@@ -1762,7 +1762,8 @@ export type AcademicTeacherStateSearchResponse = {
 }
 
 export type AcademicTeacherStateUpdatePayload = {
-  codigo_doc: number
+  codigo_doc?: number | null
+  codigo_usuario?: number | null
   estado_codigo: string
 }
 

@@ -2825,8 +2825,15 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
             TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
             TRY_CONVERT(varchar(50), u.Codigo_Usuario) AS Codigo_Usuario,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) AS cedula,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))) AS cedula_doc,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))) AS apellidos_nombre,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))), N''),
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))), N'')
+            ) AS cedula_doc,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))), N''),
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))), N''),
+                N'Sin ficha docente'
+            ) AS apellidos_nombre,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))) AS login,
             COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.tipo_usuario))), N''), N'DOCENTE') AS tipo_usuario,
             TRY_CONVERT(datetime, u.fecha_ingreso) AS fecha_ingreso_usuario,
@@ -2848,8 +2855,8 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.num_carnet_cona))) AS num_carnet_cona,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.porcen_discapa))) AS porcen_discapa,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.estado_civil))) AS estado_civil
-        FROM dbo.DATOSDOCENTE d
-        LEFT JOIN dbo.USUARIOS u
+        FROM dbo.USUARIOS u
+        FULL OUTER JOIN dbo.DATOSDOCENTE d
           ON (
                 TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
              OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
@@ -2861,7 +2868,11 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
         {where_sql}
         ORDER BY
             CASE WHEN u.Codigo_Usuario IS NULL THEN 1 ELSE 0 END,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))),
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))), N''),
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))), N''),
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))), N'')
+            ),
             TRY_CONVERT(int, u.Codigo_Usuario),
             TRY_CONVERT(int, d.codigo_doc)
     """
@@ -2870,7 +2881,7 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
 def _list_actualizacion_est_records(section: dict[str, Any], query: str | None, limit: int | None) -> dict[str, Any]:
     cleaned_query = str(query or "").strip()
     params: list[Any] = []
-    where_parts: list[str] = []
+    where_parts: list[str] = ["(u.Codigo_Usuario IS NULL OR COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1)"]
     if cleaned_query:
         like = f"%{cleaned_query}%"
         where_parts.append(
@@ -2885,10 +2896,11 @@ def _list_actualizacion_est_records(section: dict[str, Any], query: str | None, 
             OR TRY_CONVERT(nvarchar(100), u.Estado) LIKE ?
             OR TRY_CONVERT(nvarchar(255), est.ESTADO) LIKE ?
             OR TRY_CONVERT(varchar(50), d.codigo_doc) = ?
+            OR TRY_CONVERT(varchar(50), u.Codigo_Usuario) = ?
         )
         """
         )
-        params = [like, like, like, like, like, like, like, like, cleaned_query]
+        params = [like, like, like, like, like, like, like, like, cleaned_query, cleaned_query]
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     try:
         with get_connection() as conn:
@@ -2908,13 +2920,19 @@ def _list_actualizacion_est_records(section: dict[str, Any], query: str | None, 
 def _get_actualizacion_est_record(section: dict[str, Any], record_key: str) -> dict[str, Any]:
     key_values = _decode_key(record_key, 2)
     codigo_doc, codigo_usuario = key_values
-    params: list[Any] = [codigo_doc]
-    where_sql = "WHERE TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)"
+    params: list[Any] = []
+    where_parts: list[str] = ["(u.Codigo_Usuario IS NULL OR COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1)"]
+    if str(codigo_doc or "").strip():
+        where_parts.append("TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)")
+        params.append(codigo_doc)
+    else:
+        where_parts.append("d.codigo_doc IS NULL")
     if str(codigo_usuario or "").strip():
-        where_sql += " AND TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, ?)"
+        where_parts.append("TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, ?)")
         params.append(codigo_usuario)
     else:
-        where_sql += " AND u.Codigo_Usuario IS NULL"
+        where_parts.append("u.Codigo_Usuario IS NULL")
+    where_sql = f"WHERE {' AND '.join(where_parts)}"
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -2939,7 +2957,7 @@ def _update_actualizacion_est_record(section: dict[str, Any], record_key: str, p
     if estado_codigo not in {"A", "P"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Estado docente permitido: A (Activo) o P (Inactivo)")
     if not str(codigo_usuario_key or "").strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El docente no tiene usuario vinculado en USUARIOS")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El registro no tiene usuario vinculado en USUARIOS")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -2961,27 +2979,19 @@ def _update_actualizacion_est_record(section: dict[str, Any], record_key: str, p
             cursor.execute(
                 """
                 SELECT TOP (1)
-                    TRY_CONVERT(int, d.codigo_doc) AS codigo_doc,
-                    TRY_CONVERT(int, u.Codigo_Usuario) AS codigo_usuario
-                FROM dbo.DATOSDOCENTE d
-                LEFT JOIN dbo.USUARIOS u
-                  ON (
-                        TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
-                     OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
-                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
-                  )
-                WHERE TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)
-                  AND TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, ?)
+                    TRY_CONVERT(int, Codigo_Usuario) AS codigo_usuario
+                FROM dbo.USUARIOS
+                WHERE TRY_CONVERT(int, Codigo_Usuario) = TRY_CONVERT(int, ?)
+                  AND COALESCE(TRY_CONVERT(int, tipo_usuario), 2) <> 1
                 """,
-                codigo_doc,
                 codigo_usuario_key,
             )
-            teacher = cursor.fetchone()
-            if not teacher:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Docente no existe en DATOSDOCENTE")
-            codigo_usuario = getattr(teacher, "codigo_usuario", None)
+            usuario = cursor.fetchone()
+            if not usuario:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario docente no existe en USUARIOS")
+            codigo_usuario = getattr(usuario, "codigo_usuario", None)
             if codigo_usuario is None:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El docente no tiene usuario vinculado en USUARIOS")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El registro no tiene usuario vinculado en USUARIOS")
 
             cursor.execute(
                 """

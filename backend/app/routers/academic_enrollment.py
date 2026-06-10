@@ -61,7 +61,8 @@ class AcademicTeacherUniqueEnrollmentPayload(BaseModel):
 
 
 class AcademicTeacherStatePayload(BaseModel):
-    codigo_doc: int
+    codigo_doc: int | None = None
+    codigo_usuario: int | None = None
     estado_codigo: str = Field(min_length=1, max_length=10)
 
 
@@ -275,15 +276,22 @@ def _teacher_enrollment_item(row: Any) -> dict[str, Any]:
 def _estado_docente_item(row: Any) -> dict[str, Any]:
     estado_codigo = _clean(getattr(row, "Estado", ""))
     estado_nombre = _clean(getattr(row, "estado_nombre", "")) or estado_codigo or "Sin estado"
+    codigo_doc = _clean(getattr(row, "codigo_doc", "")) or _clean(getattr(row, "Codigo_Usuario", ""))
+    cedula = _clean(getattr(row, "cedula_doc", "")) or _clean(getattr(row, "cedula_usuario", ""))
+    descripcion = (
+        _clean(getattr(row, "apellidos_nombre", ""))
+        or _clean(getattr(row, "login", ""))
+        or "Sin ficha docente"
+    )
     return {
-        "codigo_doc": str(getattr(row, "codigo_doc", "") or ""),
+        "codigo_doc": codigo_doc,
         "codigo_usuario": str(getattr(row, "Codigo_Usuario", "") or ""),
-        "cedula": _clean(getattr(row, "cedula_doc", "")),
+        "cedula": cedula,
         "login": _clean(getattr(row, "login", "")),
         "tipo_usuario": _clean(getattr(row, "tipo_usuario", "")),
         "estado": estado_codigo,
         "estado_nombre": estado_nombre,
-        "descripcion": _clean(getattr(row, "apellidos_nombre", "")),
+        "descripcion": descripcion,
         "correo": _clean(getattr(row, "correo", "")),
         "correo_personal": _clean(getattr(row, "correop", "")),
         "telefono": _clean(getattr(row, "telefono", "")),
@@ -312,6 +320,7 @@ def _fetch_estado_docente_by_code(cursor: pyodbc.Cursor, codigo_doc: int) -> dic
             TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
             TRY_CONVERT(varchar(50), u.Codigo_Usuario) AS Codigo_Usuario,
             TRY_CONVERT(nvarchar(100), d.cedula_doc) AS cedula_doc,
+            TRY_CONVERT(nvarchar(100), u.cedula) AS cedula_usuario,
             TRY_CONVERT(nvarchar(255), u.login) AS login,
             COALESCE(NULLIF(TRY_CONVERT(nvarchar(100), u.tipo_usuario), N''), N'DOCENTE') AS tipo_usuario,
             TRY_CONVERT(nvarchar(100), u.Estado) AS Estado,
@@ -335,9 +344,13 @@ def _fetch_estado_docente_by_code(cursor: pyodbc.Cursor, codigo_doc: int) -> dic
             stats.total_carreras_docente,
             stats.total_materias_docente,
             stats.ultimo_periodo_docente
-        FROM dbo.DATOSDOCENTE d
-        LEFT JOIN dbo.USUARIOS u
-          ON TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+        FROM dbo.USUARIOS u
+        FULL OUTER JOIN dbo.DATOSDOCENTE d
+          ON (
+                TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+             OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+          )
         LEFT JOIN dbo.ESTADO est
           ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), est.IDESTADO)))) =
              UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado))))
@@ -348,9 +361,11 @@ def _fetch_estado_docente_by_code(cursor: pyodbc.Cursor, codigo_doc: int) -> dic
                 COUNT(DISTINCT TRY_CONVERT(int, cxd.codigo_materia)) AS total_materias_docente,
                 MAX(TRY_CONVERT(int, cxd.codigo_periodo)) AS ultimo_periodo_docente
             FROM dbo.CARRERAXDOCENTE cxd
-            WHERE TRY_CONVERT(int, cxd.codigo_doc) = TRY_CONVERT(int, d.codigo_doc)
+            WHERE TRY_CONVERT(int, cxd.codigo_doc) =
+                  TRY_CONVERT(int, COALESCE(d.codigo_doc, u.Codigo_Usuario))
         ) stats
-        WHERE TRY_CONVERT(int, d.codigo_doc) = ?
+        WHERE TRY_CONVERT(int, u.Codigo_Usuario) = ?
+          AND COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1
         """,
         codigo_doc,
     )
@@ -2504,7 +2519,7 @@ def matricula_acad_teacher_states(
     query: str = "",
     estado: str = "",
     validar_usuario: Annotated[bool, Query(description="Mostrar solo docentes con usuario vinculado")] = False,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    limit: Annotated[int, Query(ge=1, le=10000)] = 1000,
 ) -> dict[str, Any]:
     del current_user
     query_value = query.strip()
@@ -2522,6 +2537,7 @@ def matricula_acad_teacher_states(
                     TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
                     TRY_CONVERT(varchar(50), u.Codigo_Usuario) AS Codigo_Usuario,
                     TRY_CONVERT(nvarchar(100), d.cedula_doc) AS cedula_doc,
+                    TRY_CONVERT(nvarchar(100), u.cedula) AS cedula_usuario,
                     TRY_CONVERT(nvarchar(255), u.login) AS login,
                     COALESCE(NULLIF(TRY_CONVERT(nvarchar(100), u.tipo_usuario), N''), N'DOCENTE') AS tipo_usuario,
                     TRY_CONVERT(nvarchar(100), u.Estado) AS Estado,
@@ -2545,9 +2561,13 @@ def matricula_acad_teacher_states(
                     stats.total_carreras_docente,
                     stats.total_materias_docente,
                     stats.ultimo_periodo_docente
-                FROM dbo.DATOSDOCENTE d
-                LEFT JOIN dbo.USUARIOS u
-                  ON TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                FROM dbo.USUARIOS u
+                FULL OUTER JOIN dbo.DATOSDOCENTE d
+                  ON (
+                        TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                     OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+                  )
                 LEFT JOIN dbo.ESTADO est
                   ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), est.IDESTADO)))) =
                      UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado))))
@@ -2558,36 +2578,45 @@ def matricula_acad_teacher_states(
                         COUNT(DISTINCT TRY_CONVERT(int, cxd.codigo_materia)) AS total_materias_docente,
                         MAX(TRY_CONVERT(int, cxd.codigo_periodo)) AS ultimo_periodo_docente
                     FROM dbo.CARRERAXDOCENTE cxd
-                    WHERE TRY_CONVERT(int, cxd.codigo_doc) = TRY_CONVERT(int, d.codigo_doc)
+                    WHERE TRY_CONVERT(int, cxd.codigo_doc) =
+                          TRY_CONVERT(int, COALESCE(d.codigo_doc, u.Codigo_Usuario))
                 ) stats
                 WHERE (
                        ? = N''
                     OR TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) LIKE ?
+                    OR TRY_CONVERT(nvarchar(100), u.cedula) LIKE ?
                     OR TRY_CONVERT(nvarchar(255), d.correo) LIKE ?
                     OR TRY_CONVERT(nvarchar(255), d.correop) LIKE ?
                     OR TRY_CONVERT(nvarchar(255), u.login) LIKE ?
                     OR TRY_CONVERT(nvarchar(4000), u.Descripcion) LIKE ?
                     OR TRY_CONVERT(nvarchar(100), d.cedula_doc) LIKE ?
                     OR TRY_CONVERT(varchar(50), d.codigo_doc) = ?
+                    OR TRY_CONVERT(varchar(50), u.Codigo_Usuario) = ?
                 )
                   AND (
                     ? = N''
                     OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) = ?
                   )
-                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'P')
+                  AND (u.Codigo_Usuario IS NULL OR COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1)
                   AND (? = 0 OR u.Codigo_Usuario IS NOT NULL)
                 ORDER BY
                     CASE WHEN u.Codigo_Usuario IS NULL THEN 1 ELSE 0 END,
-                    TRY_CONVERT(nvarchar(4000), d.apellidos_nombre),
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))), N''),
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))), N''),
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))), N'')
+                    ),
                     TRY_CONVERT(nvarchar(255), d.correo)
                 """,
                 query_value,
                 search,
+                document,
                 search,
                 search,
                 search,
                 search,
                 document,
+                query_value,
                 query_value,
                 estado_value,
                 estado_value,
@@ -2608,6 +2637,9 @@ def matricula_acad_update_teacher_state(
     estado_codigo = _clean(payload.estado_codigo).upper()
     if estado_codigo not in _VALID_TEACHER_STATE_CODES:
         raise HTTPException(status_code=400, detail="Solo se permite Activo (A) o Inactivo (P) para docentes.")
+    codigo_usuario = payload.codigo_usuario or payload.codigo_doc
+    if not codigo_usuario:
+        raise HTTPException(status_code=400, detail="Selecciona un usuario docente para actualizar el estado.")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -2627,25 +2659,15 @@ def matricula_acad_update_teacher_state(
 
             cursor.execute(
                 """
-                SELECT TOP (1) TRY_CONVERT(varchar(50), codigo_doc) AS codigo_doc
-                FROM dbo.DATOSDOCENTE
-                WHERE TRY_CONVERT(int, codigo_doc) = ?
-                """,
-                payload.codigo_doc,
-            )
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail="Docente no existe en DATOSDOCENTE")
-
-            cursor.execute(
-                """
                 SELECT TOP (1) TRY_CONVERT(varchar(50), Codigo_Usuario) AS Codigo_Usuario
                 FROM dbo.USUARIOS
                 WHERE TRY_CONVERT(int, Codigo_Usuario) = ?
+                  AND COALESCE(TRY_CONVERT(int, tipo_usuario), 2) <> 1
                 """,
-                payload.codigo_doc,
+                codigo_usuario,
             )
             if not cursor.fetchone():
-                raise HTTPException(status_code=400, detail="El docente no tiene usuario vinculado para actualizar estado")
+                raise HTTPException(status_code=400, detail="El usuario docente no existe en USUARIOS")
 
             cursor.execute(
                 """
@@ -2654,9 +2676,9 @@ def matricula_acad_update_teacher_state(
                 WHERE TRY_CONVERT(int, Codigo_Usuario) = ?
                 """,
                 estado_codigo,
-                payload.codigo_doc,
+                codigo_usuario,
             )
-            teacher = _fetch_estado_docente_by_code(cursor, payload.codigo_doc)
+            teacher = _fetch_estado_docente_by_code(cursor, codigo_usuario)
             conn.commit()
         return {
             "ok": True,

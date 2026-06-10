@@ -83,7 +83,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
     setError('')
     setMessage('')
     try {
-      const payload = await fetchAcademicTeacherStates(query.trim(), stateFilter, validateUser, 100)
+      const payload = await fetchAcademicTeacherStates(query.trim(), stateFilter, validateUser, 10000)
       const items = payload.items || []
       setTeachers(items)
       setSelectedTeacher((current) => {
@@ -109,7 +109,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
       try {
         const [statePayload, teacherPayload] = await Promise.all([
           fetchAcademicTeacherStateCatalog(),
-          fetchAcademicTeacherStates('', '', true, 100),
+          fetchAcademicTeacherStates('', '', true, 10000),
         ])
         if (cancelled) return
         const stateItems = (statePayload.items || []).filter((state) => VALID_TEACHER_STATES.has(state.codigo.toUpperCase()))
@@ -181,6 +181,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
     try {
       const payload = await updateAcademicTeacherState({
         codigo_doc: teacherCode,
+        codigo_usuario: selectedTeacher.codigo_usuario ? Number(selectedTeacher.codigo_usuario) : teacherCode,
         estado_codigo: targetState,
       })
       const updated = payload.docente || {
