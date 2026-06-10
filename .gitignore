@@ -54,6 +54,8 @@ temp/
 *.xlsx
 *.csv
 !frontend/doc/**
+!frontend/public/plantillas/
+!frontend/public/plantillas/**
 
 # Sistema / IDE
 .DS_Store
