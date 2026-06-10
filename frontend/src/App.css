@@ -4630,6 +4630,41 @@
   font-weight: 800;
 }
 
+.mass-email-template-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.64);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  min-width: 0;
+}
+
+.mass-email-template-callout div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mass-email-template-callout strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.mass-email-template-callout span {
+  color: #52607e;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.mass-email-template-callout .ghost-button {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
 .mass-email-excel-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -11536,8 +11571,13 @@ textarea {
   }
 
   .mass-email-excel-actions,
+  .mass-email-template-callout,
   .mass-email-document-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mass-email-template-callout {
+    display: grid;
   }
 
   .mass-email-excel-row {

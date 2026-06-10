@@ -14,6 +14,7 @@ Adjunto información institucional enviada por INTEC.
 Saludos,
 INTEC`
 const intecLogoPath = '/Intec-Logowithslogangray.svg'
+const massEmailTemplatePath = '/plantillas/plantilla_envio_masivo_correos.xlsx'
 const institutionName = 'Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento INTEC'
 
 function parseEmails(value: string) {
@@ -890,6 +891,16 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
                 <span>{excelSummary.listos || 0} lista(s)</span>
                 <span>{excelSummary.sin_correo || 0} sin correo</span>
               </div>
+            </div>
+
+            <div className="mass-email-template-callout">
+              <div>
+                <strong>Plantilla disponible</strong>
+                <span>Cédula, nombre, correo, documento, carrera, periodo y referencia.</span>
+              </div>
+              <a className="ghost-button" href={massEmailTemplatePath} download>
+                Descargar plantilla
+              </a>
             </div>
 
             <div className="mass-email-excel-actions">
