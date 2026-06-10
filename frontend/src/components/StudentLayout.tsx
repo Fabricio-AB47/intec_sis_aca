@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import type { Page, PortalStudentSection, PreinscriptionStage } from '../types/app'
 
@@ -114,6 +114,175 @@ function sortNavGroups(groups: NavGroup[]) {
   })
 }
 
+type GroupIconName =
+  | 'home'
+  | 'status'
+  | 'admission'
+  | 'certificate'
+  | 'student'
+  | 'teacher'
+  | 'users'
+  | 'id-card'
+  | 'briefcase'
+  | 'catalog'
+  | 'report'
+  | 'integration'
+  | 'academic'
+  | 'matricula'
+
+function groupIconName(groupKey: string): GroupIconName {
+  const iconMap: Record<string, GroupIconName> = {
+    inicio: 'home',
+    'actualizacion-estados': 'status',
+    'admision-matriculas': 'matricula',
+    'admision-proceso': 'admission',
+    certificados: 'certificate',
+    'portal-estudiante': 'student',
+    'portal-docente': 'teacher',
+    administracion: 'users',
+    carnetizacion: 'id-card',
+    vinculacion: 'briefcase',
+    catalogos: 'catalog',
+    reporteria: 'report',
+    integraciones: 'integration',
+    'admision-integraciones': 'integration',
+    'admision-control': 'matricula',
+  }
+
+  return iconMap[groupKey] || 'academic'
+}
+
+function GroupIcon({ name }: { name: GroupIconName }) {
+  switch (name) {
+    case 'home':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 10.5 12 3l9 7.5" />
+          <path d="M5 9.5V21h14V9.5" />
+          <path d="M9 21v-6h6v6" />
+        </svg>
+      )
+    case 'status':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h10a5 5 0 0 1 5 5v1" />
+          <path d="m16 4 3 3-3 3" />
+          <path d="M20 17H10a5 5 0 0 1-5-5v-1" />
+          <path d="m8 20-3-3 3-3" />
+        </svg>
+      )
+    case 'admission':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+          <path d="M3 21a6 6 0 0 1 12 0" />
+          <path d="M19 8v8" />
+          <path d="M15 12h8" />
+        </svg>
+      )
+    case 'matricula':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5h16v14H4z" />
+          <path d="M8 9h8" />
+          <path d="M8 13h5" />
+          <path d="m15 17 1.7 1.7L21 14.5" />
+        </svg>
+      )
+    case 'certificate':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 3h8l4 4v14H6z" />
+          <path d="M14 3v5h5" />
+          <path d="m9 15 2 2 4-5" />
+        </svg>
+      )
+    case 'student':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m3 8 9-4 9 4-9 4-9-4Z" />
+          <path d="M7 10.5V15c0 1.7 2.2 3 5 3s5-1.3 5-3v-4.5" />
+          <path d="M20 9v5" />
+        </svg>
+      )
+    case 'teacher':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5h16v10H4z" />
+          <path d="M8 21h8" />
+          <path d="M12 15v6" />
+          <path d="M8 9h8" />
+        </svg>
+      )
+    case 'users':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M16 11a4 4 0 1 0-8 0" />
+          <path d="M5 21a7 7 0 0 1 14 0" />
+          <path d="M18 7a3 3 0 0 1 3 3" />
+          <path d="M3 10a3 3 0 0 1 3-3" />
+        </svg>
+      )
+    case 'id-card':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5h16v14H4z" />
+          <path d="M9 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+          <path d="M6.5 16a3 3 0 0 1 5 0" />
+          <path d="M14 10h4" />
+          <path d="M14 14h4" />
+        </svg>
+      )
+    case 'briefcase':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 7V5h6v2" />
+          <path d="M4 7h16v12H4z" />
+          <path d="M4 12h16" />
+          <path d="M10 12v2h4v-2" />
+        </svg>
+      )
+    case 'catalog':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H20v17H7.5A3.5 3.5 0 0 0 4 22Z" />
+          <path d="M4 5.5V22" />
+          <path d="M8 7h8" />
+          <path d="M8 11h7" />
+        </svg>
+      )
+    case 'report':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 19V5" />
+          <path d="M5 19h15" />
+          <path d="M9 16v-5" />
+          <path d="M13 16V8" />
+          <path d="M17 16v-3" />
+        </svg>
+      )
+    case 'integration':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 8h8v8H8z" />
+          <path d="M12 2v6" />
+          <path d="M12 16v6" />
+          <path d="M2 12h6" />
+          <path d="M16 12h6" />
+        </svg>
+      )
+    case 'academic':
+    default:
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 19V6l8-3 8 3v13" />
+          <path d="M8 19v-7h8v7" />
+          <path d="M3 21h18" />
+        </svg>
+      )
+  }
+}
+
 export function StudentLayout({
   activePage,
   activeSisAcademicoSection = '',
@@ -155,9 +324,32 @@ export function StudentLayout({
 }: Readonly<StudentLayoutProps>) {
   const normalizedRole = role.trim().toUpperCase()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
     () => new Set(['inicio', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'certificados', 'carnetizacion'])
   )
+
+  useEffect(() => {
+    const coarsePointerQuery = window.matchMedia('(pointer: coarse)')
+
+    const syncMobileState = () => {
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+      const isMobile = viewportWidth <= 767 || (coarsePointerQuery.matches && viewportWidth <= 1180)
+      setIsMobileViewport(isMobile)
+      if (!isMobile) {
+        setMobileMenuOpen(false)
+      }
+    }
+
+    syncMobileState()
+    coarsePointerQuery.addEventListener('change', syncMobileState)
+    window.addEventListener('resize', syncMobileState)
+
+    return () => {
+      coarsePointerQuery.removeEventListener('change', syncMobileState)
+      window.removeEventListener('resize', syncMobileState)
+    }
+  }, [])
 
   const preinscriptionFlowItems: NavItem[] = [
     {
@@ -866,7 +1058,6 @@ export function StudentLayout({
         : adminMenuGroups
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
-  const activeItem = visibleMenuGroups.flatMap((group) => group.items).find((item) => itemIsActive(item))
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
   const brand = roleBrandMap[normalizedRole] ?? {
     initials: initialsFromTitle(fallbackBrandTitle),
@@ -920,15 +1111,20 @@ export function StudentLayout({
   }
 
   return (
-    <div className="student-shell">
-      <aside className={`student-sidebar ${mobileMenuOpen ? 'student-sidebar--open' : ''}`}>
+    <div className={`student-shell ${isMobileViewport ? 'student-shell--mobile-view' : ''}`}>
+      <aside
+        className={`student-sidebar ${isMobileViewport ? 'student-sidebar--mobile' : ''} ${mobileMenuOpen ? 'student-sidebar--open' : ''}`}
+        aria-label="Menu lateral"
+      >
         <div className="student-sidebar__head">
           <div className="student-brand">
             <div className="student-brand__logo">{brand.initials}</div>
-            <div>
-              <strong>{brandTitle}</strong>
-              {brandSubtitle ? <span>{brandSubtitle}</span> : null}
-            </div>
+            {!isMobileViewport || mobileMenuOpen ? (
+              <div>
+                <strong>{brandTitle}</strong>
+                {brandSubtitle ? <span>{brandSubtitle}</span> : null}
+              </div>
+            ) : null}
           </div>
 
           <button
@@ -938,7 +1134,23 @@ export function StudentLayout({
             aria-expanded={mobileMenuOpen}
             onClick={() => setMobileMenuOpen((value) => !value)}
           >
-            {mobileMenuOpen ? 'Cerrar' : 'Menu'}
+            <span className="student-mobile-menu-button__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                {mobileMenuOpen ? (
+                  <>
+                    <path d="M6 6l12 12" />
+                    <path d="M18 6 6 18" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M4 7h16" />
+                    <path d="M4 12h16" />
+                    <path d="M4 17h16" />
+                  </>
+                )}
+              </svg>
+            </span>
+            <span className="student-mobile-menu-button__label">{mobileMenuOpen ? 'Cerrar' : 'Menu'}</span>
           </button>
         </div>
 
@@ -955,7 +1167,10 @@ export function StudentLayout({
                     className={`student-nav__group-button ${isActive ? 'student-nav__group-button--active' : ''}`}
                     aria-expanded={isOpen}
                     onClick={() => toggleGroup(group.key)}
-                  >
+                    >
+                      <span className="student-nav__group-icon" aria-hidden="true">
+                      <GroupIcon name={groupIconName(group.key)} />
+                    </span>
                     <span className="student-nav__group-copy">
                       <strong>{group.title}</strong>
                       <small>{group.summary}</small>
@@ -994,11 +1209,6 @@ export function StudentLayout({
             })}
           </nav>
 
-          <article className="student-note-card">
-            <h3>Ruta actual</h3>
-            <p>{activeItem?.label || 'Dashboard'}</p>
-          </article>
-
           <button
             className="logout-button"
             onClick={() => {
@@ -1006,7 +1216,14 @@ export function StudentLayout({
               onLogout()
             }}
           >
-            Cerrar sesion
+            <span className="logout-button__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M10 17l5-5-5-5" />
+                <path d="M15 12H3" />
+                <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7" />
+              </svg>
+            </span>
+            <span>Cerrar sesión</span>
           </button>
         </div>
       </aside>

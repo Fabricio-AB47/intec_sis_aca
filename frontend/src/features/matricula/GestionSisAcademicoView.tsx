@@ -270,10 +270,17 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const isStudentEstadoSection = selectedSectionKey === 'actualizacion_estudiantes'
   const estadoInlineField = selectedSection?.editable_fields?.find((field) => field.name === 'Estado')
   const docenteEstadoOptions = useMemo(
-    () =>
-      (estadoInlineField?.options || []).filter((option) =>
+    () => {
+      const filteredOptions = (estadoInlineField?.options || []).filter((option) =>
         ['A', 'P'].includes(String(option.value).trim().toUpperCase()),
-      ),
+      )
+      return filteredOptions.length > 0
+        ? filteredOptions
+        : [
+            { value: 'A', label: 'A - Activo' },
+            { value: 'P', label: 'P - Inactivo' },
+          ]
+    },
     [estadoInlineField],
   )
   const estadoPeriodField = selectedSection?.list_fields?.find((field) => field.name === 'codigo_periodo')

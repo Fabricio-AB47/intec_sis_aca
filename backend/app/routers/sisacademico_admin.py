@@ -245,21 +245,39 @@ SECTIONS: dict[str, dict[str, Any]] = {
     "actualizacion_est": {
         "title": "Actualización estados docentes",
         "category": "Docencia",
-        "description": "Verifica DATOSDOCENTE y USUARIOS para actualizar el estado del docente usando dbo.ESTADO.",
-        "table": "dbo.DATOSDOCENTE + dbo.USUARIOS + dbo.ESTADO",
-        "key_fields": ["codigo_doc"],
+        "description": "Verifica DATOSDOCENTE y todos los usuarios vinculados para activar o inactivar docentes.",
+        "table": "dbo.DATOSDOCENTE + dbo.USUARIOS",
+        "key_fields": ["codigo_doc", "Codigo_Usuario"],
         "list_fields": fields(
             ("codigo_doc", "Código docente", "number"),
+            ("cedula_doc", "Cédula docente"),
             ("apellidos_nombre", "Nombre"),
-            ("correop", "Correo personal"),
+            ("correo_docente", "Correo docente"),
+            ("movil", "Móvil"),
+            ("Codigo_Usuario", "Código usuario", "number"),
+            ("cedula", "Cédula usuario"),
             ("login", "Usuario"),
+            ("fecha_ingreso_usuario", "Ingreso", "datetime"),
             ("Estado", "Estado"),
         ),
         "detail_fields": fields(
+            ("codigo_doc", "Código docente", "number"),
+            ("Codigo_Usuario", "Código usuario", "number"),
             ("cedula", "Cédula usuario"),
             ("login", "Login"),
+            ("tipo_usuario", "Tipo usuario"),
+            ("fecha_ingreso_usuario", "Fecha ingreso usuario", "datetime"),
+            ("CambioClave", "Cambio clave"),
+            ("Estado", "Estado usuario"),
+            ("Informacion", "Descripción usuario", "textarea"),
             ("cedula_doc", "Cédula docente"),
             ("apellidos_nombre", "Docente"),
+            ("correo_docente", "Correo docente"),
+            ("correo_personal", "Correo personal"),
+            ("telefono", "Teléfono"),
+            ("movil", "Móvil"),
+            ("TipoDocente", "Tipo docente"),
+            ("nivelFormacion", "Nivel formación"),
             ("sexo", "Sexo"),
             ("nacionalidad", "Nacionalidad"),
             field("fecha_nac", "Fecha nacimiento", "date"),
@@ -2763,6 +2781,7 @@ def _update_actualizacion_estudiantes_record(section: dict[str, Any], record_key
 
 def _actualizacion_est_row(row: Any) -> dict[str, Any]:
     usuario_validado = bool(getattr(row, "Codigo_Usuario", None))
+    correo_docente = _serialize_value(getattr(row, "correo", "")) or _serialize_value(getattr(row, "correop", ""))
     record = {
         "codigo_doc": _serialize_value(getattr(row, "codigo_doc", "")),
         "Codigo_Usuario": _serialize_value(getattr(row, "Codigo_Usuario", "")),
@@ -2771,11 +2790,15 @@ def _actualizacion_est_row(row: Any) -> dict[str, Any]:
         "apellidos_nombre": _serialize_value(getattr(row, "apellidos_nombre", "")),
         "login": _serialize_value(getattr(row, "login", "")),
         "tipo_usuario": _serialize_value(getattr(row, "tipo_usuario", "")),
+        "fecha_ingreso_usuario": _serialize_value(getattr(row, "fecha_ingreso_usuario", "")),
+        "CambioClave": _serialize_value(getattr(row, "CambioClave", "")),
         "Estado": _serialize_value(getattr(row, "Estado", "")),
         "estado_nombre": _serialize_value(getattr(row, "estado_nombre", "")) or _serialize_value(getattr(row, "Estado", "")),
         "Informacion": _serialize_value(getattr(row, "Informacion", "")),
         "correo": _serialize_value(getattr(row, "correo", "")),
         "correop": _serialize_value(getattr(row, "correop", "")),
+        "correo_docente": correo_docente,
+        "correo_personal": _serialize_value(getattr(row, "correop", "")) or _serialize_value(getattr(row, "correo", "")),
         "telefono": _serialize_value(getattr(row, "telefono", "")),
         "movil": _serialize_value(getattr(row, "movil", "")),
         "TipoDocente": _serialize_value(getattr(row, "TipoDocente", "")),
@@ -2791,7 +2814,7 @@ def _actualizacion_est_row(row: Any) -> dict[str, Any]:
         "usuario_validado": usuario_validado,
     }
     record["_section"] = "actualizacion_est"
-    record["_record_key"] = _encode_key([record["codigo_doc"]])
+    record["_record_key"] = _encode_key([record["codigo_doc"], record["Codigo_Usuario"]])
     return record
 
 
@@ -2806,6 +2829,8 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))) AS apellidos_nombre,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))) AS login,
             COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.tipo_usuario))), N''), N'DOCENTE') AS tipo_usuario,
+            TRY_CONVERT(datetime, u.fecha_ingreso) AS fecha_ingreso_usuario,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.CambioClave))) AS CambioClave,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.Estado))) AS Estado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), est.ESTADO))) AS estado_nombre,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), u.Descripcion))) AS Informacion,
@@ -2824,17 +2849,12 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.porcen_discapa))) AS porcen_discapa,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.estado_civil))) AS estado_civil
         FROM dbo.DATOSDOCENTE d
-        OUTER APPLY (
-            SELECT TOP (1) usuario.*
-            FROM dbo.USUARIOS usuario
-            WHERE TRY_CONVERT(int, usuario.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
-               OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), usuario.cedula))) =
-                  LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
-            ORDER BY
-                CASE WHEN TRY_CONVERT(int, usuario.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc) THEN 0 ELSE 1 END,
-                CASE WHEN TRY_CONVERT(int, usuario.tipo_usuario) = 2 THEN 0 ELSE 1 END,
-                TRY_CONVERT(int, usuario.Codigo_Usuario)
-        ) u
+        LEFT JOIN dbo.USUARIOS u
+          ON (
+                TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+             OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+          )
         LEFT JOIN dbo.ESTADO est
           ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), est.IDESTADO)))) =
              UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado))))
@@ -2842,6 +2862,7 @@ def _actualizacion_est_select(limit: int | None, where_sql: str = "") -> str:
         ORDER BY
             CASE WHEN u.Codigo_Usuario IS NULL THEN 1 ELSE 0 END,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))),
+            TRY_CONVERT(int, u.Codigo_Usuario),
             TRY_CONVERT(int, d.codigo_doc)
     """
 
@@ -2885,12 +2906,19 @@ def _list_actualizacion_est_records(section: dict[str, Any], query: str | None, 
 
 
 def _get_actualizacion_est_record(section: dict[str, Any], record_key: str) -> dict[str, Any]:
-    key_values = _decode_key(record_key, 1)
+    key_values = _decode_key(record_key, 2)
+    codigo_doc, codigo_usuario = key_values
+    params: list[Any] = [codigo_doc]
     where_sql = "WHERE TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)"
+    if str(codigo_usuario or "").strip():
+        where_sql += " AND TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, ?)"
+        params.append(codigo_usuario)
+    else:
+        where_sql += " AND u.Codigo_Usuario IS NULL"
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(_actualizacion_est_select(1, where_sql), key_values)
+            cursor.execute(_actualizacion_est_select(1, where_sql), params)
             row = cursor.fetchone()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo consultar el estado del docente") from exc
@@ -2901,12 +2929,17 @@ def _get_actualizacion_est_record(section: dict[str, Any], record_key: str) -> d
 
 def _update_actualizacion_est_record(section: dict[str, Any], record_key: str, payload: SavePayload) -> dict[str, Any]:
     del section
-    key_values = _decode_key(record_key, 1)
+    key_values = _decode_key(record_key, 2)
+    codigo_doc, codigo_usuario_key = key_values
     estado_codigo = str(payload.values.get("Estado") or "").strip().upper()
     informacion = str(payload.values.get("Informacion") or "").strip()
     update_information = "Informacion" in payload.values
     if not estado_codigo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona el estado del docente")
+    if estado_codigo not in {"A", "P"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Estado docente permitido: A (Activo) o P (Inactivo)")
+    if not str(codigo_usuario_key or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El docente no tiene usuario vinculado en USUARIOS")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -2917,6 +2950,7 @@ def _update_actualizacion_est_record(section: dict[str, Any], record_key: str, p
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ESTADO))) AS nombre
                 FROM dbo.ESTADO
                 WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO)))) = ?
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO)))) IN (N'A', N'P')
                 """,
                 estado_codigo,
             )
@@ -2930,20 +2964,17 @@ def _update_actualizacion_est_record(section: dict[str, Any], record_key: str, p
                     TRY_CONVERT(int, d.codigo_doc) AS codigo_doc,
                     TRY_CONVERT(int, u.Codigo_Usuario) AS codigo_usuario
                 FROM dbo.DATOSDOCENTE d
-                OUTER APPLY (
-                    SELECT TOP (1) usuario.*
-                    FROM dbo.USUARIOS usuario
-                    WHERE TRY_CONVERT(int, usuario.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
-                       OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), usuario.cedula))) =
-                          LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
-                    ORDER BY
-                        CASE WHEN TRY_CONVERT(int, usuario.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc) THEN 0 ELSE 1 END,
-                        CASE WHEN TRY_CONVERT(int, usuario.tipo_usuario) = 2 THEN 0 ELSE 1 END,
-                        TRY_CONVERT(int, usuario.Codigo_Usuario)
-                ) u
+                LEFT JOIN dbo.USUARIOS u
+                  ON (
+                        TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                     OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+                  )
                 WHERE TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)
+                  AND TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, ?)
                 """,
-                key_values[0],
+                codigo_doc,
+                codigo_usuario_key,
             )
             teacher = cursor.fetchone()
             if not teacher:

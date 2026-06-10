@@ -4630,41 +4630,6 @@
   font-weight: 800;
 }
 
-.mass-email-template-callout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgba(141, 187, 199, 0.64);
-  border-radius: 8px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.86);
-  min-width: 0;
-}
-
-.mass-email-template-callout div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.mass-email-template-callout strong {
-  color: var(--ink);
-  font-size: 14px;
-}
-
-.mass-email-template-callout span {
-  color: #52607e;
-  font-size: 12px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.mass-email-template-callout .ghost-button {
-  flex: 0 0 auto;
-  text-decoration: none;
-}
-
 .mass-email-excel-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -11571,13 +11536,8 @@ textarea {
   }
 
   .mass-email-excel-actions,
-  .mass-email-template-callout,
   .mass-email-document-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .mass-email-template-callout {
-    display: grid;
   }
 
   .mass-email-excel-row {
@@ -12518,5 +12478,5318 @@ textarea {
 
   .carnet-actions--stacked {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Responsive safety layer: keeps every module usable on mobile, tablet, laptop and desktop. */
+html,
+body,
+#root,
+.app {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.app *,
+.app *::before,
+.app *::after {
+  min-width: 0;
+}
+
+.app img,
+.app svg,
+.app canvas,
+.app video,
+.app iframe {
+  max-width: 100%;
+}
+
+.student-main,
+.content-stack,
+.student-grid,
+.student-card,
+.student-topbar,
+.matricula-panel,
+.matricula-acad-grid,
+.matricula-acad-workspace,
+.matricula-acad-balance-grid,
+.matricula-docente-grid,
+.estado-docente-grid,
+.preinscripcion-grid,
+.portal-student-hero,
+.portal-teacher-grid,
+.portal-dashboard-overview,
+.reporteria-integral-grid,
+.reporteria-carreras-grid,
+.gestion-sis-grid,
+.teams-page-grid,
+.mass-email-grid,
+.credential-grid,
+.certificate-renamer-grid,
+.carnet-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.student-main {
+  overflow: hidden;
+}
+
+.content-stack {
+  display: grid;
+  gap: clamp(10px, 1.4vw, 16px);
+}
+
+.student-card,
+.student-topbar,
+.matricula-panel,
+.portal-grade-card,
+.gestion-sis-homo-bulk,
+.credential-graph-panel,
+.mass-email-attachment-box,
+.certificate-renamer-progress-panel,
+.carnet-panel {
+  overflow: hidden;
+}
+
+.section-title,
+.card-head,
+.student-topbar,
+.matricula-modal-head,
+.mass-email-selected-modal__head,
+.preinscripcion-title-actions,
+.gestion-sis-homo-bulk__head,
+.certificate-renamer-progress-head {
+  min-width: 0;
+}
+
+.section-title > *,
+.card-head > *,
+.student-topbar > *,
+.matricula-modal-head > *,
+.mass-email-selected-modal__head > *,
+.preinscripcion-title-actions > *,
+.gestion-sis-homo-bulk__head > *,
+.certificate-renamer-progress-head > * {
+  min-width: 0;
+}
+
+.app input,
+.app select,
+.app textarea,
+.app button {
+  max-width: 100%;
+}
+
+.app textarea {
+  resize: vertical;
+}
+
+.matricula-table-wrap,
+.excel-table-wrap,
+.reporteria-integral-table-wrap,
+.gestion-sis-table-wrap,
+.portal-table-wrap,
+.credential-table-wrap,
+.certificate-renamer-table-wrap {
+  border-radius: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.matricula-table,
+.credential-table,
+.certificate-renamer-table,
+.reporteria-integral-table,
+.gestion-sis-table,
+.portal-grade-table,
+.portal-record-table,
+.portal-academic-map-table,
+.portal-curriculum-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.matricula-table th,
+.matricula-table td,
+.credential-table th,
+.credential-table td,
+.certificate-renamer-table th,
+.certificate-renamer-table td {
+  vertical-align: top;
+}
+
+.matricula-modal-overlay,
+.teams-modal-overlay,
+.senescyt-modal-backdrop,
+.mass-email-selected-modal-overlay {
+  align-items: center;
+  justify-content: center;
+  padding: clamp(8px, 2vw, 18px);
+}
+
+.matricula-modal,
+.teams-modal,
+.senescyt-modal,
+.mass-email-selected-modal,
+.portal-report-preview-modal {
+  width: min(1120px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+}
+
+.matricula-docente-selector-modal,
+.preinscripcion-student-modal,
+.mass-email-preview-modal {
+  width: min(980px, calc(100vw - 24px));
+}
+
+.teams-actions,
+.portal-actions,
+.portal-grade-screen-actions,
+.matricula-acad-actions,
+.matricula-confirm-actions,
+.credential-actions,
+.mass-email-toolbar,
+.mass-email-review-actions,
+.mass-email-phase-footer,
+.mass-email-selected-modal__actions,
+.preinscripcion-row-actions,
+.preinscripcion-followup-search__actions,
+.carnet-actions {
+  max-width: 100%;
+}
+
+@media (max-width: 1280px) {
+  .student-shell {
+    grid-template-columns: minmax(238px, 288px) minmax(0, 1fr);
+  }
+
+  .student-sidebar {
+    padding: 10px;
+  }
+
+  .student-nav__group-button,
+  .student-nav__item {
+    padding-inline: 10px;
+  }
+
+  .dashboard-executive-grid,
+  .dashboard-chart-grid,
+  .student-grid--content {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .dashboard-executive-grid > *,
+  .dashboard-chart-grid > *,
+  .student-grid--content > * {
+    grid-column: span 6;
+  }
+
+  .matricula-acad-form,
+  .reporteria-integral-form,
+  .gestion-sis-edit-form,
+  .gestion-sis-homo-bulk__form {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .student-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .student-sidebar {
+    position: sticky;
+    top: 6px;
+    z-index: 70;
+    max-height: none;
+  }
+
+  .student-sidebar__panel {
+    max-height: min(70dvh, 620px);
+  }
+
+  .student-mobile-menu-button {
+    display: inline-flex;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel {
+    display: none;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid;
+  }
+
+  .student-grid--stats,
+  .matricula-stats-grid,
+  .portal-summary-grid,
+  .credential-overview,
+  .certificate-renamer-overview,
+  .carnet-manager-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matricula-acad-grid,
+  .matricula-acad-workspace,
+  .matricula-acad-balance-grid,
+  .matricula-docente-grid,
+  .estado-docente-grid,
+  .preinscripcion-grid,
+  .reporteria-integral-grid,
+  .gestion-sis-grid,
+  .teams-page-grid,
+  .mass-email-grid,
+  .credential-grid,
+  .certificate-renamer-grid,
+  .carnet-grid,
+  .carnet-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-acad-grid > *,
+  .matricula-acad-workspace > *,
+  .matricula-acad-balance-grid > *,
+  .matricula-docente-grid > *,
+  .estado-docente-grid > *,
+  .preinscripcion-grid > *,
+  .reporteria-integral-grid > *,
+  .gestion-sis-grid > *,
+  .teams-page-grid > *,
+  .mass-email-grid > *,
+  .credential-grid > *,
+  .certificate-renamer-grid > *,
+  .carnet-grid > * {
+    grid-column: 1 / -1 !important;
+  }
+
+  .matricula-acad-form,
+  .preinscripcion-register-form,
+  .preinscripcion-cabecera-form,
+  .preinscripcion-followup-form,
+  .preinscripcion-doc-form--grid,
+  .reporteria-integral-form,
+  .reporteria-carreras-card .matricula-acad-form,
+  .gestion-sis-edit-form,
+  .gestion-sis-homo-bulk__form,
+  .credential-form,
+  .credential-paste {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .teams-modal-grid,
+  .teams-modal-grid--individual,
+  .mass-email-attachments-grid,
+  .mass-email-compose,
+  .mass-email-user-search__bar,
+  .mass-email-copy-entry,
+  .certificate-renamer-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-acad-actions,
+  .excel-toolbar,
+  .gestion-sis-excel-toolbar,
+  .preinscripcion-excel-toolbar,
+  .mass-email-document-toolbar,
+  .mass-email-excel-actions,
+  .mass-email-review-actions,
+  .mass-email-phase-footer,
+  .credential-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app--dashboard {
+    padding: 4px;
+  }
+
+  .student-shell {
+    gap: 6px;
+  }
+
+  .student-sidebar {
+    border-radius: 8px;
+  }
+
+  .student-sidebar__panel {
+    max-height: calc(100dvh - 92px);
+    overflow: auto;
+  }
+
+  .student-brand {
+    width: 100%;
+  }
+
+  .student-brand strong,
+  .student-brand span,
+  .student-nav__group-copy,
+  .student-nav__group-copy strong,
+  .student-nav__group-copy small,
+  .student-nav__item strong,
+  .student-nav__item span {
+    overflow-wrap: anywhere;
+  }
+
+  .student-topbar,
+  .section-title,
+  .card-head,
+  .matricula-modal-head,
+  .mass-email-selected-modal__head,
+  .preinscripcion-title-actions,
+  .gestion-sis-current-module,
+  .certificate-renamer-progress-head,
+  .carnet-hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .student-topbar h1,
+  .section-title h2,
+  .student-card h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .student-grid--stats,
+  .matricula-stats-grid,
+  .portal-summary-grid,
+  .credential-overview,
+  .certificate-renamer-overview,
+  .carnet-manager-summary,
+  .preinscripcion-workflow,
+  .preinscripcion-workflow__group-steps,
+  .preinscripcion-current,
+  .gestion-sis-workflow,
+  .gestion-sis-process-list,
+  .gestion-sis-module-tabs,
+  .portal-nav-grid,
+  .portal-dashboard-breakdown,
+  .matricula-summary-grid,
+  .matricula-acad-preview,
+  .matricula-docente-summary,
+  .matricula-acad-ficha-summary,
+  .mass-email-simple-steps,
+  .mass-email-review-strip,
+  .mass-email-selected-modal__summary,
+  .mass-email-recipient-meta,
+  .certificate-renamer-steps,
+  .certificate-renamer-progress-files,
+  .carnet-search,
+  .carnet-meta-grid,
+  .carnet-meta-grid--compact,
+  .carnet-results {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-acad-form,
+  .preinscripcion-register-form,
+  .preinscripcion-cabecera-form,
+  .preinscripcion-followup-form,
+  .preinscripcion-doc-form,
+  .preinscripcion-doc-form--grid,
+  .reporteria-integral-form,
+  .reporteria-carreras-card .matricula-acad-form,
+  .gestion-sis-edit-form,
+  .gestion-sis-homo-bulk__form,
+  .credential-form,
+  .credential-paste,
+  .age-ranges-form,
+  .periodo-controls,
+  .teams-controls,
+  .teams-search-row--double,
+  .portal-course-filters,
+  .portal-course-jump,
+  .matricula-acad-actions,
+  .excel-toolbar,
+  .gestion-sis-excel-toolbar,
+  .preinscripcion-excel-toolbar,
+  .mass-email-document-toolbar,
+  .mass-email-excel-actions,
+  .mass-email-review-actions,
+  .mass-email-phase-footer,
+  .credential-actions,
+  .carnet-actions--stacked {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-acad-form label,
+  .preinscripcion-register-form label,
+  .preinscripcion-cabecera-form label,
+  .preinscripcion-followup-form label,
+  .preinscripcion-doc-form label,
+  .reporteria-integral-form label,
+  .reporteria-carreras-card .matricula-acad-form label,
+  .gestion-sis-edit-form label,
+  .gestion-sis-homo-bulk__form label,
+  .credential-form label,
+  .credential-paste label,
+  .age-ranges-form label {
+    grid-column: 1 / -1 !important;
+  }
+
+  .ghost-button,
+  .primary-action,
+  .danger-action,
+  .submit-button,
+  .logout-button,
+  .student-mobile-menu-button,
+  .matricula-acad-actions button,
+  .excel-toolbar button,
+  .gestion-sis-excel-toolbar button,
+  .preinscripcion-excel-toolbar button,
+  .mass-email-phase-footer button,
+  .mass-email-review-actions button,
+  .credential-actions button,
+  .carnet-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .student-card,
+  .student-topbar,
+  .matricula-panel,
+  .matricula-modal,
+  .teams-modal,
+  .senescyt-modal,
+  .mass-email-selected-modal,
+  .carnet-panel {
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .matricula-table-wrap,
+  .excel-table-wrap,
+  .reporteria-integral-table-wrap,
+  .gestion-sis-table-wrap,
+  .portal-table-wrap,
+  .credential-table-wrap,
+  .certificate-renamer-table-wrap {
+    margin-inline: -4px;
+    width: calc(100% + 8px);
+  }
+
+  .matricula-table,
+  .credential-table,
+  .certificate-renamer-table {
+    min-width: 760px;
+  }
+
+  .portal-grade-table {
+    min-width: 980px;
+  }
+
+  .portal-record-table,
+  .portal-academic-map-table,
+  .portal-curriculum-table {
+    min-width: 820px;
+  }
+}
+
+@media (max-width: 480px) {
+  .student-brand {
+    align-items: flex-start;
+  }
+
+  .student-brand__logo {
+    width: 32px;
+    height: 32px;
+  }
+
+  .student-brand strong {
+    font-size: 16px;
+  }
+
+  .student-mobile-menu-button {
+    min-height: 40px;
+  }
+
+  .student-topbar h1 {
+    font-size: clamp(24px, 9vw, 30px);
+  }
+
+  .section-title h2,
+  .student-card h2 {
+    font-size: clamp(20px, 7vw, 24px);
+  }
+
+  .student-card--stat h2,
+  .dashboard-summary-value,
+  .matricula-stat-card h2 {
+    font-size: clamp(28px, 10vw, 38px);
+  }
+
+  .student-card,
+  .student-topbar,
+  .matricula-panel,
+  .carnet-panel {
+    padding: 10px;
+  }
+
+  .matricula-modal-overlay,
+  .teams-modal-overlay,
+  .senescyt-modal-backdrop,
+  .mass-email-selected-modal-overlay {
+    padding: 6px;
+  }
+
+  .matricula-modal,
+  .teams-modal,
+  .senescyt-modal,
+  .mass-email-selected-modal,
+  .portal-report-preview-modal {
+    width: calc(100vw - 12px);
+    max-width: calc(100vw - 12px);
+    max-height: calc(100dvh - 12px);
+  }
+
+  .matricula-table th,
+  .matricula-table td,
+  .credential-table th,
+  .credential-table td,
+  .certificate-renamer-table th,
+  .certificate-renamer-table td {
+    padding: 8px;
+    font-size: 12px;
+  }
+}
+
+/* Fixed responsive navigation: lateral rail on tablet/mobile, full sidebar on desktop. */
+@media (max-width: 1024px) {
+  .app--dashboard {
+    min-height: 100dvh;
+    padding: 6px 6px 6px 70px;
+  }
+
+  .student-shell {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .student-main {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  .student-sidebar {
+    bottom: 6px;
+    left: 6px;
+    max-height: none;
+    overflow: hidden;
+    padding: 9px;
+    position: fixed !important;
+    top: 6px;
+    width: 56px;
+    z-index: 120;
+    transition: width 180ms ease, box-shadow 180ms ease;
+  }
+
+  .student-sidebar__head {
+    align-items: center;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .student-brand {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .student-brand > div:not(.student-brand__logo) {
+    display: none;
+  }
+
+  .student-brand__logo {
+    flex: 0 0 auto;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center;
+    display: inline-flex !important;
+    font-size: 0;
+    height: 40px;
+    justify-content: center;
+    min-height: 40px;
+    padding: 0;
+    width: 40px;
+  }
+
+  .student-mobile-menu-button::before {
+    content: "☰";
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button::before {
+    content: "×";
+    font-size: 26px;
+  }
+
+  .student-sidebar__panel {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    display: none !important;
+    inset: auto;
+    max-height: none;
+    overflow: hidden;
+    padding: 0;
+    position: static !important;
+  }
+
+  .student-sidebar--open {
+    box-shadow: 0 18px 46px rgba(25, 35, 63, 0.28);
+    width: min(344px, calc(100vw - 18px));
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: stretch;
+  }
+
+  .student-sidebar--open .student-brand {
+    justify-content: flex-start;
+  }
+
+  .student-sidebar--open .student-brand > div:not(.student-brand__logo) {
+    display: block;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    max-height: calc(100dvh - 86px);
+    overflow: hidden;
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 216px);
+    overflow: auto;
+    padding-right: 3px;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(25, 35, 63, 0.32);
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 100;
+  }
+
+  .student-card,
+  .student-topbar {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .app--dashboard {
+    padding: 5px 5px 5px 62px;
+  }
+
+  .student-sidebar {
+    bottom: 5px;
+    left: 5px;
+    padding: 8px;
+    top: 5px;
+    width: 50px;
+  }
+
+  .student-sidebar--open {
+    width: min(326px, calc(100vw - 10px));
+  }
+
+  .student-mobile-menu-button {
+    height: 36px;
+    min-height: 36px;
+    width: 34px;
+  }
+
+  .student-brand__logo {
+    height: 34px;
+    width: 34px;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    max-height: calc(100dvh - 78px);
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 204px);
+  }
+}
+
+@media (max-width: 420px) {
+  .app--dashboard {
+    padding-left: 56px;
+  }
+
+  .student-sidebar {
+    width: 46px;
+  }
+
+  .student-sidebar--open {
+    width: calc(100vw - 10px);
+  }
+
+  .student-sidebar--open .student-brand strong {
+    font-size: 15px;
+  }
+}
+
+/* Hover sidebar: compact rail on desktop, drawer panel on tablet/mobile. */
+.student-nav__group-icon {
+  align-items: center;
+  background: rgba(141, 187, 199, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: inherit;
+  display: inline-flex;
+  flex: 0 0 40px;
+  font-size: 12px;
+  font-weight: 900;
+  height: 40px;
+  justify-content: center;
+  letter-spacing: 0;
+  line-height: 1;
+  width: 40px;
+}
+
+@media (min-width: 1025px) {
+  .app--dashboard {
+    min-height: 100dvh;
+    padding: 8px 8px 8px 84px;
+  }
+
+  .student-shell {
+    display: block !important;
+    min-height: calc(100dvh - 16px);
+    width: 100%;
+  }
+
+  .student-main {
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+    width: 100%;
+  }
+
+  .student-sidebar {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 38%),
+      linear-gradient(180deg, #b32419 0%, #931913 48%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    bottom: 8px;
+    box-shadow: 0 20px 40px rgba(37, 17, 14, 0.22);
+    color: #ffffff;
+    left: 8px;
+    max-height: none;
+    overflow: hidden;
+    padding: 12px;
+    position: fixed !important;
+    top: 8px;
+    transition: width 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    width: 64px;
+    z-index: 120;
+  }
+
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    box-shadow: 0 24px 52px rgba(37, 17, 14, 0.34);
+    width: 330px;
+  }
+
+  .student-sidebar__head {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-start;
+    min-width: 306px;
+  }
+
+  .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    min-height: 0;
+    min-width: 306px;
+    overflow: hidden;
+  }
+
+  .student-brand {
+    color: #ffffff;
+    min-width: 0;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  .student-brand__logo {
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    box-shadow: none;
+    color: #ffffff;
+    flex: 0 0 40px;
+    height: 40px;
+    width: 40px;
+  }
+
+  .student-brand strong,
+  .student-brand span {
+    color: #ffffff;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-brand > div:not(.student-brand__logo) {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .student-sidebar:hover .student-brand > div:not(.student-brand__logo),
+  .student-sidebar:focus-within .student-brand > div:not(.student-brand__logo) {
+    opacity: 1;
+    transition: opacity 140ms ease 80ms;
+    visibility: visible;
+  }
+
+  .student-mobile-menu-button,
+  .student-mobile-menu-backdrop {
+    display: none !important;
+  }
+
+  .student-nav {
+    align-content: start;
+    gap: 8px;
+    max-height: calc(100dvh - 168px);
+    overflow-y: auto;
+    padding: 4px 2px 4px 0;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav {
+    overflow-x: hidden;
+    padding-right: 0;
+  }
+
+  .student-nav__section {
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .student-nav__group-button {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    box-shadow: none;
+    color: #ffffff;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    min-height: 48px;
+    padding: 6px 8px;
+    width: 100%;
+  }
+
+  .student-nav__group-button:hover,
+  .student-nav__group-button:focus-visible {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+    transform: none;
+  }
+
+  .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(141, 187, 199, 0.2));
+    border-color: rgba(255, 255, 255, 0.36);
+    box-shadow: inset 3px 0 0 #ffffff;
+    color: #ffffff;
+  }
+
+  .student-nav__group-button--active .student-nav__group-copy small,
+  .student-nav__group-button--active .student-nav__group-meta {
+    color: rgba(255, 255, 255, 0.82);
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0;
+    grid-template-columns: 40px;
+    justify-items: center;
+    min-height: 44px;
+    padding: 2px;
+    width: 40px;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
+  }
+
+  .student-nav__group-copy,
+  .student-nav__group-meta,
+  .student-nav__submenu,
+  .student-note-card,
+  .logout-button {
+    transition: opacity 140ms ease 70ms;
+  }
+
+  .student-nav__group-copy strong {
+    color: #ffffff;
+    font-size: 14px;
+  }
+
+  .student-nav__group-copy small,
+  .student-nav__group-meta {
+    color: rgba(255, 255, 255, 0.76);
+  }
+
+  .student-nav__group-icon {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
+
+  .student-nav__submenu {
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+    margin-left: 20px;
+    padding-left: 10px;
+  }
+
+  .student-nav__submenu-title {
+    color: rgba(255, 255, 255, 0.74);
+  }
+
+  .student-nav__item {
+    border-color: transparent;
+    color: rgba(255, 255, 255, 0.86);
+    padding: 9px 10px;
+  }
+
+  .student-nav__item:hover,
+  .student-nav__item:focus-visible {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .student-nav__item strong,
+  .student-nav__item span,
+  .student-nav__item:hover strong,
+  .student-nav__item:hover span {
+    color: inherit;
+  }
+
+  .student-nav__item--active {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.26);
+    color: #ffffff;
+  }
+
+  .student-note-card {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+    margin-top: 10px;
+  }
+
+  .student-note-card h3,
+  .student-note-card p {
+    color: #ffffff;
+  }
+
+  .logout-button {
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: none;
+    margin-top: 10px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app--dashboard {
+    min-height: 100dvh;
+    padding: 8px;
+  }
+
+  .student-shell {
+    display: block !important;
+    min-height: 100dvh;
+    width: 100%;
+  }
+
+  .student-main {
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+    width: 100%;
+  }
+
+  .student-sidebar {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%),
+      linear-gradient(180deg, #b32419, #931913) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    bottom: auto;
+    box-shadow: 0 16px 34px rgba(37, 17, 14, 0.24);
+    color: #ffffff;
+    height: 56px;
+    left: 10px;
+    max-height: none;
+    overflow: hidden;
+    padding: 8px;
+    position: fixed !important;
+    top: 10px;
+    transition: width 180ms ease, height 180ms ease, border-radius 180ms ease;
+    width: 56px;
+    z-index: 140;
+  }
+
+  .student-sidebar__head {
+    align-items: center;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 40px;
+    justify-items: center;
+    min-width: 0;
+  }
+
+  .student-brand {
+    display: none;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #ffffff;
+    display: inline-flex !important;
+    font-size: 0;
+    height: 40px;
+    justify-content: center;
+    min-height: 40px;
+    padding: 0;
+    width: 40px;
+  }
+
+  .student-mobile-menu-button::before {
+    content: "Menu";
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+
+  .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 16px 16px 0;
+    bottom: 0;
+    height: 100dvh;
+    left: 0;
+    max-width: 92vw;
+    padding: 14px;
+    top: 0;
+    width: min(380px, 92vw);
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: stretch;
+  }
+
+  .student-sidebar--open .student-brand {
+    display: flex;
+  }
+
+  .student-sidebar--open .student-brand__logo {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: none;
+    color: #ffffff;
+  }
+
+  .student-sidebar--open .student-brand strong,
+  .student-sidebar--open .student-brand span {
+    color: #ffffff;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button::before {
+    content: "Cerrar";
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    max-height: calc(100dvh - 78px);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .student-sidebar--open .student-nav {
+    align-content: start;
+    gap: 8px;
+    max-height: calc(100dvh - 214px);
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .student-nav__group-button {
+    align-items: center;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    min-height: 52px;
+    padding: 7px 9px;
+  }
+
+  .student-nav__group-copy strong {
+    font-size: 14px;
+  }
+
+  .student-nav__group-copy small {
+    font-size: 11px;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.48);
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 120;
+  }
+}
+
+@media (max-width: 640px) {
+  .app--dashboard {
+    padding: 6px;
+  }
+
+  .student-sidebar {
+    height: 52px;
+    left: 8px;
+    top: 8px;
+    width: 52px;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0;
+    max-width: 100vw;
+    width: 100vw;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    max-height: calc(100dvh - 74px);
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 206px);
+  }
+}
+
+/* Final adaptive navigation override.
+   The dashboard content must never be squeezed by the sidebar grid. */
+.app--dashboard {
+  overflow-x: hidden;
+  padding: 8px 8px 8px 84px !important;
+}
+
+.student-shell {
+  display: block !important;
+  min-height: calc(100dvh - 16px);
+  width: 100%;
+}
+
+.student-main {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  width: 100%;
+}
+
+.student-sidebar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 36%),
+    linear-gradient(180deg, #b32419 0%, #931913 52%, #74110e 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 14px !important;
+  bottom: 8px !important;
+  box-shadow: 0 20px 40px rgba(37, 17, 14, 0.22) !important;
+  color: #ffffff !important;
+  left: 8px !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 12px !important;
+  position: fixed !important;
+  top: 8px !important;
+  transition: width 180ms ease, height 180ms ease, box-shadow 180ms ease;
+  width: 64px !important;
+  z-index: 140;
+}
+
+.student-sidebar__head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  min-width: 306px;
+}
+
+.student-sidebar__panel {
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  min-height: 0;
+  min-width: 306px;
+  overflow: hidden;
+}
+
+.student-brand {
+  color: #ffffff;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.student-brand__logo {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: none;
+  color: #ffffff;
+  flex: 0 0 40px;
+  height: 40px;
+  width: 40px;
+}
+
+.student-brand strong,
+.student-brand span {
+  color: #ffffff;
+}
+
+.student-nav {
+  align-content: start;
+  gap: 8px;
+  max-height: calc(100dvh - 168px);
+  overflow-y: auto;
+  padding: 4px 2px 4px 0;
+}
+
+.student-nav__group-button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  box-shadow: none;
+  color: #ffffff;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.student-nav__group-button:hover,
+.student-nav__group-button:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  transform: none;
+}
+
+.student-nav__group-button--active {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(141, 187, 199, 0.2));
+  border-color: rgba(255, 255, 255, 0.36);
+  box-shadow: inset 3px 0 0 #ffffff;
+  color: #ffffff;
+}
+
+.student-nav__group-copy strong {
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.student-nav__group-copy small,
+.student-nav__group-meta,
+.student-nav__group-button--active .student-nav__group-copy small,
+.student-nav__group-button--active .student-nav__group-meta {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.student-nav__group-icon {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.student-nav__submenu {
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  margin-left: 20px;
+  padding-left: 10px;
+}
+
+.student-nav__submenu-title {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.student-nav__item {
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  padding: 9px 10px;
+}
+
+.student-nav__item:hover,
+.student-nav__item:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.student-nav__item strong,
+.student-nav__item span,
+.student-nav__item:hover strong,
+.student-nav__item:hover span {
+  color: inherit;
+}
+
+.student-nav__item--active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.26);
+  color: #ffffff;
+}
+
+.student-note-card {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  margin-top: 10px;
+}
+
+.student-note-card h3,
+.student-note-card p {
+  color: #ffffff;
+}
+
+.logout-button {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+  margin-top: 10px;
+}
+
+.student-mobile-menu-button,
+.student-mobile-menu-backdrop {
+  display: none !important;
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1181px) {
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    box-shadow: 0 24px 52px rgba(37, 17, 14, 0.34) !important;
+    width: 330px !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-brand > div:not(.student-brand__logo),
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav {
+    overflow-x: hidden;
+    padding-right: 0;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0;
+    grid-template-columns: 40px;
+    justify-items: center;
+    min-height: 44px;
+    padding: 2px;
+    width: 40px;
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1366px) {
+  .app--dashboard {
+    padding-left: 78px !important;
+  }
+
+  .student-sidebar {
+    width: 58px !important;
+  }
+
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    width: 305px !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app--dashboard {
+    padding: 72px 10px 10px !important;
+  }
+
+  .student-shell {
+    min-height: calc(100dvh - 82px);
+  }
+
+  .student-sidebar {
+    bottom: auto !important;
+    height: 52px !important;
+    left: 10px !important;
+    max-width: calc(100vw - 20px);
+    padding: 6px !important;
+    top: 10px !important;
+    width: 132px !important;
+  }
+
+  .student-sidebar__head {
+    display: grid;
+    gap: 0;
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+
+  .student-brand,
+  .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center;
+    background: linear-gradient(90deg, #931913, #8dbbc7);
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    border-radius: 10px;
+    color: #ffffff;
+    display: inline-flex !important;
+    font-size: 16px;
+    font-weight: 900;
+    height: 40px;
+    justify-content: center;
+    min-height: 40px;
+    padding: 0 16px;
+    width: 100%;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 16px 16px 0 !important;
+    bottom: 0 !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-width: 92vw;
+    padding: 14px !important;
+    top: 0 !important;
+    width: min(390px, 92vw) !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    align-items: center;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .student-sidebar--open .student-brand {
+    display: flex !important;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button {
+    width: auto;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button::before {
+    content: "";
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    max-height: calc(100dvh - 78px);
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 214px);
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.52);
+    display: block !important;
+    inset: 0;
+    position: fixed;
+    z-index: 120;
+  }
+
+  .student-topbar,
+  .section-title,
+  .card-head,
+  .preinscripcion-title-actions,
+  .gestion-sis-current-module,
+  .matricula-modal-head,
+  .mass-email-selected-modal__head {
+    align-items: start;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .student-grid,
+  .student-grid--stats,
+  .portal-summary-grid,
+  .portal-nav-grid,
+  .portal-dashboard-breakdown,
+  .matricula-stats-grid,
+  .matricula-summary-grid,
+  .matricula-acad-preview,
+  .matricula-docente-summary,
+  .preinscripcion-workflow,
+  .preinscripcion-workflow__group-steps,
+  .preinscripcion-current,
+  .gestion-sis-workflow,
+  .gestion-sis-process-list,
+  .gestion-sis-module-tabs,
+  .credential-overview,
+  .certificate-renamer-overview,
+  .carnet-manager-summary,
+  .carnet-results {
+    grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)) !important;
+  }
+
+  .matricula-acad-form,
+  .preinscripcion-register-form,
+  .preinscripcion-cabecera-form,
+  .preinscripcion-followup-form,
+  .preinscripcion-doc-form,
+  .reporteria-integral-form,
+  .gestion-sis-edit-form,
+  .gestion-sis-homo-bulk__form,
+  .credential-form,
+  .credential-paste,
+  .age-ranges-form,
+  .periodo-controls,
+  .teams-controls,
+  .portal-course-filters,
+  .portal-course-jump,
+  .matricula-acad-actions,
+  .excel-toolbar,
+  .gestion-sis-excel-toolbar,
+  .preinscripcion-excel-toolbar,
+  .mass-email-document-toolbar,
+  .mass-email-review-actions,
+  .mass-email-phase-footer {
+    grid-template-columns: 1fr !important;
+  }
+
+  .matricula-table-wrap,
+  .excel-table-wrap,
+  .reporteria-integral-table-wrap,
+  .gestion-sis-table-wrap,
+  .portal-table-wrap,
+  .credential-table-wrap,
+  .certificate-renamer-table-wrap {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    width: 100%;
+  }
+
+  .matricula-table,
+  .credential-table,
+  .certificate-renamer-table,
+  .portal-grade-table,
+  .portal-record-table,
+  .portal-academic-map-table,
+  .portal-curriculum-table {
+    min-width: 760px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app--dashboard {
+    padding: 66px 6px 8px !important;
+  }
+
+  .student-sidebar {
+    height: 48px !important;
+    left: 8px !important;
+    top: 8px !important;
+    width: 116px !important;
+  }
+
+  .student-mobile-menu-button {
+    font-size: 14px;
+    height: 36px;
+    min-height: 36px;
+    padding-inline: 12px;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 !important;
+    max-width: 100vw;
+    width: 100vw !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    max-height: calc(100dvh - 74px);
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 206px);
+  }
+
+  .student-card,
+  .student-topbar,
+  .matricula-panel,
+  .carnet-panel,
+  .credential-panel,
+  .certificate-renamer-panel {
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .student-topbar h1,
+  .section-title h2,
+  .student-card h2 {
+    font-size: clamp(22px, 7vw, 30px);
+    overflow-wrap: anywhere;
+  }
+
+  .ghost-button,
+  .primary-action,
+  .danger-action,
+  .submit-button,
+  .logout-button,
+  .matricula-acad-actions button,
+  .excel-toolbar button,
+  .gestion-sis-excel-toolbar button,
+  .preinscripcion-excel-toolbar button,
+  .mass-email-phase-footer button,
+  .mass-email-review-actions button,
+  .credential-actions button,
+  .carnet-actions button {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  .app--dashboard {
+    padding-inline: 4px !important;
+  }
+
+  .student-sidebar {
+    left: 6px !important;
+    top: 6px !important;
+  }
+}
+
+/* Sidebar visual v4: icon rail on desktop, drawer on tablet/mobile. */
+.student-nav__group-icon {
+  align-items: center !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 10px !important;
+  color: #ffffff !important;
+  display: inline-flex !important;
+  flex: 0 0 40px !important;
+  height: 40px !important;
+  justify-content: center !important;
+  min-width: 40px !important;
+  opacity: 1 !important;
+  position: static !important;
+  visibility: visible !important;
+  width: 40px !important;
+}
+
+.student-nav__group-icon svg {
+  display: block !important;
+  fill: none !important;
+  height: 22px !important;
+  stroke: currentColor !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  stroke-width: 2 !important;
+  width: 22px !important;
+}
+
+.student-nav__group-button {
+  align-items: center !important;
+  display: grid !important;
+  grid-template-columns: 40px minmax(0, 1fr) auto !important;
+}
+
+.student-nav__group-button:hover .student-nav__group-icon,
+.student-nav__group-button:focus-visible .student-nav__group-icon,
+.student-nav__group-button--active .student-nav__group-icon {
+  background: rgba(141, 187, 199, 0.26) !important;
+  border-color: rgba(255, 255, 255, 0.38) !important;
+}
+
+@media (min-width: 1181px) {
+  .app--dashboard {
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+    padding: 10px 10px 10px 88px !important;
+  }
+
+  .student-shell {
+    display: block !important;
+    min-height: calc(100dvh - 20px) !important;
+    width: 100% !important;
+  }
+
+  .student-main {
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 34%),
+      linear-gradient(180deg, #b32419 0%, #931913 52%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 16px !important;
+    bottom: 10px !important;
+    box-shadow: 0 20px 42px rgba(37, 17, 14, 0.24) !important;
+    color: #ffffff !important;
+    left: 10px !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    padding: 12px !important;
+    position: fixed !important;
+    top: 10px !important;
+    transition: width 190ms ease, box-shadow 190ms ease !important;
+    width: 64px !important;
+    z-index: 150 !important;
+  }
+
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    box-shadow: 0 24px 58px rgba(37, 17, 14, 0.36) !important;
+    width: min(348px, calc(100vw - 24px)) !important;
+  }
+
+  .student-sidebar__head {
+    align-items: center !important;
+    display: flex !important;
+    gap: 10px !important;
+    justify-content: flex-start !important;
+    min-width: 314px !important;
+  }
+
+  .student-brand {
+    align-items: center !important;
+    color: #ffffff !important;
+    display: flex !important;
+    gap: 10px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    width: 100% !important;
+  }
+
+  .student-brand__logo {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.16) !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    flex: 0 0 40px !important;
+    height: 40px !important;
+    justify-content: center !important;
+    width: 40px !important;
+  }
+
+  .student-brand strong,
+  .student-brand span {
+    color: #ffffff !important;
+  }
+
+  .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    min-height: 0 !important;
+    min-width: 314px !important;
+    overflow: hidden !important;
+  }
+
+  .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 176px) !important;
+    overflow-y: auto !important;
+    padding: 4px 2px 4px 0 !important;
+  }
+
+  .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    color: #ffffff !important;
+    gap: 10px !important;
+    min-height: 52px !important;
+    padding: 6px 8px !important;
+    width: 100% !important;
+  }
+
+  .student-nav__group-button:hover,
+  .student-nav__group-button:focus-visible {
+    background: rgba(255, 255, 255, 0.16) !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    color: #ffffff !important;
+    transform: none !important;
+  }
+
+  .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(141, 187, 199, 0.2)) !important;
+    border-color: rgba(255, 255, 255, 0.36) !important;
+    box-shadow: inset 3px 0 0 #ffffff !important;
+    color: #ffffff !important;
+  }
+
+  .student-nav__group-copy strong {
+    color: #ffffff !important;
+    font-size: 14px !important;
+  }
+
+  .student-nav__group-copy small,
+  .student-nav__group-meta,
+  .student-nav__group-button--active .student-nav__group-copy small,
+  .student-nav__group-button--active .student-nav__group-meta {
+    color: rgba(255, 255, 255, 0.76) !important;
+  }
+
+  .student-nav__submenu {
+    border-left: 1px solid rgba(255, 255, 255, 0.18) !important;
+    margin-left: 20px !important;
+    padding-left: 10px !important;
+  }
+
+  .student-nav__item {
+    border-color: transparent !important;
+    color: rgba(255, 255, 255, 0.88) !important;
+    padding: 9px 10px !important;
+  }
+
+  .student-nav__item:hover,
+  .student-nav__item:focus-visible,
+  .student-nav__item--active {
+    background: rgba(255, 255, 255, 0.16) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+  }
+
+  .student-note-card {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+    margin-top: 10px !important;
+  }
+
+  .student-note-card h3,
+  .student-note-card p {
+    color: #ffffff !important;
+  }
+
+  .student-mobile-menu-button,
+  .student-mobile-menu-backdrop {
+    display: none !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-brand > div:not(.student-brand__logo),
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    visibility: hidden !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav {
+    overflow-x: hidden !important;
+    padding-right: 0 !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0 !important;
+    grid-template-columns: 40px !important;
+    justify-items: center !important;
+    min-height: 44px !important;
+    padding: 2px !important;
+    width: 40px !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app--dashboard {
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+    padding: 74px 10px 10px !important;
+  }
+
+  .student-shell,
+  .student-main {
+    display: block !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    height: 52px !important;
+    left: 10px !important;
+    max-width: calc(100vw - 20px) !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: 132px !important;
+    z-index: 160 !important;
+  }
+
+  .student-sidebar__head {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    min-width: 0 !important;
+  }
+
+  .student-brand,
+  .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.36) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 12px 26px rgba(37, 17, 14, 0.2) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 16px !important;
+    font-weight: 900 !important;
+    height: 44px !important;
+    justify-content: center !important;
+    min-height: 44px !important;
+    padding: 0 18px !important;
+    width: 132px !important;
+  }
+
+  .student-sidebar--open {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 34%),
+      linear-gradient(180deg, #b32419 0%, #931913 52%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 0 !important;
+    box-shadow: 0 24px 58px rgba(37, 17, 14, 0.36) !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-width: min(420px, 94vw) !important;
+    overflow: hidden !important;
+    padding: 14px !important;
+    top: 0 !important;
+    width: min(420px, 94vw) !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .student-sidebar--open .student-brand {
+    display: flex !important;
+  }
+
+  .student-sidebar--open .student-brand__logo,
+  .student-sidebar--open .student-brand strong,
+  .student-sidebar--open .student-brand span {
+    color: #ffffff !important;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button {
+    width: auto !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    max-height: calc(100dvh - 82px) !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .student-sidebar--open .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 218px) !important;
+    overflow-y: auto !important;
+    padding-right: 4px !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.14) !important;
+    color: #ffffff !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy strong,
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__group-meta,
+  .student-sidebar--open .student-nav__item,
+  .student-sidebar--open .student-note-card,
+  .student-sidebar--open .student-note-card h3,
+  .student-sidebar--open .student-note-card p {
+    color: #ffffff !important;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.52) !important;
+    display: block !important;
+    inset: 0 !important;
+    position: fixed !important;
+    z-index: 150 !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app--dashboard {
+    padding: 68px 8px 8px !important;
+  }
+
+  .student-sidebar {
+    left: 8px !important;
+    top: 8px !important;
+    width: 116px !important;
+  }
+
+  .student-mobile-menu-button {
+    font-size: 14px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    width: 116px !important;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 !important;
+    max-width: 100vw !important;
+    width: 100vw !important;
+  }
+}
+
+/* Sidebar visual v5: riel fijo de iconos y panel de informacion independiente. */
+@media (min-width: 1181px) {
+  .app--dashboard {
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+    padding: 8px 8px 8px 78px !important;
+  }
+
+  .student-shell {
+    display: block !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-main {
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 8px !important;
+    box-shadow: none !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: calc(100dvh - 16px) !important;
+    left: 0 !important;
+    max-width: 360px !important;
+    min-width: 64px !important;
+    overflow: hidden !important;
+    padding: 12px 12px 12px 10px !important;
+    position: fixed !important;
+    top: 8px !important;
+    transition: width 180ms ease, box-shadow 180ms ease !important;
+    width: 64px !important;
+    z-index: 170 !important;
+  }
+
+  .student-sidebar::before {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 32%),
+      linear-gradient(180deg, #b32419 0%, #931913 54%, #74110e 100%) !important;
+    border-radius: 0 18px 18px 0 !important;
+    box-shadow: 0 18px 42px rgba(37, 17, 14, 0.28) !important;
+    content: "" !important;
+    inset: 0 auto 0 0 !important;
+    position: absolute !important;
+    width: 64px !important;
+    z-index: 0 !important;
+  }
+
+  .student-sidebar::after {
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.98), rgba(245, 250, 251, 0.98)) !important;
+    border: 1px solid rgba(141, 187, 199, 0.3) !important;
+    border-left: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    box-shadow: 0 24px 58px rgba(37, 17, 14, 0.24) !important;
+    content: "" !important;
+    inset: 0 0 0 64px !important;
+    opacity: 0 !important;
+    position: absolute !important;
+    transform: translateX(-18px) !important;
+    transition: opacity 180ms ease, transform 180ms ease !important;
+    z-index: 0 !important;
+  }
+
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    box-shadow: none !important;
+    overflow: hidden !important;
+    width: 360px !important;
+  }
+
+  .student-sidebar:hover::after,
+  .student-sidebar:focus-within::after {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+  }
+
+  .student-sidebar > * {
+    position: relative !important;
+    z-index: 1 !important;
+  }
+
+  .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: minmax(40px, 1fr) !important;
+    min-height: 46px !important;
+    min-width: 40px !important;
+    width: 100% !important;
+  }
+
+  .student-brand {
+    align-items: center !important;
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    min-width: 40px !important;
+    width: 100% !important;
+  }
+
+  .student-brand__logo {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 17px !important;
+    height: 40px !important;
+    justify-content: center !important;
+    min-width: 40px !important;
+    width: 40px !important;
+  }
+
+  .student-brand > div:not(.student-brand__logo) {
+    opacity: 0 !important;
+    overflow: hidden !important;
+    transform: translateX(-10px) !important;
+    transition: opacity 150ms ease, transform 150ms ease !important;
+    visibility: hidden !important;
+    white-space: nowrap !important;
+  }
+
+  .student-sidebar:hover .student-brand > div:not(.student-brand__logo),
+  .student-sidebar:focus-within .student-brand > div:not(.student-brand__logo) {
+    color: #17213d !important;
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    visibility: visible !important;
+  }
+
+  .student-sidebar:hover .student-brand strong,
+  .student-sidebar:focus-within .student-brand strong {
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-brand span,
+  .student-sidebar:focus-within .student-brand span {
+    color: #5a647d !important;
+  }
+
+  .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    margin-top: 10px !important;
+    max-height: calc(100dvh - 86px) !important;
+    min-height: 0 !important;
+    min-width: 40px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 238px) !important;
+    min-height: 0 !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 5px !important;
+    scrollbar-color: rgba(147, 25, 19, 0.55) rgba(255, 255, 255, 0.18) !important;
+  }
+
+  .student-nav__section {
+    min-width: 0 !important;
+  }
+
+  .student-nav__group-button {
+    align-items: center !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    color: #ffffff !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    min-height: 46px !important;
+    overflow: hidden !important;
+    padding: 3px !important;
+    width: 100% !important;
+  }
+
+  .student-nav__group-icon {
+    background: rgba(255, 255, 255, 0.16) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    width: 40px !important;
+  }
+
+  .student-nav__group-copy,
+  .student-nav__group-meta,
+  .student-nav__submenu,
+  .student-note-card,
+  .student-sidebar .logout-button {
+    position: static !important;
+    transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateX(-10px) !important;
+    visibility: hidden !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    display: none !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-copy,
+  .student-sidebar:hover .student-nav__group-meta,
+  .student-sidebar:hover .student-nav__submenu,
+  .student-sidebar:hover .student-note-card,
+  .student-sidebar:hover .logout-button,
+  .student-sidebar:focus-within .student-nav__group-copy,
+  .student-sidebar:focus-within .student-nav__group-meta,
+  .student-sidebar:focus-within .student-nav__submenu,
+  .student-sidebar:focus-within .student-note-card,
+  .student-sidebar:focus-within .logout-button {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: translateX(0) !important;
+    visibility: visible !important;
+  }
+
+  .student-sidebar:hover .student-nav__submenu,
+  .student-sidebar:focus-within .student-nav__submenu {
+    display: grid !important;
+  }
+
+  .student-sidebar:hover .student-note-card,
+  .student-sidebar:focus-within .student-note-card {
+    display: block !important;
+  }
+
+  .student-sidebar:hover .logout-button,
+  .student-sidebar:focus-within .logout-button {
+    display: flex !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0 !important;
+    grid-template-columns: 40px !important;
+    justify-items: center !important;
+    padding: 3px 2px !important;
+    width: 40px !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button,
+  .student-sidebar:focus-within .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.72) !important;
+    border-color: rgba(199, 198, 198, 0.9) !important;
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button:hover,
+  .student-sidebar:hover .student-nav__group-button:focus-visible,
+  .student-sidebar:focus-within .student-nav__group-button:hover,
+  .student-sidebar:focus-within .student-nav__group-button:focus-visible {
+    background: rgba(141, 187, 199, 0.14) !important;
+    border-color: rgba(141, 187, 199, 0.64) !important;
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button--active,
+  .student-sidebar:focus-within .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.12), rgba(141, 187, 199, 0.18)) !important;
+    border-color: rgba(147, 25, 19, 0.7) !important;
+    box-shadow: inset 4px 0 0 #931913 !important;
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-icon,
+  .student-sidebar:focus-within .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.18) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-copy strong,
+  .student-sidebar:focus-within .student-nav__group-copy strong {
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-copy small,
+  .student-sidebar:hover .student-nav__group-meta,
+  .student-sidebar:focus-within .student-nav__group-copy small,
+  .student-sidebar:focus-within .student-nav__group-meta {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar:hover .student-nav__submenu,
+  .student-sidebar:focus-within .student-nav__submenu {
+    border-left: 1px solid rgba(141, 187, 199, 0.44) !important;
+    margin-left: 20px !important;
+    padding-left: 12px !important;
+  }
+
+  .student-sidebar:hover .student-nav__item,
+  .student-sidebar:focus-within .student-nav__item {
+    border-color: transparent !important;
+    color: #26324f !important;
+  }
+
+  .student-sidebar:hover .student-nav__item:hover,
+  .student-sidebar:hover .student-nav__item:focus-visible,
+  .student-sidebar:hover .student-nav__item--active,
+  .student-sidebar:focus-within .student-nav__item:hover,
+  .student-sidebar:focus-within .student-nav__item:focus-visible,
+  .student-sidebar:focus-within .student-nav__item--active {
+    background: rgba(147, 25, 19, 0.08) !important;
+    border-color: rgba(147, 25, 19, 0.18) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar:hover .student-note-card,
+  .student-sidebar:focus-within .student-note-card {
+    background: rgba(141, 187, 199, 0.13) !important;
+    border-color: rgba(141, 187, 199, 0.44) !important;
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-note-card h3,
+  .student-sidebar:hover .student-note-card p,
+  .student-sidebar:focus-within .student-note-card h3,
+  .student-sidebar:focus-within .student-note-card p {
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .logout-button,
+  .student-sidebar:focus-within .logout-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    width: 100% !important;
+  }
+
+  .student-mobile-menu-button,
+  .student-mobile-menu-backdrop {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app--dashboard {
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+    padding: 72px 10px 10px !important;
+  }
+
+  .student-shell,
+  .student-main {
+    display: block !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: 48px !important;
+    left: 10px !important;
+    max-width: 148px !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: 148px !important;
+    z-index: 180 !important;
+  }
+
+  .student-sidebar::before,
+  .student-sidebar::after {
+    display: none !important;
+  }
+
+  .student-sidebar__head {
+    display: block !important;
+    height: 48px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .student-brand,
+  .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.52) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 14px 30px rgba(37, 17, 14, 0.25) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    gap: 9px !important;
+    height: 46px !important;
+    justify-content: center !important;
+    min-height: 46px !important;
+    padding: 0 16px !important;
+    width: 148px !important;
+  }
+
+  .student-mobile-menu-button__icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.16) !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    height: 28px !important;
+    justify-content: center !important;
+    width: 28px !important;
+  }
+
+  .student-mobile-menu-button__icon svg {
+    fill: none !important;
+    height: 18px !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.4 !important;
+    width: 18px !important;
+  }
+
+  .student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.42) !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 0 !important;
+    box-shadow: 0 26px 64px rgba(20, 26, 44, 0.35) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-width: min(430px, 94vw) !important;
+    overflow: hidden !important;
+    padding: 14px !important;
+    top: 0 !important;
+    width: min(430px, 94vw) !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    height: auto !important;
+  }
+
+  .student-sidebar--open .student-brand {
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+  }
+
+  .student-sidebar--open .student-brand__logo {
+    background: #931913 !important;
+    border-color: rgba(147, 25, 19, 0.35) !important;
+    color: #ffffff !important;
+  }
+
+  .student-sidebar--open .student-brand strong {
+    color: #17213d !important;
+  }
+
+  .student-sidebar--open .student-brand span {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    height: 42px !important;
+    width: auto !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    max-height: calc(100dvh - 82px) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .student-sidebar--open .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 224px) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 5px !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button {
+    background: rgba(141, 187, 199, 0.11) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #17213d !important;
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.12), rgba(141, 187, 199, 0.18)) !important;
+    border-color: rgba(147, 25, 19, 0.56) !important;
+    box-shadow: inset 4px 0 0 #931913 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.18) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy strong,
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__group-meta,
+  .student-sidebar--open .student-nav__item,
+  .student-sidebar--open .student-note-card,
+  .student-sidebar--open .student-note-card h3,
+  .student-sidebar--open .student-note-card p {
+    color: #17213d !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__group-meta {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar--open .student-nav__submenu {
+    border-left: 1px solid rgba(141, 187, 199, 0.44) !important;
+    margin-left: 20px !important;
+    padding-left: 12px !important;
+  }
+
+  .student-sidebar--open .student-nav__item:hover,
+  .student-sidebar--open .student-nav__item:focus-visible,
+  .student-sidebar--open .student-nav__item--active {
+    background: rgba(147, 25, 19, 0.08) !important;
+    border-color: rgba(147, 25, 19, 0.18) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar--open .student-note-card {
+    background: rgba(141, 187, 199, 0.13) !important;
+    border-color: rgba(141, 187, 199, 0.44) !important;
+  }
+
+  .student-sidebar--open .logout-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    width: 100% !important;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.58) !important;
+    display: block !important;
+    inset: 0 !important;
+    position: fixed !important;
+    z-index: 170 !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app--dashboard {
+    padding: 66px 8px 8px !important;
+  }
+
+  .student-sidebar {
+    left: 8px !important;
+    top: 8px !important;
+    width: 132px !important;
+  }
+
+  .student-mobile-menu-button {
+    height: 42px !important;
+    min-height: 42px !important;
+    width: 132px !important;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 !important;
+    max-width: 100vw !important;
+    width: 100vw !important;
+  }
+}
+
+/* Sidebar final responsive v6: regla autoritativa para todo el proyecto. */
+.student-main,
+.dashboard-shell,
+.dashboard-panel,
+.legacy-module,
+.records-table-wrap,
+.table-scroll,
+.responsive-table-shell,
+.form-grid,
+.admin-grid,
+.admin-card-grid {
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.records-table-wrap,
+.table-scroll,
+.responsive-table-shell,
+.admin-table-shell {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.student-main {
+  overflow-x: hidden !important;
+}
+
+.student-main table,
+.records-table,
+.admin-table,
+.legacy-table {
+  max-width: 100%;
+}
+
+.student-main button,
+.student-main input,
+.student-main select,
+.student-main textarea,
+.student-nav__group-button,
+.student-nav__item,
+.logout-button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-card-grid,
+.metric-grid,
+.portal-dashboard-grid,
+.admin-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)) !important;
+}
+
+@media (min-width: 1181px) {
+  .app--dashboard {
+    align-items: stretch !important;
+    display: block !important;
+    overflow-x: hidden !important;
+    padding: 10px 10px 10px 78px !important;
+    width: 100% !important;
+  }
+
+  .student-shell {
+    display: block !important;
+    margin: 0 !important;
+    max-width: none !important;
+    min-height: calc(100dvh - 20px) !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-main {
+    display: block !important;
+    margin: 0 !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background: #931913 !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 18px !important;
+    bottom: 10px !important;
+    box-shadow: 0 18px 42px rgba(20, 26, 44, 0.18) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: auto !important;
+    left: 10px !important;
+    max-height: calc(100dvh - 20px) !important;
+    max-width: 58px !important;
+    min-width: 58px !important;
+    overflow: hidden !important;
+    padding: 8px !important;
+    position: fixed !important;
+    top: 10px !important;
+    transition: width 180ms ease, max-width 180ms ease, background 180ms ease, box-shadow 180ms ease !important;
+    width: 58px !important;
+    z-index: 240 !important;
+  }
+
+  .student-sidebar::before,
+  .student-sidebar::after {
+    display: none !important;
+  }
+
+  .student-sidebar:hover,
+  .student-sidebar:focus-within {
+    background: #ffffff !important;
+    border-color: rgba(141, 187, 199, 0.46) !important;
+    box-shadow: 0 26px 72px rgba(20, 26, 44, 0.24) !important;
+    max-width: 352px !important;
+    width: 352px !important;
+  }
+
+  .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-brand {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-column: 1 / -1 !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    min-width: 0 !important;
+  }
+
+  .student-brand__logo {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    flex: 0 0 40px !important;
+    height: 40px !important;
+    justify-content: center !important;
+    width: 40px !important;
+  }
+
+  .student-sidebar:hover .student-brand__logo,
+  .student-sidebar:focus-within .student-brand__logo {
+    background: #931913 !important;
+    border-color: rgba(147, 25, 19, 0.35) !important;
+    color: #ffffff !important;
+  }
+
+  .student-brand strong,
+  .student-brand span {
+    white-space: nowrap !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-brand > div:not(.student-brand__logo) {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateX(-8px) !important;
+    visibility: hidden !important;
+  }
+
+  .student-sidebar:hover .student-brand > div:not(.student-brand__logo),
+  .student-sidebar:focus-within .student-brand > div:not(.student-brand__logo) {
+    opacity: 1 !important;
+    transform: none !important;
+    visibility: visible !important;
+  }
+
+  .student-sidebar:hover .student-brand strong,
+  .student-sidebar:focus-within .student-brand strong {
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-brand span,
+  .student-sidebar:focus-within .student-brand span {
+    color: #5c6680 !important;
+  }
+
+  .student-mobile-menu-button,
+  .student-mobile-menu-backdrop {
+    display: none !important;
+  }
+
+  .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding-top: 12px !important;
+  }
+
+  .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 220px) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 0 2px 0 0 !important;
+  }
+
+  .student-nav__group {
+    min-width: 0 !important;
+  }
+
+  .student-nav__group-button {
+    align-items: center !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 14px !important;
+    color: #ffffff !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    min-height: 44px !important;
+    padding: 2px !important;
+    text-align: left !important;
+    width: 100% !important;
+  }
+
+  .student-nav__group-icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.13) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    border-radius: 12px !important;
+    color: inherit !important;
+    display: inline-flex !important;
+    height: 40px !important;
+    justify-content: center !important;
+    width: 40px !important;
+  }
+
+  .student-nav__group-icon svg {
+    display: block !important;
+    fill: none !important;
+    height: 22px !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.35 !important;
+    width: 22px !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0 !important;
+    grid-template-columns: 40px !important;
+    justify-content: center !important;
+    padding: 2px !important;
+    width: 40px !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+  }
+
+  .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    display: none !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button,
+  .student-sidebar:focus-within .student-nav__group-button {
+    background: rgba(141, 187, 199, 0.11) !important;
+    border-color: rgba(141, 187, 199, 0.38) !important;
+    color: #17213d !important;
+    padding: 5px !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button:hover,
+  .student-sidebar:hover .student-nav__group-button:focus-visible,
+  .student-sidebar:focus-within .student-nav__group-button:hover,
+  .student-sidebar:focus-within .student-nav__group-button:focus-visible {
+    border-color: rgba(147, 25, 19, 0.32) !important;
+    box-shadow: 0 8px 20px rgba(147, 25, 19, 0.09) !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-button--active,
+  .student-sidebar:focus-within .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.14), rgba(141, 187, 199, 0.18)) !important;
+    border-color: rgba(147, 25, 19, 0.52) !important;
+    box-shadow: inset 4px 0 0 #931913 !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-icon,
+  .student-sidebar:focus-within .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.18) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-copy strong,
+  .student-sidebar:focus-within .student-nav__group-copy strong,
+  .student-sidebar:hover .student-nav__item,
+  .student-sidebar:focus-within .student-nav__item {
+    color: #17213d !important;
+  }
+
+  .student-sidebar:hover .student-nav__group-copy small,
+  .student-sidebar:hover .student-nav__group-meta,
+  .student-sidebar:focus-within .student-nav__group-copy small,
+  .student-sidebar:focus-within .student-nav__group-meta {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar:hover .student-nav__submenu,
+  .student-sidebar:focus-within .student-nav__submenu {
+    border-left: 1px solid rgba(141, 187, 199, 0.44) !important;
+    display: grid !important;
+    margin-left: 20px !important;
+    padding-left: 12px !important;
+  }
+
+  .student-sidebar:hover .student-nav__item:hover,
+  .student-sidebar:hover .student-nav__item:focus-visible,
+  .student-sidebar:hover .student-nav__item--active,
+  .student-sidebar:focus-within .student-nav__item:hover,
+  .student-sidebar:focus-within .student-nav__item:focus-visible,
+  .student-sidebar:focus-within .student-nav__item--active {
+    background: rgba(147, 25, 19, 0.08) !important;
+    border-color: rgba(147, 25, 19, 0.2) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar:hover .student-note-card,
+  .student-sidebar:focus-within .student-note-card {
+    background: rgba(141, 187, 199, 0.12) !important;
+    border-color: rgba(141, 187, 199, 0.44) !important;
+    color: #17213d !important;
+    display: block !important;
+  }
+
+  .student-sidebar:hover .logout-button,
+  .student-sidebar:focus-within .logout-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app--dashboard {
+    display: block !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding: 66px 8px 10px !important;
+    width: 100% !important;
+  }
+
+  .student-shell,
+  .student-main {
+    display: block !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: 46px !important;
+    left: 10px !important;
+    max-width: 150px !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: 150px !important;
+    z-index: 300 !important;
+  }
+
+  .student-sidebar::before,
+  .student-sidebar::after {
+    display: none !important;
+  }
+
+  .student-sidebar__head {
+    display: block !important;
+    height: 46px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .student-brand,
+  .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.58) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 14px 30px rgba(37, 17, 14, 0.25) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    gap: 9px !important;
+    height: 46px !important;
+    justify-content: center !important;
+    min-height: 46px !important;
+    padding: 0 14px !important;
+    width: 150px !important;
+  }
+
+  .student-mobile-menu-button__icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.18) !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    height: 28px !important;
+    justify-content: center !important;
+    width: 28px !important;
+  }
+
+  .student-mobile-menu-button__icon svg {
+    fill: none !important;
+    height: 18px !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.4 !important;
+    width: 18px !important;
+  }
+
+  .student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.42) !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 0 !important;
+    box-shadow: 0 26px 64px rgba(20, 26, 44, 0.35) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-height: 100dvh !important;
+    max-width: min(430px, 94vw) !important;
+    overflow: hidden !important;
+    padding: 14px !important;
+    top: 0 !important;
+    width: min(430px, 94vw) !important;
+    z-index: 320 !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    height: auto !important;
+    min-height: 46px !important;
+  }
+
+  .student-sidebar--open .student-brand {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+  }
+
+  .student-sidebar--open .student-brand__logo {
+    background: #931913 !important;
+    border-color: rgba(147, 25, 19, 0.35) !important;
+    color: #ffffff !important;
+  }
+
+  .student-sidebar--open .student-brand strong {
+    color: #17213d !important;
+  }
+
+  .student-sidebar--open .student-brand span {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    height: 42px !important;
+    min-width: 94px !important;
+    width: auto !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    max-height: calc(100dvh - 82px) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .student-sidebar--open .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 224px) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 5px !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button {
+    align-items: center !important;
+    background: rgba(141, 187, 199, 0.11) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #17213d !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    padding: 5px !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.12), rgba(141, 187, 199, 0.18)) !important;
+    border-color: rgba(147, 25, 19, 0.56) !important;
+    box-shadow: inset 4px 0 0 #931913 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.18) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #931913 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy strong,
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__group-meta,
+  .student-sidebar--open .student-nav__item,
+  .student-sidebar--open .student-note-card,
+  .student-sidebar--open .student-note-card h3,
+  .student-sidebar--open .student-note-card p {
+    color: #17213d !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__group-meta {
+    color: #5c6680 !important;
+  }
+
+  .student-sidebar--open .student-nav__submenu {
+    border-left: 1px solid rgba(141, 187, 199, 0.44) !important;
+    display: grid !important;
+    margin-left: 20px !important;
+    padding-left: 12px !important;
+  }
+
+  .student-sidebar--open .student-note-card {
+    background: rgba(141, 187, 199, 0.13) !important;
+    border-color: rgba(141, 187, 199, 0.44) !important;
+    display: block !important;
+  }
+
+  .student-sidebar--open .logout-button {
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    width: 100% !important;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.58) !important;
+    display: block !important;
+    inset: 0 !important;
+    position: fixed !important;
+    z-index: 310 !important;
+  }
+}
+
+@media (max-width: 700px) {
+  .app--dashboard {
+    padding: 62px 6px 8px !important;
+  }
+
+  .student-sidebar {
+    left: 8px !important;
+    top: 8px !important;
+    width: 132px !important;
+  }
+
+  .student-mobile-menu-button {
+    height: 42px !important;
+    min-height: 42px !important;
+    width: 132px !important;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 !important;
+    max-width: 100vw !important;
+    padding: 12px !important;
+    width: 100vw !important;
+  }
+
+  .student-sidebar--open .student-nav {
+    max-height: calc(100dvh - 210px) !important;
+  }
+
+  .dashboard-card-grid,
+  .metric-grid,
+  .portal-dashboard-grid,
+  .admin-card-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Ajuste final: sin tarjeta de ruta y cierre con icono. */
+.student-note-card {
+  display: none !important;
+}
+
+.student-sidebar .logout-button {
+  align-items: center !important;
+  display: inline-flex !important;
+  gap: 10px !important;
+  justify-content: center !important;
+}
+
+.logout-button__icon {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 28px;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.logout-button__icon svg {
+  fill: none;
+  height: 17px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+  width: 17px;
+}
+
+/* Navegacion responsive final: evita rieles residuales y botones duplicados. */
+.student-mobile-menu-button::before,
+.student-mobile-menu-button::after {
+  content: none !important;
+  display: none !important;
+}
+
+@media (min-width: 1181px) {
+  .student-sidebar {
+    align-self: start !important;
+    position: sticky !important;
+    top: 8px !important;
+  }
+
+  .student-main {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  html,
+  body,
+  #root {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  .app--dashboard {
+    display: block !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding: 64px 10px 12px !important;
+    width: 100% !important;
+  }
+
+  .student-shell {
+    display: block !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-main {
+    display: block !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: auto !important;
+    left: 10px !important;
+    max-height: none !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: auto !important;
+    z-index: 350 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open)::before,
+  .student-sidebar:not(.student-sidebar--open)::after {
+    content: none !important;
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__head {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-brand,
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913 0%, #b24a45 48%, #8dbbc7 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.62) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 14px 30px rgba(37, 17, 14, 0.24) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    gap: 8px !important;
+    height: 44px !important;
+    justify-content: center !important;
+    letter-spacing: 0 !important;
+    line-height: 1 !important;
+    min-height: 44px !important;
+    min-width: 122px !important;
+    padding: 0 14px !important;
+    position: relative !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
+    width: auto !important;
+  }
+
+  .student-mobile-menu-button__icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.17) !important;
+    border-radius: 10px !important;
+    color: inherit !important;
+    display: inline-flex !important;
+    flex: 0 0 28px !important;
+    height: 28px !important;
+    justify-content: center !important;
+    width: 28px !important;
+  }
+
+  .student-mobile-menu-button__icon svg {
+    display: block !important;
+    fill: none !important;
+    height: 18px !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.4 !important;
+    width: 18px !important;
+  }
+
+  .student-mobile-menu-button__label {
+    color: inherit !important;
+    display: inline !important;
+    font: inherit !important;
+  }
+
+  .student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.46) !important;
+    border-radius: 0 20px 20px 0 !important;
+    bottom: 0 !important;
+    box-shadow: 0 24px 70px rgba(10, 16, 32, 0.38) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-height: 100dvh !important;
+    max-width: min(430px, 92vw) !important;
+    min-height: 100dvh !important;
+    overflow: hidden !important;
+    padding: 14px !important;
+    position: fixed !important;
+    top: 0 !important;
+    width: min(430px, 92vw) !important;
+    z-index: 370 !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 0 0 10px !important;
+  }
+
+  .student-sidebar--open .student-brand {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+    min-width: 0 !important;
+  }
+
+  .student-sidebar--open .student-brand strong,
+  .student-sidebar--open .student-brand span {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .student-sidebar--open .student-mobile-menu-button {
+    height: 42px !important;
+    min-height: 42px !important;
+    min-width: 104px !important;
+    width: auto !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+    max-height: calc(100dvh - 70px) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .student-sidebar--open .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 150px) !important;
+    min-height: 0 !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 0 5px 0 0 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    min-width: 0 !important;
+  }
+
+  .student-sidebar--open .student-nav__group-copy,
+  .student-sidebar--open .student-nav__group-copy strong,
+  .student-sidebar--open .student-nav__group-copy small,
+  .student-sidebar--open .student-nav__item strong,
+  .student-sidebar--open .student-nav__item span {
+    min-width: 0 !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .student-sidebar--open .student-note-card {
+    display: none !important;
+  }
+
+  .student-sidebar--open .logout-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    justify-content: center !important;
+    width: 100% !important;
+  }
+
+  .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.56) !important;
+    border: 0 !important;
+    display: block !important;
+    inset: 0 !important;
+    padding: 0 !important;
+    position: fixed !important;
+    z-index: 360 !important;
+  }
+
+  .hero-section,
+  .dashboard-shell,
+  .dashboard-card,
+  .report-shell,
+  .admin-shell,
+  .portal-panel,
+  .data-card,
+  .module-panel {
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .data-table-wrapper,
+  .table-scroll,
+  .report-table-shell {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+  }
+}
+
+@media (max-width: 700px) {
+  .app--dashboard {
+    padding: 58px 6px 10px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) {
+    left: 8px !important;
+    top: 8px !important;
+  }
+
+  .student-mobile-menu-button {
+    height: 42px !important;
+    min-height: 42px !important;
+    min-width: 116px !important;
+    padding: 0 12px !important;
+  }
+
+  .student-sidebar--open {
+    border-radius: 0 !important;
+    max-width: 100vw !important;
+    padding: 12px !important;
+    width: min(100vw, 420px) !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+}
+
+/* Modo movil controlado desde React: prioridad maxima sobre el riel de escritorio. */
+.student-shell--mobile-view {
+  display: block !important;
+  margin: 0 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  width: 100% !important;
+}
+
+.student-shell--mobile-view .student-main {
+  display: block !important;
+  margin: 0 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  width: 100% !important;
+}
+
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  bottom: auto !important;
+  box-shadow: none !important;
+  display: block !important;
+  height: auto !important;
+  left: 8px !important;
+  max-height: none !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  position: fixed !important;
+  top: 8px !important;
+  width: auto !important;
+  z-index: 500 !important;
+}
+
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::before,
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::after {
+  content: none !important;
+  display: none !important;
+}
+
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__head {
+  display: block !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+}
+
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-brand,
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel,
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav,
+.student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .logout-button {
+  display: none !important;
+}
+
+.student-shell--mobile-view .student-mobile-menu-button {
+  align-items: center !important;
+  background: linear-gradient(90deg, #931913 0%, #b64b46 52%, #8dbbc7 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 14px 30px rgba(37, 17, 14, 0.25) !important;
+  color: #ffffff !important;
+  display: inline-flex !important;
+  font-size: 15px !important;
+  font-weight: 900 !important;
+  gap: 8px !important;
+  height: 42px !important;
+  justify-content: center !important;
+  letter-spacing: 0 !important;
+  line-height: 1 !important;
+  min-height: 42px !important;
+  min-width: 116px !important;
+  padding: 0 12px !important;
+  text-transform: none !important;
+  width: auto !important;
+}
+
+.student-shell--mobile-view .student-mobile-menu-button::before,
+.student-shell--mobile-view .student-mobile-menu-button::after {
+  content: none !important;
+  display: none !important;
+}
+
+.student-shell--mobile-view .student-mobile-menu-button__icon {
+  align-items: center !important;
+  background: rgba(255, 255, 255, 0.17) !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  flex: 0 0 28px !important;
+  height: 28px !important;
+  justify-content: center !important;
+  width: 28px !important;
+}
+
+.student-shell--mobile-view .student-mobile-menu-button__label {
+  display: inline !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open {
+  background: #ffffff !important;
+  border: 1px solid rgba(141, 187, 199, 0.48) !important;
+  border-radius: 0 !important;
+  bottom: 0 !important;
+  box-shadow: 0 24px 70px rgba(10, 16, 32, 0.38) !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+  height: 100dvh !important;
+  left: 0 !important;
+  max-height: 100dvh !important;
+  max-width: min(420px, 100vw) !important;
+  min-height: 100dvh !important;
+  overflow: hidden !important;
+  padding: 12px !important;
+  position: fixed !important;
+  top: 0 !important;
+  width: min(420px, 100vw) !important;
+  z-index: 520 !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open .student-sidebar__head {
+  align-items: center !important;
+  display: grid !important;
+  gap: 10px !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  height: auto !important;
+  min-height: 44px !important;
+  padding: 0 0 10px !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open .student-brand {
+  display: grid !important;
+  grid-template-columns: 40px minmax(0, 1fr) !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open .student-sidebar__panel {
+  display: grid !important;
+  gap: 12px !important;
+  grid-template-rows: minmax(0, 1fr) auto !important;
+  max-height: calc(100dvh - 68px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open .student-nav {
+  display: grid !important;
+  max-height: calc(100dvh - 146px) !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+.student-shell--mobile-view .student-sidebar--open .student-note-card {
+  display: none !important;
+}
+
+.student-shell--mobile-view .student-mobile-menu-backdrop {
+  background: rgba(8, 12, 24, 0.56) !important;
+  display: block !important;
+  inset: 0 !important;
+  position: fixed !important;
+  z-index: 510 !important;
+}
+
+.student-shell--mobile-view :is(.dashboard-card-grid, .metric-grid, .portal-dashboard-grid, .admin-card-grid, .report-grid, .quick-action-grid) {
+  grid-template-columns: 1fr !important;
+}
+
+.student-shell--mobile-view :is(.dashboard-card, .portal-panel, .module-panel, .data-card, .report-shell, .admin-shell, .hero-section) {
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.student-shell--mobile-view h1 {
+  font-size: clamp(26px, 8vw, 38px) !important;
+  line-height: 1.08 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.student-shell--mobile-view :is(.data-table-wrapper, .table-scroll, .report-table-shell, .chart-card) {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+}
+
+/* Escritorio y laptop: conserva el riel lateral fijo y evita que reglas moviles afecten pantallas con mouse/trackpad. */
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .app--dashboard {
+    display: block !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+    padding: 8px 8px 8px 78px !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) {
+    display: block !important;
+    margin: 0 !important;
+    max-width: none !important;
+    min-height: calc(100dvh - 16px) !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-main {
+    display: block !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 8px !important;
+    box-shadow: none !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: calc(100dvh - 16px) !important;
+    left: 0 !important;
+    max-height: calc(100dvh - 16px) !important;
+    max-width: 360px !important;
+    min-height: 0 !important;
+    min-width: 64px !important;
+    overflow: hidden !important;
+    padding: 12px 12px 12px 10px !important;
+    position: fixed !important;
+    top: 8px !important;
+    transition: width 180ms ease, box-shadow 180ms ease !important;
+    width: 64px !important;
+    z-index: 240 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar::before {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 32%),
+      linear-gradient(180deg, #b32419 0%, #931913 54%, #74110e 100%) !important;
+    border-radius: 0 18px 18px 0 !important;
+    box-shadow: 0 18px 42px rgba(37, 17, 14, 0.28) !important;
+    content: "" !important;
+    inset: 0 auto 0 0 !important;
+    position: absolute !important;
+    width: 64px !important;
+    z-index: 0 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar::after {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.98), rgba(245, 250, 251, 0.98)) !important;
+    border: 1px solid rgba(141, 187, 199, 0.3) !important;
+    border-left: 0 !important;
+    border-radius: 0 18px 18px 0 !important;
+    box-shadow: 0 24px 58px rgba(37, 17, 14, 0.24) !important;
+    content: "" !important;
+    inset: 0 0 0 64px !important;
+    opacity: 0 !important;
+    position: absolute !important;
+    transform: translateX(-18px) !important;
+    transition: opacity 180ms ease, transform 180ms ease !important;
+    z-index: 0 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within {
+    overflow: hidden !important;
+    width: 360px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover::after,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within::after {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar > * {
+    position: relative !important;
+    z-index: 1 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: minmax(40px, 1fr) !important;
+    min-height: 46px !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-brand {
+    align-items: center !important;
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    min-width: 40px !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-brand__logo,
+  .student-shell:not(.student-shell--mobile-view) .student-nav__group-icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.16) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    height: 40px !important;
+    justify-content: center !important;
+    min-width: 40px !important;
+    width: 40px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-mobile-menu-button,
+  .student-shell:not(.student-shell--mobile-view) .student-mobile-menu-backdrop {
+    display: none !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    margin-top: 10px !important;
+    max-height: calc(100dvh - 86px) !important;
+    min-height: 0 !important;
+    min-width: 40px !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 238px) !important;
+    min-height: 0 !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 5px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav__group-button {
+    align-items: center !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    min-height: 46px !important;
+    overflow: hidden !important;
+    padding: 3px !important;
+    width: 100% !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-brand > div:not(.student-brand__logo),
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-copy,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-meta,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateX(-10px) !important;
+    visibility: hidden !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__submenu,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-note-card,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .logout-button {
+    display: none !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    gap: 0 !important;
+    grid-template-columns: 40px !important;
+    justify-items: center !important;
+    padding: 3px 2px !important;
+    width: 40px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-brand > div:not(.student-brand__logo),
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-brand > div:not(.student-brand__logo),
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-copy,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-meta,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__submenu,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .logout-button,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-copy,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-meta,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__submenu,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .logout-button {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: translateX(0) !important;
+    visibility: visible !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-button,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.72) !important;
+    border-color: rgba(199, 198, 198, 0.9) !important;
+    color: #17213d !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-brand__logo,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-brand__logo,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-icon,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.18) !important;
+    border-color: rgba(141, 187, 199, 0.42) !important;
+    color: #931913 !important;
+  }
+}
+
+/* Prioridad final del menu lateral.
+   - Desktop/laptop con mouse: riel fijo a la izquierda, se expande al acercar el cursor.
+   - Movil/tablet: solo boton Menu; al abrir, panel lateral completo. */
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .app--dashboard {
+    padding-left: 82px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar {
+    bottom: 12px !important;
+    left: 0 !important;
+    top: 12px !important;
+    width: 66px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar::before {
+    border-radius: 0 18px 18px 0 !important;
+    width: 66px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within {
+    width: 360px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-main {
+    padding-left: 0 !important;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-width: 1180px) {
+  .app--dashboard {
+    padding: 64px 8px 12px !important;
+    overflow-x: hidden !important;
+  }
+
+  .student-shell,
+  .student-shell--mobile-view {
+    display: block !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-main,
+  .student-shell--mobile-view .student-main {
+    display: block !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open),
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: auto !important;
+    left: 10px !important;
+    max-height: none !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: auto !important;
+    z-index: 800 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open)::before,
+  .student-sidebar:not(.student-sidebar--open)::after,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::before,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::after {
+    content: none !important;
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__head,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__head {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-brand,
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel,
+  .student-sidebar:not(.student-sidebar--open) .student-nav,
+  .student-sidebar:not(.student-sidebar--open) .logout-button,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-brand,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .logout-button {
+    display: none !important;
+  }
+
+  .student-mobile-menu-button,
+  .student-shell--mobile-view .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913 0%, #b84d48 54%, #8dbbc7 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.76) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 14px 30px rgba(37, 17, 14, 0.28) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    gap: 8px !important;
+    height: 44px !important;
+    justify-content: center !important;
+    line-height: 1 !important;
+    min-height: 44px !important;
+    min-width: 122px !important;
+    padding: 0 13px !important;
+    width: auto !important;
+  }
+
+  .student-mobile-menu-button__icon,
+  .student-shell--mobile-view .student-mobile-menu-button__icon {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.18) !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    flex: 0 0 28px !important;
+    height: 28px !important;
+    justify-content: center !important;
+    width: 28px !important;
+  }
+
+  .student-sidebar--open,
+  .student-shell--mobile-view .student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.48) !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 0 !important;
+    box-shadow: 0 26px 70px rgba(10, 16, 32, 0.42) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: 100dvh !important;
+    left: 0 !important;
+    max-height: 100dvh !important;
+    max-width: min(420px, 94vw) !important;
+    min-height: 100dvh !important;
+    overflow: hidden !important;
+    padding: 12px !important;
+    position: fixed !important;
+    top: 0 !important;
+    width: min(420px, 94vw) !important;
+    z-index: 820 !important;
+  }
+
+  .student-sidebar--open::before,
+  .student-sidebar--open::after,
+  .student-shell--mobile-view .student-sidebar--open::before,
+  .student-shell--mobile-view .student-sidebar--open::after {
+    content: none !important;
+    display: none !important;
+  }
+
+  .student-sidebar--open .student-sidebar__head,
+  .student-shell--mobile-view .student-sidebar--open .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 10px !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 0 0 10px !important;
+  }
+
+  .student-sidebar--open .student-brand,
+  .student-shell--mobile-view .student-sidebar--open .student-brand {
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    min-width: 0 !important;
+  }
+
+  .student-sidebar--open .student-sidebar__panel,
+  .student-shell--mobile-view .student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+    max-height: calc(100dvh - 72px) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .student-sidebar--open .student-nav,
+  .student-shell--mobile-view .student-sidebar--open .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: calc(100dvh - 154px) !important;
+    min-height: 0 !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 4px !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button,
+  .student-shell--mobile-view .student-sidebar--open .student-nav__group-button {
+    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr) auto !important;
+    min-width: 0 !important;
+  }
+
+  .student-sidebar--open .student-note-card,
+  .student-shell--mobile-view .student-sidebar--open .student-note-card {
+    display: none !important;
+  }
+
+  .student-sidebar--open .logout-button,
+  .student-shell--mobile-view .student-sidebar--open .logout-button {
+    align-items: center !important;
+    background: linear-gradient(90deg, #931913, #8dbbc7) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    justify-content: center !important;
+    width: 100% !important;
+  }
+
+  .student-mobile-menu-backdrop,
+  .student-shell--mobile-view .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.56) !important;
+    border: 0 !important;
+    display: block !important;
+    inset: 0 !important;
+    padding: 0 !important;
+    position: fixed !important;
+    z-index: 810 !important;
+  }
+}
+
+/* Ajuste institucional final del menu: rojo, celeste, blanco y grises INTEC. */
+:root {
+  --intec-rojo: #931913;
+  --intec-rojo-oscuro: #74110e;
+  --intec-celeste: #8dbbc7;
+  --intec-blanco: #ffffff;
+  --intec-gris: #c7c6c6;
+  --intec-gris-oscuro: #777777;
+  --intec-texto: #17213d;
+}
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .app--dashboard {
+    padding-left: 92px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 20px 20px 0 !important;
+    bottom: 12px !important;
+    box-shadow: none !important;
+    left: 0 !important;
+    overflow: hidden !important;
+    padding: 12px 13px 12px 11px !important;
+    position: fixed !important;
+    top: 12px !important;
+    transition: width 180ms ease, filter 180ms ease !important;
+    width: 74px !important;
+    z-index: 500 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar::before {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 28%),
+      linear-gradient(180deg, #a8201a 0%, var(--intec-rojo) 55%, var(--intec-rojo-oscuro) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    border-left: 0 !important;
+    border-radius: 0 20px 20px 0 !important;
+    box-shadow: 0 20px 44px rgba(147, 25, 19, 0.28) !important;
+    content: "" !important;
+    inset: 0 auto 0 0 !important;
+    position: absolute !important;
+    width: 74px !important;
+    z-index: 0 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar::after {
+    background: linear-gradient(90deg, var(--intec-blanco) 0%, rgba(255, 255, 255, 0.98) 70%, rgba(141, 187, 199, 0.2) 100%) !important;
+    border: 1px solid rgba(141, 187, 199, 0.42) !important;
+    border-left: 0 !important;
+    border-radius: 0 20px 20px 0 !important;
+    box-shadow: 0 24px 62px rgba(119, 119, 119, 0.28) !important;
+    content: "" !important;
+    inset: 0 0 0 74px !important;
+    opacity: 0 !important;
+    position: absolute !important;
+    transform: translateX(-20px) !important;
+    transition: opacity 180ms ease, transform 180ms ease !important;
+    z-index: 0 !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within {
+    width: 374px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover::after,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within::after {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar__panel {
+    gap: 10px !important;
+    max-height: calc(100dvh - 92px) !important;
+    overflow: hidden !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav {
+    gap: 9px !important;
+    max-height: calc(100dvh - 176px) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-right: 4px !important;
+    scrollbar-color: var(--intec-celeste) rgba(255, 255, 255, 0.2) !important;
+    scrollbar-width: thin !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav::-webkit-scrollbar {
+    width: 6px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.18) !important;
+    border-radius: 999px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav::-webkit-scrollbar-thumb {
+    background: var(--intec-celeste) !important;
+    border-radius: 999px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-brand__logo {
+    background: var(--intec-blanco) !important;
+    border: 1px solid rgba(255, 255, 255, 0.75) !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12) !important;
+    color: var(--intec-rojo) !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    width: 46px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 14px !important;
+    color: var(--intec-blanco) !important;
+    min-height: 48px !important;
+    padding: 3px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav__group-icon {
+    background: rgba(255, 255, 255, 0.14) !important;
+    border: 1px solid rgba(255, 255, 255, 0.28) !important;
+    border-radius: 13px !important;
+    color: var(--intec-blanco) !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    opacity: 1 !important;
+    width: 42px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-nav__group-icon svg {
+    display: block !important;
+    fill: none !important;
+    height: 22px !important;
+    opacity: 1 !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.45 !important;
+    width: 22px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: var(--intec-blanco) !important;
+    grid-template-columns: 42px !important;
+    justify-items: center !important;
+    width: 48px !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button--active,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button:hover,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button:focus-visible {
+    background: var(--intec-blanco) !important;
+    border-color: rgba(255, 255, 255, 0.82) !important;
+    color: var(--intec-rojo) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button--active .student-nav__group-icon,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button:hover .student-nav__group-icon,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button:focus-visible .student-nav__group-icon {
+    background: var(--intec-blanco) !important;
+    border-color: rgba(147, 25, 19, 0.16) !important;
+    color: var(--intec-rojo) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-button,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.86) !important;
+    border-color: rgba(199, 198, 198, 0.85) !important;
+    color: var(--intec-texto) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-button--active,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.14), rgba(141, 187, 199, 0.2)) !important;
+    border-color: rgba(147, 25, 19, 0.45) !important;
+    box-shadow: inset 4px 0 0 var(--intec-rojo) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-icon,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.2) !important;
+    border-color: rgba(141, 187, 199, 0.5) !important;
+    color: var(--intec-rojo) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-copy strong,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__item,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-copy strong,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__item {
+    color: var(--intec-texto) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-copy small,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .student-nav__group-meta,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-copy small,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .student-nav__group-meta {
+    color: var(--intec-gris-oscuro) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover .logout-button,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within .logout-button {
+    background: linear-gradient(90deg, var(--intec-rojo), var(--intec-celeste)) !important;
+    color: var(--intec-blanco) !important;
+  }
+}
+
+@media (max-width: 767px), (hover: none) and (pointer: coarse) and (max-width: 1180px) {
+  .student-mobile-menu-button,
+  .student-shell--mobile-view .student-mobile-menu-button {
+    background: linear-gradient(90deg, var(--intec-rojo), var(--intec-celeste)) !important;
+    border: 1px solid rgba(255, 255, 255, 0.78) !important;
+    color: var(--intec-blanco) !important;
+  }
+
+  .student-sidebar--open,
+  .student-shell--mobile-view .student-sidebar--open {
+    background: var(--intec-blanco) !important;
+    border-color: rgba(141, 187, 199, 0.55) !important;
+    border-top: 5px solid var(--intec-rojo) !important;
+  }
+
+  .student-sidebar--open .student-brand__logo,
+  .student-shell--mobile-view .student-sidebar--open .student-brand__logo {
+    background: var(--intec-rojo) !important;
+    color: var(--intec-blanco) !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button,
+  .student-shell--mobile-view .student-sidebar--open .student-nav__group-button {
+    background: rgba(141, 187, 199, 0.1) !important;
+    border: 1px solid rgba(141, 187, 199, 0.34) !important;
+    color: var(--intec-texto) !important;
+  }
+
+  .student-sidebar--open .student-nav__group-button--active,
+  .student-shell--mobile-view .student-sidebar--open .student-nav__group-button--active {
+    background: linear-gradient(90deg, rgba(147, 25, 19, 0.14), rgba(141, 187, 199, 0.18)) !important;
+    border-color: rgba(147, 25, 19, 0.42) !important;
+  }
+
+  .student-sidebar--open .student-nav__group-icon,
+  .student-shell--mobile-view .student-sidebar--open .student-nav__group-icon {
+    background: rgba(141, 187, 199, 0.22) !important;
+    border-color: rgba(141, 187, 199, 0.48) !important;
+    color: var(--intec-rojo) !important;
+  }
+}
+
+/* Correccion responsive final: tendencia legible y menu con contraste institucional. */
+@media (max-width: 1180px), (hover: none) and (pointer: coarse) {
+  .app--dashboard {
+    overflow-x: hidden !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .student-shell {
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+  }
+
+  .student-main {
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding-inline: clamp(10px, 3vw, 18px) !important;
+    width: 100% !important;
+  }
+
+  .student-shell :is(.dashboard-executive-grid, .dashboard-chart-grid) {
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-shell :is(.dashboard-executive-grid, .dashboard-chart-grid) > * {
+    grid-column: 1 / -1 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .student-card.dashboard-trend-panel {
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    padding: clamp(12px, 3vw, 18px) !important;
+    width: 100% !important;
+  }
+
+  .dashboard-trend-panel .card-head {
+    align-items: flex-start !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    min-width: 0 !important;
+  }
+
+  .dashboard-trend-panel .card-head h3 {
+    font-size: clamp(18px, 5vw, 24px) !important;
+    line-height: 1.18 !important;
+    max-width: 100% !important;
+    overflow-wrap: normal !important;
+    white-space: normal !important;
+    word-break: normal !important;
+  }
+
+  .dashboard-year-filters {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    padding: 2px 2px 8px !important;
+    scrollbar-color: var(--intec-celeste) rgba(199, 198, 198, 0.42) !important;
+    scrollbar-width: thin !important;
+    width: 100% !important;
+  }
+
+  .dashboard-year-filters button {
+    flex: 0 0 auto !important;
+    min-height: 40px !important;
+    min-width: max-content !important;
+    padding: 8px 13px !important;
+    white-space: nowrap !important;
+    word-break: normal !important;
+  }
+
+  .dashboard-line-chart {
+    max-width: 100% !important;
+    min-height: 300px !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    width: 100% !important;
+  }
+
+  .dashboard-line-chart svg {
+    display: block !important;
+    height: 300px !important;
+    max-width: none !important;
+    min-height: 300px !important;
+    min-width: 760px !important;
+    width: max(760px, 100%) !important;
+  }
+
+  .dashboard-trend-legend {
+    flex-wrap: nowrap !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    padding-bottom: 6px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open),
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    height: auto !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+    width: auto !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open)::before,
+  .student-sidebar:not(.student-sidebar--open)::after,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::before,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::after {
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button {
+    pointer-events: auto !important;
+  }
+
+  .student-mobile-menu-button,
+  .student-shell--mobile-view .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(135deg, var(--intec-rojo) 0%, #a8201a 58%, var(--intec-celeste) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.82) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 18px 38px rgba(147, 25, 19, 0.28), 0 0 0 1px rgba(141, 187, 199, 0.28) !important;
+    color: var(--intec-blanco) !important;
+    display: inline-flex !important;
+    gap: 10px !important;
+    min-height: 48px !important;
+    min-width: 132px !important;
+    padding: 10px 14px !important;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18) !important;
+  }
+
+  .student-mobile-menu-button__icon,
+  .student-shell--mobile-view .student-mobile-menu-button__icon {
+    background: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.32) !important;
+    color: var(--intec-blanco) !important;
+  }
+
+  .student-mobile-menu-button__icon svg,
+  .student-shell--mobile-view .student-mobile-menu-button__icon svg {
+    opacity: 1 !important;
+    stroke: currentColor !important;
+    stroke-width: 2.5 !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .student-main {
+    padding-top: 82px !important;
+  }
+
+  .dashboard-line-chart {
+    min-height: 280px !important;
+  }
+
+  .dashboard-line-chart svg {
+    height: 280px !important;
+    min-height: 280px !important;
+    min-width: 680px !important;
+    width: max(680px, 100%) !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1180px), (hover: none) and (pointer: coarse) and (min-width: 768px) and (max-width: 1180px) {
+  .student-main {
+    padding-top: 86px !important;
+  }
+
+  .dashboard-line-chart {
+    min-height: 320px !important;
+  }
+
+  .dashboard-line-chart svg {
+    height: 320px !important;
+    min-height: 320px !important;
+    min-width: 920px !important;
+    width: max(920px, 100%) !important;
+  }
+}
+
+/* Barra de navegacion visible: iconos claros sobre rojo INTEC en estado cerrado. */
+@media (max-width: 1180px), (hover: none) and (pointer: coarse) {
+  .app--dashboard {
+    padding-left: 78px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open),
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 32%),
+      linear-gradient(180deg, #ad241b 0%, var(--intec-rojo) 56%, var(--intec-rojo-oscuro) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-left: 0 !important;
+    border-radius: 0 22px 22px 0 !important;
+    bottom: 8px !important;
+    box-shadow: 0 18px 38px rgba(147, 25, 19, 0.34), 0 0 0 1px rgba(141, 187, 199, 0.15) !important;
+    color: var(--intec-blanco) !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: auto !important;
+    left: 0 !important;
+    max-height: none !important;
+    max-width: 70px !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 10px 8px !important;
+    pointer-events: auto !important;
+    position: fixed !important;
+    top: 8px !important;
+    width: 70px !important;
+    z-index: 1000 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open)::before,
+  .student-sidebar:not(.student-sidebar--open)::after,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::before,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open)::after {
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__head,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__head {
+    align-items: center !important;
+    display: grid !important;
+    gap: 8px !important;
+    grid-template-columns: 1fr !important;
+    justify-items: center !important;
+    padding: 0 0 10px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-brand,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-brand {
+    display: flex !important;
+    justify-content: center !important;
+    width: 100% !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-brand > div:not(.student-brand__logo),
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-brand > div:not(.student-brand__logo) {
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-brand__logo,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-brand__logo {
+    background: var(--intec-blanco) !important;
+    border: 1px solid rgba(255, 255, 255, 0.78) !important;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18) !important;
+    color: var(--intec-rojo) !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    width: 44px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.34) !important;
+    border-radius: 14px !important;
+    box-shadow: none !important;
+    color: var(--intec-blanco) !important;
+    display: inline-flex !important;
+    height: 44px !important;
+    justify-content: center !important;
+    min-height: 44px !important;
+    min-width: 44px !important;
+    padding: 0 !important;
+    width: 44px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button__label,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button__label {
+    display: none !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button__icon,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button__icon {
+    background: transparent !important;
+    border: 0 !important;
+    color: var(--intec-blanco) !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav {
+    align-content: start !important;
+    display: grid !important;
+    gap: 8px !important;
+    max-height: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 0 2px 0 0 !important;
+    scrollbar-color: var(--intec-celeste) rgba(255, 255, 255, 0.22) !important;
+    scrollbar-width: thin !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar {
+    width: 5px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar-track,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.18) !important;
+    border-radius: 999px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar-thumb,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav::-webkit-scrollbar-thumb {
+    background: var(--intec-celeste) !important;
+    border-radius: 999px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__section,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__section {
+    display: block !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-button,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-button {
+    align-items: center !important;
+    background: rgba(255, 255, 255, 0.16) !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    border-radius: 15px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
+    color: var(--intec-blanco) !important;
+    display: grid !important;
+    grid-template-columns: 44px !important;
+    height: 48px !important;
+    justify-content: center !important;
+    justify-items: center !important;
+    min-height: 48px !important;
+    padding: 2px !important;
+    width: 48px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-button--active,
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-button:hover,
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-button:focus-visible,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-button--active,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-button:hover,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-button:focus-visible {
+    background: var(--intec-blanco) !important;
+    border-color: rgba(255, 255, 255, 0.86) !important;
+    color: var(--intec-rojo) !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-icon,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-icon {
+    align-items: center !important;
+    background: transparent !important;
+    border: 0 !important;
+    color: currentColor !important;
+    display: inline-flex !important;
+    height: 40px !important;
+    justify-content: center !important;
+    min-width: 40px !important;
+    opacity: 1 !important;
+    width: 40px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-icon svg,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-icon svg {
+    display: block !important;
+    fill: none !important;
+    height: 23px !important;
+    opacity: 1 !important;
+    stroke: currentColor !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    stroke-width: 2.6 !important;
+    width: 23px !important;
+  }
+
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-copy,
+  .student-sidebar:not(.student-sidebar--open) .student-nav__group-meta,
+  .student-sidebar:not(.student-sidebar--open) .student-nav__submenu,
+  .student-sidebar:not(.student-sidebar--open) .student-note-card,
+  .student-sidebar:not(.student-sidebar--open) .logout-button,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-copy,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__group-meta,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-nav__submenu,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-note-card,
+  .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .logout-button {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1181px) and (hover: hover) and (pointer: fine) {
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 32%),
+      linear-gradient(180deg, #ad241b 0%, var(--intec-rojo) 56%, var(--intec-rojo-oscuro) 100%) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.22) !important;
+    color: var(--intec-blanco) !important;
+  }
+
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within)::before,
+  .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within)::after {
+    display: none !important;
+  }
+}
+
+/* Refuerzo final: riel compacto siempre visible y con contraste institucional. */
+@media (max-width: 1180px), (hover: none) and (pointer: coarse) {
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open),
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) {
+    background: linear-gradient(180deg, #b32419 0%, #931913 58%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    border-left: 0 !important;
+    box-shadow: 0 18px 36px rgba(147, 25, 19, 0.38) !important;
+    color: #ffffff !important;
+    filter: none !important;
+    opacity: 1 !important;
+    outline: 1px solid rgba(141, 187, 199, 0.22) !important;
+    pointer-events: auto !important;
+    text-shadow: none !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border: 1px solid rgba(255, 255, 255, 0.36) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
+    filter: none !important;
+    opacity: 1 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button--active,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button--active,
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button:hover,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button:hover {
+    background: #ffffff !important;
+    border-color: #ffffff !important;
+    color: #931913 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-icon,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-icon,
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__icon,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__icon {
+    color: currentColor !important;
+    opacity: 1 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) svg,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) svg {
+    opacity: 1 !important;
+    stroke: currentColor !important;
+  }
+}
+
+@media (min-width: 1181px) and (hover: hover) and (pointer: fine) {
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) {
+    background: linear-gradient(180deg, #b32419 0%, #931913 58%, #74110e 100%) !important;
+    color: #ffffff !important;
+    filter: none !important;
+    opacity: 1 !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border-color: rgba(255, 255, 255, 0.36) !important;
+    color: #ffffff !important;
+    opacity: 1 !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button--active,
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button:hover {
+    background: #ffffff !important;
+    color: #931913 !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) svg {
+    opacity: 1 !important;
+    stroke: currentColor !important;
+  }
+}
+
+/* Ajuste final de navegacion: movil como boton desplegable, escritorio como riel visible. */
+@media (max-width: 767px) {
+  .app--dashboard {
+    padding-left: 0 !important;
+  }
+
+  .student-main {
+    padding-top: 78px !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open),
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    bottom: auto !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: 58px !important;
+    left: 10px !important;
+    max-height: 58px !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+    position: fixed !important;
+    top: 10px !important;
+    width: auto !important;
+    z-index: 1200 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-sidebar__head,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-sidebar__head {
+    display: block !important;
+    padding: 0 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-brand,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-brand,
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-sidebar__panel,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-sidebar__panel {
+    display: none !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button {
+    align-items: center !important;
+    background: linear-gradient(135deg, #931913 0%, #a92720 58%, #8DBBC7 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.88) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 18px 34px rgba(147, 25, 19, 0.28) !important;
+    color: #ffffff !important;
+    display: inline-flex !important;
+    gap: 10px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    min-width: 138px !important;
+    padding: 10px 16px !important;
+    pointer-events: auto !important;
+    width: auto !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__label,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__label {
+    display: inline !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__icon,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button__icon {
+    background: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.32) !important;
+    border-radius: 12px !important;
+    color: #ffffff !important;
+    height: 30px !important;
+    width: 30px !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--open,
+  body .student-sidebar.student-sidebar--mobile.student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.52) !important;
+    border-top: 5px solid #931913 !important;
+    border-radius: 0 18px 18px 0 !important;
+    bottom: 8px !important;
+    box-shadow: 0 24px 48px rgba(25, 35, 63, 0.28) !important;
+    height: auto !important;
+    left: 0 !important;
+    max-height: calc(100dvh - 16px) !important;
+    max-width: min(360px, calc(100vw - 18px)) !important;
+    overflow: hidden !important;
+    padding: 12px !important;
+    position: fixed !important;
+    top: 8px !important;
+    width: min(360px, calc(100vw - 18px)) !important;
+    z-index: 1300 !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--open .student-sidebar__panel,
+  body .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-sidebar__panel {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    max-height: calc(100dvh - 92px) !important;
+    overflow: hidden !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1180px) {
+  .app--dashboard {
+    padding-left: 86px !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open),
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) {
+    max-width: 78px !important;
+    padding: 10px 9px !important;
+    width: 78px !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav {
+    padding-right: 7px !important;
+    scrollbar-gutter: stable !important;
+  }
+
+  body .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button,
+  body .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-nav__group-button {
+    grid-template-columns: 48px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    width: 52px !important;
+  }
+}
+
+@media (min-width: 1181px) and (hover: hover) and (pointer: fine) {
+  .app--dashboard {
+    padding-left: 98px !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar {
+    width: 86px !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover,
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within {
+    width: 344px !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav {
+    padding-right: 8px !important;
+    scrollbar-gutter: stable !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-button {
+    grid-template-columns: 48px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    width: 52px !important;
+  }
+
+  body .student-shell:not(.student-shell--mobile-view) .student-sidebar:not(:hover):not(:focus-within) .student-nav__group-icon {
+    height: 44px !important;
+    min-width: 44px !important;
+    width: 44px !important;
   }
 }
