@@ -876,7 +876,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
             </button>
           </div>
 
-          <details className="mass-email-simple-details">
+          <details className="mass-email-simple-details" open>
             <summary>Importar desde Excel</summary>
             <section className="mass-email-excel-panel">
             <div className="mass-email-attachment-header">
