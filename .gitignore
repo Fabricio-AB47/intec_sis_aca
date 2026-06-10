@@ -1,1 +1,73 @@
+# Entornos y variables
 .env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+.venv/
+venv/
+env/
+backend/.venv/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Vite
+node_modules/
+**/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime uploads y generados
+backend/uploads/
+uploads/
+exports/
+reports/
+tmp/
+temp/
+*.tmp
+~$*
+
+# Archivos de datos generados localmente
+*.xls
+*.xlsx
+*.csv
+!frontend/doc/**
+
+# Sistema / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build / cache
+.cache/
+.parcel-cache/
+coverage/
