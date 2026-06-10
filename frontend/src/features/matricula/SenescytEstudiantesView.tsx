@@ -1,10 +1,25 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-import { downloadSenescytStudentReport, fetchSenescytStudentReport } from '../../lib/api'
-import type { SenescytStudentReportResponse } from '../../types/app'
+import {
+  downloadSenescytAuditWorkbook,
+  fetchSenescytAuditReport,
+  fetchSenescytCatalog,
+} from '../../lib/api'
+import type {
+  SenescytAuditResponse,
+  SenescytCatalogCareer,
+  SenescytCatalogResponse,
+  SenescytExportMode,
+  SenescytTarget,
+} from '../../types/app'
 
 type SenescytEstudiantesViewProps = {
   displayName: string
+}
+
+const TARGET_LABELS: Record<SenescytTarget, string> = {
+  estudiantes: 'Estudiantes',
+  docentes: 'Docentes',
 }
 
 function formatNumber(value?: number): string {
@@ -19,91 +34,118 @@ function handleError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-function isVisibleCareerName(careerName?: string): boolean {
-  const normalized = (careerName || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toUpperCase()
-  return Boolean(normalized) && !normalized.startsWith('SIN CARRERA')
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudiantesViewProps>) {
-  const [data, setData] = useState<SenescytStudentReportResponse | null>(null)
+  const [catalog, setCatalog] = useState<SenescytCatalogResponse | null>(null)
+  const [target, setTarget] = useState<SenescytTarget>('estudiantes')
+  const [selectedCareers, setSelectedCareers] = useState<string[]>([])
+  const [report, setReport] = useState<SenescytAuditResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [downloadLoading, setDownloadLoading] = useState(false)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [downloading, setDownloading] = useState('')
   const [error, setError] = useState('')
-  const [selectedCareerName, setSelectedCareerName] = useState('')
 
-  const summary = data?.summary
-  const careers = data?.careers || []
-  const warnings = data?.warnings || []
+  const summary = report?.summary
+  const rows = report?.rows || []
+  const missingFields = report?.missing_fields || []
+  const careers = useMemo(() => {
+    const items = catalog?.careers || []
+    const seen = new Set<string>()
+    return items.filter((item: SenescytCatalogCareer) => {
+      const name = item.nombre_carrera?.trim()
+      if (!name || seen.has(name)) return false
+      seen.add(name)
+      return true
+    })
+  }, [catalog])
+  const selectedCareerSet = useMemo(() => new Set(selectedCareers), [selectedCareers])
+  const selectedCareerLabel = selectedCareers.length ? `${selectedCareers.length} carrera(s) seleccionada(s)` : 'Todas las carreras'
 
-  const visibleCareers = useMemo(
-    () => careers.filter((career) => isVisibleCareerName(career.nombre_carrera)),
-    [careers],
-  )
-  const topCareers = useMemo(
-    () => [...visibleCareers].sort((left, right) => right.total_estudiantes - left.total_estudiantes),
-    [visibleCareers],
-  )
-  const selectedCareer = topCareers.find((career) => career.nombre_carrera === selectedCareerName)
-  const selectedStudents = selectedCareer?.students_missing || []
+  async function loadCatalog() {
+    setCatalogLoading(true)
+    try {
+      setCatalog(await fetchSenescytCatalog())
+    } catch (requestError) {
+      setError(handleError(requestError, 'No se pudo cargar el catalogo de carreras.'))
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
 
-  async function loadReport() {
+  async function loadReport(nextTarget = target, nextCareers = selectedCareers) {
     setLoading(true)
     setError('')
     try {
-      const payload = await fetchSenescytStudentReport()
-      setData(payload)
-      setSelectedCareerName((current) => {
-        if (payload.careers?.some((career) => career.nombre_carrera === current && isVisibleCareerName(career.nombre_carrera))) {
-          return current
-        }
-        return ''
-      })
+      setReport(await fetchSenescytAuditReport(nextTarget, nextCareers))
     } catch (requestError) {
-      setError(handleError(requestError, 'Error generando resumen SENECYT'))
-      setData(null)
+      setError(handleError(requestError, 'No se pudo generar el reporte SENESCYT.'))
+      setReport(null)
     } finally {
       setLoading(false)
     }
   }
 
-  async function downloadReport() {
-    setDownloadLoading(true)
+  function toggleCareer(careerName: string) {
+    setSelectedCareers((current) => {
+      if (current.includes(careerName)) {
+        return current.filter((item) => item !== careerName)
+      }
+      return [...current, careerName]
+    })
+  }
+
+  function selectAllCareers() {
+    setSelectedCareers(careers.map((item) => item.nombre_carrera).filter(Boolean))
+  }
+
+  function clearCareers() {
+    setSelectedCareers([])
+  }
+
+  async function download(targetToDownload: SenescytTarget, mode: SenescytExportMode) {
+    const key = `${targetToDownload}-${mode}`
+    setDownloading(key)
     setError('')
     try {
-      const blob = await downloadSenescytStudentReport()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `senescyt-estudiantes-${new Date().toISOString().slice(0, 10)}.zip`
-      document.body.append(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
+      const blob = await downloadSenescytAuditWorkbook(targetToDownload, mode, selectedCareers)
+      const suffix = selectedCareers.length
+        ? `${selectedCareers.length}-carreras`
+        : 'todas-las-carreras'
+      saveBlob(blob, `senescyt-${targetToDownload}-${mode}-${suffix}.xlsx`)
     } catch (requestError) {
-      setError(handleError(requestError, 'Error descargando Excel SENECYT'))
+      setError(handleError(requestError, 'No se pudo descargar el Excel SENESCYT.'))
     } finally {
-      setDownloadLoading(false)
+      setDownloading('')
     }
   }
 
-  function selectCareer(careerName: string) {
-    if (isVisibleCareerName(careerName)) {
-      setSelectedCareerName(careerName)
-    }
-  }
+  useEffect(() => {
+    void loadCatalog()
+  }, [])
+
+  useEffect(() => {
+    void loadReport(target, selectedCareers)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target])
 
   return (
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">SENECYT</p>
-          <h1>Datos Estudiante SENECYT</h1>
+          <p className="eyebrow">SENESCYT</p>
+          <h1>Datos SENESCYT</h1>
           <p className="report-description">
-            Reporte de estudiantes activos segun el tablero de matricula, con estructura SENECYT exportable por carrera.
+            Reportes regulatorios de estudiantes y docentes por carrera, con control de campos vacíos y descarga en Excel.
           </p>
         </div>
 
@@ -111,185 +153,191 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Reporte SENECYT</span>
+              <span>Reportes SENESCYT</span>
             </div>
           </div>
         </div>
       </header>
 
+      <section className="student-card senescyt-control-panel">
+        <div>
+          <p className="eyebrow">Filtros</p>
+          <h3>Seleccione el reporte</h3>
+        </div>
+
+        <label>
+          Tipo de informacion
+          <select
+            value={target}
+            onChange={(event) => setTarget(event.target.value as SenescytTarget)}
+          >
+            <option value="estudiantes">Estudiantes</option>
+            <option value="docentes">Docentes</option>
+          </select>
+        </label>
+
+        <div className="senescyt-career-picker">
+          <div className="senescyt-career-picker__head">
+            <label>Carreras</label>
+            <strong>{selectedCareerLabel}</strong>
+          </div>
+          <div className="senescyt-career-picker__actions">
+            <button type="button" onClick={selectAllCareers} disabled={catalogLoading || careers.length === 0}>
+              Seleccionar todas
+            </button>
+            <button type="button" onClick={clearCareers} disabled={selectedCareers.length === 0}>
+              Limpiar
+            </button>
+          </div>
+          <div className="senescyt-career-picker__list" aria-label="Seleccion multiple de carreras">
+            {careers.map((item) => {
+              const name = item.nombre_carrera
+              return (
+                <label key={`${item.codigo_carrera}-${name}`} className="senescyt-career-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedCareerSet.has(name)}
+                    onChange={() => toggleCareer(name)}
+                  />
+                  <span>{name}</span>
+                </label>
+              )
+            })}
+            {careers.length === 0 ? <p>{catalogLoading ? 'Cargando carreras...' : 'No hay carreras disponibles.'}</p> : null}
+          </div>
+        </div>
+
+        <button type="button" onClick={() => void loadReport()} disabled={loading}>
+          {loading ? 'Procesando...' : 'Consultar'}
+        </button>
+      </section>
+
+      {error ? <p className="form-error">{error}</p> : null}
+
       <section className="student-grid student-grid--stats matricula-stats-grid">
         <article className="student-card student-card--stat">
-          <p>Total reporte</p>
-          <h2>{formatNumber(summary?.total_reporte)}</h2>
-          <small>Exportables</small>
-        </article>
-        <article className="student-card student-card--stat">
-          <p>Activos DATOS_ESTUD</p>
-          <h2>{formatNumber(summary?.total_activos_datos_estud)}</h2>
-          <small>{summary?.coincide_activos ? 'Coincide' : 'Revisar diferencia'}</small>
-        </article>
-        <article className="student-card student-card--stat">
-          <p>Carreras</p>
-          <h2>{formatNumber(summary?.total_carreras)}</h2>
-          <small>Archivos Excel</small>
+          <p>Registros</p>
+          <h2>{formatNumber(summary?.total_registros)}</h2>
+          <small>{TARGET_LABELS[target]}</small>
         </article>
         <article className="student-card student-card--stat">
           <p>Campos llenos</p>
           <h2>{formatPercent(summary?.porcentaje_lleno)}</h2>
-          <small>{formatNumber(summary?.total_columnas)} campos del Excel SENECYT</small>
+          <small>{formatNumber(summary?.campos_llenos)} de {formatNumber(summary?.campos_totales)}</small>
+        </article>
+        <article className="student-card student-card--stat">
+          <p>Campos faltantes</p>
+          <h2>{formatNumber(summary?.campos_pendientes)}</h2>
+          <small>{formatNumber(summary?.registros_con_pendientes)} registro(s) incompleto(s)</small>
+        </article>
+        <article className="student-card student-card--stat">
+          <p>Carreras</p>
+          <h2>{formatNumber(summary?.total_carreras)}</h2>
+          <small>{selectedCareers.length ? selectedCareers.join(', ') : 'Todas'}</small>
         </article>
       </section>
 
-      <section className="student-grid student-grid--content">
+      <section className="student-card student-card--wide senescyt-download-card">
+        <div className="card-head">
+          <div>
+            <p className="eyebrow">Descargas Excel</p>
+            <h3>Generación por carrera y faltantes</h3>
+            <p className="report-description">
+              Los archivos de faltantes incluyen lista global sin duplicidad, hojas por carrera y detalle de campos pendientes.
+            </p>
+          </div>
+          <span>{report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta'}</span>
+        </div>
+
+        <div className="senescyt-download-actions">
+          <button
+            type="button"
+            onClick={() => void download(target, 'completo')}
+            disabled={downloading === `${target}-completo`}
+          >
+            {downloading === `${target}-completo`
+              ? 'Generando...'
+              : `Archivo ${TARGET_LABELS[target].toLowerCase()} por carrera`}
+          </button>
+          <button
+            type="button"
+            onClick={() => void download(target, 'faltantes')}
+            disabled={downloading === `${target}-faltantes`}
+          >
+            {downloading === `${target}-faltantes`
+              ? 'Generando...'
+              : `Faltantes ${TARGET_LABELS[target].toLowerCase()} global/carreras`}
+          </button>
+        </div>
+      </section>
+
+      <section className="student-grid student-grid--content senescyt-audit-grid">
         <article className="student-card student-card--wide senescyt-report-card">
           <div className="card-head">
-            <h3>Resumen por carrera</h3>
-            <span>{loading ? 'Procesando...' : `${formatNumber(topCareers.length)} carrera(s)`}</span>
+            <div>
+              <p className="eyebrow">Vista previa</p>
+              <h3>{TARGET_LABELS[target]} con campos pendientes</h3>
+            </div>
+            <span>{formatNumber(rows.length)} visible(s)</span>
           </div>
-
-          <div className="teams-actions">
-            <button type="button" onClick={() => void loadReport()} disabled={loading}>
-              {loading ? 'Procesando...' : 'Procesar reporte'}
-            </button>
-            <button type="button" onClick={() => void downloadReport()} disabled={loading || downloadLoading || !data}>
-              {downloadLoading ? 'Generando Excel...' : 'Descargar Excel por carrera'}
-            </button>
-          </div>
-
-          {error ? <p className="form-error">{error}</p> : null}
-          {warnings.map((warning) => (
-            <p key={warning} className="form-success">{warning}</p>
-          ))}
 
           <div className="matricula-table-wrap">
             <table className="matricula-table senescyt-table">
               <thead>
                 <tr>
+                  <th>Identificacion</th>
+                  <th>Nombre</th>
+                  <th>Correo</th>
+                  <th>Teléfono</th>
                   <th>Carrera</th>
-                  <th>Estudiantes</th>
-                  <th>Estudiantes incompletos</th>
-                  <th>Campos pendientes</th>
-                  <th>Campos llenos</th>
-                  <th>Total campos</th>
                   <th>% lleno</th>
+                  <th>Pendientes</th>
+                  <th>Campos faltantes</th>
                 </tr>
               </thead>
               <tbody>
-                {topCareers.map((career) => (
-                  <tr
-                    key={career.nombre_carrera}
-                    className={`senescyt-table-row-button ${career.nombre_carrera === selectedCareerName ? 'senescyt-table-row--active' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectCareer(career.nombre_carrera)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        selectCareer(career.nombre_carrera)
-                      }
-                    }}
-                  >
+                {rows.map((row) => (
+                  <tr key={`${row.identificacion}-${row.codigo}-${row.nombre_carrera}`}>
                     <td>
-                      <button
-                        type="button"
-                        className="senescyt-career-button"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          selectCareer(career.nombre_carrera)
-                        }}
-                      >
-                        {career.nombre_carrera}
-                      </button>
+                      <strong>{row.identificacion || '-'}</strong>
+                      <small>Codigo {row.codigo || '-'}</small>
                     </td>
-                    <td>{formatNumber(career.total_estudiantes)}</td>
-                    <td>{formatNumber(career.estudiantes_con_pendientes)}</td>
-                    <td>{formatNumber(career.campos_pendientes)}</td>
-                    <td>{formatNumber(career.campos_llenos)}</td>
-                    <td>{formatNumber(career.campos_totales)}</td>
-                    <td>{formatPercent(career.porcentaje_lleno)}</td>
+                    <td>{row.nombre || '-'}</td>
+                    <td>{row.correo || '-'}</td>
+                    <td>{row.telefono || '-'}</td>
+                    <td>{row.nombre_carrera || '-'}</td>
+                    <td>{formatPercent(row.porcentaje_lleno)}</td>
+                    <td>{formatNumber(row.campos_pendientes)}</td>
+                    <td>{(row.campos_faltantes || []).slice(0, 8).join(', ') || 'Completo'}</td>
                   </tr>
                 ))}
-                {topCareers.length === 0 ? (
+                {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7}>Procesa el reporte para ver las carreras exportables.</td>
+                    <td colSpan={8}>No hay registros para mostrar. Pulse Consultar o cambie los filtros.</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
         </article>
+
+        <article className="student-card senescyt-side-card">
+          <div className="card-head">
+            <h3>Campos mas faltantes</h3>
+            <span>{formatNumber(missingFields.length)}</span>
+          </div>
+          <div className="senescyt-missing-list">
+            {missingFields.slice(0, 12).map((field) => (
+              <div key={field.campo}>
+                <span>{field.campo}</span>
+                <strong>{formatNumber(field.pendientes)}</strong>
+                <small>{formatPercent(field.porcentaje_lleno)} lleno</small>
+              </div>
+            ))}
+            {missingFields.length === 0 ? <p>No hay campos pendientes detectados.</p> : null}
+          </div>
+        </article>
       </section>
-
-      {selectedCareer ? (
-        <div className="senescyt-modal-backdrop" role="presentation" onClick={() => setSelectedCareerName('')}>
-          <section
-            className="student-card senescyt-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="senescyt-career-detail-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="card-head">
-              <div>
-                <p className="eyebrow">Verificacion SENECYT</p>
-                <h3 id="senescyt-career-detail-title">{selectedCareer.nombre_carrera}</h3>
-              </div>
-              <button type="button" className="senescyt-modal-close" onClick={() => setSelectedCareerName('')}>
-                Cerrar
-              </button>
-            </div>
-
-            <div className="matricula-acad-preview">
-              <div>
-                <span>Estudiantes</span>
-                <strong>{formatNumber(selectedCareer.total_estudiantes)}</strong>
-              </div>
-              <div>
-                <span>Incompletos</span>
-                <strong>{formatNumber(selectedCareer.estudiantes_con_pendientes)}</strong>
-              </div>
-              <div>
-                <span>Campos pendientes</span>
-                <strong>{formatNumber(selectedCareer.campos_pendientes)}</strong>
-              </div>
-              <div>
-                <span>% lleno</span>
-                <strong>{formatPercent(selectedCareer.porcentaje_lleno)}</strong>
-              </div>
-            </div>
-
-            <div className="matricula-table-wrap">
-              <table className="matricula-table senescyt-detail-table">
-                <thead>
-                  <tr>
-                    <th>Estudiante</th>
-                    <th>Cedula</th>
-                    <th>Campos pendientes</th>
-                    <th>% lleno</th>
-                    <th>Campos faltantes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedStudents.map((student) => (
-                    <tr key={`${student.numero_identificacion}-${student.estudiante}`}>
-                      <td>{student.estudiante}</td>
-                      <td>{student.numero_identificacion || 'Sin cedula'}</td>
-                      <td>{formatNumber(student.campos_pendientes)}</td>
-                      <td>{formatPercent(student.porcentaje_lleno)}</td>
-                      <td>{student.campos_faltantes.join(', ')}</td>
-                    </tr>
-                  ))}
-                  {selectedStudents.length === 0 ? (
-                    <tr>
-                      <td colSpan={5}>Esta carrera no tiene estudiantes con campos pendientes.</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </>
   )
 }

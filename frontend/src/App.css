@@ -8149,10 +8149,132 @@
   grid-column: span 4;
 }
 
+.senescyt-control-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 240px) minmax(260px, 1.5fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.senescyt-control-panel label {
+  display: grid;
+  gap: 7px;
+  color: #26314f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.senescyt-control-panel select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(141, 187, 199, 0.72);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #17213f;
+  font: inherit;
+}
+
+.senescyt-career-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.senescyt-career-picker__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.senescyt-career-picker__head label {
+  color: #26314f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.senescyt-career-picker__head strong {
+  color: #931913;
+  font-size: 12px;
+}
+
+.senescyt-career-picker__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.senescyt-career-picker__actions button {
+  min-height: 38px;
+}
+
+.senescyt-career-picker__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(141, 187, 199, 0.55);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.senescyt-career-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid rgba(199, 198, 198, 0.74);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #17213f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.senescyt-career-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #931913;
+}
+
+.senescyt-download-card {
+  margin-top: 14px;
+}
+
+.senescyt-download-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.senescyt-download-actions button,
+.senescyt-control-panel button {
+  min-height: 48px;
+}
+
+.senescyt-control-panel .senescyt-career-picker__actions button {
+  min-height: 38px;
+}
+
+.senescyt-audit-grid {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
 .senescyt-table {
   min-width: 980px;
   border-collapse: separate;
   border-spacing: 0 8px;
+}
+
+.senescyt-table td small {
+  display: block;
+  margin-top: 4px;
+  color: #5f6987;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .senescyt-table tbody tr[role="button"],
@@ -8422,6 +8544,19 @@
   .senescyt-update-search-form,
   .senescyt-update-summary,
   .senescyt-update-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .senescyt-control-panel,
+  .senescyt-download-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .senescyt-career-picker__list {
+    grid-template-columns: 1fr;
+  }
+
+  .senescyt-audit-grid {
     grid-template-columns: 1fr;
   }
 

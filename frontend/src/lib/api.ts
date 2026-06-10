@@ -80,9 +80,13 @@ import type {
   PreinscriptionListResponse,
   PreinscriptionPhotoResponse,
   PreinscriptionRevertResponse,
+  SenescytAuditResponse,
+  SenescytCatalogResponse,
+  SenescytExportMode,
   SenescytStudentDataDetailResponse,
   SenescytStudentDataSearchResponse,
   SenescytStudentReportResponse,
+  SenescytTarget,
   SisAcademicoCatalogResponse,
   SisAcademicoListResponse,
   SisAcademicoRecordResponse,
@@ -1606,6 +1610,42 @@ export async function updateSenescytStudentData(
 
 export async function downloadSenescytStudentReport(): Promise<Blob> {
   const response = await fetch('/api/students/senescyt/estudiantes/export', {
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const payload = await readResponsePayload(response)
+    const detail =
+      typeof payload === 'string'
+        ? payload
+        : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+    throw new ApiError(detail, response.status)
+  }
+
+  return response.blob()
+}
+
+export async function fetchSenescytCatalog(): Promise<SenescytCatalogResponse> {
+  return request<SenescytCatalogResponse>('/api/students/senescyt/catalogo')
+}
+
+export async function fetchSenescytAuditReport(
+  target: SenescytTarget,
+  careers?: string[],
+): Promise<SenescytAuditResponse> {
+  const params = new URLSearchParams({ target })
+  careers?.filter(Boolean).forEach((career) => params.append('carrera', career))
+  return request<SenescytAuditResponse>(`/api/students/senescyt/datos?${params.toString()}`)
+}
+
+export async function downloadSenescytAuditWorkbook(
+  target: SenescytTarget,
+  mode: SenescytExportMode,
+  careers?: string[],
+): Promise<Blob> {
+  const params = new URLSearchParams({ target, mode })
+  careers?.filter(Boolean).forEach((career) => params.append('carrera', career))
+  const response = await fetch(`/api/students/senescyt/datos/export?${params.toString()}`, {
     credentials: 'include',
   })
 

@@ -2372,6 +2372,75 @@ export type SenescytStudentDataDetailResponse = {
   detail?: string
 }
 
+export type SenescytTarget = 'estudiantes' | 'docentes'
+export type SenescytExportMode = 'completo' | 'faltantes'
+
+export type SenescytCatalogCareer = {
+  codigo_carrera?: string
+  nombre_carrera: string
+}
+
+export type SenescytCatalogResponse = {
+  careers?: SenescytCatalogCareer[]
+  targets?: SenescytTarget[]
+  export_modes?: SenescytExportMode[]
+  detail?: string
+}
+
+export type SenescytAuditSummary = {
+  total_registros?: number
+  total_carreras?: number
+  total_columnas?: number
+  campos_llenos?: number
+  campos_totales?: number
+  campos_pendientes?: number
+  porcentaje_lleno?: number
+  registros_con_pendientes?: number
+}
+
+export type SenescytAuditCareer = {
+  nombre_carrera: string
+  total_registros: number
+  campos_llenos: number
+  campos_totales: number
+  campos_pendientes: number
+  registros_con_pendientes: number
+  porcentaje_lleno: number
+}
+
+export type SenescytAuditRow = {
+  codigo?: string
+  identificacion?: string
+  nombre?: string
+  nombre_carrera?: string
+  correo?: string
+  telefono?: string
+  campos_llenos?: number
+  campos_pendientes?: number
+  campos_totales?: number
+  porcentaje_lleno?: number
+  campos_faltantes?: string[]
+}
+
+export type SenescytAuditField = {
+  campo: string
+  llenos: number
+  pendientes: number
+  porcentaje_lleno: number
+}
+
+export type SenescytAuditResponse = {
+  generated_at?: string
+  target?: SenescytTarget
+  career_filter?: string[] | null
+  summary?: SenescytAuditSummary
+  careers?: SenescytAuditCareer[]
+  rows?: SenescytAuditRow[]
+  missing_fields?: SenescytAuditField[]
+  report_columns?: string[]
+  detail?: string
+}
+
 export type TeamsActionResponse = {
   ok?: boolean
   message?: string

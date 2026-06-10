@@ -847,3 +847,798 @@ def senescyt_students_export(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+_TEACHER_REPORT_COLUMNS = [
+    "tipoDocumentoId",
+    "numeroIdentificacion",
+    "primerApellido",
+    "segundoApellido",
+    "primerNombre",
+    "segundoNombre",
+    "sexoId",
+    "generoId",
+    "estadoCivilId",
+    "etniaId",
+    "nacionalidadId",
+    "tipoDomicilio",
+    "provinciaSufragio",
+    "numeroCelular",
+    "correoElectronico",
+    "correoPersonal",
+    "direccionDomicilio",
+    "discapacidad",
+    "tipoDiscapacidad",
+    "porcentajeDiscapacidad",
+    "carnetConadis",
+    "numeroCarnetConadis",
+    "fechaNacimiento",
+    "paisNacionalidadId",
+    "nivelFormacion",
+    "fechaIngresoIES",
+    "fechaSalidaIES",
+    "relacionLaboralIESId",
+    "ingresoConCursoMeritos",
+    "escalafonDocenteId",
+    "cargoDirectivoId",
+    "tiempoDedicacionId",
+    "nombreUnidadAcademica",
+    "nroAsignaturasDocente",
+    "nroHorasLaborablesSemanaEnCarreraPrograma",
+    "nroHorasClaseSemanaCarreraPrograma",
+    "nroHorasInvestigacionSemanaCarreraPrograma",
+    "nroHorasAdministrativasSemanaCarreraPrograma",
+    "nroHorasOtrasActividadesSemanaCarreraPrograma",
+    "nroHorasVinculacionSociedad",
+    "salarioMensual",
+    "docenciaTecnicoSuperior",
+    "docenciaTecnologico",
+    "docenciaTecnologicoUniversitario",
+    "docenciaEspecializacionTecnologica",
+    "docenciaMaestriaTecnologica",
+    "estaEnPeriodoSabatico",
+    "fechaInicioPeriodoSabatico",
+    "estaCursandoEstudiosId",
+    "institucionDondeCursaEstudios",
+    "paisEstudiosId",
+    "tituloAObtener",
+    "poseeBecaId",
+    "tipoBecaId",
+    "montoBeca",
+    "financiamientoBecaId",
+    "pubRevistasCienInIndexadasId",
+    "numPubRevistasCientifIndexadas",
+]
+
+_STUDENT_AUDIT_COLUMNS = _REPORT_COLUMNS
+
+_REPORT_TARGETS = {"estudiantes", "docentes"}
+_EXPORT_MODES = {"completo", "faltantes"}
+
+
+def _read_sql_dataframe(sql: str, params: list[Any] | None = None) -> pd.DataFrame:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params or [])
+        columns = [column[0] for column in cursor.description]
+        rows = [tuple(row) for row in cursor.fetchall()]
+    return pd.DataFrame.from_records(rows, columns=columns)
+
+
+def _career_catalog() -> list[dict[str, Any]]:
+    dataframe = _read_sql_dataframe(
+        """
+        SELECT
+            TRY_CONVERT(varchar(50), Cod_AnioBasica) AS codigo_carrera,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre_Basica))) AS nombre_carrera
+        FROM dbo.CARRERAS
+        WHERE NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre_Basica))), '') IS NOT NULL
+        ORDER BY Nombre_Basica
+        """
+    )
+    return [
+        {
+            "codigo_carrera": str(row.codigo_carrera or "").strip(),
+            "nombre_carrera": str(row.nombre_carrera or "").strip(),
+        }
+        for row in dataframe.itertuples()
+    ]
+
+
+def _split_report_name(full_name: Any) -> dict[str, Any]:
+    values = _split_names(full_name)
+    return {key: _normalize_payload_value(values.get(key)) for key in _NAME_FIELDS}
+
+
+def _prepare_student_audit_dataframe() -> pd.DataFrame:
+    raw = _read_dataframe()
+    if raw.empty:
+        return pd.DataFrame(columns=_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
+
+    names = raw["Apellidos_nombre"].apply(_split_report_name).apply(pd.Series)
+    df = pd.concat([raw.drop(columns=["Apellidos_nombre"]), names], axis=1)
+    df = df.rename(columns={"codigoEstud": "codigo"})
+    for column in _STUDENT_AUDIT_COLUMNS:
+        if column not in df.columns:
+            df[column] = None
+    df["nombreCompleto"] = df.apply(_student_display_name, axis=1)
+    df["nombreCarrera"] = df["nombreCarrera"].apply(
+        lambda value: re.sub(r"\s+", " ", str(value or "Sin carrera")).strip() or "Sin carrera"
+    )
+    return df[_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"]]
+
+
+def _read_teacher_audit_dataframe() -> pd.DataFrame:
+    sql = """
+    WITH docentes_base AS (
+        SELECT
+            TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo,
+            d.apellidos_nombre AS nombreOriginal,
+            d.tipoDocumentoId,
+            d.cedula_doc AS numeroIdentificacion,
+            d.sexo AS sexoId,
+            d.generoId,
+            d.estado_civil AS estadoCivilId,
+            d.etniaId,
+            d.nacionalidad AS nacionalidadId,
+            d.provinciaSufragio,
+            COALESCE(NULLIF(TRY_CONVERT(nvarchar(50), d.movil), ''), NULLIF(TRY_CONVERT(nvarchar(50), d.telefono), '')) AS numeroCelular,
+            COALESCE(NULLIF(TRY_CONVERT(nvarchar(320), d.correo), ''), NULLIF(TRY_CONVERT(nvarchar(320), u.login), '')) AS correoElectronico,
+            d.correop AS correoPersonal,
+            d.Direccion AS direccionDomicilio,
+            d.discapacidad,
+            COALESCE(d.tipo_discapa, d.tipoEnfermedadCatastrofica) AS tipoDiscapacidad,
+            d.porcen_discapa AS porcentajeDiscapacidad,
+            d.carnet_conadis AS carnetConadis,
+            d.num_carnet_cona AS numeroCarnetConadis,
+            d.fecha_nac AS fechaNacimiento,
+            d.paisNacionalidadId,
+            d.nivelFormacion,
+            d.fechaIngresoIES,
+            d.fechaSalidaIES,
+            d.relacionLaboralIESId,
+            d.ingresoConCursoMeritos,
+            d.escalafonDocenteId,
+            d.cargoDirectivoId,
+            d.tiempoDedicacionId,
+            d.nombreUnidadAcademica,
+            d.nroasignaturasdocente AS nroAsignaturasDocente,
+            d.nroHorasLaborablesSemanaEnCarreraPrograma,
+            d.nroHorasClaseSemanaCarreraPrograma,
+            d.nroHorasInvestigacionSemanaCarreraPrograma,
+            d.nroHorasAdministrativasSemanaCarreraPrograma,
+            d.nroHorasOtrasActividadesSemanaCarreraPrograma,
+            d.nroHorasVinculacionSociedad,
+            d.salarioMensual,
+            d.docenciaTecnicoSuperior,
+            d.docenciaTecnologico,
+            d.docenciaTecnologicoUniversitario,
+            d.docenciaEspecializacionTecnologica,
+            d.docenciaMaestriaTecnologica,
+            d.estaEnPeriodoSabatico,
+            d.fechaInicioPeriodoSabatico,
+            d.estaCursandoEstudiosId,
+            d.institucionDOndeCursaEstudios AS institucionDondeCursaEstudios,
+            d.paisEstudiosId,
+            d.tituloAObtener,
+            d.poseeBecaId,
+            d.tipoBecaId,
+            d.montoBeca,
+            d.financiamientoBecaId,
+            d.pubRevistasCienInIndexadasId,
+            d.numPubRevistasCientifIndexadas,
+            COALESCE(NULLIF(TRY_CONVERT(nvarchar(255), c.Nombre_Basica), ''), N'Sin carrera') AS nombreCarrera,
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    TRY_CONVERT(varchar(50), d.codigo_doc),
+                    COALESCE(TRY_CONVERT(varchar(50), c.Cod_AnioBasica), 'SIN')
+                ORDER BY TRY_CONVERT(nvarchar(255), c.Nombre_Basica)
+            ) AS rn
+        FROM dbo.DATOSDOCENTE d
+        LEFT JOIN dbo.USUARIOS u
+            ON LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) = LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
+        LEFT JOIN dbo.CARRERAXDOCENTE cxd
+            ON TRY_CONVERT(varchar(50), cxd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
+        LEFT JOIN dbo.CARRERAS c
+            ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica)
+    )
+    SELECT *
+    FROM docentes_base
+    WHERE rn = 1
+    ORDER BY nombreCarrera, nombreOriginal
+    """
+    raw = _read_sql_dataframe(sql)
+    if raw.empty:
+        return pd.DataFrame(columns=_TEACHER_REPORT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
+
+    names = raw["nombreOriginal"].apply(_split_report_name).apply(pd.Series)
+    df = pd.concat([raw.drop(columns=["nombreOriginal", "rn"], errors="ignore"), names], axis=1)
+    for column in _TEACHER_REPORT_COLUMNS:
+        if column not in df.columns:
+            df[column] = None
+    df["nombreCompleto"] = df.apply(
+        lambda row: " ".join(str(row.get(field) or "").strip() for field in [
+            "primerApellido",
+            "segundoApellido",
+            "primerNombre",
+            "segundoNombre",
+        ] if _filled(row.get(field))) or "Sin nombre",
+        axis=1,
+    )
+    df["nombreCarrera"] = df["nombreCarrera"].apply(
+        lambda value: re.sub(r"\s+", " ", str(value or "Sin carrera")).strip() or "Sin carrera"
+    )
+    return df[_TEACHER_REPORT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"]]
+
+
+def _load_senescyt_audit_dataframe(target: str) -> tuple[pd.DataFrame, list[str]]:
+    if target == "estudiantes":
+        return _prepare_student_audit_dataframe(), _STUDENT_AUDIT_COLUMNS
+    if target == "docentes":
+        return _read_teacher_audit_dataframe(), _TEACHER_REPORT_COLUMNS
+    raise HTTPException(status_code=400, detail="Tipo de reporte SENESCYT no valido.")
+
+
+def _normalize_career_filters(careers: list[str] | None) -> list[str]:
+    selected: list[str] = []
+    values = [careers] if isinstance(careers, str) else (careers or [])
+    for value in values:
+        for item in str(value or "").split("|"):
+            name = re.sub(r"\s+", " ", item).strip()
+            if name and name.casefold() not in {career.casefold() for career in selected}:
+                selected.append(name)
+    return selected
+
+
+def _filter_by_career(dataframe: pd.DataFrame, careers: list[str] | None) -> pd.DataFrame:
+    selected = _normalize_career_filters(careers)
+    if not selected:
+        return dataframe
+    names = dataframe["nombreCarrera"].fillna("").astype(str).str.casefold()
+    mask = pd.Series(False, index=dataframe.index)
+    for career in selected:
+        needle = career.casefold()
+        mask = mask | names.eq(needle) | names.str.contains(re.escape(needle), regex=True, na=False)
+    return dataframe[mask].copy()
+
+
+_NO_APLICA_MARKERS = {"NA", "N/A", "N.A", "N.A.", "NO APLICA", "NO APLICA.", "NO_APLICA"}
+_EMPTY_MARKERS = {"", "NONE", "NULL", "NULO", "SIN DATO", "SIN DATOS"}
+_UNSELECTED_MARKERS = {
+    "0",
+    "0.0",
+    "00",
+    "000",
+    "0000",
+    "SELECCIONE",
+    "-- SELECCIONE --",
+    "- SELECCIONE -",
+    "SELECCIONE ESTADO",
+}
+
+_ZERO_ALLOWED_FIELDS = {
+    ("estudiantes", "numCarnetConadis"),
+    ("estudiantes", "ingresoTotalHogar"),
+}
+
+_STUDENT_CODE_FIELDS = {
+    "tipoDocumentoId",
+    "sexoId",
+    "generoId",
+    "estadocivilId",
+    "etniaId",
+    "pueblonacionalidadId",
+    "tipoSangre",
+    "discapacidad",
+    "tipoDiscapacidad",
+    "paisNacionalidadId",
+    "provinciaNacimientoId",
+    "cantonNacimientoId",
+    "paisResidenciaId",
+    "provinciaResidenciaId",
+    "cantonResidenciaId",
+    "tipoColegioId",
+    "modalidadCarrera",
+    "jornadaCarrera",
+    "tipoMatriculaId",
+    "nivelAcademicoQueCursa",
+    "duracionPeriodoAcademico",
+    "haRepetidoAlMenosUnaMateria",
+    "paraleloId",
+    "haPerdidoLaGratuidad",
+    "recibePensionDiferenciada",
+    "estudianteocupacionId",
+    "ingresosestudianteId",
+    "bonodesarrolloId",
+    "haRealizadoPracticasPreprofesionales",
+    "entornoInstitucionalPracticasProfesionales",
+    "sectorEconomicoPracticaProfesional",
+    "tipoBecaId",
+    "primeraRazonBecaId",
+    "segundaRazonBecaId",
+    "terceraRazonBecaId",
+    "cuartaRazonBecaId",
+    "quintaRazonBecaId",
+    "sextaRazonBecaId",
+    "financiamientoBeca",
+    "participaEnProyectoVinculacionSociedad",
+    "tipoAlcanceProyectoVinculacionId",
+    "nivelFormacionPadre",
+    "nivelFormacionMadre",
+}
+
+_TEACHER_CODE_FIELDS = {
+    "tipoDocumentoId",
+    "sexoId",
+    "generoId",
+    "estadoCivilId",
+    "etniaId",
+    "nacionalidadId",
+    "tipoDomicilio",
+    "provinciaSufragio",
+    "discapacidad",
+    "tipoDiscapacidad",
+    "carnetConadis",
+    "paisNacionalidadId",
+    "nivelFormacion",
+    "relacionLaboralIESId",
+    "ingresoConCursoMeritos",
+    "escalafonDocenteId",
+    "cargoDirectivoId",
+    "tiempoDedicacionId",
+    "docenciaTecnicoSuperior",
+    "docenciaTecnologico",
+    "docenciaTecnologicoUniversitario",
+    "docenciaEspecializacionTecnologica",
+    "docenciaMaestriaTecnologica",
+    "estaEnPeriodoSabatico",
+    "estaCursandoEstudiosId",
+    "paisEstudiosId",
+    "poseeBecaId",
+    "tipoBecaId",
+    "financiamientoBecaId",
+    "pubRevistasCienInIndexadasId",
+}
+
+
+def _cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if re.fullmatch(r"-?\d+\.0+", text):
+        return text.split(".", 1)[0]
+    return text
+
+
+def _cell_code(value: Any) -> str:
+    return re.sub(r"\s+", " ", _cell_text(value)).strip().upper()
+
+
+def _is_zero_text(text: str) -> bool:
+    if not text:
+        return False
+    try:
+        return float(text.replace(",", ".")) == 0
+    except ValueError:
+        return False
+
+
+def _is_no_code(value: Any) -> bool:
+    return _cell_code(value) in {"2", "NO", "N", "FALSE", "FALSO"}
+
+
+def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
+    if target == "estudiantes":
+        if column in {
+            "porcientoBecaCoberturaArancel",
+            "porcientoBecaCoberturaManuntencion",
+            "montoAyudaEconomica",
+            "montoCreditoEducativo",
+        }:
+            return True
+        if _is_no_code(row.get("discapacidad")) and column in {
+            "porcentajeDiscapacidad",
+            "numCarnetConadis",
+            "tipoDiscapacidad",
+        }:
+            return True
+        if _is_no_code(row.get("haRealizadoPracticasPreprofesionales")) and column in {
+            "nroHorasPracticasPreprofesionalesPorPeriodo",
+            "entornoInstitucionalPracticasProfesionales",
+            "sectorEconomicoPracticaProfesional",
+        }:
+            return True
+        if _cell_code(row.get("tipoBecaId")) == "3" and column in {
+            "primeraRazonBecaId",
+            "segundaRazonBecaId",
+            "terceraRazonBecaId",
+            "cuartaRazonBecaId",
+            "quintaRazonBecaId",
+            "sextaRazonBecaId",
+            "montoBeca",
+            "porcientoBecaCoberturaArancel",
+            "porcientoBecaCoberturaManuntencion",
+            "financiamientoBeca",
+        }:
+            return True
+        if _cell_code(row.get("participaEnProyectoVinculacionSociedad")) in {"2", "3", "NO", "N"} and column == "tipoAlcanceProyectoVinculacionId":
+            return True
+
+    if target == "docentes":
+        if _is_no_code(row.get("discapacidad")) and column in {
+            "tipoDiscapacidad",
+            "porcentajeDiscapacidad",
+            "carnetConadis",
+            "numeroCarnetConadis",
+        }:
+            return True
+        if _is_no_code(row.get("estaEnPeriodoSabatico")) and column == "fechaInicioPeriodoSabatico":
+            return True
+        if _cell_code(row.get("estaCursandoEstudiosId")) in {"2", "8", "NO", "N"} and column in {
+            "institucionDondeCursaEstudios",
+            "paisEstudiosId",
+            "tituloAObtener",
+            "poseeBecaId",
+            "tipoBecaId",
+            "montoBeca",
+            "financiamientoBecaId",
+        }:
+            return True
+        if _is_no_code(row.get("poseeBecaId")) and column in {"tipoBecaId", "montoBeca", "financiamientoBecaId"}:
+            return True
+        if _is_no_code(row.get("pubRevistasCienInIndexadasId")) and column == "numPubRevistasCientifIndexadas":
+            return True
+
+    return False
+
+
+def _audit_field_filled(row: pd.Series, column: str, target: str) -> bool:
+    text = _cell_text(row.get(column))
+    code = _cell_code(row.get(column))
+    if code in _EMPTY_MARKERS or "SELECCIONE" in code:
+        return False
+    if _is_zero_text(text) and (target, column) in _ZERO_ALLOWED_FIELDS:
+        return True
+    if code in _NO_APLICA_MARKERS:
+        return _field_allows_no_aplica(row, column, target)
+    if code in {"0001-01-01", "0001-01-01 00:00:00"}:
+        return _field_allows_no_aplica(row, column, target)
+    code_fields = _STUDENT_CODE_FIELDS if target == "estudiantes" else _TEACHER_CODE_FIELDS
+    if column in code_fields and code in _UNSELECTED_MARKERS:
+        return _field_allows_no_aplica(row, column, target)
+    if _is_zero_text(text) and column in code_fields:
+        return _field_allows_no_aplica(row, column, target)
+    return bool(text)
+
+
+def _missing_columns(row: pd.Series, report_columns: list[str], target: str) -> list[str]:
+    return [column for column in report_columns if not _audit_field_filled(row, column, target)]
+
+
+def _count_filled(dataframe: pd.DataFrame, column: str, target: str) -> int:
+    return int(sum(1 for _, row in dataframe.iterrows() if _audit_field_filled(row, column, target)))
+
+
+def _excel_value(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _missing_export_record(
+    row: pd.Series,
+    target: str,
+    report_columns: list[str],
+    missing: list[str],
+) -> dict[str, Any]:
+    filled = len(report_columns) - len(missing)
+    record: dict[str, Any] = {
+        "tipo": target,
+        "codigo": str(row.get("codigo") or "").strip(),
+        "identificacion": str(row.get("numeroIdentificacion") or "").strip(),
+        "nombre": str(row.get("nombreCompleto") or "Sin nombre").strip(),
+        "carrera": str(row.get("nombreCarrera") or "Sin carrera").strip(),
+        "correo": str(row.get("correoElectronico") or row.get("correoPersonal") or "").strip(),
+        "telefono": str(row.get("numeroCelular") or "").strip(),
+        "campos_llenos": filled,
+        "campos_pendientes": len(missing),
+        "campos_totales": len(report_columns),
+        "porcentaje_lleno": round((filled / max(len(report_columns), 1)) * 100, 2),
+        "campos_faltantes": ", ".join(missing),
+    }
+    record.update({column: _excel_value(row.get(column)) for column in report_columns})
+    return record
+
+
+def _dedupe_missing_records(records: list[dict[str, Any]], include_career: bool) -> list[dict[str, Any]]:
+    selected: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in sorted(
+        records,
+        key=lambda item: (
+            -int(item.get("campos_pendientes") or 0),
+            str(item.get("nombre") or ""),
+            str(item.get("carrera") or ""),
+        ),
+    ):
+        identity = str(record.get("identificacion") or record.get("codigo") or "").strip().casefold()
+        if not identity:
+            identity = f"sin-id:{record.get('nombre', '')}".casefold()
+        career_key = str(record.get("carrera") or "").strip().casefold() if include_career else ""
+        selected.setdefault((identity, career_key), record)
+    return sorted(selected.values(), key=lambda item: (str(item.get("carrera") or ""), str(item.get("nombre") or "")))
+
+
+def _unique_sheet_name(writer: pd.ExcelWriter, base: str) -> str:
+    clean = _safe_filename(base).replace("'", "")[:31] or "Hoja"
+    name = clean
+    suffix = 2
+    while name in writer.book.sheetnames:
+        extra = f" {suffix}"
+        name = f"{clean[:31 - len(extra)]}{extra}"
+        suffix += 1
+    return name
+
+
+def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict[str, Any]:
+    selected_careers = _normalize_career_filters(careers)
+    dataframe, report_columns = _load_senescyt_audit_dataframe(target)
+    dataframe = _filter_by_career(dataframe, selected_careers)
+    total_rows = int(len(dataframe))
+    total_cells = max(total_rows * len(report_columns), 1)
+    field_totals = {column: _count_filled(dataframe, column, target) for column in report_columns} if total_rows else {
+        column: 0 for column in report_columns
+    }
+    filled_cells = int(sum(field_totals.values()))
+
+    row_summaries: list[dict[str, Any]] = []
+    missing_records: list[dict[str, Any]] = []
+    missing_field_records: list[dict[str, Any]] = []
+    for _, row in dataframe.iterrows():
+        missing = _missing_columns(row, report_columns, target)
+        filled = len(report_columns) - len(missing)
+        row_summary = {
+            "codigo": str(row.get("codigo") or "").strip(),
+            "identificacion": str(row.get("numeroIdentificacion") or "").strip(),
+            "nombre": str(row.get("nombreCompleto") or "Sin nombre").strip(),
+            "nombre_carrera": str(row.get("nombreCarrera") or "Sin carrera").strip(),
+            "correo": str(row.get("correoElectronico") or row.get("correoPersonal") or "").strip(),
+            "telefono": str(row.get("numeroCelular") or "").strip(),
+            "campos_llenos": filled,
+            "campos_pendientes": len(missing),
+            "campos_totales": len(report_columns),
+            "porcentaje_lleno": round((filled / max(len(report_columns), 1)) * 100, 2),
+            "campos_faltantes": missing,
+        }
+        row_summaries.append(row_summary)
+        if missing:
+            missing_records.append(_missing_export_record(row, target, report_columns, missing))
+            for column in missing:
+                missing_field_records.append({
+                    "tipo": target,
+                    "codigo": row_summary["codigo"],
+                    "identificacion": row_summary["identificacion"],
+                    "nombre": row_summary["nombre"],
+                    "carrera": row_summary["nombre_carrera"],
+                    "correo": row_summary["correo"],
+                    "telefono": row_summary["telefono"],
+                    "campo": column,
+                    "valor_actual": _excel_value(row.get(column)),
+                })
+
+    career_rows: list[dict[str, Any]] = []
+    if total_rows:
+        for career_name, group in dataframe.groupby("nombreCarrera", dropna=False):
+            group_filled = int(sum(_count_filled(group, column, target) for column in report_columns))
+            group_cells = max(len(group) * len(report_columns), 1)
+            career_missing_students = [
+                item for item in row_summaries if item["nombre_carrera"] == str(career_name or "Sin carrera")
+            ]
+            career_rows.append({
+                "nombre_carrera": str(career_name or "Sin carrera"),
+                "total_registros": int(len(group)),
+                "campos_llenos": group_filled,
+                "campos_totales": group_cells,
+                "campos_pendientes": int(group_cells - group_filled),
+                "registros_con_pendientes": sum(1 for item in career_missing_students if item["campos_pendientes"] > 0),
+                "porcentaje_lleno": round((group_filled / group_cells) * 100, 2),
+            })
+
+    missing_fields = sorted(
+        (
+            {
+                "campo": column,
+                "llenos": filled,
+                "pendientes": total_rows - filled,
+                "porcentaje_lleno": round((filled / max(total_rows, 1)) * 100, 2),
+            }
+            for column, filled in field_totals.items()
+        ),
+        key=lambda item: (-item["pendientes"], item["campo"]),
+    )
+    row_summaries.sort(key=lambda item: (-item["campos_pendientes"], item["nombre"]))
+    career_rows.sort(key=lambda item: item["nombre_carrera"])
+    missing_records_by_career = _dedupe_missing_records(missing_records, include_career=True)
+    missing_records_global = _dedupe_missing_records(missing_records, include_career=False)
+
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "target": target,
+        "career_filter": selected_careers,
+        "dataframe": dataframe,
+        "report_columns": report_columns,
+        "summary": {
+            "total_registros": total_rows,
+            "total_carreras": len(career_rows),
+            "total_columnas": len(report_columns),
+            "campos_llenos": filled_cells,
+            "campos_totales": total_cells if total_rows else 0,
+            "campos_pendientes": max((total_rows * len(report_columns)) - filled_cells, 0),
+            "porcentaje_lleno": round((filled_cells / total_cells) * 100, 2) if total_rows else 0,
+            "registros_con_pendientes": sum(1 for item in row_summaries if item["campos_pendientes"] > 0),
+        },
+        "careers": career_rows,
+        "rows": [item for item in row_summaries if item["campos_pendientes"] > 0][:100],
+        "missing_fields": missing_fields,
+        "missing_records": missing_records_by_career,
+        "missing_records_global": missing_records_global,
+        "missing_field_records": missing_field_records,
+    }
+
+
+def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
+    dataframe: pd.DataFrame = report["dataframe"]
+    report_columns: list[str] = report["report_columns"]
+    target = report["target"]
+    missing_export_columns = [
+        "tipo",
+        "codigo",
+        "identificacion",
+        "nombre",
+        "carrera",
+        "correo",
+        "telefono",
+        "campos_llenos",
+        "campos_pendientes",
+        "campos_totales",
+        "porcentaje_lleno",
+        "campos_faltantes",
+        *report_columns,
+    ]
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        summary_rows = [
+            {"Indicador": key, "Valor": value}
+            for key, value in report["summary"].items()
+        ]
+        pd.DataFrame(summary_rows).to_excel(writer, index=False, sheet_name="Resumen")
+        pd.DataFrame(report["careers"]).to_excel(writer, index=False, sheet_name="Carreras")
+        pd.DataFrame(report["missing_fields"]).to_excel(writer, index=False, sheet_name="Campos faltantes")
+
+        if mode == "faltantes":
+            global_rows = report.get("missing_records_global") or []
+            career_rows = report.get("missing_records") or []
+            detail_rows = report.get("missing_field_records") or []
+            pd.DataFrame(global_rows, columns=missing_export_columns).to_excel(
+                writer,
+                index=False,
+                sheet_name="Faltantes global",
+            )
+            pd.DataFrame(career_rows, columns=missing_export_columns).to_excel(
+                writer,
+                index=False,
+                sheet_name="Faltantes carreras",
+            )
+            pd.DataFrame(detail_rows).to_excel(
+                writer,
+                index=False,
+                sheet_name="Detalle campos",
+            )
+            if career_rows:
+                career_dataframe = pd.DataFrame(career_rows, columns=missing_export_columns)
+                for career_name, group in career_dataframe.groupby("carrera", dropna=False):
+                    sheet_name = _unique_sheet_name(writer, f"F {career_name}")
+                    group.to_excel(writer, index=False, sheet_name=sheet_name)
+        else:
+            export_columns = report_columns + ["codigo", "nombreCompleto", "nombreCarrera"]
+            if dataframe.empty:
+                pd.DataFrame(columns=export_columns).to_excel(writer, index=False, sheet_name="Datos")
+            else:
+                sheet_count = 0
+                for career_name, group in dataframe.groupby("nombreCarrera", dropna=False):
+                    sheet_count += 1
+                    sheet_name = _unique_sheet_name(writer, str(career_name or f"Carrera {sheet_count}"))
+                    group[export_columns].to_excel(writer, index=False, sheet_name=sheet_name)
+                if sheet_count == 0:
+                    dataframe[export_columns].to_excel(writer, index=False, sheet_name=target.title())
+
+        for worksheet in writer.book.worksheets:
+            _style_header(worksheet)
+            worksheet.freeze_panes = "A2"
+            for column in worksheet.columns:
+                column_letter = column[0].column_letter
+                width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
+                worksheet.column_dimensions[column_letter].width = max(width, 12)
+
+    output.seek(0)
+    return output.getvalue()
+
+
+@router.get("/catalogo")
+def senescyt_catalog(
+    current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        careers = _career_catalog()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error cargando catalogo SENESCYT: {exc}") from exc
+    return {
+        "careers": careers,
+        "targets": sorted(_REPORT_TARGETS),
+        "export_modes": sorted(_EXPORT_MODES),
+    }
+
+
+@router.get("/datos")
+def senescyt_audit_report(
+    current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
+    target: Annotated[str, Query(pattern="^(estudiantes|docentes)$")] = "estudiantes",
+    carrera: Annotated[list[str] | None, Query()] = None,
+) -> dict[str, Any]:
+    del current_user
+    try:
+        report = _build_senescyt_audit(target, carrera)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generando auditoria SENESCYT: {exc}") from exc
+
+    return {
+        "generated_at": report["generated_at"],
+        "target": report["target"],
+        "career_filter": report["career_filter"],
+        "summary": report["summary"],
+        "careers": report["careers"],
+        "rows": report["rows"],
+        "missing_fields": report["missing_fields"],
+        "report_columns": report["report_columns"],
+    }
+
+
+@router.get("/datos/export")
+def senescyt_audit_export(
+    current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
+    target: Annotated[str, Query(pattern="^(estudiantes|docentes)$")] = "estudiantes",
+    mode: Annotated[str, Query(pattern="^(completo|faltantes)$")] = "completo",
+    carrera: Annotated[list[str] | None, Query()] = None,
+) -> StreamingResponse:
+    del current_user
+    try:
+        report = _build_senescyt_audit(target, carrera)
+        content = _audit_export_workbook(report, mode)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error exportando Excel SENESCYT: {exc}") from exc
+
+    selected_careers = _normalize_career_filters(carrera)
+    suffix = _safe_filename("_".join(selected_careers[:3])) if selected_careers else "todas_las_carreras"
+    if len(selected_careers) > 3:
+        suffix = f"{suffix}_y_{len(selected_careers) - 3}_mas"
+    filename = f"senescyt_{target}_{mode}_{suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

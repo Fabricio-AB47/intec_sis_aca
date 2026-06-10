@@ -144,6 +144,7 @@ function groupIconName(groupKey: string): GroupIconName {
     vinculacion: 'briefcase',
     catalogos: 'catalog',
     reporteria: 'report',
+    'datos-senecyt': 'report',
     integraciones: 'integration',
     'admision-integraciones': 'integration',
     'admision-control': 'matricula',
@@ -326,7 +327,7 @@ export function StudentLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
-    () => new Set(['inicio', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'certificados', 'carnetizacion'])
+    () => new Set(['inicio', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'certificados', 'carnetizacion'])
   )
 
   useEffect(() => {
@@ -497,6 +498,19 @@ export function StudentLayout({
       ],
     },
     {
+      key: 'datos-senecyt',
+      title: 'Datos SENECYT',
+      summary: 'Estudiantes, docentes y faltantes',
+      items: [
+        {
+          label: 'Reportes SENECYT',
+          description: 'Genera Excel por carrera y faltantes para estudiantes y docentes.',
+          page: 'senescyt-estudiantes',
+          action: onOpenSenescytEstudiantes,
+        },
+      ],
+    },
+    {
       key: 'portal-estudiante',
       title: 'Estudiante',
       summary: 'Ficha, matricula, notas, correos y seguimiento',
@@ -549,7 +563,6 @@ export function StudentLayout({
           sectionKey: 'seguimiento',
           action: () => onOpenGestionSisAcademico('seguimiento'),
         },
-        { label: 'Datos estudiante SENESCYT', description: 'Informacion estudiantil para reporte externo.', page: 'senescyt-estudiantes', action: onOpenSenescytEstudiantes },
         { label: 'Actualizar datos estudiante', description: 'Actualizacion de datos personales del estudiante.', page: 'actualizar-datos-estudiante', action: onOpenActualizarDatosEstudiante },
         {
           label: 'Actualizacion estado estudiante',

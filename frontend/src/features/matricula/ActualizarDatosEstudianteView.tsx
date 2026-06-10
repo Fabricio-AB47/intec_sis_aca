@@ -135,7 +135,7 @@ function groupedColumns(columns: string[]): Array<{ title: string; fields: strin
     fields: group.fields.filter((field) => columns.includes(field)),
   })).filter((group) => group.fields.length > 0)
   const rest = columns.filter((field) => !known.has(field))
-  return rest.length ? [...groups, { title: 'Otros campos SENECYT', fields: rest }] : groups
+  return rest.length ? [...groups, { title: 'Otros campos SENESCYT', fields: rest }] : groups
 }
 
 export function ActualizarDatosEstudianteView({ displayName }: Readonly<ActualizarDatosEstudianteViewProps>) {
@@ -227,7 +227,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
           <p className="eyebrow">DATOS_ESTUD</p>
           <h1>Actualizar datos estudiante</h1>
           <p className="report-description">
-            Edita los campos utilizados para el reporte Datos Estudiante SENECYT.
+            Edita los campos utilizados para el reporte Datos SENESCYT de estudiantes.
           </p>
         </div>
 
@@ -235,7 +235,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Actualizacion SENECYT</span>
+              <span>Actualización SENESCYT</span>
             </div>
           </div>
         </div>
@@ -284,7 +284,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
 
         <article className="student-card student-card--wide senescyt-update-form-card">
           <div className="card-head">
-            <h3>{selected ? selected.estudiante : 'Datos SENECYT'}</h3>
+            <h3>{selected ? selected.estudiante : 'Datos SENESCYT'}</h3>
             <span>{detailLoading ? 'Cargando...' : `${formatNumber(changedCount)} cambio(s)`}</span>
           </div>
 
@@ -345,7 +345,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
               </div>
             </>
           ) : (
-            <p className="form-success">Selecciona un estudiante para cargar los campos del reporte SENECYT.</p>
+            <p className="form-success">Selecciona un estudiante para cargar los campos del reporte SENESCYT.</p>
           )}
         </article>
       </section>
