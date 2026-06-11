@@ -8151,12 +8151,53 @@
 
 .senescyt-control-panel {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 240px) minmax(260px, 1.5fr) auto;
-  gap: 14px;
-  align-items: end;
+  gap: 16px;
 }
 
-.senescyt-control-panel label {
+.senescyt-filter-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.senescyt-filter-head h3 {
+  margin: 4px 0 0;
+}
+
+.senescyt-filter-summary {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 170px;
+  border: 1px solid rgba(141, 187, 199, 0.56);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(141, 187, 199, 0.1);
+}
+
+.senescyt-filter-summary span {
+  color: #5f6987;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.senescyt-filter-summary strong {
+  color: var(--rojo);
+  font-size: 13px;
+  text-align: right;
+}
+
+.senescyt-filter-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(128px, auto);
+  gap: 14px;
+  align-items: start;
+}
+
+.senescyt-control-panel label,
+.senescyt-career-toolbar label {
   display: grid;
   gap: 7px;
   color: #26314f;
@@ -8164,20 +8205,33 @@
   font-weight: 800;
 }
 
-.senescyt-control-panel select {
+.senescyt-control-panel select,
+.senescyt-career-toolbar input {
   width: 100%;
   min-height: 46px;
   border: 1px solid rgba(141, 187, 199, 0.72);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 10px 12px;
   background: #ffffff;
   color: #17213f;
   font: inherit;
+  box-sizing: border-box;
+}
+
+.senescyt-career-toolbar input::placeholder {
+  color: #7c859e;
+}
+
+.senescyt-career-toolbar input:focus,
+.senescyt-control-panel select:focus {
+  outline: 3px solid rgba(141, 187, 199, 0.26);
+  border-color: rgba(31, 111, 139, 0.72);
 }
 
 .senescyt-career-picker {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
 }
 
 .senescyt-career-picker__head {
@@ -8187,7 +8241,14 @@
   align-items: center;
 }
 
-.senescyt-career-picker__head label {
+.senescyt-career-picker__head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.senescyt-career-picker__head label,
+.senescyt-career-picker__head span {
   color: #26314f;
   font-size: 12px;
   font-weight: 800;
@@ -8195,43 +8256,75 @@
 
 .senescyt-career-picker__head strong {
   color: #931913;
-  font-size: 12px;
+  font-size: 13px;
+}
+
+.senescyt-career-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(360px, auto);
+  gap: 8px;
+  align-items: end;
 }
 
 .senescyt-career-picker__actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
 .senescyt-career-picker__actions button {
-  min-height: 38px;
+  min-height: 42px;
+  border: 1px solid rgba(141, 187, 199, 0.72);
+  border-radius: 8px;
+  padding: 10px 13px;
+  color: #17213f;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.senescyt-career-picker__actions button:hover,
+.senescyt-career-picker__actions button:focus-visible {
+  border-color: rgba(147, 25, 19, 0.58);
+  color: var(--rojo);
+  background: rgba(147, 25, 19, 0.05);
+}
+
+.senescyt-career-picker__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .senescyt-career-picker__list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 8px;
-  max-height: 180px;
+  max-height: 260px;
   overflow: auto;
   padding: 10px;
   border: 1px solid rgba(141, 187, 199, 0.55);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.86);
+  scrollbar-gutter: stable;
 }
 
 .senescyt-career-check {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  padding: 7px 9px;
+  min-height: 42px;
+  padding: 9px 11px;
   border: 1px solid rgba(199, 198, 198, 0.74);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #ffffff;
   color: #17213f;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .senescyt-career-check input {
@@ -8240,23 +8333,92 @@
   accent-color: #931913;
 }
 
+.senescyt-career-check span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.senescyt-career-check:hover {
+  border-color: rgba(141, 187, 199, 0.9);
+  background: rgba(141, 187, 199, 0.1);
+}
+
+.senescyt-career-check.is-selected {
+  border-color: rgba(147, 25, 19, 0.44);
+  background: rgba(147, 25, 19, 0.06);
+  box-shadow: inset 4px 0 0 rgba(147, 25, 19, 0.72);
+}
+
+.senescyt-selected-careers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.senescyt-selected-careers span {
+  border: 1px solid rgba(147, 25, 19, 0.22);
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: var(--rojo);
+  background: rgba(147, 25, 19, 0.06);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.senescyt-query-button {
+  min-height: 46px;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  color: #ffffff;
+  background: var(--rojo);
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(147, 25, 19, 0.16);
+}
+
+.senescyt-query-button:hover,
+.senescyt-query-button:focus-visible {
+  background: #7f1511;
+}
+
+.senescyt-query-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  box-shadow: none;
+}
+
 .senescyt-download-card {
   margin-top: 14px;
 }
 
 .senescyt-download-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 420px));
   gap: 10px;
 }
 
-.senescyt-download-actions button,
-.senescyt-control-panel button {
+.senescyt-download-actions button {
   min-height: 48px;
+  border: 1px solid rgba(147, 25, 19, 0.28);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: var(--rojo);
+  background: rgba(147, 25, 19, 0.05);
+  font-weight: 900;
+  cursor: pointer;
 }
 
-.senescyt-control-panel .senescyt-career-picker__actions button {
-  min-height: 38px;
+.senescyt-download-actions button:hover,
+.senescyt-download-actions button:focus-visible {
+  border-color: rgba(147, 25, 19, 0.52);
+  background: rgba(147, 25, 19, 0.1);
+}
+
+.senescyt-download-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .senescyt-audit-grid {
@@ -8528,6 +8690,22 @@
   font-size: 13px;
 }
 
+@media (max-width: 1180px) {
+  .senescyt-filter-layout {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+
+  .senescyt-query-button {
+    grid-column: 1 / -1;
+    justify-self: end;
+    min-width: 180px;
+  }
+
+  .senescyt-career-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .matricula-docente-loaded,
   .matricula-docente-main-selector,
@@ -8547,13 +8725,44 @@
     grid-template-columns: 1fr;
   }
 
-  .senescyt-control-panel,
+  .senescyt-filter-head,
+  .senescyt-career-picker__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .senescyt-filter-summary {
+    justify-items: start;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .senescyt-filter-summary strong {
+    text-align: left;
+  }
+
+  .senescyt-filter-layout,
+  .senescyt-career-toolbar,
   .senescyt-download-actions {
     grid-template-columns: 1fr;
   }
 
+  .senescyt-career-picker__actions {
+    justify-content: stretch;
+  }
+
+  .senescyt-career-picker__actions button,
+  .senescyt-query-button {
+    width: 100%;
+  }
+
+  .senescyt-query-button {
+    min-width: 0;
+  }
+
   .senescyt-career-picker__list {
     grid-template-columns: 1fr;
+    max-height: 340px;
   }
 
   .senescyt-audit-grid {

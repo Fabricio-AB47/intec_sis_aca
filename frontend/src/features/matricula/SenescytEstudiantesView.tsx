@@ -54,6 +54,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [downloading, setDownloading] = useState('')
   const [error, setError] = useState('')
+  const [careerSearch, setCareerSearch] = useState('')
 
   const summary = report?.summary
   const rows = report?.rows || []
@@ -68,8 +69,15 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
       return true
     })
   }, [catalog])
+  const filteredCareers = useMemo(() => {
+    const query = careerSearch.trim().toLowerCase()
+    if (!query) return careers
+    return careers.filter((item) => item.nombre_carrera.toLowerCase().includes(query))
+  }, [careers, careerSearch])
   const selectedCareerSet = useMemo(() => new Set(selectedCareers), [selectedCareers])
   const selectedCareerLabel = selectedCareers.length ? `${selectedCareers.length} carrera(s) seleccionada(s)` : 'Todas las carreras'
+  const selectedCareerPreview = selectedCareers.slice(0, 5)
+  const selectedCareerOverflow = Math.max(selectedCareers.length - selectedCareerPreview.length, 0)
 
   async function loadCatalog() {
     setCatalogLoading(true)
@@ -106,6 +114,10 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
 
   function selectAllCareers() {
     setSelectedCareers(careers.map((item) => item.nombre_carrera).filter(Boolean))
+  }
+
+  function selectFilteredCareers() {
+    setSelectedCareers(filteredCareers.map((item) => item.nombre_carrera).filter(Boolean))
   }
 
   function clearCareers() {
@@ -160,56 +172,92 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
       </header>
 
       <section className="student-card senescyt-control-panel">
-        <div>
-          <p className="eyebrow">Filtros</p>
-          <h3>Seleccione el reporte</h3>
-        </div>
-
-        <label>
-          Tipo de informacion
-          <select
-            value={target}
-            onChange={(event) => setTarget(event.target.value as SenescytTarget)}
-          >
-            <option value="estudiantes">Estudiantes</option>
-            <option value="docentes">Docentes</option>
-          </select>
-        </label>
-
-        <div className="senescyt-career-picker">
-          <div className="senescyt-career-picker__head">
-            <label>Carreras</label>
+        <div className="senescyt-filter-head">
+          <div>
+            <p className="eyebrow">Filtros</p>
+            <h3>Seleccione el reporte</h3>
+          </div>
+          <div className="senescyt-filter-summary">
+            <span>{TARGET_LABELS[target]}</span>
             <strong>{selectedCareerLabel}</strong>
           </div>
-          <div className="senescyt-career-picker__actions">
-            <button type="button" onClick={selectAllCareers} disabled={catalogLoading || careers.length === 0}>
-              Seleccionar todas
-            </button>
-            <button type="button" onClick={clearCareers} disabled={selectedCareers.length === 0}>
-              Limpiar
-            </button>
-          </div>
-          <div className="senescyt-career-picker__list" aria-label="Seleccion multiple de carreras">
-            {careers.map((item) => {
-              const name = item.nombre_carrera
-              return (
-                <label key={`${item.codigo_carrera}-${name}`} className="senescyt-career-check">
-                  <input
-                    type="checkbox"
-                    checked={selectedCareerSet.has(name)}
-                    onChange={() => toggleCareer(name)}
-                  />
-                  <span>{name}</span>
-                </label>
-              )
-            })}
-            {careers.length === 0 ? <p>{catalogLoading ? 'Cargando carreras...' : 'No hay carreras disponibles.'}</p> : null}
-          </div>
         </div>
 
-        <button type="button" onClick={() => void loadReport()} disabled={loading}>
-          {loading ? 'Procesando...' : 'Consultar'}
-        </button>
+        <div className="senescyt-filter-layout">
+          <label className="senescyt-target-control">
+            Tipo de informacion
+            <select
+              value={target}
+              onChange={(event) => setTarget(event.target.value as SenescytTarget)}
+            >
+              <option value="estudiantes">Estudiantes</option>
+              <option value="docentes">Docentes</option>
+            </select>
+          </label>
+
+          <div className="senescyt-career-picker">
+            <div className="senescyt-career-picker__head">
+              <div>
+                <label>Carreras</label>
+                <strong>{selectedCareerLabel}</strong>
+              </div>
+              <span>{filteredCareers.length} visible(s)</span>
+            </div>
+
+            <div className="senescyt-career-toolbar">
+              <label>
+                Buscar carrera
+                <input
+                  value={careerSearch}
+                  onChange={(event) => setCareerSearch(event.target.value)}
+                  placeholder="Nombre de carrera"
+                />
+              </label>
+              <div className="senescyt-career-picker__actions">
+                <button type="button" onClick={selectFilteredCareers} disabled={catalogLoading || filteredCareers.length === 0}>
+                  Seleccionar visibles
+                </button>
+                <button type="button" onClick={selectAllCareers} disabled={catalogLoading || careers.length === 0}>
+                  Todas
+                </button>
+                <button type="button" onClick={clearCareers} disabled={selectedCareers.length === 0}>
+                  Limpiar
+                </button>
+              </div>
+            </div>
+
+            <div className="senescyt-career-picker__list" aria-label="Seleccion multiple de carreras">
+              {filteredCareers.map((item) => {
+                const name = item.nombre_carrera
+                const isSelected = selectedCareerSet.has(name)
+                return (
+                  <label key={`${item.codigo_carrera}-${name}`} className={`senescyt-career-check${isSelected ? ' is-selected' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleCareer(name)}
+                    />
+                    <span>{name}</span>
+                  </label>
+                )
+              })}
+              {filteredCareers.length === 0 ? <p>{catalogLoading ? 'Cargando carreras...' : 'No hay carreras disponibles.'}</p> : null}
+            </div>
+
+            {selectedCareers.length ? (
+              <div className="senescyt-selected-careers">
+                {selectedCareerPreview.map((career) => (
+                  <span key={career}>{career}</span>
+                ))}
+                {selectedCareerOverflow ? <span>+{selectedCareerOverflow} mas</span> : null}
+              </div>
+            ) : null}
+          </div>
+
+          <button type="button" className="senescyt-query-button" onClick={() => void loadReport()} disabled={loading}>
+            {loading ? 'Procesando...' : 'Consultar'}
+          </button>
+        </div>
       </section>
 
       {error ? <p className="form-error">{error}</p> : null}
@@ -233,7 +281,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         <article className="student-card student-card--stat">
           <p>Carreras</p>
           <h2>{formatNumber(summary?.total_carreras)}</h2>
-          <small>{selectedCareers.length ? selectedCareers.join(', ') : 'Todas'}</small>
+          <small>{selectedCareers.length ? selectedCareerLabel : 'Todas'}</small>
         </article>
       </section>
 
