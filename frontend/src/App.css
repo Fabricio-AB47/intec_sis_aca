@@ -18592,3 +18592,171 @@ body,
     width: min(390px, calc(100vw - 22px)) !important;
   }
 }
+
+/* Refuerzo opaco final: el menu nunca debe dejar ver el dashboard por debajo. */
+body .app--dashboard .student-shell .student-sidebar {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  opacity: 1 !important;
+}
+
+@media (max-width: 767px) {
+  body .app--dashboard .student-shell .student-sidebar,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.58) !important;
+    border-top: 5px solid #931913 !important;
+    border-radius: 0 20px 20px 0 !important;
+    box-shadow: 0 26px 60px rgba(15, 22, 42, 0.36) !important;
+    color: #17213d !important;
+    filter: none !important;
+    isolation: isolate !important;
+    opacity: 1 !important;
+    overflow: hidden !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar:not(.student-sidebar--open),
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open),
+  body .app--dashboard .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open),
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) {
+    background: linear-gradient(135deg, #931913 0%, #ad241b 58%, #8dbbc7 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.9) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 16px 32px rgba(147, 25, 19, 0.32), 0 0 0 1px rgba(141, 187, 199, 0.28) !important;
+    height: 54px !important;
+    left: 12px !important;
+    max-height: 54px !important;
+    max-width: 142px !important;
+    min-height: 54px !important;
+    padding: 0 !important;
+    pointer-events: auto !important;
+    top: 12px !important;
+    width: 142px !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar::before,
+  body .app--dashboard .student-shell .student-sidebar::after,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar::before,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar::after {
+    background: transparent !important;
+    box-shadow: none !important;
+    content: none !important;
+    display: none !important;
+    opacity: 0 !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar:not(.student-sidebar--open) .student-mobile-menu-button,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile:not(.student-sidebar--open) .student-mobile-menu-button {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    height: 54px !important;
+    min-height: 54px !important;
+    min-width: 142px !important;
+    padding: 0 16px !important;
+    width: 142px !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--open,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile.student-sidebar--open,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--open,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile.student-sidebar--open {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    bottom: 8px !important;
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: auto !important;
+    left: 0 !important;
+    max-height: calc(100dvh - 16px) !important;
+    max-width: min(392px, calc(100vw - 12px)) !important;
+    min-height: 0 !important;
+    padding: 14px !important;
+    position: fixed !important;
+    top: 8px !important;
+    width: min(392px, calc(100vw - 12px)) !important;
+    z-index: 1900 !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--open > *,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile.student-sidebar--open > *,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--open > *,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile.student-sidebar--open > * {
+    position: relative !important;
+    z-index: 1 !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--open .student-sidebar__panel,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-sidebar__panel,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--open .student-sidebar__panel,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-sidebar__panel {
+    background: #ffffff !important;
+    border-radius: 16px !important;
+    display: grid !important;
+    gap: 12px !important;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--open .student-nav,
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-nav,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--open .student-nav,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-nav {
+    background: #ffffff !important;
+    border-radius: 14px !important;
+    padding: 2px 4px 2px 0 !important;
+  }
+
+  body .app--dashboard .student-shell .student-mobile-menu-backdrop,
+  body .app--dashboard .student-shell--mobile-view .student-mobile-menu-backdrop {
+    background: rgba(8, 12, 24, 0.68) !important;
+    z-index: 1850 !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1180px) {
+  body .app--dashboard .student-shell .student-sidebar,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar {
+    background: linear-gradient(180deg, #b32419 0%, #931913 58%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    border-left: 0 !important;
+    box-shadow: 0 18px 38px rgba(147, 25, 19, 0.34) !important;
+    opacity: 1 !important;
+  }
+
+  body .app--dashboard .student-shell .student-sidebar.student-sidebar--open,
+  body .app--dashboard .student-shell--mobile-view .student-sidebar.student-sidebar--open {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.58) !important;
+    border-top: 5px solid #931913 !important;
+    box-shadow: 0 26px 60px rgba(15, 22, 42, 0.35) !important;
+  }
+}
+
+@media (min-width: 1181px) and (hover: hover) and (pointer: fine) {
+  body .app--dashboard .student-shell:not(.student-shell--mobile-view) .student-sidebar {
+    background: linear-gradient(180deg, #b32419 0%, #931913 58%, #74110e 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    border-left: 0 !important;
+    box-shadow: 0 18px 38px rgba(147, 25, 19, 0.34) !important;
+    opacity: 1 !important;
+  }
+
+  body .app--dashboard .student-shell:not(.student-shell--mobile-view) .student-sidebar:hover,
+  body .app--dashboard .student-shell:not(.student-shell--mobile-view) .student-sidebar:focus-within {
+    background: #ffffff !important;
+    border: 1px solid rgba(141, 187, 199, 0.46) !important;
+    border-left: 0 !important;
+  }
+
+  body .app--dashboard .student-shell:not(.student-shell--mobile-view) .student-sidebar::before,
+  body .app--dashboard .student-shell:not(.student-shell--mobile-view) .student-sidebar::after {
+    content: none !important;
+    display: none !important;
+  }
+}
