@@ -157,7 +157,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <p className="eyebrow">SENESCYT</p>
           <h1>Datos SENESCYT</h1>
           <p className="report-description">
-            Reportes regulatorios de estudiantes y docentes por carrera, con control de campos vacíos y descarga en Excel.
+            Reportes regulatorios de estudiantes y docentes activos por carrera, con control de campos vacíos y descarga en Excel.
           </p>
         </div>
 
@@ -266,7 +266,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         <article className="student-card student-card--stat">
           <p>Registros</p>
           <h2>{formatNumber(summary?.total_registros)}</h2>
-          <small>{TARGET_LABELS[target]}</small>
+          <small>{TARGET_LABELS[target]} activos</small>
         </article>
         <article className="student-card student-card--stat">
           <p>Avance de llenado</p>

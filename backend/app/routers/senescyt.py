@@ -1036,8 +1036,14 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
                 ORDER BY TRY_CONVERT(nvarchar(255), c.Nombre_Basica)
             ) AS rn
         FROM dbo.DATOSDOCENTE d
-        LEFT JOIN dbo.USUARIOS u
-            ON LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) = LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
+        INNER JOIN dbo.USUARIOS u
+            ON (
+                TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                OR LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) =
+                   LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
+            )
+           AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA', N'1')
+           AND COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1
         LEFT JOIN dbo.CARRERAXDOCENTE cxd
             ON TRY_CONVERT(varchar(50), cxd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
         LEFT JOIN dbo.CARRERAS c
