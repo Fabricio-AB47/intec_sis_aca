@@ -31,6 +31,10 @@ dist/
 dist-ssr/
 *.local
 
+# IIS local config
+web.config
+**/web.config
+
 # Logs
 logs/
 *.log
