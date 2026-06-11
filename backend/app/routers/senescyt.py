@@ -861,7 +861,7 @@ _TEACHER_REPORT_COLUMNS = [
     "estadoCivilId",
     "etniaId",
     "nacionalidadId",
-    "tipoDomicilio",
+    "numeroDomicilio",
     "provinciaSufragio",
     "numeroCelular",
     "correoElectronico",
@@ -981,6 +981,7 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
             d.estado_civil AS estadoCivilId,
             d.etniaId,
             d.nacionalidad AS nacionalidadId,
+            d.numDomicilio AS numeroDomicilio,
             d.provinciaSufragio,
             COALESCE(NULLIF(TRY_CONVERT(nvarchar(50), d.movil), ''), NULLIF(TRY_CONVERT(nvarchar(50), d.telefono), '')) AS numeroCelular,
             COALESCE(NULLIF(TRY_CONVERT(nvarchar(320), d.correo), ''), NULLIF(TRY_CONVERT(nvarchar(320), u.login), '')) AS correoElectronico,
@@ -1117,8 +1118,18 @@ _UNSELECTED_MARKERS = {
 }
 
 _ZERO_ALLOWED_FIELDS = {
-    ("estudiantes", "numCarnetConadis"),
     ("estudiantes", "ingresoTotalHogar"),
+}
+
+_ZERO_CONTEXT_FIELDS = {
+    ("estudiantes", "porcentajeDiscapacidad"),
+    ("estudiantes", "numCarnetConadis"),
+    ("estudiantes", "montoBeca"),
+    ("docentes", "porcentajeDiscapacidad"),
+    ("docentes", "carnetConadis"),
+    ("docentes", "numeroCarnetConadis"),
+    ("docentes", "montoBeca"),
+    ("docentes", "numPubRevistasCientifIndexadas"),
 }
 
 _STUDENT_CODE_FIELDS = {
@@ -1151,6 +1162,7 @@ _STUDENT_CODE_FIELDS = {
     "ingresosestudianteId",
     "bonodesarrolloId",
     "haRealizadoPracticasPreprofesionales",
+    "nroHorasPracticasPreprofesionalesPorPeriodo",
     "entornoInstitucionalPracticasProfesionales",
     "sectorEconomicoPracticaProfesional",
     "tipoBecaId",
@@ -1160,6 +1172,8 @@ _STUDENT_CODE_FIELDS = {
     "cuartaRazonBecaId",
     "quintaRazonBecaId",
     "sextaRazonBecaId",
+    "porcientoBecaCoberturaArancel",
+    "porcientoBecaCoberturaManuntencion",
     "financiamientoBeca",
     "participaEnProyectoVinculacionSociedad",
     "tipoAlcanceProyectoVinculacionId",
@@ -1174,7 +1188,6 @@ _TEACHER_CODE_FIELDS = {
     "estadoCivilId",
     "etniaId",
     "nacionalidadId",
-    "tipoDomicilio",
     "provinciaSufragio",
     "discapacidad",
     "tipoDiscapacidad",
@@ -1232,14 +1245,77 @@ def _is_no_code(value: Any) -> bool:
     return _cell_code(value) in {"2", "NO", "N", "FALSE", "FALSO"}
 
 
+def _has_selected_code(value: Any) -> bool:
+    code = _cell_code(value)
+    return bool(code) and code not in _EMPTY_MARKERS and code not in _UNSELECTED_MARKERS and "SELECCIONE" not in code
+
+
+def _is_no_beca_student(row: pd.Series) -> bool:
+    return _cell_code(row.get("tipoBecaId")) == "3"
+
+
+def _is_no_study_teacher(row: pd.Series) -> bool:
+    return _cell_code(row.get("estaCursandoEstudiosId")) in {"8", "NA", "N/A", "NO APLICA"}
+
+
+def _is_no_beca_teacher(row: pd.Series) -> bool:
+    return _is_no_study_teacher(row) or _is_no_code(row.get("poseeBecaId"))
+
+
+def _field_has_contextual_no_aplica_code(row: pd.Series, column: str, target: str, code: str) -> bool:
+    if target == "estudiantes":
+        if column == "pueblonacionalidadId" and code == "34":
+            return True
+        if column == "tipoDiscapacidad" and code == "7":
+            return True
+        if column == "entornoInstitucionalPracticasProfesionales" and code == "5":
+            return True
+        if column == "sectorEconomicoPracticaProfesional" and code == "22":
+            return True
+        if column == "financiamientoBeca" and code == "4":
+            return True
+        if column == "tipoAlcanceProyectoVinculacionId" and code == "5":
+            return True
+
+    if target == "docentes":
+        if column == "tipoDiscapacidad" and code == "7":
+            return True
+        if column == "tipoBecaId" and code == "3":
+            return True
+        if column == "financiamientoBecaId" and code == "5":
+            return True
+
+    return False
+
+
+def _field_allows_zero(row: pd.Series, column: str, target: str) -> bool:
+    if (target, column) in _ZERO_ALLOWED_FIELDS:
+        return True
+    if target == "estudiantes":
+        if column in {"porcentajeDiscapacidad", "numCarnetConadis"}:
+            return _is_no_code(row.get("discapacidad"))
+        if column == "montoBeca":
+            return _is_no_beca_student(row)
+    if target == "docentes":
+        if column in {"porcentajeDiscapacidad", "carnetConadis", "numeroCarnetConadis"}:
+            return _is_no_code(row.get("discapacidad"))
+        if column == "montoBeca":
+            return _is_no_beca_teacher(row)
+        if column == "numPubRevistasCientifIndexadas":
+            return _is_no_code(row.get("pubRevistasCienInIndexadasId"))
+    return True
+
+
 def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
     if target == "estudiantes":
-        if column in {
-            "porcientoBecaCoberturaArancel",
-            "porcientoBecaCoberturaManuntencion",
-            "montoAyudaEconomica",
-            "montoCreditoEducativo",
-        }:
+        if column == "pueblonacionalidadId":
+            etnia = row.get("etniaId")
+            return _has_selected_code(etnia) and _cell_code(etnia) != "1"
+        if column == "porcientoBecaCoberturaManuntencion":
+            return True
+        if column == "porcientoBecaCoberturaArancel":
+            return _is_no_beca_student(row)
+        if column in {"montoAyudaEconomica", "montoCreditoEducativo"}:
             return True
         if _is_no_code(row.get("discapacidad")) and column in {
             "porcentajeDiscapacidad",
@@ -1253,7 +1329,7 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
             "sectorEconomicoPracticaProfesional",
         }:
             return True
-        if _cell_code(row.get("tipoBecaId")) == "3" and column in {
+        if _is_no_beca_student(row) and column in {
             "primeraRazonBecaId",
             "segundaRazonBecaId",
             "terceraRazonBecaId",
@@ -1279,7 +1355,7 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
             return True
         if _is_no_code(row.get("estaEnPeriodoSabatico")) and column == "fechaInicioPeriodoSabatico":
             return True
-        if _cell_code(row.get("estaCursandoEstudiosId")) in {"2", "8", "NO", "N"} and column in {
+        if _is_no_study_teacher(row) and column in {
             "institucionDondeCursaEstudios",
             "paisEstudiosId",
             "tituloAObtener",
@@ -1289,7 +1365,7 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
             "financiamientoBecaId",
         }:
             return True
-        if _is_no_code(row.get("poseeBecaId")) and column in {"tipoBecaId", "montoBeca", "financiamientoBecaId"}:
+        if _is_no_beca_teacher(row) and column in {"tipoBecaId", "montoBeca", "financiamientoBecaId"}:
             return True
         if _is_no_code(row.get("pubRevistasCienInIndexadasId")) and column == "numPubRevistasCientifIndexadas":
             return True
@@ -1304,15 +1380,19 @@ def _audit_field_filled(row: pd.Series, column: str, target: str) -> bool:
         return False
     if _is_zero_text(text) and (target, column) in _ZERO_ALLOWED_FIELDS:
         return True
+    if _is_zero_text(text) and (target, column) in _ZERO_CONTEXT_FIELDS:
+        return _field_allows_zero(row, column, target)
     if code in _NO_APLICA_MARKERS:
+        return _field_allows_no_aplica(row, column, target)
+    if _field_has_contextual_no_aplica_code(row, column, target, code):
         return _field_allows_no_aplica(row, column, target)
     if code in {"0001-01-01", "0001-01-01 00:00:00"}:
         return _field_allows_no_aplica(row, column, target)
     code_fields = _STUDENT_CODE_FIELDS if target == "estudiantes" else _TEACHER_CODE_FIELDS
     if column in code_fields and code in _UNSELECTED_MARKERS:
-        return _field_allows_no_aplica(row, column, target)
+        return False
     if _is_zero_text(text) and column in code_fields:
-        return _field_allows_no_aplica(row, column, target)
+        return False
     return bool(text)
 
 

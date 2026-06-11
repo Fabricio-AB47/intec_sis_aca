@@ -221,7 +221,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <small>{TARGET_LABELS[target]}</small>
         </article>
         <article className="student-card student-card--stat">
-          <p>Campos llenos</p>
+          <p>Avance de llenado</p>
           <h2>{formatPercent(summary?.porcentaje_lleno)}</h2>
           <small>{formatNumber(summary?.campos_llenos)} de {formatNumber(summary?.campos_totales)}</small>
         </article>
@@ -290,7 +290,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
                   <th>Correo</th>
                   <th>Teléfono</th>
                   <th>Carrera</th>
-                  <th>% lleno</th>
+                  <th>% avance</th>
                   <th>Pendientes</th>
                   <th>Campos faltantes</th>
                 </tr>
@@ -331,7 +331,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
               <div key={field.campo}>
                 <span>{field.campo}</span>
                 <strong>{formatNumber(field.pendientes)}</strong>
-                <small>{formatPercent(field.porcentaje_lleno)} lleno</small>
+                <small>{formatPercent(field.porcentaje_lleno)} de avance</small>
               </div>
             ))}
             {missingFields.length === 0 ? <p>No hay campos pendientes detectados.</p> : null}
