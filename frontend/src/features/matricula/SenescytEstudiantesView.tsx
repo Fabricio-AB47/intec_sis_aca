@@ -17,6 +17,17 @@ type SenescytEstudiantesViewProps = {
   displayName: string
 }
 
+type DocumentAnalysis = {
+  normalized: string
+  suggestedType: string
+  suggestedLabel: string
+  formatLabel: string
+  validNumber: boolean
+  validType: boolean
+  valid: boolean
+  message: string
+}
+
 const TARGET_LABELS: Record<SenescytTarget, string> = {
   estudiantes: 'Estudiantes',
   docentes: 'Docentes',
@@ -28,6 +39,60 @@ function formatNumber(value?: number): string {
 
 function formatPercent(value?: number): string {
   return `${new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 }).format(value ?? 0)}%`
+}
+
+function normalizeDocumentText(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function inferDocumentType(value: string): string {
+  const normalized = normalizeDocumentText(value)
+  if (/^\d{10}$/.test(normalized)) return '1'
+  if (/^[A-Z]{3}\d{6}$/.test(normalized) || /^[A-Z]\d{8}$/.test(normalized)) return '2'
+  return ''
+}
+
+function normalizeDocumentForType(typeCode: string, value: string): string {
+  const normalized = normalizeDocumentText(value)
+  if (typeCode === '1') return normalized.replace(/\D+/g, '').slice(0, 10)
+  return normalized.slice(0, 9)
+}
+
+function documentFormatLabel(value: string): string {
+  const normalized = normalizeDocumentText(value)
+  if (/^\d{10}$/.test(normalized)) return 'Cedula ecuatoriana: 10 digitos'
+  if (/^[A-Z]{3}\d{6}$/.test(normalized)) return 'Pasaporte Ecuador/Espana/Argentina: 3 letras + 6 numeros'
+  if (/^[A-Z]\d{8}$/.test(normalized)) return 'Pasaporte Estados Unidos: 1 letra + 8 numeros'
+  return ''
+}
+
+function analyzeDocument(typeCode: string, numberValue: string): DocumentAnalysis {
+  const normalized = normalizeDocumentText(numberValue)
+  const inferredType = inferDocumentType(normalized)
+  const suggestedType = inferredType || (['1', '2'].includes(typeCode) ? typeCode : '')
+  const suggestedLabel = suggestedType === '1' ? 'Cedula' : suggestedType === '2' ? 'Pasaporte' : ''
+  const validNumber = Boolean(inferredType)
+  const validType = ['1', '2'].includes(typeCode) && (!inferredType || typeCode === inferredType)
+  let message = 'Ingrese un documento para analizar.'
+  if (normalized) {
+    if (!validNumber) {
+      message = 'No cumple cedula de 10 digitos ni pasaporte de 9 caracteres permitido.'
+    } else if (!validType) {
+      message = `Tipo incorrecto. Debe registrar codigo ${suggestedType} (${suggestedLabel}).`
+    } else {
+      message = `Documento valido. Registre codigo ${suggestedType} (${suggestedLabel}).`
+    }
+  }
+  return {
+    normalized,
+    suggestedType,
+    suggestedLabel,
+    formatLabel: documentFormatLabel(normalized),
+    validNumber,
+    validType,
+    valid: Boolean(validNumber && validType),
+    message,
+  }
 }
 
 function handleError(error: unknown, fallback: string): string {
@@ -55,8 +120,11 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const [downloading, setDownloading] = useState('')
   const [error, setError] = useState('')
   const [careerSearch, setCareerSearch] = useState('')
+  const [documentType, setDocumentType] = useState('1')
+  const [documentNumber, setDocumentNumber] = useState('')
 
   const summary = report?.summary
+  const documentSummary = report?.documentos
   const rows = report?.rows || []
   const missingFields = report?.missing_fields || []
   const careers = useMemo(() => {
@@ -78,6 +146,10 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const selectedCareerLabel = selectedCareers.length ? `${selectedCareers.length} carrera(s) seleccionada(s)` : 'Todas las carreras'
   const selectedCareerPreview = selectedCareers.slice(0, 5)
   const selectedCareerOverflow = Math.max(selectedCareers.length - selectedCareerPreview.length, 0)
+  const documentAnalysis = useMemo(
+    () => analyzeDocument(documentType, documentNumber),
+    [documentNumber, documentType],
+  )
 
   async function loadCatalog() {
     setCatalogLoading(true)
@@ -122,6 +194,18 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
 
   function clearCareers() {
     setSelectedCareers([])
+  }
+
+  function updateDocumentType(nextType: string) {
+    setDocumentType(nextType)
+    setDocumentNumber((current) => normalizeDocumentForType(nextType, current))
+  }
+
+  function updateDocumentNumber(value: string) {
+    const inferredType = inferDocumentType(value)
+    const nextType = inferredType || documentType
+    if (inferredType) setDocumentType(inferredType)
+    setDocumentNumber(normalizeDocumentForType(nextType, value))
   }
 
   async function download(targetToDownload: SenescytTarget, mode: SenescytExportMode) {
@@ -285,6 +369,77 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         </article>
       </section>
 
+      <section className="student-card student-card--wide senescyt-document-card">
+        <div className="card-head">
+          <div>
+            <p className="eyebrow">Documentos</p>
+            <h3>Analisis de tipo de documento</h3>
+            <p className="report-description">
+              El codigo SENESCYT debe ser 1 para cedula y 2 para pasaporte. El numero debe coincidir con el formato seleccionado.
+            </p>
+          </div>
+          <span>{formatPercent(documentSummary?.porcentaje_validos)} validos</span>
+        </div>
+
+        <div className="senescyt-document-layout">
+          <div className="senescyt-document-metrics">
+            <article>
+              <span>Validados</span>
+              <strong>{formatNumber(documentSummary?.documentos_validos)}</strong>
+              <small>de {formatNumber(documentSummary?.total_registros)}</small>
+            </article>
+            <article>
+              <span>Cedulas</span>
+              <strong>{formatNumber(documentSummary?.cedulas_validas)}</strong>
+              <small>codigo 1</small>
+            </article>
+            <article>
+              <span>Pasaportes</span>
+              <strong>{formatNumber(documentSummary?.pasaportes_validos)}</strong>
+              <small>codigo 2</small>
+            </article>
+            <article>
+              <span>Por revisar</span>
+              <strong>{formatNumber(documentSummary?.pendientes)}</strong>
+              <small>{formatNumber(documentSummary?.tipo_incorrecto)} tipo / {formatNumber(documentSummary?.numero_invalido)} numero</small>
+            </article>
+          </div>
+
+          <div className={`senescyt-document-analyzer${documentAnalysis.valid ? ' is-valid' : ' is-warning'}`}>
+            <div className="senescyt-document-analyzer__form">
+              <label>
+                Tipo de documento
+                <select value={documentType} onChange={(event) => updateDocumentType(event.target.value)}>
+                  <option value="1">1 - Cedula</option>
+                  <option value="2">2 - Pasaporte</option>
+                </select>
+              </label>
+              <label>
+                Numero de documento
+                <input
+                  value={documentNumber}
+                  onChange={(event) => updateDocumentNumber(event.target.value)}
+                  placeholder="0102030405 / ABC123456 / A12345678"
+                />
+              </label>
+            </div>
+            <div className="senescyt-document-result">
+              <article>
+                <span>Codigo sugerido</span>
+                <strong>{documentAnalysis.suggestedType || '-'}</strong>
+                <small>{documentAnalysis.suggestedLabel || 'Sin sugerencia'}</small>
+              </article>
+              <article>
+                <span>Formato detectado</span>
+                <strong>{documentAnalysis.formatLabel || 'No reconocido'}</strong>
+                <small>{documentAnalysis.normalized || 'Sin numero'}</small>
+              </article>
+            </div>
+            <p>{documentAnalysis.message}</p>
+          </div>
+        </div>
+      </section>
+
       <section className="student-card student-card--wide senescyt-download-card">
         <div className="card-head">
           <div>
@@ -348,7 +503,10 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
                   <tr key={`${row.identificacion}-${row.codigo}-${row.nombre_carrera}`}>
                     <td>
                       <strong>{row.identificacion || '-'}</strong>
-                      <small>Codigo {row.codigo || '-'}</small>
+                      <small>
+                        Codigo {row.codigo || '-'} - {row.documento?.tipo_actual_label || 'Sin tipo'}
+                        {row.documento?.valido === false ? ' - revisar documento' : ''}
+                      </small>
                     </td>
                     <td>{row.nombre || '-'}</td>
                     <td>{row.correo || '-'}</td>

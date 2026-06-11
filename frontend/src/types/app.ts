@@ -2398,6 +2398,39 @@ export type SenescytAuditSummary = {
   registros_con_pendientes?: number
 }
 
+export type SenescytDocumentRule = {
+  codigo: number
+  tipo: string
+  formato: string
+}
+
+export type SenescytDocumentSummary = {
+  total_registros?: number
+  documentos_validos?: number
+  cedulas_validas?: number
+  pasaportes_validos?: number
+  tipo_incorrecto?: number
+  numero_invalido?: number
+  sin_tipo?: number
+  sin_numero?: number
+  pendientes?: number
+  porcentaje_validos?: number
+  reglas?: SenescytDocumentRule[]
+}
+
+export type SenescytDocumentAnalysis = {
+  tipo_actual?: string
+  tipo_actual_label?: string
+  numero?: string
+  tipo_sugerido?: string
+  tipo_sugerido_label?: string
+  formato?: string
+  valido?: boolean
+  numero_valido?: boolean
+  tipo_valido?: boolean
+  observaciones?: string[]
+}
+
 export type SenescytAuditCareer = {
   nombre_carrera: string
   total_registros: number
@@ -2411,6 +2444,7 @@ export type SenescytAuditCareer = {
 export type SenescytAuditRow = {
   codigo?: string
   identificacion?: string
+  documento?: SenescytDocumentAnalysis
   nombre?: string
   nombre_carrera?: string
   correo?: string
@@ -2434,6 +2468,7 @@ export type SenescytAuditResponse = {
   target?: SenescytTarget
   career_filter?: string[] | null
   summary?: SenescytAuditSummary
+  documentos?: SenescytDocumentSummary
   careers?: SenescytAuditCareer[]
   rows?: SenescytAuditRow[]
   missing_fields?: SenescytAuditField[]

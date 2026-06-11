@@ -59,6 +59,16 @@ def fields(*items: tuple[str, str, str] | tuple[str, str] | FieldMeta) -> list[F
     return result
 
 
+DOCUMENT_TYPE_OPTIONS = [
+    {"value": "1", "label": "1 - Cedula"},
+    {"value": "2", "label": "2 - Pasaporte"},
+]
+
+
+def document_type_field(name: str, label: str = "Tipo documento", required: bool = False) -> FieldMeta:
+    return field(name, label, "number", required=required).model_copy(update={"options": DOCUMENT_TYPE_OPTIONS})
+
+
 STUDENT_IDENTITY_FIELDS = {"estudiante_nombre", "estudiante_cedula"}
 STUDENT_CODE_FIELD_BY_SECTION = {
     "matricula_materias": "codigo_estud",
@@ -84,6 +94,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["Cedula_Est"],
         "list_fields": fields(
             ("codigo_estud", "Codigo", "number"),
+            document_type_field("tipodocumento"),
             ("Cedula_Est", "Cedula"),
             ("Apellidos_nombre", "Estudiante"),
             ("Estado", "Estado"),
@@ -93,6 +104,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "detail_fields": fields(
             ("codigo_estud", "Codigo", "number"),
+            document_type_field("tipodocumento"),
             ("Cedula_Est", "Cedula"),
             ("Apellidos_nombre", "Estudiante"),
             ("ciudad", "Ciudad"),
@@ -113,6 +125,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("discapacidad", "Discapacidad"),
         ),
         "editable_fields": fields(
+            document_type_field("tipodocumento"),
+            ("Cedula_Est", "Cedula / pasaporte"),
             ("Apellidos_nombre", "Estudiante"),
             ("ciudad", "Ciudad"),
             ("codprov", "Provincia", "number"),
@@ -180,6 +194,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["cedula_doc"],
         "list_fields": fields(
             ("codigo_doc", "Codigo", "number"),
+            document_type_field("tipoDocumentoId"),
             ("cedula_doc", "Cedula"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
@@ -188,6 +203,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "detail_fields": fields(
             ("codigo_doc", "Codigo", "number"),
+            document_type_field("tipoDocumentoId"),
             ("cedula_doc", "Cedula"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
@@ -209,6 +225,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("tiempoDedicacionId", "Tiempo dedicacion"),
         ),
         "editable_fields": fields(
+            document_type_field("tipoDocumentoId"),
+            ("cedula_doc", "Cedula / pasaporte"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
             ("correop", "Correo personal"),
@@ -230,6 +248,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "create_fields": fields(
             field("codigo_doc", "Codigo", "number", required=True),
+            document_type_field("tipoDocumentoId", required=True),
             field("cedula_doc", "Cedula", required=True),
             field("apellidos_nombre", "Docente", required=True),
             ("login", "Login usuario"),
@@ -3331,6 +3350,7 @@ def _create_docente_with_user(payload: SavePayload) -> dict[str, Any]:
 
     docente_columns = [
         "codigo_doc",
+        "tipoDocumentoId",
         "cedula_doc",
         "apellidos_nombre",
         "correo",

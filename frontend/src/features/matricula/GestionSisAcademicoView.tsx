@@ -17,6 +17,22 @@ type GestionSisAcademicoViewProps = {
 type FormValue = string | number | boolean | null | undefined
 type OptionItem = { value: string; label: string }
 type InlineEstadoValues = Record<string, { Estado?: string; Informacion?: string }>
+type DocumentFieldConfig = {
+  typeField: string
+  numberField: string
+  typeLabel: string
+  numberLabel: string
+}
+type LocalDocumentAnalysis = {
+  normalized: string
+  suggestedType: string
+  suggestedLabel: string
+  formatLabel: string
+  validNumber: boolean
+  validType: boolean
+  valid: boolean
+  message: string
+}
 type HomoMateriaGroup = {
   key: string
   name: string
@@ -133,6 +149,81 @@ function inputValue(value: FormValue): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   return String(value)
+}
+
+function normalizeDocumentText(value: FormValue): string {
+  return inputValue(value).toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function inferDocumentType(value: FormValue): string {
+  const normalized = normalizeDocumentText(value)
+  if (/^\d{10}$/.test(normalized)) return '1'
+  if (/^[A-Z]{3}\d{6}$/.test(normalized) || /^[A-Z]\d{8}$/.test(normalized)) return '2'
+  return ''
+}
+
+function normalizeDocumentForType(typeCode: string, value: FormValue): string {
+  const normalized = normalizeDocumentText(value)
+  if (typeCode === '1') return normalized.replace(/\D+/g, '').slice(0, 10)
+  return normalized.slice(0, 9)
+}
+
+function documentFormatLabel(value: FormValue): string {
+  const normalized = normalizeDocumentText(value)
+  if (/^\d{10}$/.test(normalized)) return 'Cedula ecuatoriana: 10 digitos'
+  if (/^[A-Z]{3}\d{6}$/.test(normalized)) return 'Pasaporte Ecuador/Espana/Argentina: 3 letras + 6 numeros'
+  if (/^[A-Z]\d{8}$/.test(normalized)) return 'Pasaporte Estados Unidos: 1 letra + 8 numeros'
+  return ''
+}
+
+function analyzeLocalDocument(typeValue: FormValue, numberValue: FormValue): LocalDocumentAnalysis {
+  const typeCode = inputValue(typeValue).trim()
+  const normalized = normalizeDocumentText(numberValue)
+  const suggestedType = inferDocumentType(normalized) || (['1', '2'].includes(typeCode) ? typeCode : '')
+  const validNumber = Boolean(inferDocumentType(normalized))
+  const validType = ['1', '2'].includes(typeCode) && (!inferDocumentType(normalized) || typeCode === inferDocumentType(normalized))
+  const suggestedLabel = suggestedType === '1' ? 'Cedula' : suggestedType === '2' ? 'Pasaporte' : ''
+  let message = 'Ingrese un documento para analizar.'
+  if (normalized) {
+    if (!validNumber) {
+      message = 'No cumple cedula de 10 digitos ni pasaporte de 9 caracteres permitido.'
+    } else if (!validType) {
+      message = `Tipo incorrecto. Debe registrar codigo ${suggestedType} (${suggestedLabel}).`
+    } else {
+      message = `Documento valido. Registre codigo ${suggestedType} (${suggestedLabel}).`
+    }
+  }
+  return {
+    normalized,
+    suggestedType,
+    suggestedLabel,
+    formatLabel: documentFormatLabel(normalized),
+    validNumber,
+    validType,
+    valid: Boolean(validNumber && validType),
+    message,
+  }
+}
+
+function documentFieldConfigForSection(sectionKey: string, fields: SisAcademicoField[]): DocumentFieldConfig | null {
+  const fieldNames = new Set(fields.map((field) => field.name))
+  if (sectionKey === 'estudiantes' && fieldNames.has('tipodocumento') && fieldNames.has('Cedula_Est')) {
+    return {
+      typeField: 'tipodocumento',
+      numberField: 'Cedula_Est',
+      typeLabel: 'Tipo documento',
+      numberLabel: 'Cedula / pasaporte',
+    }
+  }
+  if (sectionKey === 'docentes' && fieldNames.has('tipoDocumentoId') && fieldNames.has('cedula_doc')) {
+    return {
+      typeField: 'tipoDocumentoId',
+      numberField: 'cedula_doc',
+      typeLabel: 'Tipo documento',
+      numberLabel: 'Cedula / pasaporte',
+    }
+  }
+  return null
 }
 
 function recordKey(row: SisAcademicoRow): string {
@@ -264,6 +355,29 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const editableFields = selectedSection?.editable_fields || []
   const createFields = selectedSection?.create_fields || []
   const currentFields = mode === 'create' ? createFields : editableFields
+  const documentFieldConfig = useMemo(
+    () => documentFieldConfigForSection(selectedSectionKey, currentFields),
+    [currentFields, selectedSectionKey],
+  )
+  const visibleCurrentFields = useMemo(
+    () =>
+      documentFieldConfig
+        ? currentFields.filter(
+            (field) => ![documentFieldConfig.typeField, documentFieldConfig.numberField].includes(field.name),
+          )
+        : currentFields,
+    [currentFields, documentFieldConfig],
+  )
+  const documentAnalysis = useMemo(
+    () =>
+      documentFieldConfig
+        ? analyzeLocalDocument(
+            formValues[documentFieldConfig.typeField],
+            formValues[documentFieldConfig.numberField],
+          )
+        : null,
+    [documentFieldConfig, formValues],
+  )
   const canCreate = createFields.length > 0
   const isEstadoInlineSection = selectedSectionKey === 'actualizacion_est' || selectedSectionKey === 'actualizacion_estudiantes'
   const isDocenteEstadoSection = selectedSectionKey === 'actualizacion_est'
@@ -471,6 +585,29 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setFormValues(emptyValues(createFields))
     setMessage('')
     setError('')
+  }
+
+  function updateDocumentType(typeCode: string) {
+    if (!documentFieldConfig) return
+    setFormValues((current) => ({
+      ...current,
+      [documentFieldConfig.typeField]: typeCode ? Number(typeCode) : '',
+      [documentFieldConfig.numberField]: normalizeDocumentForType(typeCode, current[documentFieldConfig.numberField]),
+    }))
+  }
+
+  function updateDocumentNumber(value: string) {
+    if (!documentFieldConfig) return
+    setFormValues((current) => {
+      const currentType = inputValue(current[documentFieldConfig.typeField]).trim()
+      const inferredType = inferDocumentType(value)
+      const nextType = inferredType || currentType
+      return {
+        ...current,
+        [documentFieldConfig.typeField]: nextType ? Number(nextType) : current[documentFieldConfig.typeField],
+        [documentFieldConfig.numberField]: normalizeDocumentForType(nextType, value),
+      }
+    })
   }
 
   function openSection(sectionKey: string, processKey?: string) {
@@ -1144,8 +1281,52 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                   <span>Completa los campos requeridos y guarda los cambios para actualizar la tabla.</span>
                 </div>
 
+                {documentFieldConfig && documentAnalysis ? (
+                  <section className={`gestion-document-analyzer${documentAnalysis.valid ? ' is-valid' : ' is-warning'}`}>
+                    <div className="gestion-document-analyzer__head">
+                      <div>
+                        <strong>Analisis de documento</strong>
+                        <span>Codigo 1 para cedula de 10 digitos. Codigo 2 para pasaporte de 9 caracteres.</span>
+                      </div>
+                      <em>{documentAnalysis.valid ? 'Valido' : 'Revisar'}</em>
+                    </div>
+                    <div className="gestion-document-analyzer__form">
+                      <label>
+                        <span>{documentFieldConfig.typeLabel}</span>
+                        <select
+                          value={inputValue(formValues[documentFieldConfig.typeField])}
+                          onChange={(event) => updateDocumentType(event.target.value)}
+                        >
+                          <option value="">Seleccione</option>
+                          <option value="1">1 - Cedula</option>
+                          <option value="2">2 - Pasaporte</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>{documentFieldConfig.numberLabel}</span>
+                        <input
+                          value={inputValue(formValues[documentFieldConfig.numberField])}
+                          onChange={(event) => updateDocumentNumber(event.target.value)}
+                          placeholder="0102030405 / ABC123456 / A12345678"
+                        />
+                      </label>
+                      <article>
+                        <span>Codigo sugerido</span>
+                        <strong>{documentAnalysis.suggestedType || '-'}</strong>
+                        <small>{documentAnalysis.suggestedLabel || 'Sin sugerencia'}</small>
+                      </article>
+                      <article>
+                        <span>Formato detectado</span>
+                        <strong>{documentAnalysis.formatLabel || 'No reconocido'}</strong>
+                        <small>{documentAnalysis.normalized || 'Sin numero'}</small>
+                      </article>
+                    </div>
+                    <p>{documentAnalysis.message}</p>
+                  </section>
+                ) : null}
+
                 <div className="matricula-acad-form gestion-sis-edit-form">
-                  {currentFields.map((field) => {
+                  {visibleCurrentFields.map((field) => {
                     const options = fieldOptions(field, formValues[field.name])
                     return (
                       <label key={field.name} className={field.type === 'textarea' ? 'gestion-sis-field--wide' : ''}>

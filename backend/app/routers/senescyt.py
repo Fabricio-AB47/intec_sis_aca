@@ -1219,6 +1219,17 @@ _TEACHER_CODE_FIELDS = {
     "pubRevistasCienInIndexadasId",
 }
 
+_DOCUMENT_TYPE_CEDULA = "1"
+_DOCUMENT_TYPE_PASSPORT = "2"
+_DOCUMENT_TYPE_LABELS = {
+    _DOCUMENT_TYPE_CEDULA: "Cedula",
+    _DOCUMENT_TYPE_PASSPORT: "Pasaporte",
+}
+_PASSPORT_PATTERNS = (
+    ("Ecuador / Espana / Argentina", re.compile(r"^[A-Z]{3}\d{6}$")),
+    ("Estados Unidos", re.compile(r"^[A-Z]\d{8}$")),
+)
+
 
 def _cell_text(value: Any) -> str:
     if value is None:
@@ -1254,6 +1265,71 @@ def _is_no_code(value: Any) -> bool:
 def _has_selected_code(value: Any) -> bool:
     code = _cell_code(value)
     return bool(code) and code not in _EMPTY_MARKERS and code not in _UNSELECTED_MARKERS and "SELECCIONE" not in code
+
+
+def _normalize_document_number(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", _cell_text(value).upper())
+
+
+def _infer_document_type(number: Any) -> str:
+    normalized = _normalize_document_number(number)
+    if re.fullmatch(r"\d{10}", normalized):
+        return _DOCUMENT_TYPE_CEDULA
+    if any(pattern.fullmatch(normalized) for _, pattern in _PASSPORT_PATTERNS):
+        return _DOCUMENT_TYPE_PASSPORT
+    return ""
+
+
+def _document_country_format(number: Any) -> str:
+    normalized = _normalize_document_number(number)
+    for label, pattern in _PASSPORT_PATTERNS:
+        if pattern.fullmatch(normalized):
+            return label
+    return ""
+
+
+def _document_analysis(row: pd.Series) -> dict[str, Any]:
+    type_code = _cell_code(row.get("tipoDocumentoId"))
+    number = _normalize_document_number(row.get("numeroIdentificacion"))
+    inferred_code = _infer_document_type(number)
+    expected_code = inferred_code or (type_code if type_code in _DOCUMENT_TYPE_LABELS else "")
+    is_type_selected = type_code in _DOCUMENT_TYPE_LABELS
+    is_number_valid = bool(inferred_code)
+    format_label = ""
+
+    if inferred_code == _DOCUMENT_TYPE_CEDULA:
+        format_label = "Cedula ecuatoriana: 10 digitos"
+    elif inferred_code == _DOCUMENT_TYPE_PASSPORT:
+        format_label = _document_country_format(number)
+
+    is_consistent = bool(is_type_selected and is_number_valid and type_code == inferred_code)
+    suggested_code = expected_code if expected_code in _DOCUMENT_TYPE_LABELS else ""
+    issues: list[str] = []
+    if not is_type_selected:
+        issues.append("tipoDocumentoId debe ser 1 para cedula o 2 para pasaporte")
+    if not number:
+        issues.append("numeroIdentificacion esta vacio")
+    elif not is_number_valid:
+        issues.append(
+            "numeroIdentificacion no cumple 10 digitos de cedula ni formato de pasaporte permitido"
+        )
+    if is_type_selected and inferred_code and type_code != inferred_code:
+        issues.append(
+            f"tipoDocumentoId registrado {type_code} no coincide con el documento; sugerido {inferred_code}"
+        )
+
+    return {
+        "tipo_actual": type_code,
+        "tipo_actual_label": _DOCUMENT_TYPE_LABELS.get(type_code, "Sin seleccionar"),
+        "numero": number,
+        "tipo_sugerido": suggested_code,
+        "tipo_sugerido_label": _DOCUMENT_TYPE_LABELS.get(suggested_code, ""),
+        "formato": format_label,
+        "valido": is_consistent,
+        "numero_valido": is_number_valid,
+        "tipo_valido": is_type_selected,
+        "observaciones": issues,
+    }
 
 
 def _is_no_beca_student(row: pd.Series) -> bool:
@@ -1380,6 +1456,11 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
 
 
 def _audit_field_filled(row: pd.Series, column: str, target: str) -> bool:
+    if column == "tipoDocumentoId":
+        analysis = _document_analysis(row)
+        return bool(analysis["tipo_valido"] and analysis["tipo_actual"] == analysis["tipo_sugerido"])
+    if column == "numeroIdentificacion":
+        return bool(_document_analysis(row)["numero_valido"])
     text = _cell_text(row.get(column))
     code = _cell_code(row.get(column))
     if code in _EMPTY_MARKERS or "SELECCIONE" in code:
@@ -1428,10 +1509,15 @@ def _missing_export_record(
     missing: list[str],
 ) -> dict[str, Any]:
     filled = len(report_columns) - len(missing)
+    document = _document_analysis(row)
     record: dict[str, Any] = {
         "tipo": target,
         "codigo": str(row.get("codigo") or "").strip(),
         "identificacion": str(row.get("numeroIdentificacion") or "").strip(),
+        "tipo_documento_actual": document.get("tipo_actual"),
+        "tipo_documento_sugerido": document.get("tipo_sugerido"),
+        "documento_formato": document.get("formato"),
+        "documento_observaciones": "; ".join(document.get("observaciones") or []),
         "nombre": str(row.get("nombreCompleto") or "Sin nombre").strip(),
         "carrera": str(row.get("nombreCarrera") or "Sin carrera").strip(),
         "correo": str(row.get("correoElectronico") or row.get("correoPersonal") or "").strip(),
@@ -1475,6 +1561,61 @@ def _unique_sheet_name(writer: pd.ExcelWriter, base: str) -> str:
     return name
 
 
+def _build_document_summary(dataframe: pd.DataFrame) -> dict[str, Any]:
+    totals = {
+        "total_registros": int(len(dataframe)),
+        "documentos_validos": 0,
+        "cedulas_validas": 0,
+        "pasaportes_validos": 0,
+        "tipo_incorrecto": 0,
+        "numero_invalido": 0,
+        "sin_tipo": 0,
+        "sin_numero": 0,
+        "pendientes": 0,
+        "porcentaje_validos": 0,
+        "reglas": [
+            {
+                "codigo": 1,
+                "tipo": "Cedula",
+                "formato": "10 digitos numericos",
+            },
+            {
+                "codigo": 2,
+                "tipo": "Pasaporte",
+                "formato": "Ecuador/Espana/Argentina: 3 letras + 6 numeros; Estados Unidos: 1 letra + 8 numeros",
+            },
+        ],
+    }
+    if dataframe.empty:
+        return totals
+
+    for _, row in dataframe.iterrows():
+        analysis = _document_analysis(row)
+        suggested = analysis["tipo_sugerido"]
+        if analysis["valido"]:
+            totals["documentos_validos"] += 1
+            if suggested == _DOCUMENT_TYPE_CEDULA:
+                totals["cedulas_validas"] += 1
+            elif suggested == _DOCUMENT_TYPE_PASSPORT:
+                totals["pasaportes_validos"] += 1
+        else:
+            totals["pendientes"] += 1
+        if not analysis["tipo_valido"]:
+            totals["sin_tipo"] += 1
+        elif analysis["tipo_sugerido"] and analysis["tipo_actual"] != analysis["tipo_sugerido"]:
+            totals["tipo_incorrecto"] += 1
+        if not analysis["numero"]:
+            totals["sin_numero"] += 1
+        elif not analysis["numero_valido"]:
+            totals["numero_invalido"] += 1
+
+    totals["porcentaje_validos"] = round(
+        (totals["documentos_validos"] / max(totals["total_registros"], 1)) * 100,
+        2,
+    )
+    return totals
+
+
 def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict[str, Any]:
     selected_careers = _normalize_career_filters(careers)
     dataframe, report_columns = _load_senescyt_audit_dataframe(target)
@@ -1492,9 +1633,11 @@ def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict
     for _, row in dataframe.iterrows():
         missing = _missing_columns(row, report_columns, target)
         filled = len(report_columns) - len(missing)
+        document_analysis = _document_analysis(row)
         row_summary = {
             "codigo": str(row.get("codigo") or "").strip(),
             "identificacion": str(row.get("numeroIdentificacion") or "").strip(),
+            "documento": document_analysis,
             "nombre": str(row.get("nombreCompleto") or "Sin nombre").strip(),
             "nombre_carrera": str(row.get("nombreCarrera") or "Sin carrera").strip(),
             "correo": str(row.get("correoElectronico") or row.get("correoPersonal") or "").strip(),
@@ -1555,6 +1698,7 @@ def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict
     career_rows.sort(key=lambda item: item["nombre_carrera"])
     missing_records_by_career = _dedupe_missing_records(missing_records, include_career=True)
     missing_records_global = _dedupe_missing_records(missing_records, include_career=False)
+    document_summary = _build_document_summary(dataframe)
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -1572,6 +1716,7 @@ def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict
             "porcentaje_lleno": round((filled_cells / total_cells) * 100, 2) if total_rows else 0,
             "registros_con_pendientes": sum(1 for item in row_summaries if item["campos_pendientes"] > 0),
         },
+        "documentos": document_summary,
         "careers": career_rows,
         "rows": [item for item in row_summaries if item["campos_pendientes"] > 0][:100],
         "missing_fields": missing_fields,
@@ -1589,6 +1734,10 @@ def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
         "tipo",
         "codigo",
         "identificacion",
+        "tipo_documento_actual",
+        "tipo_documento_sugerido",
+        "documento_formato",
+        "documento_observaciones",
         "nombre",
         "carrera",
         "correo",
@@ -1610,6 +1759,21 @@ def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
         pd.DataFrame(summary_rows).to_excel(writer, index=False, sheet_name="Resumen")
         pd.DataFrame(report["careers"]).to_excel(writer, index=False, sheet_name="Carreras")
         pd.DataFrame(report["missing_fields"]).to_excel(writer, index=False, sheet_name="Campos faltantes")
+        document_summary = report.get("documentos") or {}
+        document_rows = [
+            {"Indicador": key, "Valor": value}
+            for key, value in document_summary.items()
+            if key != "reglas"
+        ]
+        document_rules = [
+            {"Indicador": f"regla_{item.get('codigo')}", "Valor": f"{item.get('tipo')}: {item.get('formato')}"}
+            for item in document_summary.get("reglas") or []
+        ]
+        pd.DataFrame(document_rows + [{}] + document_rules).to_excel(
+            writer,
+            index=False,
+            sheet_name="Analisis documentos",
+        )
 
         if mode == "faltantes":
             global_rows = report.get("missing_records_global") or []

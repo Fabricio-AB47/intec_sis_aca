@@ -8389,6 +8389,167 @@
   box-shadow: none;
 }
 
+.senescyt-document-card {
+  margin-top: 14px;
+}
+
+.senescyt-document-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(340px, 520px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.senescyt-document-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.senescyt-document-metrics article,
+.senescyt-document-result article,
+.gestion-document-analyzer__form article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid rgba(141, 187, 199, 0.38);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.senescyt-document-metrics span,
+.senescyt-document-result span,
+.gestion-document-analyzer__form article span {
+  color: #5c6680;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.senescyt-document-metrics strong,
+.senescyt-document-result strong,
+.gestion-document-analyzer__form article strong {
+  color: #17213f;
+  font-size: 22px;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.senescyt-document-metrics small,
+.senescyt-document-result small,
+.gestion-document-analyzer__form article small {
+  color: #931913;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.senescyt-document-analyzer,
+.gestion-document-analyzer {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(141, 187, 199, 0.42);
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbfc;
+}
+
+.gestion-document-analyzer {
+  margin-bottom: 14px;
+}
+
+.senescyt-document-analyzer.is-valid,
+.gestion-document-analyzer.is-valid {
+  border-color: rgba(42, 130, 87, 0.34);
+  background: rgba(42, 130, 87, 0.06);
+}
+
+.senescyt-document-analyzer.is-warning,
+.gestion-document-analyzer.is-warning {
+  border-color: rgba(147, 25, 19, 0.28);
+  background: rgba(147, 25, 19, 0.05);
+}
+
+.gestion-document-analyzer__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.gestion-document-analyzer__head div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gestion-document-analyzer__head strong {
+  color: #17213f;
+  font-size: 15px;
+}
+
+.gestion-document-analyzer__head span {
+  color: #5c6680;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.gestion-document-analyzer__head em {
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #ffffff;
+  color: #931913;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.senescyt-document-analyzer__form,
+.gestion-document-analyzer__form,
+.senescyt-document-result {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.senescyt-document-analyzer label,
+.gestion-document-analyzer label {
+  display: grid;
+  gap: 7px;
+  color: #26314f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.senescyt-document-analyzer select,
+.senescyt-document-analyzer input,
+.gestion-document-analyzer select,
+.gestion-document-analyzer input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(141, 187, 199, 0.66);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #17213f;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.senescyt-document-analyzer p,
+.gestion-document-analyzer p {
+  margin: 0;
+  color: #17213f;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .senescyt-download-card {
   margin-top: 14px;
 }
@@ -18716,6 +18877,21 @@ body .app--dashboard .student-shell .student-sidebar {
   body .app--dashboard .student-shell--mobile-view .student-mobile-menu-backdrop {
     background: rgba(8, 12, 24, 0.68) !important;
     z-index: 1850 !important;
+  }
+
+  .senescyt-document-layout,
+  .senescyt-document-analyzer__form,
+  .gestion-document-analyzer__form,
+  .senescyt-document-result {
+    grid-template-columns: 1fr !important;
+  }
+
+  .senescyt-document-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .gestion-document-analyzer__head {
+    display: grid !important;
   }
 }
 
