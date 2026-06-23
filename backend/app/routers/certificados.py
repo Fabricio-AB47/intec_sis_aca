@@ -14,6 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
@@ -947,6 +948,7 @@ _MATRICULA_EXCEL_COLUMNS = [
     "nombres_apellidos",
     "numero_cedula",
     "carrera",
+    "semestre",
 ]
 
 
@@ -971,7 +973,12 @@ def _matricula_excel_costs(carrera: str, row: dict[str, Any]) -> tuple[float, fl
     return matricula, arancel
 
 
-def _build_matricula_excel_template(periodos: list[dict[str, Any]]) -> BytesIO:
+def _is_excluded_matricula_excel_career(value: Any) -> bool:
+    key = _text_key(value)
+    return "EDUCACION CONTINUA" in key or key in {"INGLES", "IDIOMAS INGLES"} or " INGLES " in f" {key} "
+
+
+def _build_matricula_excel_template(periodos: list[dict[str, Any]], carreras: list[dict[str, Any]] | None = None) -> BytesIO:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Matriculas"
@@ -980,10 +987,47 @@ def _build_matricula_excel_template(periodos: list[dict[str, Any]]) -> BytesIO:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="600000")
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    sheet.append(["NOMBRE APELLIDO", "0102030405", "TECNOLOGIA SUPERIOR EN ADMINISTRACION"])
-    sheet.append(["ESTUDIANTE EJEMPLO", "0999999999", "GASTRONOMIA"])
+    sheet.append(["NOMBRE APELLIDO", "0102030405", "TECNOLOGIA SUPERIOR EN ADMINISTRACION", 1])
+    sheet.append(["ESTUDIANTE EJEMPLO", "0999999999", "GASTRONOMIA", 2])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
+
+    career_sheet = workbook.create_sheet("Carreras")
+    career_sheet.append(["carrera"])
+    career_names: list[str] = []
+    for item in carreras or []:
+        name = _clean(item.get("carrera") or item.get("nombre") or item.get("Nombre_Basica"))
+        if name and not _is_excluded_matricula_excel_career(name) and name not in career_names:
+            career_names.append(name)
+    if not career_names:
+        career_names = [
+            "TECNOLOGIA SUPERIOR EN ADMINISTRACION",
+            "TECNOLOGIA SUPERIOR EN DESARROLLO DE SOFTWARE",
+            "GASTRONOMIA",
+        ]
+    for name in career_names:
+        career_sheet.append([name])
+    for cell in career_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="600000")
+    _autosize_worksheet(career_sheet)
+
+    career_validation = DataValidation(
+        type="list",
+        formula1=f"'Carreras'!$A$2:$A${len(career_names) + 1}",
+        allow_blank=False,
+    )
+    career_validation.error = "Selecciona una carrera de la hoja Carreras."
+    career_validation.errorTitle = "Carrera no valida"
+    sheet.add_data_validation(career_validation)
+    career_validation.add("C2:C501")
+
+    semester_validation = DataValidation(type="whole", operator="between", formula1="1", formula2="4", allow_blank=False)
+    semester_validation.error = "El semestre debe ser un numero entre 1 y 4."
+    semester_validation.errorTitle = "Semestre no valido"
+    sheet.add_data_validation(semester_validation)
+    semester_validation.add("D2:D501")
+
     _autosize_worksheet(sheet)
 
     help_sheet = workbook.create_sheet("Instrucciones")
@@ -991,8 +1035,9 @@ def _build_matricula_excel_template(periodos: list[dict[str, Any]]) -> BytesIO:
         ["Campo", "Detalle"],
         ["nombres_apellidos", "Obligatorio. Nombre completo tal como debe aparecer en el certificado."],
         ["numero_cedula", "Obligatorio. Numero de cedula o documento."],
-        ["carrera", "Obligatorio. Nombre de la carrera."],
-        ["costos", "No van en el Excel. Gastronomia usa matricula 100.00 y arancel 1000.00; el resto usa 75.00 y 750.00."],
+        ["carrera", "Obligatorio. Selecciona una carrera desde la lista. No incluye Educacion Continua ni Ingles."],
+        ["semestre", "Obligatorio. Valor numerico entre 1 y 4."],
+        ["costos", "No van en el Excel. Se calculan automaticamente por carrera; Gastronomia usa su valor diferenciado."],
         ["periodo", "No va en el Excel. Seleccionalo en la pantalla antes de subir el documento."],
     ]
     for row in help_rows:
@@ -1044,6 +1089,11 @@ def _parse_matricula_excel(file_bytes: bytes) -> list[dict[str, Any]]:
             errors.append("numero_cedula")
         if not carrera:
             errors.append("carrera")
+        if carrera and _is_excluded_matricula_excel_career(carrera):
+            errors.append("carrera no permitida para esta plantilla")
+        semestre = _int_value(_excel_value(row, "semestre"))
+        if semestre is None or semestre < 1 or semestre > 4:
+            errors.append("semestre debe estar entre 1 y 4")
         matricula_base, arancel_base = _matricula_excel_costs(carrera, row)
         rows.append(
             {
@@ -1051,7 +1101,7 @@ def _parse_matricula_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                 "nombre": nombre,
                 "cedula": cedula,
                 "carrera": carrera,
-                "semestre": 1,
+                "semestre": semestre or 1,
                 "matricula_base": matricula_base,
                 "arancel_base": arancel_base,
                 "errors": errors,
@@ -1359,6 +1409,21 @@ def download_matricula_excel_template(_: SessionUser = Depends(_CERTIFICATES_ACC
                 """
             )
             periodos = [_period_row(row) for row in _rows_from_cursor(cursor)]
+            cursor.execute(
+                """
+                SELECT DISTINCT
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Nombre_Basica))) AS carrera
+                FROM dbo.CARRERAS
+                WHERE Nombre_Basica IS NOT NULL
+                  AND LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Nombre_Basica))) <> ''
+                ORDER BY LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Nombre_Basica)))
+                """
+            )
+            carreras = [
+                row
+                for row in _rows_from_cursor(cursor)
+                if not _is_excluded_matricula_excel_career(row.get("carrera"))
+            ]
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1366,9 +1431,14 @@ def download_matricula_excel_template(_: SessionUser = Depends(_CERTIFICATES_ACC
         ) from exc
 
     return StreamingResponse(
-        _build_matricula_excel_template(periodos),
+        _build_matricula_excel_template(periodos, carreras),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="plantilla_matricula_certificados.xlsx"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="plantilla_matricula_certificados_v3.xlsx"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 

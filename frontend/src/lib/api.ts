@@ -774,8 +774,9 @@ export async function downloadCertificadosExcel(payload: CertificadosGeneratePay
 }
 
 export async function downloadMatriculaExcelTemplate(): Promise<Blob> {
-  const response = await fetch('/api/certificados/matricula-excel/plantilla', {
+  const response = await fetch(`/api/certificados/matricula-excel/plantilla?v=${Date.now()}`, {
     credentials: 'include',
+    cache: 'no-store',
   })
 
   if (!response.ok) {

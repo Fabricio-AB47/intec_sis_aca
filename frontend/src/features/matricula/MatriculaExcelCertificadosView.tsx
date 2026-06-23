@@ -69,7 +69,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
     setTemplateLoading(true)
     try {
       const blob = await downloadMatriculaExcelTemplate()
-      downloadBlob(blob, 'plantilla_matricula_certificados.xlsx')
+      downloadBlob(blob, 'plantilla_matricula_certificados_v3.xlsx')
       setMessage('Plantilla descargada.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la plantilla')
@@ -131,8 +131,8 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
         </article>
         <article>
           <span>Plantilla</span>
-          <strong>nombres, cédula, carrera</strong>
-          <small>Los costos se calculan por carrera</small>
+          <strong>nombres, cédula, carrera, semestre</strong>
+          <small>Carreras sin Educación Continua ni Inglés</small>
         </article>
         <article>
           <span>Salida</span>
@@ -151,9 +151,9 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
           <div className="certificados-format-note">
             <strong>Formato del Excel:</strong>
             <span>
-              La plantilla usa solo nombres y apellidos, número de cédula y carrera. El periodo no se escribe en el Excel;
-              se selecciona aquí antes de generar el documento. Gastronomía usa matrícula $100.00 y arancel $1000.00; el
-              resto mantiene matrícula $75.00 y arancel $750.00.
+              La plantilla usa nombres y apellidos, número de cédula, carrera y semestre. La carrera se selecciona desde
+              una hoja de carreras permitidas, excluyendo Educación Continua e Inglés. Los costos no se editan en el Excel:
+              se calculan automáticamente por carrera y Gastronomía conserva su valor diferenciado.
             </span>
           </div>
 
