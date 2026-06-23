@@ -209,11 +209,18 @@ WHERE bc.estado_codigo = 'A'
 """
 )
 
-_QUERY = (
-    _MATRICULA_ACTUAL_CTE
-    + """
+_QUERY = """
+WITH UltimaMatricula AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (
+            PARTITION BY codigo_estud
+            ORDER BY fecha_pago DESC, codigo_periodo DESC, numcodigo DESC
+        ) AS rn
+    FROM dbo.CABECERA_MATRICULA
+)
 SELECT
-    TRY_CONVERT(varchar(50), bc.codigo_estud) AS codigoEstud,
+    TRY_CONVERT(varchar(50), e.codigo_estud) AS codigoEstud,
     e.tipodocumento AS tipoDocumentoId,
     e.Cedula_Est AS numeroIdentificacion,
     e.Apellidos_nombre,
@@ -268,48 +275,23 @@ SELECT
     e.montoCreditoEducativo,
     e.participaEnProyectoVinculacionSociedad,
     e.tipoAlcanceProyectoVinculacionId,
-    COALESCE(
-        NULLIF(TRY_CONVERT(nvarchar(320), e.correointec), ''),
-        NULLIF(TRY_CONVERT(nvarchar(320), e.correo), ''),
-        NULLIF(TRY_CONVERT(nvarchar(320), c.correointec), ''),
-        NULLIF(TRY_CONVERT(nvarchar(320), bc.correo_intec_datos), '')
-    ) AS correoElectronico,
+    c.CorreoIntec AS correoElectronico,
     e.movil AS numeroCelular,
     e.nivelFormacionPadre,
     e.nivelFormacionMadre,
     e.IngresoHogar AS ingresoTotalHogar,
     e.Numpersonasvive AS cantidadMiembrosHogar,
-    COALESCE(
-        NULLIF(TRY_CONVERT(nvarchar(255), ca.Nombre_Basica), ''),
-        NULLIF(TRY_CONVERT(nvarchar(255), bc.nombre_carrera), ''),
-        N'Sin carrera'
-    ) AS nombreCarrera
-FROM base_cruce bc
-INNER JOIN dbo.DATOS_ESTUD e
-    ON TRY_CONVERT(varchar(50), e.codigo_estud) = TRY_CONVERT(varchar(50), bc.codigo_estud)
-OUTER APPLY (
-    SELECT TOP (1) TRY_CONVERT(nvarchar(320), ci.correointec) AS correointec
-    FROM dbo.CorreosEstudIntec ci
-    WHERE TRY_CONVERT(varchar(50), ci.codestud) = TRY_CONVERT(varchar(50), bc.codigo_estud)
-    ORDER BY
-        CASE
-            WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ci.Estado)))) = N'ACTIVO' THEN 0
-            ELSE 1
-        END,
-        TRY_CONVERT(nvarchar(320), ci.correointec)
-) c
-OUTER APPLY (
-    SELECT TOP (1) ca.Nombre_Basica
-    FROM dbo.CARRERAS ca
-    WHERE TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), bc.cod_anio_Basica)
-    ORDER BY TRY_CONVERT(nvarchar(255), ca.Nombre_Basica)
-) ca
-WHERE bc.estado_codigo = 'A'
-  AND bc.cod_anio_Basica IS NOT NULL
-  AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), bc.nombre_carrera))), '') IS NOT NULL
-  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), bc.nombre_carrera)))) NOT LIKE N'SIN CARRERA%';
+    ca.Nombre_Basica AS nombreCarrera
+FROM dbo.DATOS_ESTUD e
+INNER JOIN dbo.CorreosEstudIntec c
+    ON TRY_CONVERT(varchar(50), e.codigo_estud) = TRY_CONVERT(varchar(50), c.codestud)
+INNER JOIN UltimaMatricula m
+    ON TRY_CONVERT(varchar(50), e.codigo_estud) = TRY_CONVERT(varchar(50), m.codigo_estud)
+    AND m.rn = 1
+INNER JOIN dbo.CARRERAS ca
+    ON TRY_CONVERT(varchar(50), m.cod_anio_Basica) = TRY_CONVERT(varchar(50), ca.Cod_AnioBasica)
+WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), e.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA');
 """
-)
 
 
 def _read_dataframe() -> pd.DataFrame:
@@ -653,44 +635,6 @@ def _dataframe_to_workbook_bytes(dataframe: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
-def _summary_workbook_bytes(report: dict[str, Any]) -> bytes:
-    summary = report["summary"]
-    rows = [
-        {"Indicador": key, "Valor": value}
-        for key, value in summary.items()
-    ]
-    criteria_rows = [
-        {"Indicador": key, "Valor": value}
-        for key, value in report["criteria"].items()
-    ]
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        pd.DataFrame(rows + [{}] + criteria_rows).to_excel(writer, index=False, sheet_name="Resumen")
-        career_rows = [
-            {key: value for key, value in item.items() if key != "students_missing"}
-            for item in report["careers"]
-        ]
-        pd.DataFrame(career_rows).to_excel(writer, index=False, sheet_name="Carreras")
-        pd.DataFrame(report["missing_fields"]).to_excel(writer, index=False, sheet_name="Campos pendientes")
-        if report.get("students_missing"):
-            pending_rows = [
-                {
-                    **item,
-                    "campos_faltantes": ", ".join(item.get("campos_faltantes") or []),
-                }
-                for item in report["students_missing"]
-            ]
-            pd.DataFrame(pending_rows).to_excel(writer, index=False, sheet_name="Estudiantes pendientes")
-        for worksheet in writer.book.worksheets:
-            _style_header(worksheet)
-            for column in worksheet.columns:
-                column_letter = column[0].column_letter
-                width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
-                worksheet.column_dimensions[column_letter].width = max(width, 14)
-    output.seek(0)
-    return output.getvalue()
-
-
 @router.get("/estudiantes/buscar")
 def search_senescyt_students(
     current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
@@ -824,7 +768,6 @@ def senescyt_students_export(
         dataframe: pd.DataFrame = report["dataframe"]
         output = BytesIO()
         with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-            archive.writestr("resumen_senescyt.xlsx", _summary_workbook_bytes(report))
             if split_by_career:
                 for career, group in dataframe.groupby("nombreCarrera", dropna=False):
                     filename = f"EstudiantesPorCarrera/{_safe_filename(career)}.xlsx"
@@ -858,20 +801,19 @@ _TEACHER_REPORT_COLUMNS = [
     "segundoNombre",
     "sexoId",
     "generoId",
-    "estadoCivilId",
+    "estadocivilId",
     "etniaId",
-    "nacionalidadId",
-    "numeroDomicilio",
+    "pueblonacionalidadId",
+    "direccionDomiciliaria",
     "provinciaSufragio",
     "numeroCelular",
     "correoElectronico",
-    "correoPersonal",
-    "direccionDomicilio",
+    "numDomicilio",
     "discapacidad",
-    "tipoDiscapacidad",
     "porcentajeDiscapacidad",
-    "carnetConadis",
-    "numeroCarnetConadis",
+    "numCarnetDiscapacidad",
+    "tipoDiscapacidad",
+    "tipoEnfermedadCatastrofica",
     "fechaNacimiento",
     "paisNacionalidadId",
     "nivelFormacion",
@@ -883,7 +825,7 @@ _TEACHER_REPORT_COLUMNS = [
     "cargoDirectivoId",
     "tiempoDedicacionId",
     "nombreUnidadAcademica",
-    "nroAsignaturasDocente",
+    "nroasignaturasdocente",
     "nroHorasLaborablesSemanaEnCarreraPrograma",
     "nroHorasClaseSemanaCarreraPrograma",
     "nroHorasInvestigacionSemanaCarreraPrograma",
@@ -893,9 +835,6 @@ _TEACHER_REPORT_COLUMNS = [
     "salarioMensual",
     "docenciaTecnicoSuperior",
     "docenciaTecnologico",
-    "docenciaTecnologicoUniversitario",
-    "docenciaEspecializacionTecnologica",
-    "docenciaMaestriaTecnologica",
     "estaEnPeriodoSabatico",
     "fechaInicioPeriodoSabatico",
     "estaCursandoEstudiosId",
@@ -908,6 +847,9 @@ _TEACHER_REPORT_COLUMNS = [
     "financiamientoBecaId",
     "pubRevistasCienInIndexadasId",
     "numPubRevistasCientifIndexadas",
+    "docenciaTecnologicoUniversitario",
+    "docenciaEspecializacionTecnologica",
+    "docenciaMaestriaTecnologica",
 ]
 
 _STUDENT_AUDIT_COLUMNS = _REPORT_COLUMNS
@@ -955,9 +897,7 @@ def _prepare_student_audit_dataframe() -> pd.DataFrame:
     if raw.empty:
         return pd.DataFrame(columns=_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
 
-    names = raw["Apellidos_nombre"].apply(_split_report_name).apply(pd.Series)
-    df = pd.concat([raw.drop(columns=["Apellidos_nombre"]), names], axis=1)
-    df = df.rename(columns={"codigoEstud": "codigo"})
+    df = _normalize_dataframe(raw).rename(columns={"codigoEstud": "codigo"})
     for column in _STUDENT_AUDIT_COLUMNS:
         if column not in df.columns:
             df[column] = None
@@ -970,88 +910,83 @@ def _prepare_student_audit_dataframe() -> pd.DataFrame:
 
 def _read_teacher_audit_dataframe() -> pd.DataFrame:
     sql = """
-    WITH docentes_base AS (
-        SELECT
-            TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo,
-            d.apellidos_nombre AS nombreOriginal,
-            d.tipoDocumentoId,
-            d.cedula_doc AS numeroIdentificacion,
-            d.sexo AS sexoId,
-            d.generoId,
-            d.estado_civil AS estadoCivilId,
-            d.etniaId,
-            d.nacionalidad AS nacionalidadId,
-            d.numDomicilio AS numeroDomicilio,
-            d.provinciaSufragio,
-            COALESCE(NULLIF(TRY_CONVERT(nvarchar(50), d.movil), ''), NULLIF(TRY_CONVERT(nvarchar(50), d.telefono), '')) AS numeroCelular,
-            COALESCE(NULLIF(TRY_CONVERT(nvarchar(320), d.correo), ''), NULLIF(TRY_CONVERT(nvarchar(320), u.login), '')) AS correoElectronico,
-            d.correop AS correoPersonal,
-            d.Direccion AS direccionDomicilio,
-            d.discapacidad,
-            COALESCE(d.tipo_discapa, d.tipoEnfermedadCatastrofica) AS tipoDiscapacidad,
-            d.porcen_discapa AS porcentajeDiscapacidad,
-            d.carnet_conadis AS carnetConadis,
-            d.num_carnet_cona AS numeroCarnetConadis,
-            d.fecha_nac AS fechaNacimiento,
-            d.paisNacionalidadId,
-            d.nivelFormacion,
-            d.fechaIngresoIES,
-            d.fechaSalidaIES,
-            d.relacionLaboralIESId,
-            d.ingresoConCursoMeritos,
-            d.escalafonDocenteId,
-            d.cargoDirectivoId,
-            d.tiempoDedicacionId,
-            d.nombreUnidadAcademica,
-            d.nroasignaturasdocente AS nroAsignaturasDocente,
-            d.nroHorasLaborablesSemanaEnCarreraPrograma,
-            d.nroHorasClaseSemanaCarreraPrograma,
-            d.nroHorasInvestigacionSemanaCarreraPrograma,
-            d.nroHorasAdministrativasSemanaCarreraPrograma,
-            d.nroHorasOtrasActividadesSemanaCarreraPrograma,
-            d.nroHorasVinculacionSociedad,
-            d.salarioMensual,
-            d.docenciaTecnicoSuperior,
-            d.docenciaTecnologico,
-            d.docenciaTecnologicoUniversitario,
-            d.docenciaEspecializacionTecnologica,
-            d.docenciaMaestriaTecnologica,
-            d.estaEnPeriodoSabatico,
-            d.fechaInicioPeriodoSabatico,
-            d.estaCursandoEstudiosId,
-            d.institucionDOndeCursaEstudios AS institucionDondeCursaEstudios,
-            d.paisEstudiosId,
-            d.tituloAObtener,
-            d.poseeBecaId,
-            d.tipoBecaId,
-            d.montoBeca,
-            d.financiamientoBecaId,
-            d.pubRevistasCienInIndexadasId,
-            d.numPubRevistasCientifIndexadas,
-            COALESCE(NULLIF(TRY_CONVERT(nvarchar(255), c.Nombre_Basica), ''), N'Sin carrera') AS nombreCarrera,
-            ROW_NUMBER() OVER (
-                PARTITION BY
-                    TRY_CONVERT(varchar(50), d.codigo_doc),
-                    COALESCE(TRY_CONVERT(varchar(50), c.Cod_AnioBasica), 'SIN')
-                ORDER BY TRY_CONVERT(nvarchar(255), c.Nombre_Basica)
-            ) AS rn
-        FROM dbo.DATOSDOCENTE d
-        INNER JOIN dbo.USUARIOS u
-            ON (
-                TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
-                OR LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) =
-                   LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
-            )
-           AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA', N'1')
-           AND COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1
-        LEFT JOIN dbo.CARRERAXDOCENTE cxd
-            ON TRY_CONVERT(varchar(50), cxd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
-        LEFT JOIN dbo.CARRERAS c
-            ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica)
+    SELECT DISTINCT
+        TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo,
+        d.apellidos_nombre AS nombreOriginal,
+        d.tipoDocumentoId,
+        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc))) AS numeroIdentificacion,
+        d.sexo AS sexoId,
+        d.generoId,
+        d.estado_civil AS estadocivilId,
+        d.etniaId,
+        CAST(NULL AS nvarchar(100)) AS pueblonacionalidadId,
+        d.numDomicilio AS numDomicilio,
+        d.Direccion AS direccionDomiciliaria,
+        d.provinciaSufragio,
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.movil))), ''),
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.telefono))), '')
+        ) AS numeroCelular,
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(320), d.correo))), ''),
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(320), d.correop))), '')
+        ) AS correoElectronico,
+        d.discapacidad,
+        d.porcen_discapa AS porcentajeDiscapacidad,
+        d.num_carnet_cona AS numCarnetDiscapacidad,
+        d.tipo_discapa AS tipoDiscapacidad,
+        d.tipoEnfermedadCatastrofica,
+        d.fecha_nac AS fechaNacimiento,
+        d.paisNacionalidadId,
+        d.nivelFormacion,
+        d.fechaIngresoIES,
+        d.fechaSalidaIES,
+        d.relacionLaboralIESId,
+        d.ingresoConCursoMeritos,
+        d.escalafonDocenteId,
+        d.cargoDirectivoId,
+        d.tiempoDedicacionId,
+        d.nombreUnidadAcademica,
+        d.nroasignaturasdocente AS nroasignaturasdocente,
+        d.nroHorasLaborablesSemanaEnCarreraPrograma,
+        d.nroHorasClaseSemanaCarreraPrograma,
+        d.nroHorasInvestigacionSemanaCarreraPrograma,
+        d.nroHorasAdministrativasSemanaCarreraPrograma,
+        d.nroHorasOtrasActividadesSemanaCarreraPrograma,
+        d.nroHorasVinculacionSociedad,
+        d.salarioMensual,
+        d.docenciaTecnicoSuperior,
+        d.docenciaTecnologico,
+        d.estaEnPeriodoSabatico,
+        d.fechaInicioPeriodoSabatico,
+        d.estaCursandoEstudiosId,
+        d.institucionDOndeCursaEstudios AS institucionDondeCursaEstudios,
+        d.paisEstudiosId,
+        d.tituloAObtener,
+        d.poseeBecaId,
+        d.tipoBecaId,
+        d.montoBeca,
+        d.financiamientoBecaId,
+        d.pubRevistasCienInIndexadasId,
+        d.numPubRevistasCientifIndexadas,
+        d.docenciaTecnologicoUniversitario,
+        d.docenciaEspecializacionTecnologica,
+        d.docenciaMaestriaTecnologica,
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), c.Nombre_Basica))), ''),
+            N'Sin carrera'
+        ) AS nombreCarrera
+    FROM dbo.CARRERAXDOCENTE cd
+    INNER JOIN dbo.CARRERAS c
+        ON TRY_CONVERT(varchar(50), cd.cod_Anio_Basica) = TRY_CONVERT(varchar(50), c.Cod_AnioBasica)
+    INNER JOIN dbo.DATOSDOCENTE d
+        ON TRY_CONVERT(varchar(50), cd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
+    WHERE EXISTS (
+        SELECT 1
+        FROM dbo.USUARIOS u
+        WHERE LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) = LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
+          AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
     )
-    SELECT *
-    FROM docentes_base
-    WHERE rn = 1
     ORDER BY nombreCarrera, nombreOriginal
     """
     raw = _read_sql_dataframe(sql)
@@ -1059,7 +994,7 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
         return pd.DataFrame(columns=_TEACHER_REPORT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
 
     names = raw["nombreOriginal"].apply(_split_report_name).apply(pd.Series)
-    df = pd.concat([raw.drop(columns=["nombreOriginal", "rn"], errors="ignore"), names], axis=1)
+    df = pd.concat([raw.drop(columns=["nombreOriginal"], errors="ignore"), names], axis=1)
     for column in _TEACHER_REPORT_COLUMNS:
         if column not in df.columns:
             df[column] = None
@@ -1616,10 +1551,13 @@ def _build_document_summary(dataframe: pd.DataFrame) -> dict[str, Any]:
     return totals
 
 
-def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict[str, Any]:
-    selected_careers = _normalize_career_filters(careers)
-    dataframe, report_columns = _load_senescyt_audit_dataframe(target)
-    dataframe = _filter_by_career(dataframe, selected_careers)
+def _build_senescyt_audit_from_dataframe(
+    target: str,
+    dataframe: pd.DataFrame,
+    report_columns: list[str],
+    selected_careers: list[str] | None = None,
+) -> dict[str, Any]:
+    selected_careers = selected_careers or []
     total_rows = int(len(dataframe))
     total_cells = max(total_rows * len(report_columns), 1)
     field_totals = {column: _count_filled(dataframe, column, target) for column in report_columns} if total_rows else {
@@ -1726,6 +1664,13 @@ def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict
     }
 
 
+def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict[str, Any]:
+    selected_careers = _normalize_career_filters(careers)
+    dataframe, report_columns = _load_senescyt_audit_dataframe(target)
+    dataframe = _filter_by_career(dataframe, selected_careers)
+    return _build_senescyt_audit_from_dataframe(target, dataframe, report_columns, selected_careers)
+
+
 def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
     dataframe: pd.DataFrame = report["dataframe"]
     report_columns: list[str] = report["report_columns"]
@@ -1752,29 +1697,6 @@ def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        summary_rows = [
-            {"Indicador": key, "Valor": value}
-            for key, value in report["summary"].items()
-        ]
-        pd.DataFrame(summary_rows).to_excel(writer, index=False, sheet_name="Resumen")
-        pd.DataFrame(report["careers"]).to_excel(writer, index=False, sheet_name="Carreras")
-        pd.DataFrame(report["missing_fields"]).to_excel(writer, index=False, sheet_name="Campos faltantes")
-        document_summary = report.get("documentos") or {}
-        document_rows = [
-            {"Indicador": key, "Valor": value}
-            for key, value in document_summary.items()
-            if key != "reglas"
-        ]
-        document_rules = [
-            {"Indicador": f"regla_{item.get('codigo')}", "Valor": f"{item.get('tipo')}: {item.get('formato')}"}
-            for item in document_summary.get("reglas") or []
-        ]
-        pd.DataFrame(document_rows + [{}] + document_rules).to_excel(
-            writer,
-            index=False,
-            sheet_name="Analisis documentos",
-        )
-
         if mode == "faltantes":
             global_rows = report.get("missing_records_global") or []
             career_rows = report.get("missing_records") or []
@@ -1824,6 +1746,38 @@ def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
     return output.getvalue()
 
 
+def _audit_export_zip(report: dict[str, Any], mode: str) -> bytes:
+    dataframe: pd.DataFrame = report["dataframe"]
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        if dataframe.empty or "nombreCarrera" not in dataframe.columns:
+            archive.writestr(
+                f"senescyt_{report['target']}_{mode}.xlsx",
+                _audit_export_workbook(report, mode),
+            )
+        else:
+            career_series = (
+                dataframe["nombreCarrera"]
+                .fillna("Sin carrera")
+                .astype(str)
+                .str.strip()
+                .replace({"": "Sin carrera"})
+            )
+            career_names = sorted(career_series.unique(), key=lambda value: str(value).casefold())
+            for index, career_name in enumerate(career_names, start=1):
+                group = dataframe[career_series == career_name].copy()
+                career_report = _build_senescyt_audit_from_dataframe(
+                    report["target"],
+                    group,
+                    report["report_columns"],
+                    [str(career_name)],
+                )
+                filename = f"{index:02d}_{_safe_filename(str(career_name))}_{mode}.xlsx"
+                archive.writestr(filename, _audit_export_workbook(career_report, mode))
+    output.seek(0)
+    return output.getvalue()
+
+
 @router.get("/catalogo")
 def senescyt_catalog(
     current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
@@ -1832,7 +1786,7 @@ def senescyt_catalog(
     try:
         careers = _career_catalog()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error cargando catalogo SENESCYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error cargando catálogo SENESCYT: {exc}") from exc
     return {
         "careers": careers,
         "targets": sorted(_REPORT_TARGETS),
@@ -1876,19 +1830,19 @@ def senescyt_audit_export(
     del current_user
     try:
         report = _build_senescyt_audit(target, carrera)
-        content = _audit_export_workbook(report, mode)
+        content = _audit_export_zip(report, mode)
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error exportando Excel SENESCYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error exportando ZIP SENESCYT: {exc}") from exc
 
     selected_careers = _normalize_career_filters(carrera)
     suffix = _safe_filename("_".join(selected_careers[:3])) if selected_careers else "todas_las_carreras"
     if len(selected_careers) > 3:
         suffix = f"{suffix}_y_{len(selected_careers) - 3}_mas"
-    filename = f"senescyt_{target}_{mode}_{suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"senescyt_{target}_{mode}_{suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return StreamingResponse(
         BytesIO(content),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

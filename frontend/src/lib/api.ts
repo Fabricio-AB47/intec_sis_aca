@@ -7,6 +7,10 @@ import type {
   AcademicBulkEnrollmentPayload,
   AcademicBulkEnrollmentPreviewResponse,
   AcademicBulkEnrollmentSaveResponse,
+  AcademicPeriodChangeApplyResponse,
+  AcademicPeriodChangeCatalogResponse,
+  AcademicPeriodChangePayload,
+  AcademicPeriodChangePreviewResponse,
   AcademicParallelBalancePayload,
   AcademicParallelBalanceResponse,
   AcademicEnrollmentPayload,
@@ -115,6 +119,14 @@ import type {
   TeamRecording,
   TeamsActionResponse,
   TeamsCatalogResponse,
+  TeacherEvaluationFlow,
+  TeacherEvaluationIdentityResponse,
+  TeacherEvaluationQuestionsResponse,
+  TeacherEvaluationStudentResponse,
+  TeacherEvaluationTeacherResponse,
+  TeacherRoleEvaluationSubmitPayload,
+  TeacherEvaluationSubmitPayload,
+  TeacherEvaluationSubmitResponse,
   UserSession,
 } from '../types/app'
 
@@ -567,6 +579,12 @@ function buildLegacyReportParams(filters: LegacyReportFilters = {}): URLSearchPa
   }
   if (filters.estado) {
     params.set('estado', filters.estado)
+  }
+  if (filters.anio) {
+    params.set('anio', filters.anio)
+  }
+  if (filters.genero) {
+    params.set('genero', filters.genero)
   }
   if (filters.buscar) {
     params.set('buscar', filters.buscar)
@@ -1202,6 +1220,28 @@ export async function saveBulkAcademicEnrollment(
   })
 }
 
+export async function fetchAcademicPeriodChangeCatalog(): Promise<AcademicPeriodChangeCatalogResponse> {
+  return request<AcademicPeriodChangeCatalogResponse>('/api/students/matricula-acad/period-change/catalog')
+}
+
+export async function previewAcademicPeriodChange(
+  payload: AcademicPeriodChangePayload
+): Promise<AcademicPeriodChangePreviewResponse> {
+  return request<AcademicPeriodChangePreviewResponse>('/api/students/matricula-acad/period-change/preview', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function applyAcademicPeriodChange(
+  payload: AcademicPeriodChangePayload
+): Promise<AcademicPeriodChangeApplyResponse> {
+  return request<AcademicPeriodChangeApplyResponse>('/api/students/matricula-acad/period-change/apply', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
 export async function balanceAcademicEnrollmentParallels(
   payload: AcademicParallelBalancePayload
 ): Promise<AcademicParallelBalanceResponse> {
@@ -1497,6 +1537,55 @@ export async function updateAcademicTeacherState(
   payload: AcademicTeacherStateUpdatePayload
 ): Promise<AcademicTeacherStateUpdateResponse> {
   return request<AcademicTeacherStateUpdateResponse>('/api/students/matricula-acad/docentes/estado', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function fetchTeacherEvaluationIdentity(
+  cedula: string,
+): Promise<TeacherEvaluationIdentityResponse> {
+  return request<TeacherEvaluationIdentityResponse>(
+    `/api/evaluacion-docente/identity/${encodeURIComponent(cedula.trim())}`,
+  )
+}
+
+export async function fetchTeacherEvaluationByCedula(
+  cedula: string
+): Promise<TeacherEvaluationStudentResponse> {
+  return request<TeacherEvaluationStudentResponse>(
+    `/api/evaluacion-docente/student/${encodeURIComponent(cedula.trim())}`,
+  )
+}
+
+export async function fetchTeacherEvaluationTeacherByCedula(
+  cedula: string
+): Promise<TeacherEvaluationTeacherResponse> {
+  return request<TeacherEvaluationTeacherResponse>(
+    `/api/evaluacion-docente/teacher/${encodeURIComponent(cedula.trim())}`,
+  )
+}
+
+export async function fetchTeacherEvaluationQuestions(
+  flow: TeacherEvaluationFlow = 'student'
+): Promise<TeacherEvaluationQuestionsResponse> {
+  const params = new URLSearchParams({ flow })
+  return request<TeacherEvaluationQuestionsResponse>(`/api/evaluacion-docente/questions?${params.toString()}`)
+}
+
+export async function saveTeacherEvaluation(
+  payload: TeacherEvaluationSubmitPayload
+): Promise<TeacherEvaluationSubmitResponse> {
+  return request<TeacherEvaluationSubmitResponse>('/api/evaluacion-docente/evaluate', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function saveTeacherRoleEvaluation(
+  payload: TeacherRoleEvaluationSubmitPayload
+): Promise<TeacherEvaluationSubmitResponse> {
+  return request<TeacherEvaluationSubmitResponse>('/api/evaluacion-docente/teacher/evaluate', {
     method: 'POST',
     body: payload,
   })

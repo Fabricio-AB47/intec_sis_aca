@@ -7,6 +7,7 @@ import {
 } from '../../lib/api'
 import type {
   SenescytAuditResponse,
+  SenescytAuditRow,
   SenescytCatalogCareer,
   SenescytCatalogResponse,
   SenescytExportMode,
@@ -15,17 +16,6 @@ import type {
 
 type SenescytEstudiantesViewProps = {
   displayName: string
-}
-
-type DocumentAnalysis = {
-  normalized: string
-  suggestedType: string
-  suggestedLabel: string
-  formatLabel: string
-  validNumber: boolean
-  validType: boolean
-  valid: boolean
-  message: string
 }
 
 const TARGET_LABELS: Record<SenescytTarget, string> = {
@@ -39,60 +29,6 @@ function formatNumber(value?: number): string {
 
 function formatPercent(value?: number): string {
   return `${new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 }).format(value ?? 0)}%`
-}
-
-function normalizeDocumentText(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, '')
-}
-
-function inferDocumentType(value: string): string {
-  const normalized = normalizeDocumentText(value)
-  if (/^\d{10}$/.test(normalized)) return '1'
-  if (/^[A-Z]{3}\d{6}$/.test(normalized) || /^[A-Z]\d{8}$/.test(normalized)) return '2'
-  return ''
-}
-
-function normalizeDocumentForType(typeCode: string, value: string): string {
-  const normalized = normalizeDocumentText(value)
-  if (typeCode === '1') return normalized.replace(/\D+/g, '').slice(0, 10)
-  return normalized.slice(0, 9)
-}
-
-function documentFormatLabel(value: string): string {
-  const normalized = normalizeDocumentText(value)
-  if (/^\d{10}$/.test(normalized)) return 'Cedula ecuatoriana: 10 digitos'
-  if (/^[A-Z]{3}\d{6}$/.test(normalized)) return 'Pasaporte Ecuador/Espana/Argentina: 3 letras + 6 numeros'
-  if (/^[A-Z]\d{8}$/.test(normalized)) return 'Pasaporte Estados Unidos: 1 letra + 8 numeros'
-  return ''
-}
-
-function analyzeDocument(typeCode: string, numberValue: string): DocumentAnalysis {
-  const normalized = normalizeDocumentText(numberValue)
-  const inferredType = inferDocumentType(normalized)
-  const suggestedType = inferredType || (['1', '2'].includes(typeCode) ? typeCode : '')
-  const suggestedLabel = suggestedType === '1' ? 'Cedula' : suggestedType === '2' ? 'Pasaporte' : ''
-  const validNumber = Boolean(inferredType)
-  const validType = ['1', '2'].includes(typeCode) && (!inferredType || typeCode === inferredType)
-  let message = 'Ingrese un documento para analizar.'
-  if (normalized) {
-    if (!validNumber) {
-      message = 'No cumple cedula de 10 digitos ni pasaporte de 9 caracteres permitido.'
-    } else if (!validType) {
-      message = `Tipo incorrecto. Debe registrar codigo ${suggestedType} (${suggestedLabel}).`
-    } else {
-      message = `Documento valido. Registre codigo ${suggestedType} (${suggestedLabel}).`
-    }
-  }
-  return {
-    normalized,
-    suggestedType,
-    suggestedLabel,
-    formatLabel: documentFormatLabel(normalized),
-    validNumber,
-    validType,
-    valid: Boolean(validNumber && validType),
-    message,
-  }
 }
 
 function handleError(error: unknown, fallback: string): string {
@@ -120,13 +56,12 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const [downloading, setDownloading] = useState('')
   const [error, setError] = useState('')
   const [careerSearch, setCareerSearch] = useState('')
-  const [documentType, setDocumentType] = useState('1')
-  const [documentNumber, setDocumentNumber] = useState('')
+  const [careerPickerOpen, setCareerPickerOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [detailRow, setDetailRow] = useState<SenescytAuditRow | null>(null)
 
   const summary = report?.summary
-  const documentSummary = report?.documentos
   const rows = report?.rows || []
-  const missingFields = report?.missing_fields || []
   const careers = useMemo(() => {
     const items = catalog?.careers || []
     const seen = new Set<string>()
@@ -144,19 +79,18 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   }, [careers, careerSearch])
   const selectedCareerSet = useMemo(() => new Set(selectedCareers), [selectedCareers])
   const selectedCareerLabel = selectedCareers.length ? `${selectedCareers.length} carrera(s) seleccionada(s)` : 'Todas las carreras'
-  const selectedCareerPreview = selectedCareers.slice(0, 5)
-  const selectedCareerOverflow = Math.max(selectedCareers.length - selectedCareerPreview.length, 0)
-  const documentAnalysis = useMemo(
-    () => analyzeDocument(documentType, documentNumber),
-    [documentNumber, documentType],
-  )
+  const selectedCareerPreview = selectedCareers.length
+    ? selectedCareers.slice(0, 3).join(', ')
+    : 'Se consultarán todas las carreras disponibles'
+  const selectedCareerOverflow = Math.max(selectedCareers.length - 3, 0)
+  const selectedCareerDisplay = `${selectedCareerPreview}${selectedCareerOverflow ? ` y ${selectedCareerOverflow} más` : ''}`
 
   async function loadCatalog() {
     setCatalogLoading(true)
     try {
       setCatalog(await fetchSenescytCatalog())
     } catch (requestError) {
-      setError(handleError(requestError, 'No se pudo cargar el catalogo de carreras.'))
+      setError(handleError(requestError, 'No se pudo cargar el catálogo de carreras.'))
     } finally {
       setCatalogLoading(false)
     }
@@ -196,16 +130,9 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
     setSelectedCareers([])
   }
 
-  function updateDocumentType(nextType: string) {
-    setDocumentType(nextType)
-    setDocumentNumber((current) => normalizeDocumentForType(nextType, current))
-  }
-
-  function updateDocumentNumber(value: string) {
-    const inferredType = inferDocumentType(value)
-    const nextType = inferredType || documentType
-    if (inferredType) setDocumentType(inferredType)
-    setDocumentNumber(normalizeDocumentForType(nextType, value))
+  function closePreview() {
+    setPreviewOpen(false)
+    setDetailRow(null)
   }
 
   async function download(targetToDownload: SenescytTarget, mode: SenescytExportMode) {
@@ -217,9 +144,9 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
       const suffix = selectedCareers.length
         ? `${selectedCareers.length}-carreras`
         : 'todas-las-carreras'
-      saveBlob(blob, `senescyt-${targetToDownload}-${mode}-${suffix}.xlsx`)
+      saveBlob(blob, `senescyt-${targetToDownload}-${mode}-${suffix}.zip`)
     } catch (requestError) {
-      setError(handleError(requestError, 'No se pudo descargar el Excel SENESCYT.'))
+      setError(handleError(requestError, 'No se pudo descargar el ZIP SENESCYT.'))
     } finally {
       setDownloading('')
     }
@@ -234,6 +161,10 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target])
 
+  useEffect(() => {
+    setCareerPickerOpen(false)
+  }, [target])
+
   return (
     <>
       <header className="student-topbar">
@@ -241,7 +172,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <p className="eyebrow">SENESCYT</p>
           <h1>Datos SENESCYT</h1>
           <p className="report-description">
-            Reportes regulatorios de estudiantes y docentes activos por carrera, con control de campos vacíos y descarga en Excel.
+            Reportes regulatorios de estudiantes y docentes activos por carrera, con control de campos vacíos y descarga en ZIP.
           </p>
         </div>
 
@@ -269,7 +200,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
 
         <div className="senescyt-filter-layout">
           <label className="senescyt-target-control">
-            Tipo de informacion
+            Tipo de información
             <select
               value={target}
               onChange={(event) => setTarget(event.target.value as SenescytTarget)}
@@ -281,61 +212,86 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
 
           <div className="senescyt-career-picker">
             <div className="senescyt-career-picker__head">
-              <div>
-                <label>Carreras</label>
-                <strong>{selectedCareerLabel}</strong>
-              </div>
+              <label>Carreras</label>
               <span>{filteredCareers.length} visible(s)</span>
             </div>
 
-            <div className="senescyt-career-toolbar">
-              <label>
-                Buscar carrera
-                <input
-                  value={careerSearch}
-                  onChange={(event) => setCareerSearch(event.target.value)}
-                  placeholder="Nombre de carrera"
-                />
-              </label>
-              <div className="senescyt-career-picker__actions">
-                <button type="button" onClick={selectFilteredCareers} disabled={catalogLoading || filteredCareers.length === 0}>
-                  Seleccionar visibles
-                </button>
-                <button type="button" onClick={selectAllCareers} disabled={catalogLoading || careers.length === 0}>
-                  Todas
-                </button>
-                <button type="button" onClick={clearCareers} disabled={selectedCareers.length === 0}>
-                  Limpiar
-                </button>
-              </div>
+            <div className="senescyt-career-combo-row">
+              <button
+                type="button"
+                className="senescyt-career-combobox"
+                aria-expanded={careerPickerOpen}
+                onClick={() => setCareerPickerOpen((isOpen) => !isOpen)}
+              >
+                <span>Seleccionar carreras</span>
+                <strong>{selectedCareerLabel}</strong>
+                <small>{selectedCareerDisplay}</small>
+              </button>
+              <button
+                type="button"
+                className="senescyt-career-select-all"
+                onClick={selectAllCareers}
+                disabled={catalogLoading || careers.length === 0}
+              >
+                Seleccionar todas
+              </button>
             </div>
 
-            <div className="senescyt-career-picker__list" aria-label="Seleccion multiple de carreras">
-              {filteredCareers.map((item) => {
-                const name = item.nombre_carrera
-                const isSelected = selectedCareerSet.has(name)
-                return (
-                  <label key={`${item.codigo_carrera}-${name}`} className={`senescyt-career-check${isSelected ? ' is-selected' : ''}`}>
+            {careerPickerOpen ? (
+              <div className="senescyt-career-dropdown">
+                <div className="senescyt-career-toolbar">
+                  <label>
+                    Buscar carrera
                     <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleCareer(name)}
+                      value={careerSearch}
+                      onChange={(event) => setCareerSearch(event.target.value)}
+                      placeholder="Nombre de carrera"
                     />
-                    <span>{name}</span>
                   </label>
-                )
-              })}
-              {filteredCareers.length === 0 ? <p>{catalogLoading ? 'Cargando carreras...' : 'No hay carreras disponibles.'}</p> : null}
-            </div>
+                  <div className="senescyt-career-picker__actions">
+                    <button type="button" onClick={selectFilteredCareers} disabled={catalogLoading || filteredCareers.length === 0}>
+                      Seleccionar visibles
+                    </button>
+                    <button type="button" onClick={clearCareers} disabled={selectedCareers.length === 0}>
+                      Limpiar
+                    </button>
+                  </div>
+                </div>
 
-            {selectedCareers.length ? (
-              <div className="senescyt-selected-careers">
-                {selectedCareerPreview.map((career) => (
-                  <span key={career}>{career}</span>
-                ))}
-                {selectedCareerOverflow ? <span>+{selectedCareerOverflow} mas</span> : null}
+                <div className="senescyt-career-picker__list" aria-label="Selección múltiple de carreras">
+                  {filteredCareers.map((item) => {
+                    const name = item.nombre_carrera
+                    const isSelected = selectedCareerSet.has(name)
+                    return (
+                      <label key={`${item.codigo_carrera}-${name}`} className={`senescyt-career-check${isSelected ? ' is-selected' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleCareer(name)}
+                        />
+                        <span>{name}</span>
+                      </label>
+                    )
+                  })}
+                  {filteredCareers.length === 0 ? <p>{catalogLoading ? 'Cargando carreras...' : 'No hay carreras disponibles.'}</p> : null}
+                </div>
               </div>
             ) : null}
+
+            {selectedCareers.length ? (
+              <div className="senescyt-selected-careers" aria-label="Carreras seleccionadas">
+                {selectedCareers.map((career) => (
+                  <span key={career} className="senescyt-career-chip">
+                    {career}
+                    <button type="button" aria-label={`Quitar ${career}`} onClick={() => toggleCareer(career)}>
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="senescyt-selected-careers-empty">Sin selección específica: se incluirán todas las carreras.</p>
+            )}
           </div>
 
           <button type="button" className="senescyt-query-button" onClick={() => void loadReport()} disabled={loading}>
@@ -369,181 +325,235 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         </article>
       </section>
 
-      <section className="student-card student-card--wide senescyt-document-card">
-        <div className="card-head">
-          <div>
-            <p className="eyebrow">Documentos</p>
-            <h3>Analisis de tipo de documento</h3>
-            <p className="report-description">
-              El codigo SENESCYT debe ser 1 para cedula y 2 para pasaporte. El numero debe coincidir con el formato seleccionado.
-            </p>
-          </div>
-          <span>{formatPercent(documentSummary?.porcentaje_validos)} validos</span>
-        </div>
-
-        <div className="senescyt-document-layout">
-          <div className="senescyt-document-metrics">
-            <article>
-              <span>Validados</span>
-              <strong>{formatNumber(documentSummary?.documentos_validos)}</strong>
-              <small>de {formatNumber(documentSummary?.total_registros)}</small>
-            </article>
-            <article>
-              <span>Cedulas</span>
-              <strong>{formatNumber(documentSummary?.cedulas_validas)}</strong>
-              <small>codigo 1</small>
-            </article>
-            <article>
-              <span>Pasaportes</span>
-              <strong>{formatNumber(documentSummary?.pasaportes_validos)}</strong>
-              <small>codigo 2</small>
-            </article>
-            <article>
-              <span>Por revisar</span>
-              <strong>{formatNumber(documentSummary?.pendientes)}</strong>
-              <small>{formatNumber(documentSummary?.tipo_incorrecto)} tipo / {formatNumber(documentSummary?.numero_invalido)} numero</small>
-            </article>
-          </div>
-
-          <div className={`senescyt-document-analyzer${documentAnalysis.valid ? ' is-valid' : ' is-warning'}`}>
-            <div className="senescyt-document-analyzer__form">
-              <label>
-                Tipo de documento
-                <select value={documentType} onChange={(event) => updateDocumentType(event.target.value)}>
-                  <option value="1">1 - Cedula</option>
-                  <option value="2">2 - Pasaporte</option>
-                </select>
-              </label>
-              <label>
-                Numero de documento
-                <input
-                  value={documentNumber}
-                  onChange={(event) => updateDocumentNumber(event.target.value)}
-                  placeholder="0102030405 / ABC123456 / A12345678"
-                />
-              </label>
+      <section className="senescyt-action-row" aria-label="Descargas y vista previa SENESCYT">
+        <article className="student-card student-card--wide senescyt-download-card senescyt-action-card">
+          <div className="card-head">
+            <div>
+              <p className="eyebrow">Descargas ZIP</p>
+              <h3>Generación por carrera y faltantes</h3>
+              <p className="report-description">
+                Cada ZIP contiene un Excel por carrera. Los faltantes incluyen lista sin duplicidad y detalle de campos pendientes.
+              </p>
             </div>
-            <div className="senescyt-document-result">
-              <article>
-                <span>Codigo sugerido</span>
-                <strong>{documentAnalysis.suggestedType || '-'}</strong>
-                <small>{documentAnalysis.suggestedLabel || 'Sin sugerencia'}</small>
-              </article>
-              <article>
-                <span>Formato detectado</span>
-                <strong>{documentAnalysis.formatLabel || 'No reconocido'}</strong>
-                <small>{documentAnalysis.normalized || 'Sin numero'}</small>
-              </article>
-            </div>
-            <p>{documentAnalysis.message}</p>
+            <span>{report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta'}</span>
           </div>
-        </div>
-      </section>
 
-      <section className="student-card student-card--wide senescyt-download-card">
-        <div className="card-head">
-          <div>
-            <p className="eyebrow">Descargas Excel</p>
-            <h3>Generación por carrera y faltantes</h3>
-            <p className="report-description">
-              Los archivos de faltantes incluyen lista global sin duplicidad, hojas por carrera y detalle de campos pendientes.
-            </p>
+          <div className="senescyt-download-actions">
+            <button
+              type="button"
+              className="senescyt-action-button senescyt-action-button--primary"
+              onClick={() => void download(target, 'completo')}
+              disabled={downloading === `${target}-completo`}
+            >
+              {downloading === `${target}-completo`
+                ? 'Generando...'
+                : `Archivo ${TARGET_LABELS[target].toLowerCase()} por carrera`}
+            </button>
+            <button
+              type="button"
+              className="senescyt-action-button senescyt-action-button--secondary"
+              onClick={() => void download(target, 'faltantes')}
+              disabled={downloading === `${target}-faltantes`}
+            >
+              {downloading === `${target}-faltantes`
+                ? 'Generando...'
+                : `Faltantes ${TARGET_LABELS[target].toLowerCase()} global/carreras`}
+            </button>
           </div>
-          <span>{report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta'}</span>
-        </div>
+        </article>
 
-        <div className="senescyt-download-actions">
-          <button
-            type="button"
-            onClick={() => void download(target, 'completo')}
-            disabled={downloading === `${target}-completo`}
-          >
-            {downloading === `${target}-completo`
-              ? 'Generando...'
-              : `Archivo ${TARGET_LABELS[target].toLowerCase()} por carrera`}
-          </button>
-          <button
-            type="button"
-            onClick={() => void download(target, 'faltantes')}
-            disabled={downloading === `${target}-faltantes`}
-          >
-            {downloading === `${target}-faltantes`
-              ? 'Generando...'
-              : `Faltantes ${TARGET_LABELS[target].toLowerCase()} global/carreras`}
-          </button>
-        </div>
-      </section>
-
-      <section className="student-grid student-grid--content senescyt-audit-grid">
-        <article className="student-card student-card--wide senescyt-report-card">
+        <article className="student-card student-card--wide senescyt-report-card senescyt-preview-launcher senescyt-action-card">
           <div className="card-head">
             <div>
               <p className="eyebrow">Vista previa</p>
               <h3>{TARGET_LABELS[target]} con campos pendientes</h3>
+              <p className="report-description">
+                Abra la subpantalla para revisar registros, campos faltantes y detalle individual.
+              </p>
             </div>
-            <span>{formatNumber(rows.length)} visible(s)</span>
-          </div>
-
-          <div className="matricula-table-wrap">
-            <table className="matricula-table senescyt-table">
-              <thead>
-                <tr>
-                  <th>Identificacion</th>
-                  <th>Nombre</th>
-                  <th>Correo</th>
-                  <th>Teléfono</th>
-                  <th>Carrera</th>
-                  <th>% avance</th>
-                  <th>Pendientes</th>
-                  <th>Campos faltantes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={`${row.identificacion}-${row.codigo}-${row.nombre_carrera}`}>
-                    <td>
-                      <strong>{row.identificacion || '-'}</strong>
-                      <small>
-                        Codigo {row.codigo || '-'} - {row.documento?.tipo_actual_label || 'Sin tipo'}
-                        {row.documento?.valido === false ? ' - revisar documento' : ''}
-                      </small>
-                    </td>
-                    <td>{row.nombre || '-'}</td>
-                    <td>{row.correo || '-'}</td>
-                    <td>{row.telefono || '-'}</td>
-                    <td>{row.nombre_carrera || '-'}</td>
-                    <td>{formatPercent(row.porcentaje_lleno)}</td>
-                    <td>{formatNumber(row.campos_pendientes)}</td>
-                    <td>{(row.campos_faltantes || []).slice(0, 8).join(', ') || 'Completo'}</td>
-                  </tr>
-                ))}
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={8}>No hay registros para mostrar. Pulse Consultar o cambie los filtros.</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article className="student-card senescyt-side-card">
-          <div className="card-head">
-            <h3>Campos mas faltantes</h3>
-            <span>{formatNumber(missingFields.length)}</span>
-          </div>
-          <div className="senescyt-missing-list">
-            {missingFields.slice(0, 12).map((field) => (
-              <div key={field.campo}>
-                <span>{field.campo}</span>
-                <strong>{formatNumber(field.pendientes)}</strong>
-                <small>{formatPercent(field.porcentaje_lleno)} de avance</small>
-              </div>
-            ))}
-            {missingFields.length === 0 ? <p>No hay campos pendientes detectados.</p> : null}
+            <div className="senescyt-preview-launcher__actions">
+              <span>{formatNumber(rows.length)} visible(s)</span>
+              <button
+                type="button"
+                className="senescyt-action-button senescyt-action-button--primary"
+                onClick={() => setPreviewOpen(true)}
+              >
+                Vista previa
+              </button>
+            </div>
           </div>
         </article>
       </section>
+
+      {previewOpen ? (
+        <div className="senescyt-modal-backdrop senescyt-preview-backdrop" role="presentation">
+          <section
+            className="senescyt-modal senescyt-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="senescyt-preview-title"
+          >
+            <div className="senescyt-modal__header">
+              <div>
+                <p className="eyebrow">Vista previa</p>
+                <h3 id="senescyt-preview-title">{TARGET_LABELS[target]} con campos pendientes</h3>
+                <p className="report-description">
+                  Revise los registros antes de descargar el ZIP o completar la información pendiente.
+                </p>
+              </div>
+              <button type="button" className="senescyt-modal__close" onClick={closePreview}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="senescyt-modal__body">
+              <div className="matricula-table-wrap">
+                <table className="matricula-table senescyt-table senescyt-preview-table">
+                  <thead>
+                    <tr>
+                      <th>Ver</th>
+                      <th>Identificación</th>
+                      <th>Nombre</th>
+                      <th>Correo</th>
+                      <th>Teléfono</th>
+                      <th>Carrera</th>
+                      <th>% avance</th>
+                      <th>Pendientes</th>
+                      <th>Campos faltantes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <tr key={`${row.identificacion}-${row.codigo}-${row.nombre_carrera}-${index}`}>
+                        <td>
+                          <button
+                            type="button"
+                            className="senescyt-icon-button"
+                            title="Ver detalle"
+                            aria-label={`Ver detalle de ${row.nombre || row.identificacion || 'registro'}`}
+                            onClick={() => setDetailRow(row)}
+                          >
+                            <svg
+                              aria-hidden="true"
+                              viewBox="0 0 24 24"
+                              width="18"
+                              height="18"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          </button>
+                        </td>
+                        <td>
+                          <strong>{row.identificacion || '-'}</strong>
+                          <small>
+                            Código {row.codigo || '-'} - {row.documento?.tipo_actual_label || 'Sin tipo'}
+                            {row.documento?.valido === false ? ' - revisar documento' : ''}
+                          </small>
+                        </td>
+                        <td>{row.nombre || '-'}</td>
+                        <td>{row.correo || '-'}</td>
+                        <td>{row.telefono || '-'}</td>
+                        <td>{row.nombre_carrera || '-'}</td>
+                        <td>{formatPercent(row.porcentaje_lleno)}</td>
+                        <td>{formatNumber(row.campos_pendientes)}</td>
+                        <td>{(row.campos_faltantes || []).slice(0, 8).join(', ') || 'Completo'}</td>
+                      </tr>
+                    ))}
+                    {rows.length === 0 ? (
+                      <tr>
+                        <td colSpan={9}>No hay registros para mostrar. Pulse Consultar o cambie los filtros.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {detailRow ? (
+        <div className="senescyt-modal-backdrop senescyt-modal-backdrop--stacked" role="presentation">
+          <section
+            className="senescyt-modal senescyt-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="senescyt-detail-title"
+          >
+            <div className="senescyt-modal__header">
+              <div>
+                <p className="eyebrow">Detalle del registro</p>
+                <h3 id="senescyt-detail-title">{detailRow.nombre || 'Registro SENESCYT'}</h3>
+              </div>
+              <button type="button" className="senescyt-modal__close" onClick={() => setDetailRow(null)}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="senescyt-modal__body">
+              <div className="senescyt-detail-grid">
+                <div className="senescyt-detail-field">
+                  <span>Identificación</span>
+                  <strong>{detailRow.identificacion || '-'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Código</span>
+                  <strong>{detailRow.codigo || '-'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Tipo documento</span>
+                  <strong>{detailRow.documento?.tipo_actual_label || 'Sin tipo'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Validación</span>
+                  <strong>{detailRow.documento?.valido === false ? 'Revisar documento' : 'Validado'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Correo</span>
+                  <strong>{detailRow.correo || '-'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Teléfono</span>
+                  <strong>{detailRow.telefono || '-'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Carrera</span>
+                  <strong>{detailRow.nombre_carrera || '-'}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Avance</span>
+                  <strong>{formatPercent(detailRow.porcentaje_lleno)}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Campos llenos</span>
+                  <strong>{formatNumber(detailRow.campos_llenos)} de {formatNumber(detailRow.campos_totales)}</strong>
+                </div>
+                <div className="senescyt-detail-field">
+                  <span>Pendientes</span>
+                  <strong>{formatNumber(detailRow.campos_pendientes)}</strong>
+                </div>
+              </div>
+
+              <div className="senescyt-detail-block">
+                <h4>Campos faltantes</h4>
+                <div className="senescyt-missing-chips">
+                  {detailRow.campos_faltantes?.length ? (
+                    detailRow.campos_faltantes.map((field) => <span key={field}>{field}</span>)
+                  ) : (
+                    <strong className="senescyt-ok-pill">Completo</strong>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </>
   )
 }

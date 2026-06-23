@@ -12,6 +12,7 @@ type LoginViewProps = {
   onPasswordChange: (value: string) => void
   onTogglePassword: () => void
   onSubmit: FormEventHandler<HTMLFormElement>
+  onOpenTeacherEvaluation?: () => void
 }
 
 export function LoginView({
@@ -24,6 +25,7 @@ export function LoginView({
   onPasswordChange,
   onTogglePassword,
   onSubmit,
+  onOpenTeacherEvaluation,
 }: Readonly<LoginViewProps>) {
   return (
     <AuthShell title="Acceso" subtitle="Ingrese con su cuenta institucional">
@@ -64,6 +66,12 @@ export function LoginView({
         <button className="submit-button" type="submit" disabled={loading}>
           {loading ? 'Validando...' : 'Iniciar sesion'}
         </button>
+
+        {onOpenTeacherEvaluation ? (
+          <button type="button" className="public-evaluation-button" onClick={onOpenTeacherEvaluation}>
+            Evaluacion docente sin iniciar sesion
+          </button>
+        ) : null}
 
         {error ? (
           <p className="error-banner" role="alert" aria-live="polite">

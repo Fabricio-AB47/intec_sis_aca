@@ -6,7 +6,6 @@ import {
   fetchLegacyReportsCatalog,
 } from '../../lib/api'
 import type {
-  LegacyFunctionalInventoryItem,
   LegacyReportOption,
   LegacyReportDefinition,
   LegacyReportFilters,
@@ -25,19 +24,86 @@ type ReporteriaIntegralViewProps = {
 
 const defaultReports: LegacyReportDefinition[] = [
   {
-    key: 'matriculados',
-    title: 'Estudiantes matriculados',
-    category: 'Academico',
-    description: 'Reporte por periodo, carrera, estado y paralelo.',
-    source_tables: ['CARRERAXESTUD', 'DATOS_ESTUD', 'CARRERAS', 'PERIODO'],
-    estado_options: [
-      { value: 'A', label: 'Activo' },
-      { value: 'G', label: 'Graduado' },
-      { value: 'P', label: 'Inactivo' },
-      { value: 'R', label: 'Retirado' },
-    ],
+    key: 'provincia',
+    title: 'Provincia',
+    category: 'Reportería R/H',
+    description: 'Totales por provincia separados en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'Provincias'],
+    filters: ['anio', 'estado', 'buscar', 'limite'],
+  },
+  {
+    key: 'provincia_genero',
+    title: 'Provincia por género',
+    category: 'Reportería R/H',
+    description: 'Consolidado por provincia y género separado en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'CARRERAS', 'Provincias', 'Sexo'],
+    filters: ['anio', 'estado', 'genero', 'buscar', 'limite'],
+  },
+  {
+    key: 'provincia_carrera',
+    title: 'Provincia por carreras',
+    category: 'Reportería R/H',
+    description: 'Consolidado por provincia y carrera separado en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'CARRERAS', 'Provincias'],
+    filters: ['anio', 'estado', 'carrera', 'buscar', 'limite'],
+  },
+  {
+    key: 'carrera',
+    title: 'Carrera',
+    category: 'Reportería R/H',
+    description: 'Totales por carrera separados en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'CARRERAS'],
+    filters: ['anio', 'estado', 'carrera', 'buscar', 'limite'],
+  },
+  {
+    key: 'graduados_2025',
+    title: 'Graduados',
+    category: 'Reportería R/H',
+    description: 'Listado de graduados por año, provincia, carrera y género.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'CARRERAS', 'Provincias', 'ESTADO'],
+    filters: ['anio', 'estado', 'carrera', 'genero', 'buscar', 'limite'],
+  },
+  {
+    key: 'genero',
+    title: 'Género',
+    category: 'Reportería R/H',
+    description: 'Distribución por género separada en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'Sexo'],
+    filters: ['anio', 'estado', 'genero', 'buscar', 'limite'],
+  },
+  {
+    key: 'periodo',
+    title: 'Período',
+    category: 'Reportería R/H',
+    description: 'Totales por período separados en Regular y Homologación.',
+    source_tables: ['DATOS_ESTUD', 'CARRERAXESTUD', 'PERIODO', 'CARRERAS', 'Sexo'],
+    filters: ['anio', 'estado', 'carrera', 'genero', 'buscar', 'limite'],
   },
 ]
+
+const fallbackYearOptions: LegacyReportOption[] = [
+  { value: '', label: 'Todos' },
+  { value: '2026', label: '2026' },
+  { value: '2025', label: '2025' },
+  { value: '2024', label: '2024' },
+  { value: '2023', label: '2023' },
+]
+const studentEstadoOptions: LegacyReportOption[] = [
+  { value: '', label: 'Todos los estados' },
+  { value: 'A', label: 'Activo' },
+  { value: 'G', label: 'Graduado' },
+  { value: 'P', label: 'Inactivo' },
+  { value: 'R', label: 'Retirado' },
+]
+const genderOptions = [
+  { value: '', label: 'Todos los géneros' },
+  { value: 'Masculino', label: 'Masculino' },
+  { value: 'Femenino', label: 'Femenino' },
+]
+
+function defaultEstadoForReport(reportKey: LegacyReportKey): string {
+  return reportKey === 'graduados_2025' ? 'G' : ''
+}
 
 const ageRangeOrder = ['Menor de 18', '18 a 29', '30 a 40', '41 a 50', '51 a 60', '61 o mas', 'Sin fecha']
 
@@ -61,6 +127,14 @@ function formatCell(value: LegacyReportRow[string]): string {
 }
 
 function columnLabel(column: string): string {
+  const labels: Record<string, string> = {
+    anio: 'Año',
+    periodo: 'Período',
+    periodo_codigo: 'Código período',
+    genero: 'Género',
+    cedula: 'Cédula',
+  }
+  if (labels[column]) return labels[column]
   return column
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (value) => value.toUpperCase())
@@ -70,6 +144,21 @@ function cellNumber(value: LegacyReportRow[string]): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const parsed = Number(String(value ?? '').replace(',', '.'))
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function isTotalColumn(column: string): boolean {
+  const normalized = column.toLowerCase()
+  if (normalized.includes('codigo') || normalized.includes('cedula') || normalized === 'anio') return false
+  return (
+    normalized === 'regular' ||
+    normalized === 'homologacion' ||
+    normalized === 'total' ||
+    normalized === 'cantidad' ||
+    normalized === 'graduados' ||
+    normalized.startsWith('total_') ||
+    normalized.endsWith('_total') ||
+    normalized.includes('total_estudiantes')
+  )
 }
 
 function ageRangeSortValue(range: string): number {
@@ -96,16 +185,18 @@ export function ReporteriaIntegralView({
   initialReportKey = '',
 }: Readonly<ReporteriaIntegralViewProps>) {
   const [reports, setReports] = useState<LegacyReportDefinition[]>(defaultReports)
-  const [inventory, setInventory] = useState<LegacyFunctionalInventoryItem[]>([])
   const [periodOptions, setPeriodOptions] = useState<LegacyReportOption[]>([])
   const [careerOptions, setCareerOptions] = useState<LegacyReportOption[]>([])
+  const [yearOptions, setYearOptions] = useState<LegacyReportOption[]>(fallbackYearOptions)
   const [reportKey, setReportKey] = useState<LegacyReportKey>(
-    (initialReportKey as LegacyReportKey) || 'matriculados',
+    (initialReportKey as LegacyReportKey) || 'provincia_genero',
   )
   const [appliedInitialReport, setAppliedInitialReport] = useState('')
-  const [periodo, setPeriodo] = useState('')
+  const [anio, setAnio] = useState('')
+  const [periodos, setPeriodos] = useState<string[]>([])
   const [carrera, setCarrera] = useState('')
-  const [estado, setEstado] = useState('')
+  const [estado, setEstado] = useState(defaultEstadoForReport((initialReportKey as LegacyReportKey) || 'provincia_genero'))
+  const [genero, setGenero] = useState('')
   const [buscar, setBuscar] = useState('')
   const [limit, setLimit] = useState(500)
   const [loading, setLoading] = useState(false)
@@ -121,7 +212,7 @@ export function ReporteriaIntegralView({
   )
   const directReportMode = individualMode && Boolean(initialReportKey)
   const enabledFilters = useMemo(
-    () => new Set(selectedReport?.filters?.length ? selectedReport.filters : ['periodo', 'carrera', 'estado', 'buscar', 'limite']),
+    () => new Set(selectedReport?.filters?.length ? selectedReport.filters : ['anio', 'carrera', 'genero', 'buscar', 'limite']),
     [selectedReport],
   )
   const columns = data?.columns || []
@@ -164,37 +255,86 @@ export function ReporteriaIntegralView({
       columns.some((column) => formatCell(row[column]).toLowerCase().includes(needle)),
     )
   }, [columns, rows, tableFilter])
+  const totalsRow = useMemo(() => {
+    if (!visibleRows.length || !columns.length) return null
+    const totals: Record<string, number> = {}
+    let hasTotals = false
+
+    for (const column of columns) {
+      if (!isTotalColumn(column)) continue
+      const columnTotal = visibleRows.reduce((sum, row) => sum + cellNumber(row[column]), 0)
+      totals[column] = columnTotal
+      hasTotals = true
+    }
+
+    return hasTotals ? totals : null
+  }, [columns, visibleRows])
+  const totalSummaryItems = useMemo(
+    () =>
+      totalsRow
+        ? columns
+            .filter((column) => isTotalColumn(column))
+            .map((column) => ({
+              key: column,
+              label: columnLabel(column),
+              value: totalsRow[column] ?? 0,
+            }))
+        : [],
+    [columns, totalsRow],
+  )
   const sourceTables = selectedReport?.source_tables || []
-  const estadoOptions = selectedReport?.estado_options || []
+  const estadoOptions = selectedReport?.estado_options?.length ? selectedReport.estado_options : studentEstadoOptions
+  const estadoLabel = estadoOptions.find((option) => option.value === estado)?.label || estado
+  const selectedPeriodLabels = useMemo(
+    () =>
+      periodos.map((value) => periodOptions.find((option) => option.value === value)?.label || value),
+    [periodOptions, periodos],
+  )
   const activeFilters = [
-    enabledFilters.has('periodo') && periodo ? `Periodo ${periodOptions.find((option) => option.value === periodo)?.label || periodo}` : '',
+    enabledFilters.has('anio') ? `Año ${anio || 'Todos'}` : '',
+    enabledFilters.has('periodo') && periodos.length === 1 ? `Período ${selectedPeriodLabels[0]}` : '',
+    enabledFilters.has('periodo') && periodos.length > 1 ? `${periodos.length} períodos seleccionados` : '',
     enabledFilters.has('carrera') && carrera ? `Carrera ${careerOptions.find((option) => option.value === carrera)?.label || carrera}` : '',
-    enabledFilters.has('estado') && estado ? `Estado ${estado}` : '',
-    enabledFilters.has('buscar') && buscar ? `Busqueda "${buscar}"` : '',
+    enabledFilters.has('estado') && estado ? `Estado ${estadoLabel}` : '',
+    enabledFilters.has('genero') ? `Género ${genero || 'Todos'}` : '',
+    enabledFilters.has('buscar') && buscar ? `Búsqueda "${buscar}"` : '',
   ].filter(Boolean)
 
   function filtersForReport(nextReportKey: LegacyReportKey) {
     const report = reports.find((item) => item.key === nextReportKey) || selectedReport
-    return new Set(report?.filters?.length ? report.filters : ['periodo', 'carrera', 'estado', 'buscar', 'limite'])
+    return new Set(report?.filters?.length ? report.filters : ['anio', 'carrera', 'genero', 'buscar', 'limite'])
   }
 
   function filters(nextReportKey: LegacyReportKey = reportKey, nextEstado: string = estado): LegacyReportFilters {
     const nextEnabledFilters = filtersForReport(nextReportKey)
     return {
       reportKey: nextReportKey,
-      periodo: nextEnabledFilters.has('periodo') ? periodo.trim() : '',
+      anio: nextEnabledFilters.has('anio') ? anio.trim() : '',
+      periodo: nextEnabledFilters.has('periodo') && periodos.length === 1 ? periodos[0] : '',
+      periodos: nextEnabledFilters.has('periodo') ? periodos : [],
       carrera: nextEnabledFilters.has('carrera') ? carrera.trim() : '',
       estado: nextEnabledFilters.has('estado') ? nextEstado.trim() : '',
+      genero: nextEnabledFilters.has('genero') ? genero.trim() : '',
       buscar: nextEnabledFilters.has('buscar') ? buscar.trim() : '',
       limit,
     }
   }
 
   function validateFiltersForReport(nextReportKey: LegacyReportKey) {
-    if (nextReportKey === 'estud_per_c_m' && !periodo.trim()) {
+    if (nextReportKey === 'estud_per_c_m' && periodos.length === 0) {
       return 'Selecciona un periodo para consultar estudiantes, carreras y materias matriculadas.'
     }
     return ''
+  }
+
+  function togglePeriod(value: string) {
+    setPeriodos((current) =>
+      current.includes(value) ? current.filter((item) => item !== value) : [...current, value],
+    )
+  }
+
+  function selectAllPeriods() {
+    setPeriodos(periodOptions.map((option) => option.value))
   }
 
   async function loadReport(nextReportKey: LegacyReportKey = reportKey, nextEstado: string = estado) {
@@ -246,9 +386,12 @@ export function ReporteriaIntegralView({
         if (payload.reports?.length) {
           setReports(payload.reports)
         }
-        setInventory(payload.functional_inventory || [])
         setPeriodOptions(payload.periodos || [])
         setCareerOptions(payload.carreras || [])
+        const catalogYears = (payload.anios || [])
+          .filter((option) => option.value)
+          .map((option) => ({ value: option.value, label: option.label || option.value }))
+        setYearOptions(catalogYears.length ? [{ value: '', label: 'Todos' }, ...catalogYears] : fallbackYearOptions)
       } catch (apiError) {
         if (!cancelled) {
           setError(apiError instanceof Error ? apiError.message : 'Error cargando catalogo integral')
@@ -275,10 +418,22 @@ export function ReporteriaIntegralView({
     const nextReportKey = initialReportKey as LegacyReportKey
     setAppliedInitialReport(initialReportKey)
     setReportKey(nextReportKey)
-    setEstado('')
+    setAnio('')
+    const nextEstado = defaultEstadoForReport(nextReportKey)
+    setEstado(nextEstado)
+    setGenero('')
     setData(null)
-    void loadReport(nextReportKey, '')
+    void loadReport(nextReportKey, nextEstado)
   }, [appliedInitialReport, initialReportKey, reports])
+
+  useEffect(() => {
+    if (reportKey !== 'graduados_2025') return
+    const timeout = window.setTimeout(() => {
+      void loadReport('graduados_2025', estado)
+    }, 250)
+
+    return () => window.clearTimeout(timeout)
+  }, [reportKey, anio, carrera, genero, estado])
 
   return (
     <>
@@ -298,27 +453,6 @@ export function ReporteriaIntegralView({
         </div>
       </header>
 
-      {!directReportMode ? (
-        <section className="student-grid student-grid--stats matricula-stats-grid">
-          <article className="student-card student-card--stat matricula-stat-card">
-            <p>Consultas disponibles</p>
-            <h2>{formatNumber(reports.length)}</h2>
-          </article>
-          <article className="student-card student-card--stat matricula-stat-card">
-            <p>Filas consultadas</p>
-            <h2>{formatNumber(data?.total)}</h2>
-          </article>
-          <article className="student-card student-card--stat matricula-stat-card">
-            <p>Columnas</p>
-            <h2>{formatNumber(columns.length)}</h2>
-          </article>
-          <article className="student-card student-card--stat matricula-stat-card">
-            <p>Fuentes SQL</p>
-            <h2>{formatNumber(sourceTables.length)}</h2>
-          </article>
-        </section>
-      ) : null}
-
       <section className={`student-grid student-grid--content reporteria-integral-grid ${directReportMode ? 'reporteria-integral-grid--single' : ''}`}>
         <article className="student-card student-card--wide reporteria-integral-panel">
           <div className="card-head">
@@ -335,9 +469,12 @@ export function ReporteriaIntegralView({
                   className={report.key === reportKey ? 'reporteria-individual-list__item reporteria-individual-list__item--active' : 'reporteria-individual-list__item'}
                   onClick={() => {
                     setReportKey(report.key)
-                    setEstado('')
+                    setAnio('')
+                    const nextEstado = defaultEstadoForReport(report.key)
+                    setEstado(nextEstado)
+                    setGenero('')
                     setData(null)
-                    void loadReport(report.key, '')
+                    void loadReport(report.key, nextEstado)
                   }}
                 >
                   <strong>{report.title}</strong>
@@ -354,8 +491,11 @@ export function ReporteriaIntegralView({
                 <select
                   value={reportKey}
                   onChange={(event) => {
-                    setReportKey(event.target.value as LegacyReportKey)
-                    setEstado('')
+                    const nextReportKey = event.target.value as LegacyReportKey
+                    setReportKey(nextReportKey)
+                    setAnio('')
+                    setEstado(defaultEstadoForReport(nextReportKey))
+                    setGenero('')
                   }}
                 >
                   {reports.map((report) => (
@@ -366,20 +506,54 @@ export function ReporteriaIntegralView({
                 </select>
               </label>
             ) : null}
+            {enabledFilters.has('anio') ? (
+              <label className="reporteria-year-filter">
+                <span>Año</span>
+                <select value={anio} onChange={(event) => setAnio(event.target.value)}>
+                  {yearOptions.map((option) => (
+                    <option key={option.value || 'todos'} value={option.value}>
+                      {option.label || option.value || 'Todos'}
+                    </option>
+                  ))}
+                </select>
+                <small>{anio ? `Año seleccionado: ${anio}` : 'Año seleccionado: Todos'}</small>
+              </label>
+            ) : null}
             {enabledFilters.has('periodo') ? (
               <label>
                 <span>Periodo</span>
                 {periodOptions.length > 0 ? (
-                  <select value={periodo} onChange={(event) => setPeriodo(event.target.value)}>
-                    <option value="">Todos los periodos</option>
-                    {periodOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="report-period-picker">
+                    <div className="report-period-toolbar">
+                      <strong>{periodos.length ? `${periodos.length} seleccionado(s)` : 'Todos los períodos'}</strong>
+                      <button type="button" onClick={selectAllPeriods}>
+                        Seleccionar todos
+                      </button>
+                      <button type="button" onClick={() => setPeriodos([])}>
+                        Limpiar
+                      </button>
+                    </div>
+                    <div className="report-period-options">
+                      {periodOptions.map((option) => (
+                        <label key={option.value} className="report-period-option">
+                          <input
+                            type="checkbox"
+                            checked={periodos.includes(option.value)}
+                            onChange={() => togglePeriod(option.value)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 ) : (
-                  <input value={periodo} onChange={(event) => setPeriodo(event.target.value)} placeholder="Codigo periodo" />
+                  <textarea
+                    value={periodos.join('\n')}
+                    onChange={(event) =>
+                      setPeriodos(event.target.value.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean))
+                    }
+                    placeholder="Códigos de período, uno por línea"
+                  />
                 )}
               </label>
             ) : null}
@@ -403,7 +577,7 @@ export function ReporteriaIntegralView({
             {enabledFilters.has('estado') ? (
               <label>
                 <span>Estado</span>
-                <select value={estado} onChange={(event) => setEstado(event.target.value)} disabled={estadoOptions.length === 0}>
+                <select value={estado} onChange={(event) => setEstado(event.target.value)}>
                   <option value="">Todos</option>
                   {estadoOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -413,15 +587,27 @@ export function ReporteriaIntegralView({
                 </select>
               </label>
             ) : null}
+            {enabledFilters.has('genero') ? (
+              <label>
+                <span>Género</span>
+                <select value={genero} onChange={(event) => setGenero(event.target.value)}>
+                  {genderOptions.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {enabledFilters.has('buscar') ? (
               <label>
                 <span>Buscar</span>
-                <input value={buscar} onChange={(event) => setBuscar(event.target.value)} placeholder="Nombre, cedula o materia" />
+                <input value={buscar} onChange={(event) => setBuscar(event.target.value)} placeholder="Cédula, estudiante, provincia, carrera o período" />
               </label>
             ) : null}
             {enabledFilters.has('limite') ? (
               <label>
-                <span>Limite</span>
+                <span>Límite</span>
                 <input
                   type="number"
                   min={1}
@@ -488,6 +674,28 @@ export function ReporteriaIntegralView({
             </div>
           ) : null}
 
+          <div className="reporteria-total-summary" aria-label="Totales del resultado filtrado">
+            <div className="reporteria-total-summary__lead">
+              <span>Total del resultado</span>
+              <strong>{formatNumber(visibleRows.length)}</strong>
+              <small>{visibleRows.length === 1 ? 'fila filtrada' : 'filas filtradas'}</small>
+            </div>
+            {totalSummaryItems.length > 0 ? (
+              <div className="reporteria-total-summary__items">
+                {totalSummaryItems.map((item) => (
+                  <div key={item.key} className="reporteria-total-summary__item">
+                    <span>{item.label}</span>
+                    <strong>{formatCell(item.value)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <small className="reporteria-total-summary__empty">
+                El resultado actual no tiene columnas numericas para totalizar.
+              </small>
+            )}
+          </div>
+
           <div className="excel-toolbar">
             <label>
               <span>Filtrar tabla</span>
@@ -534,30 +742,22 @@ export function ReporteriaIntegralView({
                   </tr>
                 )}
               </tbody>
+              {totalsRow ? (
+                <tfoot>
+                  <tr>
+                    <td>Total</td>
+                    {columns.map((column) => (
+                      <td key={`total-${column}`} className={isTotalColumn(column) ? 'reporteria-total-cell' : undefined}>
+                        {isTotalColumn(column) ? formatCell(totalsRow[column] ?? 0) : ''}
+                      </td>
+                    ))}
+                  </tr>
+                </tfoot>
+              ) : null}
             </table>
           </div>
         </article>
 
-        {!directReportMode ? (
-          <article className="student-card reporteria-integral-panel reporteria-integral-inventory">
-            <div className="card-head">
-                  <h3>Areas disponibles</h3>
-              <span>{formatNumber(inventory.length)} bloque(s)</span>
-            </div>
-
-            {inventory.length > 0 ? (
-              inventory.map((item) => (
-                <div key={item.module} className="reporteria-integral-inventory-item">
-                  <strong>{item.module}</strong>
-                  <p>{(item.capabilities || []).join(' / ')}</p>
-                  <small>{(item.legacy_sources || []).join(', ')}</small>
-                </div>
-              ))
-            ) : (
-              <p className="empty-block">El inventario se cargara desde el backend.</p>
-            )}
-          </article>
-        ) : null}
       </section>
     </>
   )

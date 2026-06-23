@@ -29,6 +29,7 @@ function isPage(value: string): value is Page {
     value === 'credenciales' ||
     value === 'correos-masivos' ||
     value === 'carnet-institucional' ||
+    value === 'evaluacion-docente' ||
     value === 'portal-estudiante' ||
     value === 'portal-docente'
   )

@@ -1,13 +1,23 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import {
+  applyAcademicPeriodChange,
   createSisAcademicoRecord,
+  fetchAcademicPeriodChangeCatalog,
   fetchSisAcademicoCatalog,
   fetchSisAcademicoRecord,
   fetchSisAcademicoRows,
+  previewAcademicPeriodChange,
   updateSisAcademicoRecord,
 } from '../../lib/api'
-import type { SisAcademicoField, SisAcademicoRow, SisAcademicoSection } from '../../types/app'
+import type {
+  AcademicPeriodChangeCatalogResponse,
+  AcademicPeriodChangePreviewResponse,
+  AcademicPeriodOption,
+  SisAcademicoField,
+  SisAcademicoRow,
+  SisAcademicoSection,
+} from '../../types/app'
 
 type GestionSisAcademicoViewProps = {
   displayName: string
@@ -17,22 +27,6 @@ type GestionSisAcademicoViewProps = {
 type FormValue = string | number | boolean | null | undefined
 type OptionItem = { value: string; label: string }
 type InlineEstadoValues = Record<string, { Estado?: string; Informacion?: string }>
-type DocumentFieldConfig = {
-  typeField: string
-  numberField: string
-  typeLabel: string
-  numberLabel: string
-}
-type LocalDocumentAnalysis = {
-  normalized: string
-  suggestedType: string
-  suggestedLabel: string
-  formatLabel: string
-  validNumber: boolean
-  validType: boolean
-  valid: boolean
-  message: string
-}
 type HomoMateriaGroup = {
   key: string
   name: string
@@ -117,6 +111,12 @@ const processShortcuts: ProcessShortcut[] = [
     ],
   },
   {
+    key: 'migracion',
+    title: 'Migracion',
+    description: 'Procesos controlados de cambio de modalidad y periodo academico.',
+    sections: ['cambio_periodo_hr'],
+  },
+  {
     key: 'vinculacion',
     title: 'Seguimiento y practicas',
     description: 'Observaciones, practicas profesionales, vinculacion y empresas.',
@@ -128,6 +128,11 @@ function valueLabel(value: FormValue): string {
   if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'boolean') return value ? 'Si' : 'No'
   return String(value)
+}
+
+function gradeLabel(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+  return Number(value).toFixed(2)
 }
 
 function fieldOptions(field: SisAcademicoField, value: FormValue) {
@@ -149,81 +154,6 @@ function inputValue(value: FormValue): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   return String(value)
-}
-
-function normalizeDocumentText(value: FormValue): string {
-  return inputValue(value).toUpperCase().replace(/[^A-Z0-9]/g, '')
-}
-
-function inferDocumentType(value: FormValue): string {
-  const normalized = normalizeDocumentText(value)
-  if (/^\d{10}$/.test(normalized)) return '1'
-  if (/^[A-Z]{3}\d{6}$/.test(normalized) || /^[A-Z]\d{8}$/.test(normalized)) return '2'
-  return ''
-}
-
-function normalizeDocumentForType(typeCode: string, value: FormValue): string {
-  const normalized = normalizeDocumentText(value)
-  if (typeCode === '1') return normalized.replace(/\D+/g, '').slice(0, 10)
-  return normalized.slice(0, 9)
-}
-
-function documentFormatLabel(value: FormValue): string {
-  const normalized = normalizeDocumentText(value)
-  if (/^\d{10}$/.test(normalized)) return 'Cedula ecuatoriana: 10 digitos'
-  if (/^[A-Z]{3}\d{6}$/.test(normalized)) return 'Pasaporte Ecuador/Espana/Argentina: 3 letras + 6 numeros'
-  if (/^[A-Z]\d{8}$/.test(normalized)) return 'Pasaporte Estados Unidos: 1 letra + 8 numeros'
-  return ''
-}
-
-function analyzeLocalDocument(typeValue: FormValue, numberValue: FormValue): LocalDocumentAnalysis {
-  const typeCode = inputValue(typeValue).trim()
-  const normalized = normalizeDocumentText(numberValue)
-  const suggestedType = inferDocumentType(normalized) || (['1', '2'].includes(typeCode) ? typeCode : '')
-  const validNumber = Boolean(inferDocumentType(normalized))
-  const validType = ['1', '2'].includes(typeCode) && (!inferDocumentType(normalized) || typeCode === inferDocumentType(normalized))
-  const suggestedLabel = suggestedType === '1' ? 'Cedula' : suggestedType === '2' ? 'Pasaporte' : ''
-  let message = 'Ingrese un documento para analizar.'
-  if (normalized) {
-    if (!validNumber) {
-      message = 'No cumple cedula de 10 digitos ni pasaporte de 9 caracteres permitido.'
-    } else if (!validType) {
-      message = `Tipo incorrecto. Debe registrar codigo ${suggestedType} (${suggestedLabel}).`
-    } else {
-      message = `Documento valido. Registre codigo ${suggestedType} (${suggestedLabel}).`
-    }
-  }
-  return {
-    normalized,
-    suggestedType,
-    suggestedLabel,
-    formatLabel: documentFormatLabel(normalized),
-    validNumber,
-    validType,
-    valid: Boolean(validNumber && validType),
-    message,
-  }
-}
-
-function documentFieldConfigForSection(sectionKey: string, fields: SisAcademicoField[]): DocumentFieldConfig | null {
-  const fieldNames = new Set(fields.map((field) => field.name))
-  if (sectionKey === 'estudiantes' && fieldNames.has('tipodocumento') && fieldNames.has('Cedula_Est')) {
-    return {
-      typeField: 'tipodocumento',
-      numberField: 'Cedula_Est',
-      typeLabel: 'Tipo documento',
-      numberLabel: 'Cedula / pasaporte',
-    }
-  }
-  if (sectionKey === 'docentes' && fieldNames.has('tipoDocumentoId') && fieldNames.has('cedula_doc')) {
-    return {
-      typeField: 'tipoDocumentoId',
-      numberField: 'cedula_doc',
-      typeLabel: 'Tipo documento',
-      numberLabel: 'Cedula / pasaporte',
-    }
-  }
-  return null
 }
 
 function recordKey(row: SisAcademicoRow): string {
@@ -289,6 +219,12 @@ function formatSpanishDateRange(start: string, end: string): string {
   return `${startText} al ${endText}`
 }
 
+function periodOptionLabel(period?: AcademicPeriodOption): string {
+  if (!period) return ''
+  const dates = [period.fecha_inicio, period.fecha_fin].filter(Boolean).join(' / ')
+  return `${period.detalle_periodo || period.codigo_periodo}${dates ? ` (${dates})` : ''} - ${period.codigo_periodo}`
+}
+
 function emptyValues(fields: SisAcademicoField[]): Record<string, FormValue> {
   return fields.reduce<Record<string, FormValue>>((acc, field) => {
     acc[field.name] = field.type === 'bool' ? false : ''
@@ -325,6 +261,13 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const [homoMateriaSelectorOpen, setHomoMateriaSelectorOpen] = useState(false)
   const [homoMateriaNameSearch, setHomoMateriaNameSearch] = useState('')
   const [homoBulkSaving, setHomoBulkSaving] = useState(false)
+  const [periodChangeCatalog, setPeriodChangeCatalog] = useState<AcademicPeriodChangeCatalogResponse | null>(null)
+  const [periodChangeEstado, setPeriodChangeEstado] = useState('')
+  const [periodChangeStudentQuery, setPeriodChangeStudentQuery] = useState('')
+  const [periodChangeSelectedCedulas, setPeriodChangeSelectedCedulas] = useState<string[]>([])
+  const [periodChangePreview, setPeriodChangePreview] = useState<AcademicPeriodChangePreviewResponse | null>(null)
+  const [periodChangeLoading, setPeriodChangeLoading] = useState(false)
+  const [periodChangeSaving, setPeriodChangeSaving] = useState(false)
 
   const selectedSection = useMemo(
     () => sections.find((section) => section.key === selectedSectionKey) || null,
@@ -355,29 +298,6 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const editableFields = selectedSection?.editable_fields || []
   const createFields = selectedSection?.create_fields || []
   const currentFields = mode === 'create' ? createFields : editableFields
-  const documentFieldConfig = useMemo(
-    () => documentFieldConfigForSection(selectedSectionKey, currentFields),
-    [currentFields, selectedSectionKey],
-  )
-  const visibleCurrentFields = useMemo(
-    () =>
-      documentFieldConfig
-        ? currentFields.filter(
-            (field) => ![documentFieldConfig.typeField, documentFieldConfig.numberField].includes(field.name),
-          )
-        : currentFields,
-    [currentFields, documentFieldConfig],
-  )
-  const documentAnalysis = useMemo(
-    () =>
-      documentFieldConfig
-        ? analyzeLocalDocument(
-            formValues[documentFieldConfig.typeField],
-            formValues[documentFieldConfig.numberField],
-          )
-        : null,
-    [documentFieldConfig, formValues],
-  )
   const canCreate = createFields.length > 0
   const isEstadoInlineSection = selectedSectionKey === 'actualizacion_est' || selectedSectionKey === 'actualizacion_estudiantes'
   const isDocenteEstadoSection = selectedSectionKey === 'actualizacion_est'
@@ -402,6 +322,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const hasIndexColumn = !isEstadoInlineSection
   const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
   const isMateriaHomoTextSection = selectedSection?.key === 'materia_homo_textof'
+  const isPeriodChangeSection = selectedSection?.key === 'cambio_periodo_hr'
   const homoMateriaOptions = useMemo(
     (): OptionItem[] => uniqueOptionsByValue(selectedSection?.create_fields?.find((field) => field.name === 'cod_materia')?.options || []),
     [selectedSection],
@@ -461,6 +382,39 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     () => homoMateriaGroups.filter((group) => group.codes.some((code) => homoBulkMateriaCodes.includes(code))).length,
     [homoBulkMateriaCodes, homoMateriaGroups],
   )
+  const filteredPeriodChangeStudents = useMemo(() => {
+    const estado = periodChangeEstado.trim().toUpperCase()
+    const needle = periodChangeStudentQuery.trim().toLowerCase()
+    return (periodChangeCatalog?.students || [])
+      .filter((student) => {
+        const matchesEstado = !estado || estado === 'TODOS' || String(student.estado_codigo || '').trim().toUpperCase() === estado
+        const text = `${student.codigo_estud || ''} ${student.cedula || ''} ${student.estudiante || ''} ${student.carrera || ''}`.toLowerCase()
+        const matchesText = !needle || text.includes(needle)
+        return matchesEstado && matchesText
+      })
+  }, [periodChangeCatalog, periodChangeEstado, periodChangeStudentQuery])
+  const periodChangeVisibleCedulas = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          filteredPeriodChangeStudents
+            .map((student) => String(student.cedula_normalizada || student.cedula || '').trim())
+            .filter(Boolean),
+        ),
+      ),
+    [filteredPeriodChangeStudents],
+  )
+  const periodChangeSelectedSet = useMemo(
+    () => new Set(periodChangeSelectedCedulas.map((cedula) => cedula.trim()).filter(Boolean)),
+    [periodChangeSelectedCedulas],
+  )
+  const selectedPeriodChangeStudents = useMemo(
+    () =>
+      (periodChangeCatalog?.students || []).filter((student) =>
+        periodChangeSelectedSet.has(String(student.cedula_normalizada || student.cedula || '').trim()),
+      ),
+    [periodChangeCatalog, periodChangeSelectedSet],
+  )
   const visibleRows = useMemo(() => {
     const needle = tableFilter.trim().toLowerCase()
     if (!needle) return rows
@@ -477,6 +431,14 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     if (!sectionKey) return
     setError('')
     setMessage('')
+    if (sectionKey === 'cambio_periodo_hr') {
+      setRows([])
+      setInlineEstadoValues({})
+      setSelectedRecordKey('')
+      setFormValues({})
+      setMode('edit')
+      return
+    }
     setListLoading(true)
     try {
       const payload = await fetchSisAcademicoRows(sectionKey, nextQuery.trim(), {
@@ -587,29 +549,6 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setError('')
   }
 
-  function updateDocumentType(typeCode: string) {
-    if (!documentFieldConfig) return
-    setFormValues((current) => ({
-      ...current,
-      [documentFieldConfig.typeField]: typeCode ? Number(typeCode) : '',
-      [documentFieldConfig.numberField]: normalizeDocumentForType(typeCode, current[documentFieldConfig.numberField]),
-    }))
-  }
-
-  function updateDocumentNumber(value: string) {
-    if (!documentFieldConfig) return
-    setFormValues((current) => {
-      const currentType = inputValue(current[documentFieldConfig.typeField]).trim()
-      const inferredType = inferDocumentType(value)
-      const nextType = inferredType || currentType
-      return {
-        ...current,
-        [documentFieldConfig.typeField]: nextType ? Number(nextType) : current[documentFieldConfig.typeField],
-        [documentFieldConfig.numberField]: normalizeDocumentForType(nextType, value),
-      }
-    })
-  }
-
   function openSection(sectionKey: string, processKey?: string) {
     setSelectedSectionKey(sectionKey)
     setSelectedProcessKey(processKey || processKeyForSection(sectionKey))
@@ -705,6 +644,99 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     }
   }
 
+  function togglePeriodChangeStudent(cedulaValue?: string) {
+    const cedula = String(cedulaValue || '').trim()
+    if (!cedula) return
+    setPeriodChangePreview(null)
+    setPeriodChangeSelectedCedulas((current) =>
+      current.includes(cedula) ? current.filter((item) => item !== cedula) : [...current, cedula],
+    )
+  }
+
+  function selectVisiblePeriodChangeStudents() {
+    setPeriodChangePreview(null)
+    setPeriodChangeSelectedCedulas(periodChangeVisibleCedulas)
+  }
+
+  function clearPeriodChangeStudentSelection() {
+    setPeriodChangePreview(null)
+    setPeriodChangeSelectedCedulas([])
+  }
+
+  function periodChangePayload() {
+    if (!periodChangeEstado) {
+      setError('Selecciona el estado de estudiantes que deseas revisar.')
+      return null
+    }
+    return {
+      estado_codigo: periodChangeEstado,
+      student_query: periodChangeStudentQuery.trim() || null,
+      student_cedulas: periodChangeSelectedCedulas,
+      exception_cedulas: [],
+      solo_graduados: false,
+    }
+  }
+
+  async function loadPeriodChangeCatalog() {
+    setPeriodChangeLoading(true)
+    setError('')
+    try {
+      const payload = await fetchAcademicPeriodChangeCatalog()
+      setPeriodChangeCatalog(payload)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catálogo de periodos H/R')
+    } finally {
+      setPeriodChangeLoading(false)
+    }
+  }
+
+  async function previewPeriodChange() {
+    const payload = periodChangePayload()
+    if (!payload) return
+    setPeriodChangeLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const preview = await previewAcademicPeriodChange(payload)
+      setPeriodChangePreview(preview)
+      setMessage(
+        `Analisis generado: ${preview.summary?.migrar || 0} registro(s) listos en ${preview.summary?.periodos_regulares || 0} periodo(s) regular(es).`,
+      )
+    } catch (apiError) {
+      setPeriodChangePreview(null)
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo generar la vista previa H/R')
+    } finally {
+      setPeriodChangeLoading(false)
+    }
+  }
+
+  async function applyPeriodChange() {
+    const payload = periodChangePayload()
+    if (!payload) return
+    const pending = periodChangePreview?.summary?.migrar || 0
+    if (!pending) {
+      setError('Genera una vista previa con registros listos antes de aplicar el cambio.')
+      return
+    }
+    if (!window.confirm(`Se cambiarán ${pending} registro(s) de matrícula HOMO a matrícula regular. ¿Deseas continuar?`)) {
+      return
+    }
+    setPeriodChangeSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await applyAcademicPeriodChange(payload)
+      setMessage(
+        `${result.message || 'Migración aplicada.'} Actualizados: ${result.summary?.registros_actualizados || 0}. Cabeceras nuevas: ${result.summary?.cabeceras_insertadas || 0}.`,
+      )
+      setPeriodChangePreview(result.preview || null)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo aplicar el cambio H/R')
+    } finally {
+      setPeriodChangeSaving(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
@@ -721,9 +753,11 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
         if (firstSection) {
           setSelectedProcessKey(processKeyForSection(firstSection))
         }
-        if (firstSection) {
+        if (firstSection && firstSection !== 'cambio_periodo_hr') {
           const rowsPayload = await fetchSisAcademicoRows(firstSection, '')
           if (!cancelled) setRows(rowsPayload.rows || [])
+        } else if (!cancelled) {
+          setRows([])
         }
       } catch (apiError) {
         if (!cancelled) {
@@ -750,6 +784,11 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setAppliedInitialSection(initialSectionKey)
     openSection(initialSectionKey)
   }, [appliedInitialSection, initialSectionKey, sections])
+
+  useEffect(() => {
+    if (!isPeriodChangeSection || periodChangeCatalog) return
+    void loadPeriodChangeCatalog()
+  }, [isPeriodChangeSection, periodChangeCatalog])
 
   return (
     <>
@@ -1027,167 +1066,425 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
             </div>
           ) : null}
 
-          <div className="matricula-acad-form gestion-sis-filters">
-            <label>
-              <span>{isEstadoInlineSection ? 'Buscar nombre o correo' : 'Buscar'}</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={isEstadoInlineSection ? 'Nombre, correo, cedula o codigo' : 'Codigo, cedula, nombre o correo'}
-              />
-            </label>
-            {isStudentEstadoSection ? (
-              <label>
-                <span>Período</span>
-                <select value={estadoPeriodFilter} onChange={(event) => setEstadoPeriodFilter(event.target.value)}>
-                  <option value="">-- Todos --</option>
-                  {(estadoPeriodField?.options || []).map((option) => (
-                    <option key={`estado-periodo-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-
-          <div className="teams-actions">
-            <button type="button" onClick={() => void loadRows()} disabled={!selectedSection || listLoading}>
-              {listLoading ? 'Consultando...' : isEstadoInlineSection ? 'Filtrar' : 'Consultar'}
-            </button>
-            {canCreate ? (
-              <button type="button" onClick={startCreate} disabled={!selectedSection}>
-                Nuevo
-              </button>
-            ) : null}
-          </div>
-
-          <div className="excel-toolbar gestion-sis-excel-toolbar">
-            {!isEstadoInlineSection ? (
-              <label>
-                <span>Filtrar tabla</span>
-                <input
-                  value={tableFilter}
-                  onChange={(event) => setTableFilter(event.target.value)}
-                  placeholder="Buscar solo en los datos mostrados"
-                />
-              </label>
-            ) : null}
-            <div>
-              <strong>{visibleRows.length}</strong>
-              <span>de {rows.length} registro(s)</span>
-            </div>
-            <small>{isEstadoInlineSection ? 'Edita estado y descripción directamente en la fila.' : 'Doble clic en una fila para editar'}</small>
-          </div>
-
           {message ? <p className="teams-message">{message}</p> : null}
           {error ? <p className="teams-error">{error}</p> : null}
 
-          <div className="matricula-table-wrap gestion-sis-table-wrap excel-table-wrap">
-            <table className="matricula-table gestion-sis-table">
-              <thead>
-                <tr>
-                  {hasIndexColumn ? <th>#</th> : null}
-                  {tableFields.map((field) => (
-                    <Fragment key={field.name}>
-                      <th>{field.label}</th>
-                      {isEstadoInlineSection && field.name === 'Estado' ? <th>Descripción</th> : null}
-                    </Fragment>
-                  ))}
-                  <th>{isEstadoInlineSection ? 'Guardar' : 'Editar'}</th>
-                  {isDocenteEstadoSection ? <th>Observar</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.length > 0 ? (
-                  visibleRows.map((row, rowIndex) => (
-                    <tr
-                      key={recordKey(row)}
-                      className={selectedRecordKey === recordKey(row) ? 'excel-row--active' : ''}
-                      onDoubleClick={isEstadoInlineSection ? undefined : () => void openRecord(selectedSectionKey, recordKey(row))}
-                    >
-                      {hasIndexColumn ? <td>{rowIndex + 1}</td> : null}
-                      {tableFields.map((field) => {
-                        if (isEstadoInlineSection && field.name === 'Estado') {
-                          const options = isDocenteEstadoSection
-                            ? docenteEstadoOptions
-                            : estadoInlineField
-                              ? fieldOptions(estadoInlineField, row.Estado)
-                              : []
-                          const estadoValue = inlineEstadoValue(row, 'Estado')
-                          const selectValue = isDocenteEstadoSection && !['A', 'P'].includes(estadoValue.trim().toUpperCase())
-                            ? ''
-                            : estadoValue
-                          return (
-                            <Fragment key={`${recordKey(row)}-${field.name}`}>
+          {isPeriodChangeSection ? (
+            <div className="gestion-sis-homo-bulk gestion-sis-period-change">
+              <div className="gestion-sis-homo-bulk__head">
+                <div>
+                  <strong>Migración matrícula H a R</strong>
+                  <span>
+                    Selecciona un estado, revisa el listado de estudiantes y ejecuta el analisis. El sistema calcula los
+                    periodos regulares segun las fechas HOMO, reparte las materias en bloques de 6 y conserva el promedio final.
+                  </span>
+                </div>
+                <em>{periodChangePreview?.summary?.migrar || 0} registro(s) listos</em>
+              </div>
+
+              <div className="matricula-acad-form gestion-sis-homo-bulk__form">
+                <label>
+                  <span>Estado</span>
+                  <select
+                    value={periodChangeEstado}
+                    onChange={(event) => {
+                      setPeriodChangeEstado(event.target.value)
+                      setPeriodChangeSelectedCedulas([])
+                      setPeriodChangePreview(null)
+                    }}
+                  >
+                    <option value="">Seleccione estado</option>
+                    {(periodChangeCatalog?.estados || []).map((estado) => (
+                      <option key={`period-change-state-${estado.value}`} value={estado.value}>
+                        {estado.label} ({estado.total || 0})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Buscar estudiante</span>
+                  <input
+                    value={periodChangeStudentQuery}
+                    onChange={(event) => {
+                      setPeriodChangeStudentQuery(event.target.value)
+                      setPeriodChangeSelectedCedulas([])
+                      setPeriodChangePreview(null)
+                    }}
+                    placeholder="Cedula, codigo, nombre o carrera"
+                  />
+                </label>
+                <div className="gestion-sis-period-change__hint">
+                  <strong>Flujo automatico por fechas</strong>
+                  <span>
+                    El estado elegido carga estudiantes con matriculas HOMO. La vista previa calcula los periodos R
+                    posibles y muestra duplicados, bloqueos y notas a migrar antes de guardar.
+                  </span>
+                </div>
+              </div>
+
+              <div className="gestion-sis-period-change__students">
+                <div className="gestion-sis-homo-bulk__head">
+                  <div>
+                    <strong>Estudiantes encontrados</strong>
+                    <span>
+                      Selecciona uno o varios estudiantes para analizar solo esos registros. Si no seleccionas ninguno,
+                      el analisis se ejecuta sobre todo el listado filtrado.
+                    </span>
+                  </div>
+                  <em>
+                    {periodChangeSelectedCedulas.length > 0
+                      ? `${periodChangeSelectedCedulas.length} seleccionado(s)`
+                      : `${filteredPeriodChangeStudents.length} visible(s)`}
+                  </em>
+                </div>
+                <div className="gestion-sis-period-change__student-actions">
+                  <button type="button" className="ghost-button" onClick={selectVisiblePeriodChangeStudents} disabled={periodChangeVisibleCedulas.length === 0}>
+                    Seleccionar visibles
+                  </button>
+                  <button type="button" className="ghost-button" onClick={clearPeriodChangeStudentSelection} disabled={periodChangeSelectedCedulas.length === 0}>
+                    Limpiar seleccion
+                  </button>
+                  <span>
+                    {selectedPeriodChangeStudents.length > 0
+                      ? `${selectedPeriodChangeStudents.length} estudiante(s) iran al analisis`
+                      : 'Sin seleccion manual'}
+                  </span>
+                </div>
+                <div className="gestion-sis-period-change__student-grid">
+                  {filteredPeriodChangeStudents.length > 0 ? (
+                    filteredPeriodChangeStudents.map((student) => {
+                      const cedulaKey = String(student.cedula_normalizada || student.cedula || '').trim()
+                      const selected = periodChangeSelectedSet.has(cedulaKey)
+                      return (
+                        <article
+                          key={`period-change-student-${student.codigo_estud}-${student.cod_anio_basica}`}
+                          className={selected ? 'is-selected' : ''}
+                        >
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => togglePeriodChangeStudent(cedulaKey)}
+                            />
+                            <span>
+                              <strong>{student.estudiante || '-'}</strong>
+                              <small>{student.cedula || '-'} · {student.carrera || '-'}</small>
+                            </span>
+                          </label>
+                          <span>{student.estado_nombre || student.estado_codigo || '-'}</span>
+                          <small>
+                            {student.total_periodos_homo || 0} periodo(s) HOMO · {student.total_materias_homo || 0} materia(s)
+                          </small>
+                          <small>
+                            Fechas HOMO: {student.primera_fecha_homo || '-'} a {student.ultima_fecha_homo || '-'}
+                          </small>
+                        </article>
+                      )
+                    })
+                  ) : (
+                    <p className="gestion-sis-homo-bulk__empty">Selecciona un estado o ajusta la búsqueda para ver estudiantes.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="gestion-sis-homo-bulk__toolbar">
+                <button type="button" className="ghost-button" onClick={() => void loadPeriodChangeCatalog()} disabled={periodChangeLoading}>
+                  {periodChangeLoading ? 'Actualizando...' : 'Actualizar estudiantes'}
+                </button>
+                <button type="button" className="ghost-button" onClick={() => void previewPeriodChange()} disabled={!periodChangeEstado || periodChangeLoading}>
+                  Analizar migracion
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => void applyPeriodChange()}
+                  disabled={!periodChangeEstado || periodChangeSaving || (periodChangePreview?.summary?.migrar || 0) === 0}
+                >
+                  {periodChangeSaving ? 'Migrando...' : 'Migrar matrícula H a R'}
+                </button>
+              </div>
+
+              {periodChangePreview ? (
+                <>
+                  <div className="gestion-sis-period-change__summary">
+                    <article>
+                      <span>Estado</span>
+                      <strong>
+                        {periodChangeCatalog?.estados?.find((estado) => estado.value === periodChangeEstado)?.label || periodChangeEstado || '-'}
+                      </strong>
+                      <small>
+                        {periodChangeSelectedCedulas.length > 0
+                          ? `${periodChangeSelectedCedulas.length} cedula(s) seleccionada(s)`
+                          : periodChangePreview.summary?.student_filter
+                            ? `Filtro: ${periodChangePreview.summary.student_filter}`
+                            : 'Todo el estado seleccionado'}
+                      </small>
+                    </article>
+                    <article>
+                      <span>Periodos HOMO</span>
+                      <strong>{periodChangePreview.summary?.periodos_homo_origen || 0}</strong>
+                      <small>Detectados por matrícula</small>
+                    </article>
+                    <article>
+                      <span>Ruta regular</span>
+                      <strong>{periodChangePreview.summary?.periodos_regulares || periodChangePreview.target_periods?.length || 0} periodo(s)</strong>
+                      <small>
+                        {(periodChangePreview.target_periods || [periodChangePreview.target_period])
+                          .filter(Boolean)
+                          .map((period) => periodOptionLabel(period))
+                          .join(' | ') || '-'}
+                      </small>
+                      <small>Sugerida por fechas de homologacion</small>
+                    </article>
+                    <article>
+                      <span>Estudiantes</span>
+                      <strong>{periodChangePreview.summary?.estudiantes_origen || 0}</strong>
+                    </article>
+                    <article>
+                      <span>Migran</span>
+                      <strong>{periodChangePreview.summary?.migrar || 0}</strong>
+                    </article>
+                    <article>
+                      <span>Duplicados</span>
+                      <strong>{periodChangePreview.summary?.duplicados_destino || 0}</strong>
+                    </article>
+                    <article>
+                      <span>Sin periodo</span>
+                      <strong>{periodChangePreview.summary?.sin_periodo_destino || 0}</strong>
+                    </article>
+                  </div>
+
+                  <div className="matricula-table-wrap gestion-sis-table-wrap excel-table-wrap">
+                    <table className="matricula-table gestion-sis-table">
+                      <thead>
+                        <tr>
+                          <th>Estudiante</th>
+                          <th>Carrera / materia</th>
+                          <th>Origen</th>
+                          <th>Destino</th>
+                          <th>Bloque</th>
+                          <th>Notas que migran</th>
+                          <th>Acción</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(periodChangePreview.items || []).length > 0 ? (
+                          (periodChangePreview.items || []).map((item) => (
+                            <tr key={`period-change-${item.row_id || `${item.codigo_estud}-${item.codigo_materia}`}`}>
                               <td>
-                                <select
-                                  className="gestion-sis-inline-select"
-                                  value={selectValue}
-                                  onChange={(event) => updateInlineEstado(row, { Estado: event.target.value })}
-                                >
-                                  <option value="">Seleccione estado</option>
-                                  {options.map((option) => (
-                                    <option key={`${recordKey(row)}-estado-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                <strong>{item.estudiante || '-'}</strong>
+                                <small>{item.cedula || '-'}</small>
                               </td>
                               <td>
-                                <input
-                                  className="gestion-sis-inline-input"
-                                  value={inlineEstadoValue(row, 'Informacion')}
-                                  onChange={(event) => updateInlineEstado(row, { Informacion: event.target.value })}
-                                  placeholder="Descripción u observación"
-                                />
+                                <strong>{item.carrera || '-'}</strong>
+                                <small>{item.materia || item.codigo_materia || '-'}</small>
                               </td>
-                            </Fragment>
-                          )
-                        }
-                        return <td key={`${recordKey(row)}-${field.name}`}>{displayValue(field, row[field.name])}</td>
-                      })}
-                      <td>
-                        {isEstadoInlineSection ? (
-                          <button
-                            type="button"
-                            className="reporteria-row-action"
-                            onClick={() => void saveInlineEstado(row)}
-                            disabled={inlineSavingKey === recordKey(row)}
-                          >
-                            {inlineSavingKey === recordKey(row) ? 'Guardando...' : 'Guardar'}
-                          </button>
+                              <td>{item.source_periodo || item.source_codigo_periodo || '-'}</td>
+                              <td>{item.target_periodo || item.target_codigo_periodo || '-'}</td>
+                              <td>{item.bloque_regular ? `Periodo ${item.bloque_regular}` : '-'}</td>
+                              <td>
+                                <strong>Final {gradeLabel(item.nota_migrada ?? item.promedio_final)}</strong>
+                                <small>
+                                  HOMO T/P: {gradeLabel(item.teoria_homo)} / {gradeLabel(item.practica_homo)}
+                                </small>
+                                <small>
+                                  Regular P1/P2/P3: {gradeLabel(item.prom_p1)} / {gradeLabel(item.prom_p2)} / {gradeLabel(item.prom_p3)}
+                                </small>
+                              </td>
+                              <td>
+                                <span className={`gestion-sis-period-change__state ${item.accion === 'MIGRAR' ? 'is-ready' : 'is-blocked'}`}>
+                                  {item.accion === 'MIGRAR'
+                                    ? 'Migrar'
+                                    : item.accion === 'EXCEPCION'
+                                      ? 'Excepción'
+                                      : item.accion === 'DUPLICADO_DESTINO'
+                                        ? 'Ya existe'
+                                        : item.accion === 'SIN_PERIODO_DESTINO'
+                                          ? 'Sin periodo'
+                                        : item.accion || '-'}
+                                </span>
+                              </td>
+                              <td>{item.motivo || '-'}</td>
+                            </tr>
+                          ))
                         ) : (
-                          <button
-                            type="button"
-                            className="reporteria-row-action"
-                            onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
-                          >
-                            Abrir
-                          </button>
+                          <tr>
+                            <td colSpan={8}>No hay registros para revisar.</td>
+                          </tr>
                         )}
-                      </td>
-                      {isDocenteEstadoSection ? (
-                        <td>
-                          <button
-                            type="button"
-                            className="reporteria-row-action"
-                            onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
-                          >
-                            Observar
-                          </button>
-                        </td>
-                      ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <p className="gestion-sis-homo-bulk__empty">
+                  Ejecuta la vista previa para ver estudiantes, materias, duplicados y excepciones antes de migrar.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="matricula-acad-form gestion-sis-filters">
+                <label>
+                  <span>{isEstadoInlineSection ? 'Buscar nombre o correo' : 'Buscar'}</span>
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={isEstadoInlineSection ? 'Nombre, correo, cedula o codigo' : 'Codigo, cedula, nombre o correo'}
+                  />
+                </label>
+                {isStudentEstadoSection ? (
+                  <label>
+                    <span>Período</span>
+                    <select value={estadoPeriodFilter} onChange={(event) => setEstadoPeriodFilter(event.target.value)}>
+                      <option value="">-- Todos --</option>
+                      {(estadoPeriodField?.options || []).map((option) => (
+                        <option key={`estado-periodo-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+
+              <div className="teams-actions">
+                <button type="button" onClick={() => void loadRows()} disabled={!selectedSection || listLoading}>
+                  {listLoading ? 'Consultando...' : isEstadoInlineSection ? 'Filtrar' : 'Consultar'}
+                </button>
+                {canCreate ? (
+                  <button type="button" onClick={startCreate} disabled={!selectedSection}>
+                    Nuevo
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="excel-toolbar gestion-sis-excel-toolbar">
+                {!isEstadoInlineSection ? (
+                  <label>
+                    <span>Filtrar tabla</span>
+                    <input
+                      value={tableFilter}
+                      onChange={(event) => setTableFilter(event.target.value)}
+                      placeholder="Buscar solo en los datos mostrados"
+                    />
+                  </label>
+                ) : null}
+                <div>
+                  <strong>{visibleRows.length}</strong>
+                  <span>de {rows.length} registro(s)</span>
+                </div>
+                <small>{isEstadoInlineSection ? 'Edita estado y descripción directamente en la fila.' : 'Doble clic en una fila para editar'}</small>
+              </div>
+
+              <div className="matricula-table-wrap gestion-sis-table-wrap excel-table-wrap">
+                <table className="matricula-table gestion-sis-table">
+                  <thead>
+                    <tr>
+                      {hasIndexColumn ? <th>#</th> : null}
+                      {tableFields.map((field) => (
+                        <Fragment key={field.name}>
+                          <th>{field.label}</th>
+                          {isEstadoInlineSection && field.name === 'Estado' ? <th>Descripción</th> : null}
+                        </Fragment>
+                      ))}
+                      <th>{isEstadoInlineSection ? 'Guardar' : 'Editar'}</th>
+                      {isDocenteEstadoSection ? <th>Observar</th> : null}
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={tableColSpan}>{listLoading ? 'Consultando...' : 'Sin registros para mostrar.'}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {visibleRows.length > 0 ? (
+                      visibleRows.map((row, rowIndex) => (
+                        <tr
+                          key={recordKey(row)}
+                          className={selectedRecordKey === recordKey(row) ? 'excel-row--active' : ''}
+                          onDoubleClick={isEstadoInlineSection ? undefined : () => void openRecord(selectedSectionKey, recordKey(row))}
+                        >
+                          {hasIndexColumn ? <td>{rowIndex + 1}</td> : null}
+                          {tableFields.map((field) => {
+                            if (isEstadoInlineSection && field.name === 'Estado') {
+                              const options = isDocenteEstadoSection
+                                ? docenteEstadoOptions
+                                : estadoInlineField
+                                  ? fieldOptions(estadoInlineField, row.Estado)
+                                  : []
+                              const estadoValue = inlineEstadoValue(row, 'Estado')
+                              const selectValue = isDocenteEstadoSection && !['A', 'P'].includes(estadoValue.trim().toUpperCase())
+                                ? ''
+                                : estadoValue
+                              return (
+                                <Fragment key={`${recordKey(row)}-${field.name}`}>
+                                  <td>
+                                    <select
+                                      className="gestion-sis-inline-select"
+                                      value={selectValue}
+                                      onChange={(event) => updateInlineEstado(row, { Estado: event.target.value })}
+                                    >
+                                      <option value="">Seleccione estado</option>
+                                      {options.map((option) => (
+                                        <option key={`${recordKey(row)}-estado-${option.value}`} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td>
+                                    <input
+                                      className="gestion-sis-inline-input"
+                                      value={inlineEstadoValue(row, 'Informacion')}
+                                      onChange={(event) => updateInlineEstado(row, { Informacion: event.target.value })}
+                                      placeholder="Descripción u observación"
+                                    />
+                                  </td>
+                                </Fragment>
+                              )
+                            }
+                            return <td key={`${recordKey(row)}-${field.name}`}>{displayValue(field, row[field.name])}</td>
+                          })}
+                          <td>
+                            {isEstadoInlineSection ? (
+                              <button
+                                type="button"
+                                className="reporteria-row-action"
+                                onClick={() => void saveInlineEstado(row)}
+                                disabled={inlineSavingKey === recordKey(row)}
+                              >
+                                {inlineSavingKey === recordKey(row) ? 'Guardando...' : 'Guardar'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="reporteria-row-action"
+                                onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
+                              >
+                                Abrir
+                              </button>
+                            )}
+                          </td>
+                          {isDocenteEstadoSection ? (
+                            <td>
+                              <button
+                                type="button"
+                                className="reporteria-row-action"
+                                onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
+                              >
+                                Observar
+                              </button>
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={tableColSpan}>{listLoading ? 'Consultando...' : 'Sin registros para mostrar.'}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </article>
       </section>
 
@@ -1281,52 +1578,8 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                   <span>Completa los campos requeridos y guarda los cambios para actualizar la tabla.</span>
                 </div>
 
-                {documentFieldConfig && documentAnalysis ? (
-                  <section className={`gestion-document-analyzer${documentAnalysis.valid ? ' is-valid' : ' is-warning'}`}>
-                    <div className="gestion-document-analyzer__head">
-                      <div>
-                        <strong>Analisis de documento</strong>
-                        <span>Codigo 1 para cedula de 10 digitos. Codigo 2 para pasaporte de 9 caracteres.</span>
-                      </div>
-                      <em>{documentAnalysis.valid ? 'Valido' : 'Revisar'}</em>
-                    </div>
-                    <div className="gestion-document-analyzer__form">
-                      <label>
-                        <span>{documentFieldConfig.typeLabel}</span>
-                        <select
-                          value={inputValue(formValues[documentFieldConfig.typeField])}
-                          onChange={(event) => updateDocumentType(event.target.value)}
-                        >
-                          <option value="">Seleccione</option>
-                          <option value="1">1 - Cedula</option>
-                          <option value="2">2 - Pasaporte</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>{documentFieldConfig.numberLabel}</span>
-                        <input
-                          value={inputValue(formValues[documentFieldConfig.numberField])}
-                          onChange={(event) => updateDocumentNumber(event.target.value)}
-                          placeholder="0102030405 / ABC123456 / A12345678"
-                        />
-                      </label>
-                      <article>
-                        <span>Codigo sugerido</span>
-                        <strong>{documentAnalysis.suggestedType || '-'}</strong>
-                        <small>{documentAnalysis.suggestedLabel || 'Sin sugerencia'}</small>
-                      </article>
-                      <article>
-                        <span>Formato detectado</span>
-                        <strong>{documentAnalysis.formatLabel || 'No reconocido'}</strong>
-                        <small>{documentAnalysis.normalized || 'Sin numero'}</small>
-                      </article>
-                    </div>
-                    <p>{documentAnalysis.message}</p>
-                  </section>
-                ) : null}
-
                 <div className="matricula-acad-form gestion-sis-edit-form">
-                  {visibleCurrentFields.map((field) => {
+                  {currentFields.map((field) => {
                     const options = fieldOptions(field, formValues[field.name])
                     return (
                       <label key={field.name} className={field.type === 'textarea' ? 'gestion-sis-field--wide' : ''}>

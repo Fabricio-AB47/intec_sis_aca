@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     db_encrypt: str = "no"
     db_trust_cert: str = "yes"
 
+    eval_db_name: str | None = Field(default=None, validation_alias=AliasChoices("DB_NAME1", "B_NAME1"))
+    eval_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER1"))
+    eval_db_password: str | None = Field(default=None, validation_alias=AliasChoices("DB_PASSWORD1"))
+    eval_db_host: str | None = Field(default=None, validation_alias=AliasChoices("DB_HOST1"))
+    eval_db_port: int = Field(default=1433, validation_alias=AliasChoices("DB_PORT1"))
+    eval_db_driver: str | None = Field(default=None, validation_alias=AliasChoices("DB_DRIVER1"))
+    eval_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT1"))
+    eval_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT1"))
+
     tenant_id: str | None = Field(default=None, validation_alias=AliasChoices("TENANT_ID", "MS_TENANT_ID"))
     client_id: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_ID", "MS_CLIENT_ID"))
     client_secret: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_SECRET", "MS_CLIENT_SECRET"))

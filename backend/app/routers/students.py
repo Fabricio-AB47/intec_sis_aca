@@ -2608,8 +2608,26 @@ def dashboard_matricula(
         ORDER BY bc.estado_codigo
         """
     )
+    active_by_type_query = (
+        _MATRICULA_ACTUAL_CTE
+        + """
+        SELECT
+            bc.tipo_matricula,
+            COUNT(*) AS total_estudiantes
+        FROM base_cruce bc
+        WHERE bc.estado_codigo = 'A'
+          AND bc.tipo_matricula IN ('R', 'H')
+          AND __DASHBOARD_IGNORED_CEDULA_FILTER__
+        GROUP BY bc.tipo_matricula
+        ORDER BY bc.tipo_matricula
+        """
+    )
     trend_query = trend_query.replace("__DASHBOARD_IGNORED_CEDULA_FILTER__", _DASHBOARD_IGNORED_CEDULA_SQL)
     states_query = states_query.replace("__DASHBOARD_IGNORED_CEDULA_FILTER__", _DASHBOARD_IGNORED_CEDULA_SQL)
+    active_by_type_query = active_by_type_query.replace(
+        "__DASHBOARD_IGNORED_CEDULA_FILTER__",
+        _DASHBOARD_IGNORED_CEDULA_SQL,
+    )
 
     try:
         with get_connection() as conn:
@@ -2618,6 +2636,8 @@ def dashboard_matricula(
             trend_rows = cursor.fetchall()
             cursor.execute(states_query)
             state_rows = cursor.fetchall()
+            cursor.execute(active_by_type_query)
+            active_by_type_rows = cursor.fetchall()
 
         month_names = {
             1: "Ene",
@@ -2645,19 +2665,61 @@ def dashboard_matricula(
             for row in trend_rows
             if row.anio is not None and row.mes is not None
         ]
+        estado_nombres = {codigo: nombre for codigo, nombre in _MAIN_ESTADOS}
+        estado_totales = {codigo: 0 for codigo, _ in _MAIN_ESTADOS}
+        for row in state_rows:
+            codigo = str(row.estado_codigo or "").strip().upper()
+            if codigo in estado_totales:
+                estado_nombres[codigo] = str(row.estado_nombre or estado_nombres[codigo])
+                estado_totales[codigo] = int(row.total_estudiantes or 0)
+
         estados = [
             {
-                "estado_codigo": str(row.estado_codigo or ""),
-                "estado_nombre": str(row.estado_nombre or ""),
+                "estado_codigo": codigo,
+                "estado_nombre": estado_nombres[codigo],
+                "total_estudiantes": estado_totales[codigo],
+            }
+            for codigo, _ in _MAIN_ESTADOS
+        ]
+        total_estudiantes = sum(estado_totales.values())
+        active_total = estado_totales.get("A", 0)
+
+        raw_active_by_type = [
+            {
+                "tipo_matricula": str(row.tipo_matricula or "").strip().upper(),
                 "total_estudiantes": int(row.total_estudiantes or 0),
             }
-            for row in state_rows
+            for row in active_by_type_rows
+        ]
+        active_regular = next(
+            (item["total_estudiantes"] for item in raw_active_by_type if item["tipo_matricula"] == "R"),
+            0,
+        )
+        active_homologation = next(
+            (item["total_estudiantes"] for item in raw_active_by_type if item["tipo_matricula"] == "H"),
+            0,
+        )
+        split_total = active_regular + active_homologation
+        if active_total != split_total:
+            difference = active_total - split_total
+            if active_regular >= active_homologation:
+                active_regular = max(0, active_regular + difference)
+            else:
+                active_homologation = max(0, active_homologation + difference)
+
+        active_by_type = [
+            {"tipo_matricula": "R", "total_estudiantes": active_regular},
+            {"tipo_matricula": "H", "total_estudiantes": active_homologation},
         ]
 
         return {
             "trend": trend,
             "states": estados,
-            "total_estudiantes": sum(item["total_estudiantes"] for item in estados),
+            "active_by_type": active_by_type,
+            "active_regular_students": active_regular,
+            "active_homologation_students": active_homologation,
+            "active_regular_homologation_students": active_total,
+            "total_estudiantes": total_estudiantes,
             "criteria": {
                 "fecha": "PERIODO.fechain",
                 "excluidos": [

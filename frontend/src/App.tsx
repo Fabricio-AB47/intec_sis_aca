@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import './App.css'
 import { StudentLayout } from './components/StudentLayout'
@@ -10,6 +10,7 @@ import { SessionStatusView } from './features/auth/SessionStatusView'
 import { CruceDatosView } from './features/cruce/CruceDatosView'
 import { ExcelValidationView } from './features/cruce/ExcelValidationView'
 import { DashboardView } from './features/dashboard/DashboardView'
+import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
 import { ActualizarDatosEstudianteView } from './features/matricula/ActualizarDatosEstudianteView'
 import { CertificateRenamerView } from './features/matricula/CertificateRenamerView'
 import { CertificadosView } from './features/matricula/CertificadosView'
@@ -35,9 +36,24 @@ import { useReporteriaApp } from './hooks/useReporteriaApp'
 
 function App() {
   const app = useReporteriaApp()
+  const [publicTeacherEvaluation, setPublicTeacherEvaluation] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    const requestedPage = params.get('open_page') || params.get('public')
+    return requestedPage === 'evaluacion-docente' || window.location.pathname.includes('evaluacion-docente')
+  })
 
   if (app.bootstrapping) {
     return <SessionStatusView message="Validando sesion activa..." />
+  }
+
+  if (!app.session && publicTeacherEvaluation) {
+    return (
+      <TeacherEvaluationView
+        displayName="Formulario publico"
+        publicMode
+        onBackToLogin={() => setPublicTeacherEvaluation(false)}
+      />
+    )
   }
 
   if (app.session) {
@@ -171,6 +187,13 @@ function App() {
       pageContent = <MassEmailView displayName={app.displayName} />
     } else if (app.activePage === 'carnet-institucional') {
       pageContent = <CarnetInstitucionalView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'evaluacion-docente') {
+      pageContent = (
+        <TeacherEvaluationView
+          displayName={app.displayName}
+          defaultCedula={app.session.cedula || ''}
+        />
+      )
     } else if (app.activePage === 'portal-estudiante') {
       pageContent = (
         <PortalEstudianteView
@@ -263,6 +286,7 @@ function App() {
           onOpenCredentialGenerator={app.openCredentialGeneratorPage}
           onOpenMassEmail={app.openMassEmailPage}
           onOpenCarnetInstitucional={app.openCarnetInstitucionalPage}
+          onOpenTeacherEvaluation={app.openTeacherEvaluationPage}
           onLogout={() => {
             void app.logout()
           }}
@@ -284,6 +308,7 @@ function App() {
       onPasswordChange={app.setPassword}
       onTogglePassword={() => app.setShowPassword((value) => !value)}
       onSubmit={app.onSubmit}
+      onOpenTeacherEvaluation={() => setPublicTeacherEvaluation(true)}
     />
   )
 }

@@ -48,11 +48,141 @@ export type Page =
   | 'credenciales'
   | 'correos-masivos'
   | 'carnet-institucional'
+  | 'evaluacion-docente'
   | 'portal-estudiante'
   | 'portal-docente'
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
+
+export type TeacherEvaluationFlow = 'student' | 'auto_docente' | 'par_docente'
+
+export type TeacherEvaluationQuestion = {
+  id_pregunta: number
+  id_dimension?: number | null
+  no_pregunta: number
+  tipo_preg: number
+  tipo_label?: string | null
+  categoria?: string | null
+  categoria_pregunta?: string | null
+  categoria_codigo?: string | null
+  dimension_codigo?: string | null
+  dimension_global_nombre?: string | null
+  dimension_nombre?: string | null
+  nombre_dimension?: string | null
+  instrumento_codigo?: string | null
+  instrumento_nombre?: string | null
+  tipo_evaluacion_codigo?: string | null
+  tipo_evaluacion_nombre?: string | null
+  detalle_preg: string
+  peso_pregunta?: number | null
+  puntaje_min?: number | null
+  puntaje_max?: number | null
+  orden?: number | null
+  control?: string | number | null
+  comentario_coord?: string | null
+}
+
+export type TeacherEvaluationCourse = {
+  key: string
+  codigo_periodo: number
+  detalle_periodo?: string | null
+  orden_periodo?: number | null
+  cod_anio_basica?: number | string | null
+  carrera?: string | null
+  codigo_materia: number
+  codigo_materia_interno?: string | null
+  materia?: string | null
+  nivel?: number | string | null
+  paralelo?: string | null
+  tipo_matricula?: string | null
+  codigo_docente_eval: number
+  docente?: string | null
+  cedula_docente?: string | null
+  cod_jornada?: string | number | null
+  jornada?: string | null
+  respuestas_registradas?: number
+  evaluado?: boolean
+}
+
+export type TeacherEvaluationStudent = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  correo_personal?: string | null
+  correo_intec?: string | null
+}
+
+export type TeacherEvaluationStudentResponse = {
+  student: TeacherEvaluationStudent
+  courses: TeacherEvaluationCourse[]
+  total: number
+}
+
+export type TeacherEvaluationTeacher = {
+  codigo_doc: number
+  cedula: string
+  docente: string
+  correo_personal?: string | null
+  correo_intec?: string | null
+  usuario?: string | null
+}
+
+export type TeacherEvaluationTeacherResponse = {
+  teacher: TeacherEvaluationTeacher
+  auto_courses: TeacherEvaluationCourse[]
+  peer_courses: TeacherEvaluationCourse[]
+  total_auto: number
+  total_peer: number
+}
+
+
+export type TeacherEvaluationIdentityResponse = {
+  cedula: string
+  roles: Array<'student' | 'teacher'>
+  student: TeacherEvaluationStudentResponse['student'] | null
+  teacher: TeacherEvaluationTeacherResponse['teacher'] | null
+  student_courses: TeacherEvaluationCourse[]
+  auto_courses: TeacherEvaluationCourse[]
+  peer_courses: TeacherEvaluationCourse[]
+  advertencias?: string[]
+}
+
+export type TeacherEvaluationQuestionsResponse = {
+  flow?: TeacherEvaluationFlow
+  instrument?: Record<string, unknown>
+  items: TeacherEvaluationQuestion[]
+  total: number
+}
+
+export type TeacherEvaluationSubmitPayload = {
+  cedula: string
+  codigo_periodo: number
+  codigo_materia: number
+  codigo_docente_eval: number
+  paralelo: string
+  jornada?: string | null
+  answers: Array<{
+    id_pregunta: number
+    no_pregunta: number
+    tipo_preg: number
+    detalle_preg?: string | null
+    puntaje: number
+  }>
+}
+
+export type TeacherEvaluationSubmitResponse = {
+  saved: number
+  average: number
+  message: string
+  student?: TeacherEvaluationStudent
+  teacher?: TeacherEvaluationTeacher
+  course: TeacherEvaluationCourse
+}
+
+export type TeacherRoleEvaluationSubmitPayload = TeacherEvaluationSubmitPayload & {
+  flow: Exclude<TeacherEvaluationFlow, 'student'>
+}
 
 export type GraphTeam = {
   id?: string
@@ -103,9 +233,18 @@ export type DashboardMatriculaStateItem = {
   total_estudiantes: number
 }
 
+export type DashboardMatriculaActiveTypeItem = {
+  tipo_matricula: string
+  total_estudiantes: number
+}
+
 export type DashboardMatriculaResponse = {
   trend?: DashboardMatriculaTrendItem[]
   states?: DashboardMatriculaStateItem[]
+  active_by_type?: DashboardMatriculaActiveTypeItem[]
+  active_regular_students?: number
+  active_homologation_students?: number
+  active_regular_homologation_students?: number
   total_estudiantes?: number
   criteria?: {
     fecha?: string
@@ -474,6 +613,13 @@ export type IngresoVentasResponse = {
 }
 
 export type LegacyReportKey =
+  | 'provincia'
+  | 'provincia_genero'
+  | 'provincia_carrera'
+  | 'carrera'
+  | 'graduados_2025'
+  | 'genero'
+  | 'periodo'
   | 'matriculados'
   | 'becas_edades'
   | 'preinscritos'
@@ -515,14 +661,18 @@ export type LegacyReportsCatalogResponse = {
   functional_inventory?: LegacyFunctionalInventoryItem[]
   periodos?: LegacyReportOption[]
   carreras?: LegacyReportOption[]
+  anios?: LegacyReportOption[]
   detail?: string
 }
 
 export type LegacyReportFilters = {
   reportKey?: LegacyReportKey
   periodo?: string
+  periodos?: string[] | string
   carrera?: string
   estado?: string
+  anio?: string
+  genero?: string
   buscar?: string
   limit?: number
 }
@@ -1941,6 +2091,128 @@ export type AcademicBulkEnrollmentSaveResponse = {
   detail?: string
 }
 
+export type AcademicPeriodChangePayload = {
+  source_codigo_periodo?: number | null
+  target_codigo_periodo?: number | null
+  estado_codigo?: string | null
+  student_query?: string | null
+  student_cedulas?: string[]
+  exception_cedulas: string[]
+  solo_graduados?: boolean
+}
+
+export type AcademicPeriodChangeStateOption = {
+  value?: string
+  label?: string
+  total?: number
+}
+
+export type AcademicPeriodChangeStudentOption = {
+  codigo_estud?: string
+  cedula?: string
+  cedula_normalizada?: string
+  estudiante?: string
+  estado_codigo?: string
+  estado_nombre?: string
+  cod_anio_basica?: string
+  carrera?: string
+  total_periodos_homo?: number
+  total_materias_homo?: number
+  primera_fecha_homo?: string
+  ultima_fecha_homo?: string
+}
+
+export type AcademicPeriodChangeCatalogResponse = {
+  periodos_homo?: AcademicPeriodOption[]
+  periodos_regulares?: AcademicPeriodOption[]
+  estados?: AcademicPeriodChangeStateOption[]
+  students?: AcademicPeriodChangeStudentOption[]
+  detail?: string
+}
+
+export type AcademicPeriodChangePreviewItem = {
+  row_id?: number
+  codigo_estud?: string
+  cedula?: string
+  estudiante?: string
+  estado_estudiante?: string
+  cod_anio_basica?: string
+  carrera?: string
+  codigo_materia?: string
+  materia?: string
+  nivel?: number | null
+  source_codigo_periodo?: string
+  source_periodo?: string
+  target_codigo_periodo?: string
+  target_periodo?: string
+  bloque_regular?: number | null
+  num_matricula?: string
+  paralelo?: string
+  num_grupo?: number | null
+  tipo_actual?: string
+  teoria_homo?: number | null
+  practica_homo?: number | null
+  p1_tareas?: number | null
+  p1_proyectos?: number | null
+  p1_examen?: number | null
+  prom_p1?: number | null
+  p2_tareas?: number | null
+  p2_proyectos?: number | null
+  p2_examen?: number | null
+  prom_p2?: number | null
+  p3_tareas?: number | null
+  p3_proyectos?: number | null
+  p3_examen?: number | null
+  prom_p3?: number | null
+  promedio?: number | null
+  asistencia?: number | null
+  recuperacion?: number | null
+  promedio_final?: number | null
+  promedio_aux?: number | null
+  nota_migrada?: number | null
+  mantiene_notas?: boolean
+  existe_cabecera_destino?: boolean
+  accion?: string
+  motivo?: string
+}
+
+export type AcademicPeriodChangePreviewResponse = {
+  source_period?: AcademicPeriodOption
+  target_period?: AcademicPeriodOption
+  target_periods?: AcademicPeriodOption[]
+  auto_target?: boolean
+  exception_cedulas?: string[]
+  summary?: {
+    registros_origen?: number
+    estudiantes_origen?: number
+    migrar?: number
+    excepciones?: number
+    duplicados_destino?: number
+    sin_periodo_destino?: number
+    cabeceras_referenciadas?: number
+    periodos_regulares?: number
+    solo_graduados?: boolean
+    periodos_homo_origen?: number
+    estado_codigo?: string
+    student_filter?: string
+  }
+  students?: AcademicPeriodChangeStudentOption[]
+  items?: AcademicPeriodChangePreviewItem[]
+  detail?: string
+}
+
+export type AcademicPeriodChangeApplyResponse = {
+  ok?: boolean
+  message?: string
+  summary?: {
+    cabeceras_insertadas?: number
+    registros_actualizados?: number
+    registros_omitidos?: number
+  }
+  preview?: AcademicPeriodChangePreviewResponse
+  detail?: string
+}
+
 export type AcademicParallelBalancePayload = {
   cod_anio_basica: number
   codigo_periodo: number
@@ -2398,39 +2670,6 @@ export type SenescytAuditSummary = {
   registros_con_pendientes?: number
 }
 
-export type SenescytDocumentRule = {
-  codigo: number
-  tipo: string
-  formato: string
-}
-
-export type SenescytDocumentSummary = {
-  total_registros?: number
-  documentos_validos?: number
-  cedulas_validas?: number
-  pasaportes_validos?: number
-  tipo_incorrecto?: number
-  numero_invalido?: number
-  sin_tipo?: number
-  sin_numero?: number
-  pendientes?: number
-  porcentaje_validos?: number
-  reglas?: SenescytDocumentRule[]
-}
-
-export type SenescytDocumentAnalysis = {
-  tipo_actual?: string
-  tipo_actual_label?: string
-  numero?: string
-  tipo_sugerido?: string
-  tipo_sugerido_label?: string
-  formato?: string
-  valido?: boolean
-  numero_valido?: boolean
-  tipo_valido?: boolean
-  observaciones?: string[]
-}
-
 export type SenescytAuditCareer = {
   nombre_carrera: string
   total_registros: number
@@ -2444,11 +2683,14 @@ export type SenescytAuditCareer = {
 export type SenescytAuditRow = {
   codigo?: string
   identificacion?: string
-  documento?: SenescytDocumentAnalysis
   nombre?: string
   nombre_carrera?: string
   correo?: string
   telefono?: string
+  documento?: {
+    tipo_actual_label?: string
+    valido?: boolean
+  }
   campos_llenos?: number
   campos_pendientes?: number
   campos_totales?: number
@@ -2468,7 +2710,6 @@ export type SenescytAuditResponse = {
   target?: SenescytTarget
   career_filter?: string[] | null
   summary?: SenescytAuditSummary
-  documentos?: SenescytDocumentSummary
   careers?: SenescytAuditCareer[]
   rows?: SenescytAuditRow[]
   missing_fields?: SenescytAuditField[]

@@ -85,6 +85,16 @@ class AcademicBulkEnrollmentPayload(BaseModel):
     remove_unselected: bool = False
 
 
+class AcademicPeriodChangePayload(BaseModel):
+    source_codigo_periodo: int | None = None
+    target_codigo_periodo: int | None = None
+    estado_codigo: str | None = None
+    student_query: str | None = None
+    student_cedulas: list[str] = Field(default_factory=list)
+    exception_cedulas: list[str] = Field(default_factory=list)
+    solo_graduados: bool = False
+
+
 def _clean(value: Any) -> str:
     if value is None:
         return ""
@@ -207,6 +217,597 @@ def _subject_item(row: Any) -> dict[str, Any]:
         "num_malla": _int_value(row.NumMalla),
         "horas": _int_value(row.Horas),
         "tipo_materia": _clean(row.tipomateria),
+    }
+
+
+def _period_is_homo(item: dict[str, Any]) -> bool:
+    detail = _clean(item.get("detalle_periodo")).upper()
+    tipo = _clean(item.get("tipo_matricula")).upper()
+    return "HOMO" in detail or tipo.startswith("H")
+
+
+def _period_is_regular(item: dict[str, Any]) -> bool:
+    detail = _clean(item.get("detalle_periodo")).upper()
+    tipo = _clean(item.get("tipo_matricula")).upper()
+    return not _period_is_homo(item) and (not tipo or tipo.startswith("R") or "REGULAR" in tipo)
+
+
+def _period_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _period_rank_for_source(source: dict[str, Any], candidate: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    source_start = _period_date(source.get("_raw_fechain") or source.get("fecha_inicio"))
+    source_end = _period_date(source.get("_raw_fechafin") or source.get("fecha_fin"))
+    candidate_start = _period_date(candidate.get("_raw_fechain") or candidate.get("fecha_inicio"))
+    candidate_end = _period_date(candidate.get("_raw_fechafin") or candidate.get("fecha_fin"))
+    overlap = -1
+    distance = 999999
+    starts_after = 1
+    if source_start and source_end and candidate_start and candidate_end:
+        latest_start = max(source_start, candidate_start)
+        earliest_end = min(source_end, candidate_end)
+        overlap = max(0, (earliest_end - latest_start).days + 1)
+        distance = abs((candidate_start - source_start).days)
+        starts_after = 0 if candidate_start >= source_start else 1
+    elif source_start and candidate_start:
+        distance = abs((candidate_start - source_start).days)
+        starts_after = 0 if candidate_start >= source_start else 1
+    same_year = 0 if _int_value(source.get("anio")) == _int_value(candidate.get("anio")) else 1
+    return (starts_after, distance, 0 if overlap > 0 else 1, same_year, -overlap)
+
+
+def _fetch_periods_for_change(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT TOP (500)
+            p.cod_periodo,
+            p.Detalle_Periodo,
+            p.Estado,
+            p.Periodo,
+            p.anio,
+            p.fechain,
+            p.fechafin,
+            p.TipoMatricula,
+            0 AS total_matriculados
+        FROM dbo.PERIODO p
+        ORDER BY COALESCE(p.anio, 0) DESC, p.cod_periodo DESC
+        """
+    )
+    periods: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        item = _period_item(row)
+        item["_raw_fechain"] = row.fechain
+        item["_raw_fechafin"] = row.fechafin
+        periods.append(item)
+    return periods
+
+
+def _period_sort_key(item: dict[str, Any]) -> tuple[int, date, int]:
+    raw_date = _period_date(item.get("_raw_fechain") or item.get("fecha_inicio"))
+    fallback = date(1900, 1, 1)
+    return (_int_value(item.get("anio")) or 0, raw_date or fallback, _int_value(item.get("codigo_periodo")) or 0)
+
+
+def _public_period(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in item.items() if not key.startswith("_")}
+
+
+def _select_target_regular_periods(
+    periods: list[dict[str, Any]],
+    source_codigo_periodo: int,
+    target_codigo_periodo: int | None,
+    max_periods: int = 4,
+) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+    source = next((item for item in periods if _int_value(item.get("codigo_periodo")) == source_codigo_periodo), None)
+    if not source:
+        raise HTTPException(status_code=404, detail="No se encontro el periodo HOMO de origen")
+    if not _period_is_homo(source):
+        raise HTTPException(status_code=400, detail="El periodo de origen debe ser HOMO o tipo H")
+
+    regular_periods = sorted([item for item in periods if _period_is_regular(item)], key=_period_sort_key)
+    if target_codigo_periodo:
+        target = next((item for item in regular_periods if _int_value(item.get("codigo_periodo")) == target_codigo_periodo), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="No se encontro un periodo regular destino valido")
+        start_key = _period_sort_key(target)
+        selected = [item for item in regular_periods if _period_sort_key(item) >= start_key][:max_periods]
+        if len(selected) < max_periods:
+            selected_ids = {_int_value(item.get("codigo_periodo")) for item in selected}
+            selected.extend(
+                item
+                for item in sorted(regular_periods, key=lambda item: _period_rank_for_source(source, item))
+                if _int_value(item.get("codigo_periodo")) not in selected_ids
+            )
+        return source, selected[:max_periods], False
+
+    if not regular_periods:
+        raise HTTPException(status_code=404, detail="No existen periodos regulares para usar como referencia")
+    ranked = sorted(regular_periods, key=lambda item: _period_rank_for_source(source, item))
+    first = ranked[0]
+    first_key = _period_sort_key(first)
+    selected = [item for item in regular_periods if _period_sort_key(item) >= first_key][:max_periods]
+    if len(selected) < max_periods:
+        selected_ids = {_int_value(item.get("codigo_periodo")) for item in selected}
+        selected.extend(
+            item
+            for item in ranked
+            if _int_value(item.get("codigo_periodo")) not in selected_ids
+        )
+    return source, selected[:max_periods], True
+
+
+def _exception_cedulas(values: list[str]) -> set[str]:
+    normalized: set[str] = set()
+    for value in values:
+        for part in re.split(r"[\s,;|]+", _clean(value)):
+            document = _normalize_document(part)
+            if document:
+                normalized.add(document)
+    return normalized
+
+
+def _period_change_states_with_cursor(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT
+            UPPER(LTRIM(RTRIM(ISNULL(d.Estado, '')))) AS estado_codigo,
+            MAX(COALESCE(e.ESTADO, d.Estado, 'Sin estado')) AS estado_nombre,
+            COUNT(DISTINCT TRY_CONVERT(varchar(50), d.codigo_estud)) AS total_estudiantes
+        FROM dbo.CARRERAXESTUD cxe
+        INNER JOIN dbo.DATOS_ESTUD d
+          ON TRY_CONVERT(decimal(18,0), d.codigo_estud) = TRY_CONVERT(decimal(18,0), cxe.codigo_estud)
+        LEFT JOIN dbo.ESTADO e
+          ON UPPER(LTRIM(RTRIM(e.IDESTADO))) = UPPER(LTRIM(RTRIM(d.Estado)))
+        WHERE UPPER(LTRIM(RTRIM(ISNULL(cxe.TipoMatricula, '')))) = 'H'
+        GROUP BY UPPER(LTRIM(RTRIM(ISNULL(d.Estado, ''))))
+        ORDER BY MAX(COALESCE(e.ESTADO, d.Estado, 'Sin estado'))
+        """
+    )
+    states: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        value = _clean(row.estado_codigo)
+        if not value:
+            continue
+        label = _clean(row.estado_nombre)
+        states.append(
+            {
+                "value": value,
+                "label": f"{value} - {label}" if label and not label.upper().startswith(value.upper()) else label or value,
+                "total": int(row.total_estudiantes or 0),
+            }
+        )
+    return states
+
+
+def _period_change_students_with_cursor(
+    cursor: pyodbc.Cursor,
+    estado_codigo: str | None = None,
+    student_query: str | None = None,
+) -> list[dict[str, Any]]:
+    where = ["UPPER(LTRIM(RTRIM(ISNULL(cxe.TipoMatricula, '')))) = 'H'"]
+    params: list[Any] = []
+    estado = _clean(estado_codigo).upper()
+    if estado and estado not in {"TODOS", "ALL", "*"}:
+        where.append("UPPER(LTRIM(RTRIM(ISNULL(d.Estado, '')))) = ?")
+        params.append(estado)
+    query = _clean(student_query)
+    if query:
+        like = f"%{query}%"
+        where.append(
+            """
+            (
+                TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
+                OR LTRIM(RTRIM(ISNULL(d.Cedula_Est, ''))) LIKE ?
+                OR d.Apellidos_nombre LIKE ?
+                OR c.Nombre_Basica LIKE ?
+            )
+            """
+        )
+        params.extend([like, like, like, like])
+    cursor.execute(
+        f"""
+        SELECT
+            d.codigo_estud,
+            d.Cedula_Est,
+            d.Apellidos_nombre,
+            d.Estado AS estado_codigo,
+            COALESCE(e.ESTADO, d.Estado, 'Sin estado') AS estado_nombre,
+            cxe.cod_anio_Basica,
+            c.Nombre_Basica,
+            COUNT(DISTINCT TRY_CONVERT(varchar(50), cxe.codigo_periodo)) AS total_periodos_homo,
+            COUNT(*) AS total_materias_homo,
+            MIN(pe.fechain) AS primera_fecha_homo,
+            MAX(pe.fechafin) AS ultima_fecha_homo
+        FROM dbo.CARRERAXESTUD cxe
+        INNER JOIN dbo.DATOS_ESTUD d
+          ON TRY_CONVERT(decimal(18,0), d.codigo_estud) = TRY_CONVERT(decimal(18,0), cxe.codigo_estud)
+        LEFT JOIN dbo.CARRERAS c
+          ON TRY_CONVERT(decimal(18,0), c.Cod_AnioBasica) = TRY_CONVERT(decimal(18,0), cxe.cod_anio_Basica)
+        LEFT JOIN dbo.PERIODO pe
+          ON TRY_CONVERT(decimal(18,0), pe.cod_periodo) = TRY_CONVERT(decimal(18,0), cxe.codigo_periodo)
+        LEFT JOIN dbo.ESTADO e
+          ON UPPER(LTRIM(RTRIM(e.IDESTADO))) = UPPER(LTRIM(RTRIM(d.Estado)))
+        WHERE {" AND ".join(where)}
+        GROUP BY
+            d.codigo_estud,
+            d.Cedula_Est,
+            d.Apellidos_nombre,
+            d.Estado,
+            COALESCE(e.ESTADO, d.Estado, 'Sin estado'),
+            cxe.cod_anio_Basica,
+            c.Nombre_Basica
+        ORDER BY d.Apellidos_nombre, c.Nombre_Basica
+        """,
+        *params,
+    )
+    students: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        students.append(
+            {
+                "codigo_estud": str(row.codigo_estud),
+                "cedula": _clean(row.Cedula_Est),
+                "cedula_normalizada": _normalize_document(row.Cedula_Est),
+                "estudiante": _clean(row.Apellidos_nombre),
+                "estado_codigo": _clean(row.estado_codigo),
+                "estado_nombre": _clean(row.estado_nombre),
+                "cod_anio_basica": str(row.cod_anio_Basica),
+                "carrera": _clean(row.Nombre_Basica),
+                "total_periodos_homo": int(row.total_periodos_homo or 0),
+                "total_materias_homo": int(row.total_materias_homo or 0),
+                "primera_fecha_homo": _date_text(row.primera_fecha_homo),
+                "ultima_fecha_homo": _date_text(row.ultima_fecha_homo),
+            }
+        )
+    return students
+
+
+def _period_change_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicPeriodChangePayload) -> dict[str, Any]:
+    periods = _fetch_periods_for_change(cursor)
+    period_map = {
+        _int_value(item.get("codigo_periodo")): item
+        for item in periods
+        if _int_value(item.get("codigo_periodo"))
+    }
+    global_source_period: dict[str, Any] | None = None
+    source_period_id = _int_value(payload.source_codigo_periodo)
+    if source_period_id:
+        global_source_period = period_map.get(source_period_id)
+        if not global_source_period:
+            raise HTTPException(status_code=404, detail="No se encontro el periodo HOMO de origen")
+        if not _period_is_homo(global_source_period):
+            raise HTTPException(status_code=400, detail="El periodo de origen debe ser HOMO o tipo H")
+    exceptions = _exception_cedulas(payload.exception_cedulas)
+
+    base_where = ["UPPER(LTRIM(RTRIM(ISNULL(cxe.TipoMatricula, '')))) = 'H'"]
+    base_params: list[Any] = []
+    if source_period_id:
+        base_where.append("TRY_CONVERT(decimal(18,0), cxe.codigo_periodo) = ?")
+        base_params.append(source_period_id)
+
+    estado = _clean(payload.estado_codigo).upper()
+    if payload.solo_graduados:
+        base_where.append("UPPER(LTRIM(RTRIM(ISNULL(d.Estado, '')))) = 'G'")
+    elif estado and estado not in {"TODOS", "ALL", "*"}:
+        base_where.append("UPPER(LTRIM(RTRIM(ISNULL(d.Estado, '')))) = ?")
+        base_params.append(estado)
+
+    student_query = _clean(payload.student_query)
+    selected_cedulas = _exception_cedulas(payload.student_cedulas)
+    if student_query:
+        like = f"%{student_query}%"
+        base_where.append(
+            """
+            (
+                TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
+                OR LTRIM(RTRIM(ISNULL(d.Cedula_Est, ''))) LIKE ?
+                OR d.Apellidos_nombre LIKE ?
+                OR c.Nombre_Basica LIKE ?
+            )
+            """
+        )
+        base_params.extend([like, like, like, like])
+    if selected_cedulas:
+        placeholders = ", ".join("?" for _ in selected_cedulas)
+        base_where.append(f"REPLACE(LTRIM(RTRIM(ISNULL(d.Cedula_Est, ''))), '-', '') IN ({placeholders})")
+        base_params.extend(sorted(selected_cedulas))
+
+    cursor.execute(
+        f"""
+        WITH base_estudiantes AS (
+            SELECT DISTINCT
+                cxe.codigo_estud,
+                cxe.cod_anio_Basica
+            FROM dbo.CARRERAXESTUD cxe
+            INNER JOIN dbo.DATOS_ESTUD d
+              ON TRY_CONVERT(decimal(18,0), d.codigo_estud) = TRY_CONVERT(decimal(18,0), cxe.codigo_estud)
+            LEFT JOIN dbo.CARRERAS c
+              ON TRY_CONVERT(decimal(18,0), c.Cod_AnioBasica) = TRY_CONVERT(decimal(18,0), cxe.cod_anio_Basica)
+            WHERE {" AND ".join(base_where)}
+        )
+        SELECT
+            cxe.num AS row_id,
+            cxe.codigo_estud,
+            d.Cedula_Est,
+            d.Apellidos_nombre,
+            d.Estado AS estado_estudiante,
+            cxe.cod_anio_Basica,
+            c.Nombre_Basica,
+            cxe.codigo_materia,
+            p.Nomb_Materia,
+            p.Semestre,
+            p.Orden AS materia_orden,
+            cxe.codigo_periodo,
+            pe.Detalle_Periodo,
+            pe.fechain AS periodo_fechain,
+            pe.fechafin AS periodo_fechafin,
+            cxe.Num_Matricula,
+            cxe.paralelo,
+            cxe.NumGrupo,
+            cxe.TipoMatricula,
+            cxe.teoriaHomo,
+            cxe.practicahomo,
+            cxe.P1Tareas,
+            cxe.P1Proyectos,
+            cxe.P1Examen,
+            cxe.promP1,
+            cxe.P2Tareas,
+            cxe.P2Proyectos,
+            cxe.P2Examen,
+            cxe.promP2,
+            cxe.P3Tareas,
+            cxe.P3Proyectos,
+            cxe.P3Examen,
+            cxe.promP3,
+            cxe.Promedio,
+            cxe.Asistencia,
+            cxe.Recuperacion,
+            cxe.PromedioFinal,
+            cxe.PromedioAux
+        FROM dbo.CARRERAXESTUD cxe
+        INNER JOIN base_estudiantes base
+          ON TRY_CONVERT(decimal(18,0), base.codigo_estud) = TRY_CONVERT(decimal(18,0), cxe.codigo_estud)
+         AND TRY_CONVERT(decimal(18,0), base.cod_anio_Basica) = TRY_CONVERT(decimal(18,0), cxe.cod_anio_Basica)
+        INNER JOIN dbo.DATOS_ESTUD d
+          ON TRY_CONVERT(decimal(18,0), d.codigo_estud) = TRY_CONVERT(decimal(18,0), cxe.codigo_estud)
+        LEFT JOIN dbo.CARRERAS c
+          ON TRY_CONVERT(decimal(18,0), c.Cod_AnioBasica) = TRY_CONVERT(decimal(18,0), cxe.cod_anio_Basica)
+        LEFT JOIN dbo.PENSUM p
+          ON TRY_CONVERT(decimal(18,0), p.codigo_materia) = TRY_CONVERT(decimal(18,0), cxe.codigo_materia)
+        LEFT JOIN dbo.PERIODO pe
+          ON TRY_CONVERT(decimal(18,0), pe.cod_periodo) = TRY_CONVERT(decimal(18,0), cxe.codigo_periodo)
+        WHERE UPPER(LTRIM(RTRIM(ISNULL(cxe.TipoMatricula, '')))) = 'H'
+        ORDER BY
+            d.Apellidos_nombre,
+            c.Nombre_Basica,
+            COALESCE(pe.fechain, CONVERT(date, '19000101')),
+            TRY_CONVERT(int, pe.cod_periodo),
+            p.Semestre,
+            p.Orden,
+            p.Nomb_Materia
+        """,
+        *base_params,
+    )
+    rows = cursor.fetchall()
+
+    group_target_periods: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    group_auto_target: dict[tuple[str, str], bool] = {}
+    target_period_ids_set: set[int] = set()
+    for row in rows:
+        codigo_estud = str(row.codigo_estud)
+        cod_anio_basica = str(row.cod_anio_Basica)
+        group_key = (codigo_estud, cod_anio_basica)
+        if group_key in group_target_periods:
+            continue
+        row_source_period_id = _int_value(row.codigo_periodo)
+        if not row_source_period_id:
+            group_target_periods[group_key] = []
+            group_auto_target[group_key] = True
+            continue
+        try:
+            _, selected_targets, auto_target = _select_target_regular_periods(
+                periods,
+                row_source_period_id,
+                payload.target_codigo_periodo,
+            )
+        except HTTPException:
+            selected_targets = []
+            auto_target = True
+        group_target_periods[group_key] = selected_targets
+        group_auto_target[group_key] = auto_target
+        for target in selected_targets:
+            target_id = _int_value(target.get("codigo_periodo"))
+            if target_id:
+                target_period_ids_set.add(target_id)
+
+    target_period_ids = sorted(target_period_ids_set)
+    target_period_map = {target_id: period_map.get(target_id, {}) for target_id in target_period_ids}
+
+    existing_subjects: set[tuple[str, str, str, int]] = set()
+    existing_headers: set[tuple[str, str, int]] = set()
+    if target_period_ids:
+        placeholders = ", ".join("?" for _ in target_period_ids)
+        cursor.execute(
+            f"""
+            SELECT codigo_estud, cod_anio_Basica, codigo_materia, codigo_periodo
+            FROM dbo.CARRERAXESTUD
+            WHERE TRY_CONVERT(decimal(18,0), codigo_periodo) IN ({placeholders})
+              AND UPPER(LTRIM(RTRIM(ISNULL(TipoMatricula, '')))) = 'R'
+            """,
+            *target_period_ids,
+        )
+        for row in cursor.fetchall():
+            period_id = _int_value(row.codigo_periodo)
+            if period_id:
+                existing_subjects.add(
+                    (str(row.codigo_estud), str(row.cod_anio_Basica), str(row.codigo_materia), period_id)
+                )
+
+        cursor.execute(
+            f"""
+            SELECT codigo_estud, cod_anio_Basica, codigo_periodo
+            FROM dbo.CABECERA_MATRICULA
+            WHERE TRY_CONVERT(decimal(18,0), codigo_periodo) IN ({placeholders})
+            """,
+            *target_period_ids,
+        )
+        for row in cursor.fetchall():
+            period_id = _int_value(row.codigo_periodo)
+            if period_id:
+                existing_headers.add((str(row.codigo_estud), str(row.cod_anio_Basica), period_id))
+
+    items: list[dict[str, Any]] = []
+    students: set[str] = set()
+    header_keys: set[tuple[str, str, int]] = set()
+    group_counter: dict[tuple[str, str], int] = {}
+    source_period_ids: set[int] = set()
+    student_groups: dict[tuple[str, str], dict[str, Any]] = {}
+    all_auto_target = True
+    for row in rows:
+        cedula = _normalize_document(row.Cedula_Est)
+        codigo_estud = str(row.codigo_estud)
+        cod_anio_basica = str(row.cod_anio_Basica)
+        codigo_materia = str(row.codigo_materia)
+        row_source_period_id = _int_value(row.codigo_periodo) or source_period_id
+        if row_source_period_id:
+            source_period_ids.add(int(row_source_period_id))
+        group_key = (codigo_estud, cod_anio_basica)
+        group_targets = group_target_periods.get(group_key, [])
+        all_auto_target = all_auto_target and group_auto_target.get(group_key, True)
+        group_counter[group_key] = group_counter.get(group_key, 0) + 1
+        block_index = (group_counter[group_key] - 1) // 6
+        target_period = group_targets[block_index] if block_index < len(group_targets) else None
+        target_period_id = _int_value(target_period.get("codigo_periodo")) if target_period else None
+        students.add(codigo_estud)
+        student_summary = student_groups.setdefault(
+            group_key,
+            {
+                "codigo_estud": codigo_estud,
+                "cedula": cedula,
+                "estudiante": _clean(row.Apellidos_nombre),
+                "estado_codigo": _clean(row.estado_estudiante),
+                "cod_anio_basica": cod_anio_basica,
+                "carrera": _clean(row.Nombre_Basica),
+                "periodos_homo": set(),
+                "materias_homo": 0,
+                "materias_migran": 0,
+                "materias_bloqueadas": 0,
+            },
+        )
+        if row_source_period_id:
+            student_summary["periodos_homo"].add(int(row_source_period_id))
+        student_summary["materias_homo"] += 1
+        is_exception = cedula in exceptions
+        is_duplicate = (
+            bool(target_period_id)
+            and (codigo_estud, cod_anio_basica, codigo_materia, int(target_period_id)) in existing_subjects
+        )
+        if is_exception:
+            action = "EXCEPCION"
+            reason = "Cedula marcada para editar manualmente; no se migrara."
+        elif not target_period_id or not target_period:
+            action = "SIN_PERIODO_DESTINO"
+            reason = "No existe un periodo regular disponible dentro de los 4 periodos de migracion."
+        elif is_duplicate:
+            action = "DUPLICADO_DESTINO"
+            reason = "La materia ya existe en el periodo regular destino."
+        else:
+            action = "MIGRAR"
+            reason = "Lista para cambiar de HOMO a regular; se asigno por bloque de 6 materias."
+            header_keys.add((codigo_estud, cod_anio_basica, int(target_period_id)))
+        if action == "MIGRAR":
+            student_summary["materias_migran"] += 1
+        else:
+            student_summary["materias_bloqueadas"] += 1
+        items.append(
+            {
+                "row_id": int(row.row_id),
+                "codigo_estud": codigo_estud,
+                "cedula": cedula,
+                "estudiante": _clean(row.Apellidos_nombre),
+                "estado_estudiante": _clean(row.estado_estudiante),
+                "cod_anio_basica": cod_anio_basica,
+                "carrera": _clean(row.Nombre_Basica),
+                "codigo_materia": codigo_materia,
+                "materia": _clean(row.Nomb_Materia),
+                "nivel": _int_value(row.Semestre),
+                "source_codigo_periodo": str(row_source_period_id or ""),
+                "source_periodo": _clean(row.Detalle_Periodo),
+                "target_codigo_periodo": str(target_period_id) if target_period_id else "",
+                "target_periodo": target_period.get("detalle_periodo", "") if target_period else "",
+                "bloque_regular": block_index + 1,
+                "num_matricula": str(row.Num_Matricula),
+                "paralelo": _clean(row.paralelo),
+                "num_grupo": _int_value(row.NumGrupo),
+                "tipo_actual": _clean(row.TipoMatricula),
+                "teoria_homo": _number_value(row.teoriaHomo),
+                "practica_homo": _number_value(row.practicahomo),
+                "p1_tareas": _number_value(row.P1Tareas),
+                "p1_proyectos": _number_value(row.P1Proyectos),
+                "p1_examen": _number_value(row.P1Examen),
+                "prom_p1": _number_value(row.promP1),
+                "p2_tareas": _number_value(row.P2Tareas),
+                "p2_proyectos": _number_value(row.P2Proyectos),
+                "p2_examen": _number_value(row.P2Examen),
+                "prom_p2": _number_value(row.promP2),
+                "p3_tareas": _number_value(row.P3Tareas),
+                "p3_proyectos": _number_value(row.P3Proyectos),
+                "p3_examen": _number_value(row.P3Examen),
+                "prom_p3": _number_value(row.promP3),
+                "promedio": _number_value(row.Promedio),
+                "asistencia": _number_value(row.Asistencia),
+                "recuperacion": _number_value(row.Recuperacion),
+                "promedio_final": _number_value(row.PromedioFinal),
+                "promedio_aux": _number_value(row.PromedioAux),
+                "nota_migrada": _number_value(row.PromedioFinal),
+                "mantiene_notas": True,
+                "existe_cabecera_destino": (
+                    bool(target_period_id)
+                    and (codigo_estud, cod_anio_basica, int(target_period_id)) in existing_headers
+                ),
+                "accion": action,
+                "motivo": reason,
+            }
+        )
+
+    summary = {
+        "registros_origen": len(items),
+        "estudiantes_origen": len(students),
+        "migrar": sum(1 for item in items if item["accion"] == "MIGRAR"),
+        "excepciones": sum(1 for item in items if item["accion"] == "EXCEPCION"),
+        "duplicados_destino": sum(1 for item in items if item["accion"] == "DUPLICADO_DESTINO"),
+        "sin_periodo_destino": sum(1 for item in items if item["accion"] == "SIN_PERIODO_DESTINO"),
+        "cabeceras_referenciadas": len(header_keys),
+        "periodos_regulares": len(target_period_ids),
+        "periodos_homo_origen": len(source_period_ids),
+        "solo_graduados": bool(payload.solo_graduados),
+        "estado_codigo": estado,
+        "student_filter": student_query,
+    }
+    students_payload: list[dict[str, Any]] = []
+    for item in student_groups.values():
+        periodos_homo = sorted(item.pop("periodos_homo", set()))
+        item["total_periodos_homo"] = len(periodos_homo)
+        item["periodos_homo"] = [str(period_id) for period_id in periodos_homo]
+        students_payload.append(item)
+    return {
+        "source_period": _public_period(global_source_period) if global_source_period else None,
+        "target_period": _public_period(period_map[target_period_ids[0]]) if target_period_ids else None,
+        "target_periods": [_public_period(period_map[target_id]) for target_id in target_period_ids if target_id in period_map],
+        "auto_target": all_auto_target,
+        "exception_cedulas": sorted(exceptions),
+        "summary": summary,
+        "students": students_payload,
+        "items": items,
     }
 
 
@@ -4012,6 +4613,214 @@ def matricula_acad_bulk_save(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Error guardando matricula masiva: {exc}") from exc
+
+
+@router.get("/period-change/catalog")
+def matricula_acad_period_change_catalog(
+    current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            periods = _fetch_periods_for_change(cursor)
+            estados = _period_change_states_with_cursor(cursor)
+            students = _period_change_students_with_cursor(cursor)
+        return {
+            "periodos_homo": [
+                {key: value for key, value in item.items() if not key.startswith("_")}
+                for item in periods
+                if _period_is_homo(item)
+            ],
+            "periodos_regulares": [
+                {key: value for key, value in item.items() if not key.startswith("_")}
+                for item in periods
+                if _period_is_regular(item)
+            ],
+            "estados": estados,
+            "students": students,
+        }
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error consultando periodos para cambio H/R: {exc}") from exc
+
+
+@router.post("/period-change/preview")
+def matricula_acad_period_change_preview(
+    payload: AcademicPeriodChangePayload,
+    current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            return _period_change_preview_with_cursor(cursor, payload)
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error generando vista previa de cambio H/R: {exc}") from exc
+
+
+@router.post("/period-change/apply")
+def matricula_acad_period_change_apply(
+    payload: AcademicPeriodChangePayload,
+    current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
+) -> dict[str, Any]:
+    user_code = (current_user.login or "APP")[:10]
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            preview = _period_change_preview_with_cursor(cursor, payload)
+            source_period_id = _int_value(preview.get("source_period", {}).get("codigo_periodo"))
+
+            migrar_items = [item for item in preview.get("items", []) if item.get("accion") == "MIGRAR"]
+            if not migrar_items:
+                return {
+                    "ok": True,
+                    "message": "No existen registros listos para migrar.",
+                    "summary": {
+                        "cabeceras_insertadas": 0,
+                        "registros_actualizados": 0,
+                        "registros_omitidos": 0,
+                    },
+                    "preview": preview,
+                }
+
+            header_groups = {
+                (
+                    str(item.get("codigo_estud")),
+                    str(item.get("cod_anio_basica")),
+                    int(_int_value(item.get("target_codigo_periodo")) or 0),
+                    int(_int_value(item.get("source_codigo_periodo")) or source_period_id or 0),
+                )
+                for item in migrar_items
+                if item.get("codigo_estud")
+                and item.get("cod_anio_basica")
+                and _int_value(item.get("target_codigo_periodo"))
+                and (_int_value(item.get("source_codigo_periodo")) or source_period_id)
+            }
+            cabeceras_insertadas = 0
+            for codigo_estud, cod_anio_basica, target_period_id, header_source_period_id in sorted(header_groups):
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.CABECERA_MATRICULA (
+                        codigo_estud, cod_anio_Basica, codigo_periodo, Num_Matricula,
+                        fecha_pago, valor, num_dep_transf, InscripValor, MatriValor,
+                        Cuota1, RecargoMatricula, Beca, Descuento, Jornada, AyudaEcono,
+                        ControlMatricula, ValorNivelacion, codhorario, codmodalidad, coddias,
+                        codjornada, codestadoMat, reingreso, urlcedula, urltitulo, urldeposito,
+                        urlconvenio, Descuentoprontopago, Descuentoreferidos, UrlQR, linkUrl, NumMigracion
+                    )
+                    SELECT TOP (1)
+                        cm.codigo_estud, cm.cod_anio_Basica, ?, cm.Num_Matricula,
+                        cm.fecha_pago, cm.valor, cm.num_dep_transf, cm.InscripValor, cm.MatriValor,
+                        cm.Cuota1, cm.RecargoMatricula, cm.Beca, cm.Descuento, cm.Jornada, cm.AyudaEcono,
+                        cm.ControlMatricula, cm.ValorNivelacion, cm.codhorario, cm.codmodalidad, cm.coddias,
+                        cm.codjornada, cm.codestadoMat, cm.reingreso, cm.urlcedula, cm.urltitulo, cm.urldeposito,
+                        cm.urlconvenio, cm.Descuentoprontopago, cm.Descuentoreferidos, cm.UrlQR, cm.linkUrl, cm.NumMigracion
+                    FROM dbo.CABECERA_MATRICULA cm
+                    WHERE TRY_CONVERT(decimal(18,0), cm.codigo_estud) = TRY_CONVERT(decimal(18,0), ?)
+                      AND TRY_CONVERT(decimal(18,0), cm.cod_anio_Basica) = TRY_CONVERT(decimal(18,0), ?)
+                      AND TRY_CONVERT(decimal(18,0), cm.codigo_periodo) = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM dbo.CABECERA_MATRICULA existing
+                          WHERE TRY_CONVERT(decimal(18,0), existing.codigo_estud) = TRY_CONVERT(decimal(18,0), cm.codigo_estud)
+                            AND TRY_CONVERT(decimal(18,0), existing.cod_anio_Basica) = TRY_CONVERT(decimal(18,0), cm.cod_anio_Basica)
+                            AND TRY_CONVERT(decimal(18,0), existing.codigo_periodo) = ?
+                      )
+                    ORDER BY cm.numcodigo DESC
+                    """,
+                    target_period_id,
+                    codigo_estud,
+                    cod_anio_basica,
+                    header_source_period_id,
+                    target_period_id,
+                )
+                cabeceras_insertadas += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+
+            registros_actualizados = 0
+            registros_omitidos = 0
+            for item in migrar_items:
+                target_period_id = _int_value(item.get("target_codigo_periodo"))
+                item_source_period_id = _int_value(item.get("source_codigo_periodo")) or source_period_id
+                if not target_period_id or not item_source_period_id:
+                    registros_omitidos += 1
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE source
+                    SET codigo_periodo = ?,
+                        TipoMatricula = 'R',
+                        TipoCursoMigra = 'R',
+                        P1Tareas = COALESCE(nota.nota_migrada, source.P1Tareas),
+                        P1Proyectos = COALESCE(nota.nota_migrada, source.P1Proyectos),
+                        P1Examen = COALESCE(nota.nota_migrada, source.P1Examen),
+                        promP1 = COALESCE(nota.nota_migrada, source.promP1),
+                        P2Tareas = COALESCE(nota.nota_migrada, source.P2Tareas),
+                        P2Proyectos = COALESCE(nota.nota_migrada, source.P2Proyectos),
+                        P2Examen = COALESCE(nota.nota_migrada, source.P2Examen),
+                        promP2 = COALESCE(nota.nota_migrada, source.promP2),
+                        P3Tareas = COALESCE(nota.nota_migrada, source.P3Tareas),
+                        P3Proyectos = COALESCE(nota.nota_migrada, source.P3Proyectos),
+                        P3Examen = COALESCE(nota.nota_migrada, source.P3Examen),
+                        promP3 = COALESCE(nota.nota_migrada, source.promP3),
+                        Promedio = COALESCE(nota.nota_migrada, source.Promedio),
+                        PromedioAux = COALESCE(nota.nota_migrada, source.PromedioAux),
+                        CodUsuaMat = ?,
+                        NumMatricuMod = COALESCE(source.NumMatricuMod, 0) + 1
+                    FROM dbo.CARRERAXESTUD source
+                    CROSS APPLY (
+                        SELECT CASE
+                            WHEN source.PromedioFinal IS NOT NULL THEN source.PromedioFinal
+                            WHEN source.teoriaHomo IS NOT NULL OR source.practicahomo IS NOT NULL
+                                THEN (COALESCE(source.teoriaHomo, 0) * 0.4 + COALESCE(source.practicahomo, 0) * 0.6)
+                            ELSE NULL
+                        END AS nota_migrada
+                    ) nota
+                    WHERE source.num = ?
+                      AND TRY_CONVERT(decimal(18,0), source.codigo_periodo) = ?
+                      AND UPPER(LTRIM(RTRIM(ISNULL(source.TipoMatricula, '')))) = 'H'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM dbo.CARRERAXESTUD target
+                          WHERE target.num <> source.num
+                            AND TRY_CONVERT(decimal(18,0), target.codigo_estud) = TRY_CONVERT(decimal(18,0), source.codigo_estud)
+                            AND TRY_CONVERT(decimal(18,0), target.cod_anio_Basica) = TRY_CONVERT(decimal(18,0), source.cod_anio_Basica)
+                            AND TRY_CONVERT(decimal(18,0), target.codigo_materia) = TRY_CONVERT(decimal(18,0), source.codigo_materia)
+                            AND TRY_CONVERT(decimal(18,0), target.codigo_periodo) = ?
+                            AND UPPER(LTRIM(RTRIM(ISNULL(target.TipoMatricula, '')))) = 'R'
+                      )
+                    """,
+                    target_period_id,
+                    user_code,
+                    item.get("row_id"),
+                    item_source_period_id,
+                    target_period_id,
+                )
+                if cursor.rowcount and cursor.rowcount > 0:
+                    registros_actualizados += cursor.rowcount
+                else:
+                    registros_omitidos += 1
+
+            conn.commit()
+            return {
+                "ok": True,
+                "message": "Migración de matrícula H a R aplicada correctamente.",
+                "summary": {
+                    "cabeceras_insertadas": cabeceras_insertadas,
+                    "registros_actualizados": registros_actualizados,
+                    "registros_omitidos": registros_omitidos,
+                },
+                "preview": preview,
+            }
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        try:
+            conn.rollback()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Error aplicando cambio H/R: {exc}") from exc
 
 
 @router.post("/balance-paralelos")

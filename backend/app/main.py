@@ -20,6 +20,7 @@ from app.routers.senescyt import router as senescyt_router
 from app.routers.sisacademico_admin import router as sisacademico_admin_router
 from app.routers.students import router as students_router
 from app.routers.teams import router as teams_router
+from app.routers.teacher_evaluation import router as teacher_evaluation_router
 
 settings = get_settings()
 
@@ -56,6 +57,7 @@ app.include_router(senescyt_router)
 app.include_router(legacy_reports_router)
 app.include_router(sisacademico_admin_router)
 app.include_router(portal_academico_router)
+app.include_router(teacher_evaluation_router)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT), check_dir=False), name="uploads")
 
 

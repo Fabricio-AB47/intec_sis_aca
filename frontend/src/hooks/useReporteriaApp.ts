@@ -86,7 +86,9 @@ function defaultPageForRole(role?: string): Page {
 
 function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   const normalizedRole = role?.trim().toUpperCase()
-  if (normalizedRole === 'ESTUDIANTE') return page === 'portal-estudiante' || page === 'carnet-institucional'
+  if (normalizedRole === 'ESTUDIANTE') {
+    return page === 'portal-estudiante' || page === 'carnet-institucional' || page === 'evaluacion-docente'
+  }
   if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (page === 'credenciales') return normalizedRole === 'ADMINISTRADOR'
@@ -299,7 +301,11 @@ export function useReporteriaApp() {
   useEffect(() => {
     if (!session) return
     if (session.rol === 'ESTUDIANTE') {
-      if (activePage !== 'portal-estudiante' && activePage !== 'carnet-institucional') {
+      if (
+        activePage !== 'portal-estudiante'
+        && activePage !== 'carnet-institucional'
+        && activePage !== 'evaluacion-docente'
+      ) {
         setActivePage('portal-estudiante')
         setPortalStudentSection('dashboard')
       }
@@ -380,6 +386,8 @@ export function useReporteriaApp() {
       setActivePage('correos-masivos')
     } else if (openPage === 'carnet-institucional' && pageAllowedForRole(session.rol, 'carnet-institucional')) {
       setActivePage('carnet-institucional')
+    } else if (openPage === 'evaluacion-docente' && pageAllowedForRole(session.rol, 'evaluacion-docente')) {
+      setActivePage('evaluacion-docente')
     } else if (!openPage && !pageAllowedForRole(session.rol, activePage)) {
       setActivePage(defaultPageForRole(session.rol))
     }
@@ -802,6 +810,9 @@ export function useReporteriaApp() {
   const openPortalDocentePage = () => {
     setActivePage('portal-docente')
   }
+  const openTeacherEvaluationPage = () => {
+    setActivePage('evaluacion-docente')
+  }
   const openTeamsPage = () => setActivePage('teams')
   const openTeamsMatriculaPage = () => {
     setActivePage('teams-matricula')
@@ -965,6 +976,7 @@ export function useReporteriaApp() {
     openPortalEstudiantePage,
     setPortalStudentSection,
     openPortalDocentePage,
+    openTeacherEvaluationPage,
     openTeamsPage,
     openTeamsMatriculaPage,
     openMatriculaPage,

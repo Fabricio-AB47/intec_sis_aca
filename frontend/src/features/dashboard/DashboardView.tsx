@@ -9,6 +9,11 @@ type DashboardViewProps = {
   data: DashboardMatriculaResponse | null
 }
 
+const activeTypeColors: Record<string, string> = {
+  R: '#1f6f8b',
+  H: '#931913',
+}
+
 const stateColors: Record<string, string> = {
   A: '#1f6f8b',
   G: '#5c7c35',
@@ -16,6 +21,7 @@ const stateColors: Record<string, string> = {
   R: '#9b2d25',
 }
 
+const dashboardStateCodes = new Set(['A', 'G', 'P', 'R'])
 const dashboardIgnoredCedulas = new Set(['1708531189'])
 
 const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
@@ -41,6 +47,19 @@ type TrendPoint = {
 type TrendCoordinate = {
   x: number
   y: number
+}
+
+type ActiveTypeItem = {
+  tipo_matricula: 'R' | 'H'
+  label: string
+  total_estudiantes: number
+}
+
+type PieSegment = {
+  key: string
+  dasharray: string
+  dashoffset: number
+  color: string
 }
 
 function buildTrendCoordinates(values: number[], maxValue?: number): TrendCoordinate[] {
@@ -83,20 +102,20 @@ function buildAreaPath(points: TrendCoordinate[]): string {
   return `${buildSmoothPath(points)} L ${last.x},${trendChartBaseY} L ${first.x},${trendChartBaseY} Z`
 }
 
-function pieSegments(states: DashboardMatriculaStateItem[]) {
+function pieSegments(items: Array<{ key: string; total_estudiantes: number; color: string }>): PieSegment[] {
   const radius = 54
   const circumference = 2 * Math.PI * radius
-  const total = states.reduce((sum, item) => sum + item.total_estudiantes, 0)
+  const total = items.reduce((sum, item) => sum + item.total_estudiantes, 0)
   let offset = 0
-  return states
+  return items
     .filter((item) => item.total_estudiantes > 0)
     .map((item) => {
       const size = total > 0 ? (item.total_estudiantes / total) * circumference : 0
       const segment = {
-        item,
+        key: item.key,
         dasharray: `${size} ${circumference - size}`,
         dashoffset: -offset,
-        color: stateColors[item.estado_codigo] || '#8dbbc7',
+        color: item.color,
       }
       offset += size
       return segment
@@ -146,13 +165,17 @@ export function DashboardView({
   error,
   data,
 }: Readonly<DashboardViewProps>) {
-  const [selectedState, setSelectedState] = useState<DashboardMatriculaStateItem | null>(null)
   const [selectedTrendPoint, setSelectedTrendPoint] = useState<TrendPoint | null>(null)
   const [selectedTrendYear, setSelectedTrendYear] = useState<'ALL' | number>('ALL')
   const [selectedDistributionYear, setSelectedDistributionYear] = useState<number | null>(null)
+  const [selectedState, setSelectedState] = useState<DashboardMatriculaStateItem | null>(null)
   const [stateStudents, setStateStudents] = useState<MatriculaStudentItem[]>([])
   const [stateStudentsLoading, setStateStudentsLoading] = useState(false)
   const [stateStudentsError, setStateStudentsError] = useState('')
+  const [selectedActiveType, setSelectedActiveType] = useState<ActiveTypeItem | null>(null)
+  const [activeTypeStudents, setActiveTypeStudents] = useState<MatriculaStudentItem[]>([])
+  const [activeTypeStudentsLoading, setActiveTypeStudentsLoading] = useState(false)
+  const [activeTypeStudentsError, setActiveTypeStudentsError] = useState('')
   const [trendStudents, setTrendStudents] = useState<MatriculaStudentItem[]>([])
   const [trendStudentsLoading, setTrendStudentsLoading] = useState(false)
   const [trendStudentsError, setTrendStudentsError] = useState('')
@@ -168,7 +191,7 @@ export function DashboardView({
     : defaultDistributionYear
   const visibleTrend = buildMonthlyTrend(trend, selectedTrendYear)
   const distributionTrend = buildMonthlyTrend(trend, distributionYear)
-  const states = (data?.states || []).filter((item) => item.estado_codigo !== 'D')
+  const states = (data?.states || []).filter((item) => dashboardStateCodes.has(item.estado_codigo))
   const totalStudents = states.reduce((sum, item) => sum + item.total_estudiantes, 0)
   const trendSeries = selectedTrendYear === 'ALL'
     ? trendYears.map((year) => ({
@@ -182,8 +205,31 @@ export function DashboardView({
         items: visibleTrend,
       }]
   const trendMax = Math.max(...trendSeries.flatMap((series) => series.items.map((item) => item.total_estudiantes)), 1)
-  const segments = pieSegments(states)
   const activeStudents = states.find((item) => item.estado_codigo === 'A')?.total_estudiantes ?? 0
+  const activeByType = data?.active_by_type || []
+  const rawActiveRegularStudents = data?.active_regular_students
+    ?? activeByType.find((item) => item.tipo_matricula === 'R')?.total_estudiantes
+    ?? 0
+  const rawActiveHomologationStudents = data?.active_homologation_students
+    ?? activeByType.find((item) => item.tipo_matricula === 'H')?.total_estudiantes
+    ?? 0
+  const rawActiveSplit = rawActiveRegularStudents + rawActiveHomologationStudents
+  const activeRhStudents = activeStudents
+  const activeRegularStudents = activeRhStudents > 0 && rawActiveSplit > 0 && rawActiveSplit !== activeRhStudents
+    ? Math.min(activeRhStudents, Math.round((rawActiveRegularStudents / rawActiveSplit) * activeRhStudents))
+    : Math.min(rawActiveRegularStudents, activeRhStudents)
+  const activeHomologationStudents = Math.max(0, activeRhStudents - activeRegularStudents)
+  const activeTypeItems: ActiveTypeItem[] = [
+    { tipo_matricula: 'R', label: 'Regular', total_estudiantes: activeRegularStudents },
+    { tipo_matricula: 'H', label: 'Homologación', total_estudiantes: activeHomologationStudents },
+  ]
+  const stateSegments = pieSegments(
+    states.map((item) => ({
+      key: item.estado_codigo,
+      total_estudiantes: item.total_estudiantes,
+      color: stateColors[item.estado_codigo] || '#8dbbc7',
+    }))
+  )
   const currentYearTrend = buildMonthlyTrend(trend, currentYear)
   const peakMonth = currentYearTrend.reduce(
     (best, item) => (item.total_estudiantes > best.total_estudiantes ? item : best),
@@ -192,10 +238,31 @@ export function DashboardView({
   const peakMonthDetail = peakMonth.total_estudiantes > 0 ? `${peakMonth.mes_nombre} ${currentYear}` : `Sin datos ${currentYear}`
   const monthBarMax = Math.max(...distributionTrend.map((item) => item.total_estudiantes), 1)
   const metricCards = [
-    { label: 'Total estudiantes', value: totalStudents, detail: 'R + H', tone: 'red' },
+    { label: 'Total estudiantes', value: totalStudents, detail: 'Estados reales A/G/P/R', tone: 'red' },
+    {
+      label: 'Activos R + H',
+      value: activeRhStudents,
+      detail: `R ${activeRegularStudents} + H ${activeHomologationStudents}`,
+      tone: 'cyan',
+    },
     { label: 'Activos', value: activeStudents, detail: statePercent(activeStudents, totalStudents), tone: 'cyan' },
     { label: 'Mes mayor', value: peakMonth.total_estudiantes, detail: peakMonthDetail, tone: 'gold' },
   ]
+
+  async function openActiveTypeStudents(item: ActiveTypeItem) {
+    setSelectedActiveType(item)
+    setActiveTypeStudents([])
+    setActiveTypeStudentsError('')
+    setActiveTypeStudentsLoading(true)
+    try {
+      const response = await fetchMatriculaList(item.tipo_matricula, 'A', 10000)
+      setActiveTypeStudents((response.items || []).filter(isDashboardVisibleStudent))
+    } catch (apiError) {
+      setActiveTypeStudentsError(apiError instanceof Error ? apiError.message : 'Error consultando estudiantes activos')
+    } finally {
+      setActiveTypeStudentsLoading(false)
+    }
+  }
 
   async function openStateStudents(item: DashboardMatriculaStateItem) {
     setSelectedState(item)
@@ -206,7 +273,7 @@ export function DashboardView({
       const response = await fetchMatriculaList('ALL', item.estado_codigo, 10000)
       setStateStudents((response.items || []).filter(isDashboardVisibleStudent))
     } catch (apiError) {
-      setStateStudentsError(apiError instanceof Error ? apiError.message : 'Error consultando estudiantes del estado')
+      setStateStudentsError(apiError instanceof Error ? apiError.message : 'Error consultando estudiantes por estado')
     } finally {
       setStateStudentsLoading(false)
     }
@@ -384,7 +451,7 @@ export function DashboardView({
         <article className="student-card dashboard-summary-panel">
           <div className="card-head">
             <h3>Resumen de matricula</h3>
-            <span>Sincronizacion automatica</span>
+            <span>Activos R {activeRegularStudents} + H {activeHomologationStudents}</span>
           </div>
 
           <div className="dashboard-metric-tiles">
@@ -398,49 +465,110 @@ export function DashboardView({
           </div>
         </article>
 
-        <article className="student-card dashboard-pie-card">
-          <div className="card-head">
-            <h3>Estados de estudiantes</h3>
-          </div>
+        <div className="dashboard-active-row">
+          <article className="student-card dashboard-pie-card">
+            <div className="card-head">
+              <h3>Estados de estudiantes</h3>
+              <span>Total: {totalStudents} · Activos R/H: {activeRhStudents}</span>
+            </div>
 
-          <div className="dashboard-pie-content">
-            <div className="dashboard-pie-wrap">
-              <svg viewBox="0 0 140 140" role="img" aria-label="Distribucion de estudiantes por estado">
-                <circle cx="70" cy="70" r="54" className="dashboard-pie-base" />
-                {segments.map((segment) => (
-                  <circle
-                    key={segment.item.estado_codigo}
-                    cx="70"
-                    cy="70"
-                    r="54"
-                    className="dashboard-pie-segment"
-                    stroke={segment.color}
-                    strokeDasharray={segment.dasharray}
-                    strokeDashoffset={segment.dashoffset}
-                  />
+            <div className="dashboard-active-breakdown dashboard-active-breakdown--top">
+              <div>
+                <span style={{ backgroundColor: activeTypeColors.R }} />
+                <strong>Activos Regular</strong>
+                <small>{statePercent(activeRegularStudents, activeRhStudents)} · {activeRegularStudents}</small>
+              </div>
+              <div>
+                <span style={{ backgroundColor: activeTypeColors.H }} />
+                <strong>Activos Homologación</strong>
+                <small>{statePercent(activeHomologationStudents, activeRhStudents)} · {activeHomologationStudents}</small>
+              </div>
+            </div>
+
+            <div className="dashboard-pie-content">
+              <div className="dashboard-pie-wrap">
+                <svg viewBox="0 0 140 140" role="img" aria-label="Distribución de estudiantes por estado">
+                  <circle cx="70" cy="70" r="54" className="dashboard-pie-base" />
+                  {stateSegments.map((segment) => (
+                    <circle
+                      key={segment.key}
+                      cx="70"
+                      cy="70"
+                      r="54"
+                      className="dashboard-pie-segment"
+                      stroke={segment.color}
+                      strokeDasharray={segment.dasharray}
+                      strokeDashoffset={segment.dashoffset}
+                    />
+                  ))}
+                  <text x="70" y="66" className="dashboard-pie-total">
+                    100%
+                  </text>
+                  <text x="70" y="82" className="dashboard-pie-caption">
+                    {totalStudents}
+                  </text>
+                </svg>
+              </div>
+
+              <div className="dashboard-state-list">
+                {states.length > 0 ? (
+                  states.map((item) => (
+                    <button key={item.estado_codigo} type="button" onClick={() => void openStateStudents(item)}>
+                      <span style={{ backgroundColor: stateColors[item.estado_codigo] || '#8dbbc7' }} />
+                      <strong>{item.estado_nombre}</strong>
+                      <small>
+                        {statePercent(item.total_estudiantes, totalStudents)} · {item.total_estudiantes}
+                      </small>
+                    </button>
+                  ))
+                ) : (
+                  <p className="empty-block">Sin estados de estudiantes para mostrar.</p>
+                )}
+              </div>
+            </div>
+          </article>
+
+          <article className="student-card dashboard-active-type-card">
+            <div className="card-head dashboard-active-type-head">
+              <div>
+                <h3>Activos R/H</h3>
+                <small>Matriculas activas por tipo</small>
+              </div>
+              <span>{activeRhStudents} activo(s)</span>
+            </div>
+
+            <div className="dashboard-active-type-layout">
+              <div className="dashboard-active-total-card" aria-label="Total de estudiantes activos regular y homologacion">
+                <span>Total activos</span>
+                <strong>{activeRhStudents}</strong>
+                <small>Regular + Homologación</small>
+              </div>
+
+              <div className="dashboard-active-type-grid">
+                {activeTypeItems.map((item) => (
+                  <button
+                    key={item.tipo_matricula}
+                    type="button"
+                    className="dashboard-active-type-subcard"
+                    onClick={() => openActiveTypeStudents(item)}
+                  >
+                    <span
+                      className="dashboard-active-type-dot"
+                      style={{ backgroundColor: activeTypeColors[item.tipo_matricula] || '#8dbbc7' }}
+                    />
+                    <div className="dashboard-active-type-copy">
+                      <strong>{item.label}</strong>
+                    </div>
+                    <div className="dashboard-active-type-value">
+                      <strong>{item.total_estudiantes}</strong>
+                      <small>{statePercent(item.total_estudiantes, activeRhStudents)}</small>
+                    </div>
+                  </button>
                 ))}
-                <text x="70" y="66" className="dashboard-pie-total">
-                  100%
-                </text>
-                <text x="70" y="82" className="dashboard-pie-caption">
-                  {totalStudents}
-                </text>
-              </svg>
+              </div>
             </div>
-
-            <div className="dashboard-state-list">
-              {states.map((item) => (
-                <button key={item.estado_codigo} type="button" onClick={() => void openStateStudents(item)}>
-                  <span style={{ backgroundColor: stateColors[item.estado_codigo] || '#8dbbc7' }} />
-                  <strong>{item.estado_nombre}</strong>
-                  <small>
-                    {statePercent(item.total_estudiantes, totalStudents)} · {item.total_estudiantes}
-                  </small>
-                </button>
-              ))}
-            </div>
-          </div>
-        </article>
+          </article>
+        </div>
 
         <article className="student-card dashboard-bars-card">
           <div className="card-head">
@@ -476,12 +604,12 @@ export function DashboardView({
 
       {selectedState ? (
         <div className="matricula-modal-overlay">
-          <article className="matricula-modal">
+          <article className="matricula-modal dashboard-active-students-modal">
             <div className="matricula-modal-head">
               <div className="matricula-modal-title">
-                <h3>Estudiantes por estado</h3>
+                <h3>Estudiantes en estado {selectedState.estado_nombre}</h3>
                 <span>
-                  {selectedState.estado_nombre} · {statePercent(selectedState.total_estudiantes, totalStudents)} ·{' '}
+                  {statePercent(selectedState.total_estudiantes, totalStudents)} ·{' '}
                   {selectedState.total_estudiantes} estudiante(s)
                 </span>
               </div>
@@ -498,6 +626,21 @@ export function DashboardView({
               </button>
             </div>
 
+            <div className="dashboard-active-modal-summary">
+              <div>
+                <span>Estado</span>
+                <strong>{selectedState.estado_nombre}</strong>
+              </div>
+              <div>
+                <span>Total</span>
+                <strong>{selectedState.total_estudiantes}</strong>
+              </div>
+              <div>
+                <span>Participación</span>
+                <strong>{statePercent(selectedState.total_estudiantes, totalStudents)}</strong>
+              </div>
+            </div>
+
             {stateStudentsLoading ? <p className="teams-message">Consultando estudiantes...</p> : null}
             {stateStudentsError ? <p className="teams-error">{stateStudentsError}</p> : null}
 
@@ -506,30 +649,114 @@ export function DashboardView({
                 <thead>
                   <tr>
                     <th>Estudiante</th>
-                    <th>Cedula</th>
+                    <th>Cédula</th>
+                    <th>Carrera</th>
+                    <th>Período</th>
                     <th>Tipo</th>
                     <th>Estado</th>
-                    <th>Periodo</th>
                     <th>Correo personal</th>
-                    <th>Nombre Carrera</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stateStudents.length > 0 ? (
                     stateStudents.map((student) => (
-                      <tr key={`${student.estado_codigo}-${student.tipo_matricula}-${student.codigo_estud}-${student.periodo || 'na'}`}>
+                      <tr
+                        key={`state-${selectedState.estado_codigo}-${student.tipo_matricula}-${student.codigo_estud}-${student.periodo || 'na'}`}
+                      >
                         <td>{student.nombre_estudiante}</td>
                         <td>{student.cedula || '-'}</td>
+                        <td>{student.nombre_carrera || '-'}</td>
+                        <td>{student.detalle_periodo || student.periodo || '-'}</td>
                         <td>{student.tipo_matricula}</td>
                         <td>{student.estado_nombre}</td>
-                        <td>{student.detalle_periodo || student.periodo || '-'}</td>
                         <td>{student.correo_personal || '-'}</td>
-                        <td>{student.nombre_carrera || '-'}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
                       <td colSpan={7}>Sin estudiantes para el estado seleccionado.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
+      {selectedActiveType ? (
+        <div className="matricula-modal-overlay">
+          <article className="matricula-modal dashboard-active-students-modal">
+            <div className="matricula-modal-head">
+              <div className="matricula-modal-title">
+                <h3>Activos en {selectedActiveType.label}</h3>
+                <span>
+                  {statePercent(selectedActiveType.total_estudiantes, activeRhStudents)} ·{' '}
+                  {selectedActiveType.total_estudiantes} estudiante(s)
+                </span>
+              </div>
+              <button
+                type="button"
+                className="matricula-modal-close"
+                onClick={() => {
+                  setSelectedActiveType(null)
+                  setActiveTypeStudents([])
+                  setActiveTypeStudentsError('')
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="dashboard-active-modal-summary">
+              <div>
+                <span>Tipo de matrícula</span>
+                <strong>{selectedActiveType.label}</strong>
+              </div>
+              <div>
+                <span>Total activo</span>
+                <strong>{selectedActiveType.total_estudiantes}</strong>
+              </div>
+              <div>
+                <span>Participación</span>
+                <strong>{statePercent(selectedActiveType.total_estudiantes, activeRhStudents)}</strong>
+              </div>
+            </div>
+
+            {activeTypeStudentsLoading ? <p className="teams-message">Consultando estudiantes...</p> : null}
+            {activeTypeStudentsError ? <p className="teams-error">{activeTypeStudentsError}</p> : null}
+
+            <div className="matricula-table-wrap">
+              <table className="matricula-table">
+                <thead>
+                  <tr>
+                    <th>Estudiante</th>
+                    <th>Cedula</th>
+                    <th>Carrera</th>
+                    <th>Periodo</th>
+                    <th>Tipo</th>
+                    <th>Estado</th>
+                    <th>Correo personal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeTypeStudents.length > 0 ? (
+                    activeTypeStudents.map((student) => (
+                      <tr
+                        key={`active-${selectedActiveType.tipo_matricula}-${student.codigo_estud}-${student.periodo || 'na'}`}
+                      >
+                        <td>{student.nombre_estudiante}</td>
+                        <td>{student.cedula || '-'}</td>
+                        <td>{student.nombre_carrera || '-'}</td>
+                        <td>{student.detalle_periodo || student.periodo || '-'}</td>
+                        <td>{student.tipo_matricula}</td>
+                        <td>{student.estado_nombre}</td>
+                        <td>{student.correo_personal || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7}>Sin estudiantes activos para {selectedActiveType.label}.</td>
                     </tr>
                   )}
                 </tbody>

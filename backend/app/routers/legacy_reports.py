@@ -259,12 +259,21 @@ def _report_payload(report_key: str) -> dict[str, Any]:
     return {"key": report_key, **report}
 
 
-def _base_params(periodo: str | None, carrera: str | None, estado: str | None, buscar: str | None) -> dict[str, str | None]:
+def _base_params(
+    periodo: str | None,
+    carrera: str | None,
+    estado: str | None,
+    buscar: str | None,
+    anio: str | None = None,
+    genero: str | None = None,
+) -> dict[str, str | None]:
     return {
         "periodo": _clean(periodo),
         "carrera": _clean(carrera),
         "estado": _clean(estado),
         "buscar": _search_like(buscar),
+        "anio": _clean(anio),
+        "genero": _search_like(genero),
     }
 
 
@@ -1037,21 +1046,300 @@ def _pagos_matricula_query(limit: int, params: dict[str, str | None]) -> tuple[s
     ]
 
 
+STUDENT_ESTADO_OPTIONS = [
+    {"value": "", "label": "Todos los estados"},
+    {"value": "A", "label": "Activo"},
+    {"value": "G", "label": "Graduado"},
+    {"value": "P", "label": "Inactivo"},
+    {"value": "R", "label": "Retirado"},
+]
+
+
+def _default_estado_for_report(report_key: str, estado: str | None) -> str | None:
+    cleaned = _clean(estado)
+    if cleaned:
+        return cleaned
+    if report_key == "graduados_2025":
+        return "G"
+    return None
+
+
+REPORTS = {
+    "provincia": {
+        "title": "Provincia",
+        "description": "Totales por provincia divididos en matrícula regular y homologación, filtrable por año.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "Provincias"],
+        "filters": ["anio", "estado", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "provincia_genero": {
+        "title": "Provincia por género",
+        "description": "Consolidado de estudiantes por provincia y género, dividido en regular y homologación.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "CARRERAS", "Provincias", "Sexo"],
+        "filters": ["anio", "estado", "genero", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "provincia_carrera": {
+        "title": "Provincia por carreras",
+        "description": "Consolidado de estudiantes por provincia y carrera, dividido en regular y homologación.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "CARRERAS", "Provincias"],
+        "filters": ["anio", "estado", "carrera", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "carrera": {
+        "title": "Carrera",
+        "description": "Totales por carrera divididos en matrícula regular y homologación.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "CARRERAS"],
+        "filters": ["anio", "estado", "carrera", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "graduados_2025": {
+        "title": "Graduados",
+        "description": "Listado de estudiantes graduados por año, provincia, carrera y género.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "CARRERAS", "ESTADO"],
+        "filters": ["anio", "estado", "carrera", "genero", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "genero": {
+        "title": "Género",
+        "description": "Distribución por género, dividida en matrícula regular y homologación.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO", "Sexo"],
+        "filters": ["anio", "estado", "genero", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+    "periodo": {
+        "title": "Período",
+        "description": "Totales de estudiantes por período académico, divididos en regular y homologación.",
+        "category": "Reportería R/H",
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PERIODO"],
+        "filters": ["anio", "estado", "carrera", "genero", "buscar", "limite"],
+        "estado_options": STUDENT_ESTADO_OPTIONS,
+    },
+}
+
+FUNCTIONAL_INVENTORY = [
+    {
+        "module": "Reportes por provincia",
+        "legacy_sources": ["DATOS_ESTUD", "Provincias", "CARRERAXESTUD", "PERIODO"],
+        "capabilities": ["Provincia por género", "Provincia por carrera", "Filtros por año y género"],
+    },
+    {
+        "module": "Reportes academicos",
+        "legacy_sources": ["CARRERAXESTUD", "CARRERAS", "PERIODO", "ESTADO"],
+        "capabilities": ["Graduados", "Distribución por período"],
+    },
+]
+
+
+def _student_report_base_where(params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    clauses = [
+        "p.anio IS NOT NULL",
+    ]
+    values: list[Any] = []
+    if params.get("anio"):
+        clauses.append("CAST(p.anio AS varchar(10)) = ?")
+        values.append(params["anio"])
+    if params.get("estado"):
+        clauses.append("LTRIM(RTRIM(de.Estado)) = ?")
+        values.append(params["estado"])
+    if params.get("periodo"):
+        clauses.append("CAST(p.cod_periodo AS varchar(30)) = ?")
+        values.append(params["periodo"])
+    if params.get("carrera"):
+        clauses.append("CAST(c.Cod_AnioBasica AS varchar(30)) = ?")
+        values.append(params["carrera"])
+    if params.get("genero"):
+        clauses.append(
+            """
+            LOWER(COALESCE(NULLIF(LTRIM(RTRIM(s.detalle_sexo)), ''), NULLIF(LTRIM(RTRIM(de.generoId)), ''), 'Sin genero')) LIKE LOWER(?)
+            """
+        )
+        values.append(params["genero"])
+    if params.get("buscar"):
+        clauses.append(
+            """
+            (
+                de.Cedula_Est LIKE ?
+                OR de.Apellidos_nombre LIKE ?
+                OR c.Nombre_Basica LIKE ?
+                OR p.Detalle_Periodo LIKE ?
+                OR pr.Descripcion_Prov LIKE ?
+            )
+            """
+        )
+        values.extend([params["buscar"]] * 5)
+    return " AND ".join(clauses), values
+
+
+def _student_report_cte(params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    where_sql, values = _student_report_base_where(params)
+    sql = f"""
+        WITH base AS (
+            SELECT DISTINCT
+                CAST(de.codigo_estud AS varchar(30)) AS estudiante_codigo,
+                LTRIM(RTRIM(de.Cedula_Est)) AS cedula,
+                LTRIM(RTRIM(de.Apellidos_nombre)) AS estudiante,
+                COALESCE(NULLIF(LTRIM(RTRIM(pr.Descripcion_Prov)), ''), NULLIF(LTRIM(RTRIM(de.ciudad)), ''), 'Sin provincia') AS provincia,
+                COALESCE(NULLIF(LTRIM(RTRIM(s.detalle_sexo)), ''), NULLIF(LTRIM(RTRIM(de.generoId)), ''), 'Sin genero') AS genero,
+                CAST(c.Cod_AnioBasica AS varchar(30)) AS carrera_codigo,
+                LTRIM(RTRIM(c.Nombre_Basica)) AS carrera,
+                CAST(p.cod_periodo AS varchar(30)) AS periodo_codigo,
+                LTRIM(RTRIM(p.Detalle_Periodo)) AS periodo,
+                p.anio,
+                UPPER(COALESCE(NULLIF(LTRIM(RTRIM(p.TipoMatricula)), ''), NULLIF(LTRIM(RTRIM(ce.TipoMatricula)), ''), 'SIN TIPO')) AS tipo_matricula,
+                LTRIM(RTRIM(de.Estado)) AS estado_codigo,
+                COALESCE(NULLIF(LTRIM(RTRIM(es.ESTADO)), ''), LTRIM(RTRIM(de.Estado)), 'Sin estado') AS estado
+            FROM dbo.CARRERAXESTUD ce
+            INNER JOIN dbo.DATOS_ESTUD de ON ce.codigo_estud = de.codigo_estud
+            INNER JOIN dbo.PERIODO p ON ce.codigo_periodo = p.cod_periodo
+            INNER JOIN dbo.CARRERAS c ON ce.cod_anio_Basica = c.Cod_AnioBasica
+            LEFT JOIN dbo.Provincias pr ON TRY_CONVERT(int, pr.Cod_Provincia) = TRY_CONVERT(int, de.codprov)
+            LEFT JOIN dbo.Sexo s ON de.Sexo = s.id_sexo
+            LEFT JOIN dbo.ESTADO es ON de.Estado = es.IDESTADO
+            WHERE {where_sql}
+        )
+    """
+    return sql, values
+
+
+def _split_count_columns() -> str:
+    return """
+            COUNT(DISTINCT CASE WHEN tipo_matricula = 'R' THEN estudiante_codigo END) AS regular,
+            COUNT(DISTINCT CASE WHEN tipo_matricula = 'H' THEN estudiante_codigo END) AS homologacion,
+            COUNT(DISTINCT estudiante_codigo) AS total_estudiantes
+    """
+
+
+def _provincia_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            provincia,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, provincia
+        ORDER BY anio DESC, provincia
+    """
+    return sql, values
+
+
+def _provincia_genero_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            provincia,
+            genero,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, provincia, genero
+        ORDER BY anio DESC, provincia, genero
+    """
+    return sql, values
+
+
+def _provincia_carrera_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            provincia,
+            carrera_codigo,
+            carrera,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, provincia, carrera_codigo, carrera
+        ORDER BY anio DESC, provincia, carrera
+    """
+    return sql, values
+
+
+def _carrera_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            carrera_codigo,
+            carrera,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, carrera_codigo, carrera
+        ORDER BY anio DESC, carrera
+    """
+    return sql, values
+
+
+def _graduados_2025_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            cedula,
+            estudiante,
+            provincia,
+            genero,
+            carrera,
+            periodo,
+            anio,
+            tipo_matricula,
+            estado
+        FROM base
+        WHERE estado_codigo = 'G' OR LOWER(estado) LIKE '%graduado%'
+        ORDER BY anio DESC, carrera, estudiante
+    """
+    return sql, values
+
+
+def _genero_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            genero,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, genero
+        ORDER BY anio DESC, genero
+    """
+    return sql, values
+
+
+def _periodo_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    cte, values = _student_report_cte(params)
+    sql = f"""
+        {cte}
+        SELECT TOP ({limit})
+            anio,
+            periodo_codigo,
+            periodo,
+            {_split_count_columns()}
+        FROM base
+        GROUP BY anio, periodo_codigo, periodo
+        ORDER BY anio DESC, TRY_CONVERT(int, periodo_codigo) DESC
+    """
+    return sql, values
+
+
 QUERY_BUILDERS = {
-    "matriculados": _matriculados_query,
-    "becas_edades": _becas_edades_query,
-    "preinscritos": _preinscritos_query,
-    "docentes": _docentes_query,
-    "documentos": _documentos_query,
-    "seguimiento": _seguimiento_query,
-    "practicas": _practicas_query,
-    "evaluacion_docente": _evaluacion_docente_query,
-    "moodle_notas": _moodle_notas_query,
-    "notas_carrera_materia": _notas_carrera_materia_query,
-    "estud_per_c_m": _estud_per_c_m_query,
-    "correos_intec": _correos_intec_query,
-    "microsoft_audit": _microsoft_audit_query,
-    "pagos_matricula": _pagos_matricula_query,
+    "provincia": _provincia_query,
+    "provincia_genero": _provincia_genero_query,
+    "provincia_carrera": _provincia_carrera_query,
+    "carrera": _carrera_query,
+    "graduados_2025": _graduados_2025_query,
+    "genero": _genero_query,
+    "periodo": _periodo_query,
 }
 
 
@@ -1062,13 +1350,16 @@ def _execute_report(
     carrera: str | None,
     estado: str | None,
     buscar: str | None,
+    anio: str | None,
+    genero: str | None,
     limit: int,
 ) -> dict[str, Any]:
     if report_key not in REPORTS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reporte no disponible")
 
     safe_limit = _limit(limit)
-    filters = _base_params(periodo, carrera, estado, buscar)
+    effective_estado = _default_estado_for_report(report_key, estado)
+    filters = _base_params(periodo, carrera, effective_estado, buscar, anio, genero)
     sql, sql_params = QUERY_BUILDERS[report_key](safe_limit, filters)
 
     try:
@@ -1092,6 +1383,8 @@ def _execute_report(
             "periodo": filters["periodo"],
             "carrera": filters["carrera"],
             "estado": filters["estado"],
+            "anio": filters["anio"],
+            "genero": _clean(genero),
             "buscar": _clean(buscar),
             "limit": safe_limit,
         },
@@ -1099,16 +1392,33 @@ def _execute_report(
 
 
 def _catalog_options() -> dict[str, list[dict[str, str]]]:
-    options: dict[str, list[dict[str, str]]] = {"periodos": [], "carreras": []}
+    options: dict[str, list[dict[str, str]]] = {"periodos": [], "carreras": [], "anios": []}
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    CAST(anio_valor AS varchar(10)) AS value,
+                    CAST(anio_valor AS varchar(10)) AS label
+                FROM (
+                    SELECT DISTINCT TRY_CONVERT(int, anio) AS anio_valor
+                    FROM dbo.PERIODO p
+                    INNER JOIN dbo.CARRERAXESTUD ce ON ce.codigo_periodo = p.cod_periodo
+                    WHERE TRY_CONVERT(int, p.anio) IS NOT NULL
+                ) years
+                ORDER BY anio_valor DESC
+                """
+            )
+            options["anios"] = [{"value": str(row[0]), "label": str(row[1])} for row in cursor.fetchall()]
+
             cursor.execute(
                 """
                 SELECT TOP (500)
                     CAST(cod_periodo AS varchar(30)) AS value,
                     CONCAT(CAST(cod_periodo AS varchar(30)), ' - ', LTRIM(RTRIM(Detalle_Periodo))) AS label
                 FROM dbo.PERIODO
+                WHERE TRY_CONVERT(int, anio) IS NOT NULL
                 ORDER BY cod_periodo DESC
                 """
             )
@@ -1137,16 +1447,19 @@ def catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
         "functional_inventory": FUNCTIONAL_INVENTORY,
         "periodos": options["periodos"],
         "carreras": options["carreras"],
+        "anios": options["anios"],
     }
 
 
 @router.get("")
 def run_report(
-    report_key: str = Query(default="matriculados"),
+    report_key: str = Query(default="provincia_genero"),
     periodo: str | None = Query(default=None),
     carrera: str | None = Query(default=None),
     estado: str | None = Query(default=None),
     buscar: str | None = Query(default=None),
+    anio: str | None = Query(default=None),
+    genero: str | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=10000),
     _: SessionUser = AllowedUser,
 ) -> dict[str, Any]:
@@ -1156,6 +1469,8 @@ def run_report(
         carrera=carrera,
         estado=estado,
         buscar=buscar,
+        anio=anio,
+        genero=genero,
         limit=limit,
     )
 
@@ -1172,6 +1487,27 @@ def _autosize(sheet: Any) -> None:
     for column_cells in sheet.columns:
         width = max(len(str(cell.value or "")) for cell in column_cells)
         sheet.column_dimensions[column_cells[0].column_letter].width = min(max(width + 2, 12), 48)
+
+
+def _is_total_column(column: str) -> bool:
+    normalized = column.lower()
+    if "codigo" in normalized or "cedula" in normalized or normalized == "anio":
+        return False
+    return (
+        normalized in {"regular", "homologacion", "total", "cantidad", "graduados"}
+        or normalized.startswith("total_")
+        or normalized.endswith("_total")
+        or "total_estudiantes" in normalized
+    )
+
+
+def _numeric_value(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value or "0").replace(",", "."))
+    except ValueError:
+        return 0.0
 
 
 def _build_workbook(payload: dict[str, Any]) -> BytesIO:
@@ -1191,6 +1527,20 @@ def _build_workbook(payload: dict[str, Any]) -> BytesIO:
 
     for row in rows:
         ws_data.append([row.get(column) for column in columns])
+    total_columns = [column for column in columns if _is_total_column(column)]
+    if rows and total_columns:
+        total_row: list[Any] = []
+        for index, column in enumerate(columns):
+            if index == 0:
+                total_row.append("Total")
+            elif column in total_columns:
+                total_row.append(sum(_numeric_value(row.get(column)) for row in rows))
+            else:
+                total_row.append("")
+        ws_data.append(total_row)
+        for cell in ws_data[ws_data.max_row]:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="EAF4F6")
     _autosize(ws_data)
 
     ws_meta = workbook.create_sheet("Reporte")
@@ -1227,11 +1577,13 @@ def _build_workbook(payload: dict[str, Any]) -> BytesIO:
 
 @router.get("/export")
 def export_report(
-    report_key: str = Query(default="matriculados"),
+    report_key: str = Query(default="provincia_genero"),
     periodo: str | None = Query(default=None),
     carrera: str | None = Query(default=None),
     estado: str | None = Query(default=None),
     buscar: str | None = Query(default=None),
+    anio: str | None = Query(default=None),
+    genero: str | None = Query(default=None),
     limit: int = Query(default=5000, ge=1, le=10000),
     _: SessionUser = AllowedUser,
 ) -> StreamingResponse:
@@ -1241,6 +1593,8 @@ def export_report(
         carrera=carrera,
         estado=estado,
         buscar=buscar,
+        anio=anio,
+        genero=genero,
         limit=limit,
     )
     buffer = _build_workbook(payload)
@@ -1259,6 +1613,8 @@ def run_individual_report(
     carrera: str | None = Query(default=None),
     estado: str | None = Query(default=None),
     buscar: str | None = Query(default=None),
+    anio: str | None = Query(default=None),
+    genero: str | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=10000),
     _: SessionUser = AllowedUser,
 ) -> dict[str, Any]:
@@ -1268,6 +1624,8 @@ def run_individual_report(
         carrera=carrera,
         estado=estado,
         buscar=buscar,
+        anio=anio,
+        genero=genero,
         limit=limit,
     )
 
@@ -1279,6 +1637,8 @@ def export_individual_report(
     carrera: str | None = Query(default=None),
     estado: str | None = Query(default=None),
     buscar: str | None = Query(default=None),
+    anio: str | None = Query(default=None),
+    genero: str | None = Query(default=None),
     limit: int = Query(default=5000, ge=1, le=10000),
     _: SessionUser = AllowedUser,
 ) -> StreamingResponse:
@@ -1288,6 +1648,8 @@ def export_individual_report(
         carrera=carrera,
         estado=estado,
         buscar=buscar,
+        anio=anio,
+        genero=genero,
         limit=limit,
     )
     buffer = _build_workbook(payload)

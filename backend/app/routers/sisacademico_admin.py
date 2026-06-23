@@ -59,16 +59,6 @@ def fields(*items: tuple[str, str, str] | tuple[str, str] | FieldMeta) -> list[F
     return result
 
 
-DOCUMENT_TYPE_OPTIONS = [
-    {"value": "1", "label": "1 - Cedula"},
-    {"value": "2", "label": "2 - Pasaporte"},
-]
-
-
-def document_type_field(name: str, label: str = "Tipo documento", required: bool = False) -> FieldMeta:
-    return field(name, label, "number", required=required).model_copy(update={"options": DOCUMENT_TYPE_OPTIONS})
-
-
 STUDENT_IDENTITY_FIELDS = {"estudiante_nombre", "estudiante_cedula"}
 STUDENT_CODE_FIELD_BY_SECTION = {
     "matricula_materias": "codigo_estud",
@@ -94,7 +84,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["Cedula_Est"],
         "list_fields": fields(
             ("codigo_estud", "Codigo", "number"),
-            document_type_field("tipodocumento"),
             ("Cedula_Est", "Cedula"),
             ("Apellidos_nombre", "Estudiante"),
             ("Estado", "Estado"),
@@ -104,7 +93,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "detail_fields": fields(
             ("codigo_estud", "Codigo", "number"),
-            document_type_field("tipodocumento"),
             ("Cedula_Est", "Cedula"),
             ("Apellidos_nombre", "Estudiante"),
             ("ciudad", "Ciudad"),
@@ -125,8 +113,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("discapacidad", "Discapacidad"),
         ),
         "editable_fields": fields(
-            document_type_field("tipodocumento"),
-            ("Cedula_Est", "Cedula / pasaporte"),
             ("Apellidos_nombre", "Estudiante"),
             ("ciudad", "Ciudad"),
             ("codprov", "Provincia", "number"),
@@ -194,7 +180,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["cedula_doc"],
         "list_fields": fields(
             ("codigo_doc", "Codigo", "number"),
-            document_type_field("tipoDocumentoId"),
             ("cedula_doc", "Cedula"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
@@ -203,7 +188,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "detail_fields": fields(
             ("codigo_doc", "Codigo", "number"),
-            document_type_field("tipoDocumentoId"),
             ("cedula_doc", "Cedula"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
@@ -225,8 +209,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("tiempoDedicacionId", "Tiempo dedicacion"),
         ),
         "editable_fields": fields(
-            document_type_field("tipoDocumentoId"),
-            ("cedula_doc", "Cedula / pasaporte"),
             ("apellidos_nombre", "Docente"),
             ("correo", "Correo"),
             ("correop", "Correo personal"),
@@ -248,7 +230,6 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "create_fields": fields(
             field("codigo_doc", "Codigo", "number", required=True),
-            document_type_field("tipoDocumentoId", required=True),
             field("cedula_doc", "Cedula", required=True),
             field("apellidos_nombre", "Docente", required=True),
             ("login", "Login usuario"),
@@ -1133,6 +1114,25 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "search_fields": ["num", "cod_materia", "cod_periodo", "materia", "textofecha", "url"],
         "order_by": "cod_periodo DESC, cod_materia",
+    },
+    "cambio_periodo_hr": {
+        "title": "Migración matrícula H a R",
+        "category": "Academico",
+        "description": "Migra matrículas HOMO a matrícula regular con excepciones por cédula.",
+        "table": "dbo.CARRERAXESTUD + dbo.CABECERA_MATRICULA + dbo.PERIODO",
+        "key_fields": ["codigo_periodo"],
+        "list_fields": fields(
+            ("codigo_periodo", "Periodo origen", "number"),
+            ("TipoMatricula", "Tipo matricula"),
+        ),
+        "detail_fields": fields(
+            ("codigo_periodo", "Periodo origen", "number"),
+            ("TipoMatricula", "Tipo matricula"),
+        ),
+        "editable_fields": fields(),
+        "create_fields": fields(),
+        "search_fields": ["codigo_periodo", "TipoMatricula"],
+        "order_by": "codigo_periodo DESC",
     },
     "jornadas": {
         "title": "Jornadas",
@@ -3214,6 +3214,13 @@ def list_records(
         return _list_actualizacion_estudiantes_records(section, query, None, periodo)
     if section_key == "actualizacion_est":
         return _list_actualizacion_est_records(section, query, None)
+    if section_key == "cambio_periodo_hr":
+        return {
+            "section": _section_meta(section_key, section).model_dump(),
+            "rows": [],
+            "total": 0,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     columns = _selectable_columns(_column_names(section["list_fields"]))
     select_columns = ", ".join(_quote_column(column) for column in columns)
@@ -3350,7 +3357,6 @@ def _create_docente_with_user(payload: SavePayload) -> dict[str, Any]:
 
     docente_columns = [
         "codigo_doc",
-        "tipoDocumentoId",
         "cedula_doc",
         "apellidos_nombre",
         "correo",

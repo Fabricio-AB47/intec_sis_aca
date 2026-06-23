@@ -38,6 +38,7 @@ type StudentLayoutProps = {
   onOpenCredentialGenerator: () => void
   onOpenMassEmail: () => void
   onOpenCarnetInstitucional: () => void
+  onOpenTeacherEvaluation: () => void
   onLogout: () => void
   children: ReactNode
 }
@@ -62,7 +63,11 @@ type NavGroup = {
 }
 
 const roleBrandMap: Record<string, { initials: string; title: string }> = {
+  '1': { initials: 'AD', title: 'Administracion' },
   ADMINISTRADOR: { initials: 'AD', title: 'Administracion' },
+  ADMINISTRACION: { initials: 'AD', title: 'Administracion' },
+  ADMINISTRACIÓN: { initials: 'AD', title: 'Administracion' },
+  ADMIN: { initials: 'AD', title: 'Administracion' },
   FINANCIERO: { initials: 'FI', title: 'Financiero' },
   BIENESTAR: { initials: 'BI', title: 'Bienestar' },
   ACADEMICO: { initials: 'AC', title: 'Academico' },
@@ -75,6 +80,20 @@ const roleBrandMap: Record<string, { initials: string; title: string }> = {
   ESTUDIANTE: { initials: 'ES', title: 'Estudiante' },
   TECNOLOGIA: { initials: 'TI', title: 'Tecnologia' },
   TI: { initials: 'TI', title: 'Tecnologia' },
+}
+
+const administratorRoles = new Set(['1', 'ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN'])
+
+function normalizeRoleKey(role: string) {
+  return role
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+function isAdministratorRole(role: string) {
+  return administratorRoles.has(normalizeRoleKey(role))
 }
 
 function titleFromRole(role: string) {
@@ -107,9 +126,28 @@ function sortNavItems(items: NavItem[]) {
 }
 
 function sortNavGroups(groups: NavGroup[]) {
+  const order: Record<string, number> = {
+    inicio: 0,
+    'actualizacion-estados': 10,
+    administracion: 20,
+    'admision-matriculas': 30,
+    migracion: 35,
+    carnetizacion: 50,
+    certificados: 60,
+    'datos-senecyt': 70,
+    'portal-docente': 80,
+    'portal-estudiante': 90,
+    integraciones: 100,
+    catalogos: 110,
+    reporteria: 120,
+    'reportes-rh': 121,
+    vinculacion: 130,
+  }
+
   return [...groups].sort((left, right) => {
-    if (left.key === 'inicio') return -1
-    if (right.key === 'inicio') return 1
+    const leftOrder = order[left.key] ?? 999
+    const rightOrder = order[right.key] ?? 999
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder
     return left.title.localeCompare(right.title, 'es', { sensitivity: 'base' })
   })
 }
@@ -136,6 +174,7 @@ function groupIconName(groupKey: string): GroupIconName {
     'actualizacion-estados': 'status',
     'admision-matriculas': 'matricula',
     'admision-proceso': 'admission',
+    migracion: 'matricula',
     certificados: 'certificate',
     'portal-estudiante': 'student',
     'portal-docente': 'teacher',
@@ -298,36 +337,32 @@ export function StudentLayout({
   onOpenPortalDocente,
   onOpenTeams,
   onOpenTeamsMatricula,
-  onOpenMatricula,
   onOpenMatriculaAcad,
   onOpenMatriculaDocente,
   onOpenEstadoDocente,
   onOpenSenescytEstudiantes,
   onOpenActualizarDatosEstudiante,
   onOpenPreinscripcion,
-  onOpenReporteriaCarreras,
   onOpenReporteriaIntegral,
   onOpenReportesIndividuales,
   onOpenGestionSisAcademico,
   onOpenPeriodoAcademico,
-  onOpenPeriodoMatriculados,
-  onOpenIngresoVentas,
-  onOpenCruceDatos,
-  onOpenValidarExcel,
   onOpenRangoEdades,
   onOpenCertificados,
   onOpenCertificateRenamer,
   onOpenCredentialGenerator,
   onOpenMassEmail,
   onOpenCarnetInstitucional,
+  onOpenTeacherEvaluation,
   onLogout,
   children,
 }: Readonly<StudentLayoutProps>) {
   const normalizedRole = role.trim().toUpperCase()
+  const isAdministrator = isAdministratorRole(normalizedRole)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
-    () => new Set(['inicio', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'certificados', 'carnetizacion'])
+    () => new Set(['inicio', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'migracion', 'certificados', 'carnetizacion'])
   )
 
   useEffect(() => {
@@ -479,6 +514,20 @@ export function StudentLayout({
       ],
     },
     {
+      key: 'migracion',
+      title: 'Migracion',
+      summary: 'Cambio de periodo H a R',
+      items: [
+        {
+          label: 'Migracion H a R',
+          description: 'Migrar matriculas de homologacion hacia periodo regular.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'cambio_periodo_hr',
+          action: () => onOpenGestionSisAcademico('cambio_periodo_hr'),
+        },
+      ],
+    },
+    {
       key: 'certificados',
       title: 'Certificados',
       summary: 'Promocion y matricula',
@@ -551,10 +600,10 @@ export function StudentLayout({
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
         },
         {
-          label: 'Rango de edades',
-          description: 'Beca, porcentaje y rango de edad por estudiante.',
-          page: 'rango-edades',
-          action: onOpenRangoEdades,
+          label: 'Evaluacion docente',
+          description: 'Cuestionario por materia, periodo y docente asignado.',
+          page: 'evaluacion-docente',
+          action: onOpenTeacherEvaluation,
         },
         {
           label: 'Seguimiento academico',
@@ -837,38 +886,56 @@ export function StudentLayout({
     {
       key: 'reporteria',
       title: 'Reportes y control',
-      summary: 'Reportes, indicadores y cruces de datos',
+      summary: 'Rango de edades',
       items: [
-        { label: 'Reportes operativos', description: 'Reportes heredados organizados por proceso.', page: 'reporteria-integral', action: onOpenReporteriaIntegral },
-        { label: 'Reportes por modulo', description: 'Consultas individuales listas para exportar.', page: 'reportes-individuales', action: onOpenReportesIndividuales },
-        { label: 'Proceso de matricula', description: 'Consulta de matriculados por tipo y estado.', page: 'matricula', action: onOpenMatricula },
-        { label: 'Carreras y estados', description: 'Totales por carrera, estado y periodo.', page: 'reporteria-carreras', action: onOpenReporteriaCarreras },
         {
-          label: 'Reporte de pagos',
-          description: 'Consulta exportable de pagos de matricula.',
-          page: 'reportes-individuales',
-          reportKey: 'pagos_matricula',
-          action: () => onOpenReportesIndividuales('pagos_matricula'),
+          label: 'Rango de edades',
+          description: 'Edades calculadas, becas y porcentaje exportable.',
+          page: 'rango-edades',
+          action: onOpenRangoEdades,
         },
-        { label: 'Matriculados por periodo', description: 'Movimiento de matriculados por anio y periodo.', page: 'periodo-matriculados', action: onOpenPeriodoMatriculados },
+      ],
+    },
+    {
+      key: 'reportes-rh',
+      title: 'Reportes R/H',
+      summary: 'Provincia, género, carrera y período',
+      items: [
         {
-          label: 'Estudiantes por periodo/carrera/materia',
-          description: 'Materias tomadas y estado aprobado, reprobado o pendiente.',
-          page: 'reportes-individuales',
-          reportKey: 'estud_per_c_m',
-          action: () => onOpenReportesIndividuales('estud_per_c_m'),
+          label: 'Provincia',
+          description: 'Totales por provincia separados en Regular y Homologación.',
+          page: 'reporteria-integral',
+          reportKey: 'provincia',
+          action: () => onOpenReporteriaIntegral('provincia'),
         },
-        { label: 'Ingreso por ventas', description: 'Reporte financiero y comercial.', page: 'ingreso-ventas', action: onOpenIngresoVentas },
         {
-          label: 'Repositorio digital',
-          description: 'Documentos, autores, enlaces y archivos por carrera.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'repositorio',
-          action: () => onOpenGestionSisAcademico('repositorio'),
+          label: 'Género',
+          description: 'Totales por género separados en Regular y Homologación.',
+          page: 'reporteria-integral',
+          reportKey: 'genero',
+          action: () => onOpenReporteriaIntegral('genero'),
         },
-        { label: 'Cruce de datos', description: 'Comparacion entre Excel y SQL Server.', page: 'cruce-datos', action: onOpenCruceDatos },
-        { label: 'Validar Excel', description: 'Subir archivo y verificar si sus datos existen en SQL.', page: 'validar-excel', action: onOpenValidarExcel },
-        { label: 'Rango de edades', description: 'Edades calculadas, beca y porcentaje exportable.', page: 'rango-edades', action: onOpenRangoEdades },
+        {
+          label: 'Carrera',
+          description: 'Totales por carrera separados en Regular y Homologación.',
+          page: 'reporteria-integral',
+          reportKey: 'carrera',
+          action: () => onOpenReporteriaIntegral('carrera'),
+        },
+        {
+          label: 'Período',
+          description: 'Totales por período separados en Regular y Homologación.',
+          page: 'reporteria-integral',
+          reportKey: 'periodo',
+          action: () => onOpenReporteriaIntegral('periodo'),
+        },
+        {
+          label: 'Graduados',
+          description: 'Listado de graduados por año, carrera, género y provincia.',
+          page: 'reporteria-integral',
+          reportKey: 'graduados_2025',
+          action: () => onOpenReporteriaIntegral('graduados_2025'),
+        },
       ],
     },
     {
@@ -876,7 +943,7 @@ export function StudentLayout({
       title: 'Integraciones',
       summary: 'Teams, Office 365 y servicios externos',
       items: [
-        ...(normalizedRole === 'ADMINISTRADOR'
+        ...(isAdministrator
           ? [{
               label: 'Credenciales Office 365',
               description: 'Crear usuarios por curso mediante Microsoft Graph.',
@@ -1030,6 +1097,12 @@ export function StudentLayout({
           action: () => onOpenPortalEstudiante('notas'),
         },
         {
+          label: 'Evaluacion docente',
+          description: 'Evalua al docente segun tus materias matriculadas.',
+          page: 'evaluacion-docente',
+          action: onOpenTeacherEvaluation,
+        },
+        {
           label: 'Carnet institucional',
           description: 'Subir foto y revisar estado de aprobacion.',
           page: 'carnet-institucional',
@@ -1061,7 +1134,7 @@ export function StudentLayout({
     },
   ]
 
-  const menuGroups =
+  const baseMenuGroups =
     normalizedRole === 'ESTUDIANTE'
       ? studentMenuGroups
       : normalizedRole === 'DOCENTE'
@@ -1069,6 +1142,8 @@ export function StudentLayout({
         : normalizedRole === 'ADMISIONES'
           ? admissionsMenuGroups
         : adminMenuGroups
+
+  const menuGroups = baseMenuGroups
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
