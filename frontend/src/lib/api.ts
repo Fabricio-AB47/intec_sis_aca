@@ -773,6 +773,46 @@ export async function downloadCertificadosExcel(payload: CertificadosGeneratePay
   return response.blob()
 }
 
+export async function downloadMatriculaExcelTemplate(): Promise<Blob> {
+  const response = await fetch('/api/certificados/matricula-excel/plantilla', {
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const errorPayload = await readResponsePayload(response)
+    const detail =
+      typeof errorPayload === 'string'
+        ? errorPayload
+        : (errorPayload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+    throw new ApiError(detail, response.status)
+  }
+
+  return response.blob()
+}
+
+export async function generateMatriculaPdfFromExcel(periodo: string, file: File): Promise<Blob> {
+  const formData = new FormData()
+  formData.set('periodo', periodo)
+  formData.set('file', file)
+
+  const response = await fetch('/api/certificados/matricula-excel/generar', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorPayload = await readResponsePayload(response)
+    const detail =
+      typeof errorPayload === 'string'
+        ? errorPayload
+        : (errorPayload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+    throw new ApiError(detail, response.status)
+  }
+
+  return response.blob()
+}
+
 export async function previewCertificadoPdf(params: {
   codestud: string
   periodo: string

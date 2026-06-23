@@ -19,6 +19,7 @@ import { GestionSisAcademicoView } from './features/matricula/GestionSisAcademic
 import { IngresoVentasView } from './features/matricula/IngresoVentasView'
 import { MatriculaAcadView } from './features/matricula/MatriculaAcadView'
 import { MatriculaDocenteView } from './features/matricula/MatriculaDocenteView'
+import { MatriculaExcelCertificadosView } from './features/matricula/MatriculaExcelCertificadosView'
 import { MatriculaView } from './features/matricula/MatriculaView'
 import { PeriodoAcademicoView } from './features/matricula/PeriodoAcademicoView'
 import { PeriodoMatriculadosView } from './features/matricula/PeriodoMatriculadosView'
@@ -179,6 +180,8 @@ function App() {
       pageContent = <RangoEdadesView displayName={app.displayName} />
     } else if (app.activePage === 'certificados') {
       pageContent = <CertificadosView displayName={app.displayName} />
+    } else if (app.activePage === 'matricula-excel-certificados') {
+      pageContent = <MatriculaExcelCertificadosView displayName={app.displayName} />
     } else if (app.activePage === 'renombrar-certificados') {
       pageContent = <CertificateRenamerView displayName={app.displayName} />
     } else if (app.activePage === 'credenciales') {
@@ -282,6 +285,7 @@ function App() {
           onOpenValidarExcel={app.openValidarExcelPage}
           onOpenRangoEdades={app.openRangoEdadesPage}
           onOpenCertificados={app.openCertificadosPage}
+          onOpenMatriculaExcelCertificados={app.openMatriculaExcelCertificadosPage}
           onOpenCertificateRenamer={app.openCertificateRenamerPage}
           onOpenCredentialGenerator={app.openCredentialGeneratorPage}
           onOpenMassEmail={app.openMassEmailPage}

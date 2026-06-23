@@ -43,6 +43,7 @@ const ADMISSIONS_ALLOWED_PAGES: Page[] = [
   'preinscripcion',
   'gestion-sisacademico',
   'certificados',
+  'matricula-excel-certificados',
   'renombrar-certificados',
   'correos-masivos',
   'carnet-institucional',
@@ -324,6 +325,8 @@ export function useReporteriaApp() {
         setActivePage('correos-masivos')
       } else if (openPage === 'certificados') {
         setActivePage('certificados')
+      } else if (openPage === 'matricula-excel-certificados') {
+        setActivePage('matricula-excel-certificados')
       } else if (openPage === 'renombrar-certificados') {
         setActivePage('renombrar-certificados')
       } else if (openPage === 'carnet-institucional') {
@@ -378,6 +381,8 @@ export function useReporteriaApp() {
       setActivePage('rango-edades')
     } else if (openPage === 'certificados') {
       setActivePage('certificados')
+    } else if (openPage === 'matricula-excel-certificados') {
+      setActivePage('matricula-excel-certificados')
     } else if (openPage === 'renombrar-certificados') {
       setActivePage('renombrar-certificados')
     } else if (openPage === 'credenciales' && session.rol === 'ADMINISTRADOR') {
@@ -892,6 +897,9 @@ export function useReporteriaApp() {
   const openCertificadosPage = () => {
     setActivePage('certificados')
   }
+  const openMatriculaExcelCertificadosPage = () => {
+    setActivePage('matricula-excel-certificados')
+  }
   const openCertificateRenamerPage = () => {
     setActivePage('renombrar-certificados')
   }
@@ -999,6 +1007,7 @@ export function useReporteriaApp() {
     openValidarExcelPage,
     openRangoEdadesPage,
     openCertificadosPage,
+    openMatriculaExcelCertificadosPage,
     openCertificateRenamerPage,
     openCredentialGeneratorPage,
     openMassEmailPage,

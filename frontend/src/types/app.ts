@@ -44,6 +44,7 @@ export type Page =
   | 'validar-excel'
   | 'rango-edades'
   | 'certificados'
+  | 'matricula-excel-certificados'
   | 'renombrar-certificados'
   | 'credenciales'
   | 'correos-masivos'

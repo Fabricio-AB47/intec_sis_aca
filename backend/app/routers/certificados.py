@@ -11,9 +11,9 @@ import unicodedata
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
@@ -943,6 +943,152 @@ def _build_matricula_pdf_bundle(contexts: list[dict[str, Any]]) -> bytes:
     return output.getvalue()
 
 
+_MATRICULA_EXCEL_COLUMNS = [
+    "nombres_apellidos",
+    "numero_cedula",
+    "carrera",
+]
+
+
+def _normalize_excel_header(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", _clean(value).lower())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def _excel_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if _clean(value):
+            return value
+    return ""
+
+
+def _matricula_excel_costs(carrera: str, row: dict[str, Any]) -> tuple[float, float]:
+    del row
+    matricula = _GASTRONOMIA_MATRICULA_BASE if _is_gastronomia_career(carrera) else 75.0
+    arancel = _GASTRONOMIA_ARANCEL_BASE if _is_gastronomia_career(carrera) else 750.0
+    return matricula, arancel
+
+
+def _build_matricula_excel_template(periodos: list[dict[str, Any]]) -> BytesIO:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Matriculas"
+    sheet.append(_MATRICULA_EXCEL_COLUMNS)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="600000")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    sheet.append(["NOMBRE APELLIDO", "0102030405", "TECNOLOGIA SUPERIOR EN ADMINISTRACION"])
+    sheet.append(["ESTUDIANTE EJEMPLO", "0999999999", "GASTRONOMIA"])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    _autosize_worksheet(sheet)
+
+    help_sheet = workbook.create_sheet("Instrucciones")
+    help_rows = [
+        ["Campo", "Detalle"],
+        ["nombres_apellidos", "Obligatorio. Nombre completo tal como debe aparecer en el certificado."],
+        ["numero_cedula", "Obligatorio. Numero de cedula o documento."],
+        ["carrera", "Obligatorio. Nombre de la carrera."],
+        ["costos", "No van en el Excel. Gastronomia usa matricula 100.00 y arancel 1000.00; el resto usa 75.00 y 750.00."],
+        ["periodo", "No va en el Excel. Seleccionalo en la pantalla antes de subir el documento."],
+    ]
+    for row in help_rows:
+        help_sheet.append(row)
+    for cell in help_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="600000")
+    _autosize_worksheet(help_sheet)
+
+    period_sheet = workbook.create_sheet("Periodos")
+    period_sheet.append(["cod_periodo", "detalle_periodo", "fecha_inicio", "fecha_fin"])
+    for period in periodos:
+        period_sheet.append([
+            period.get("cod_periodo"),
+            period.get("detalle_periodo"),
+            period.get("fecha_inicio"),
+            period.get("fecha_fin"),
+        ])
+    for cell in period_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="600000")
+    _autosize_worksheet(period_sheet)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _parse_matricula_excel(file_bytes: bytes) -> list[dict[str, Any]]:
+    try:
+        workbook = load_workbook(BytesIO(file_bytes), data_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo Excel no es valido") from exc
+    sheet = workbook["Matriculas"] if "Matriculas" in workbook.sheetnames else workbook.active
+    headers = [_normalize_excel_header(cell.value) for cell in sheet[1]]
+    rows: list[dict[str, Any]] = []
+    for index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        if not any(_clean(value) for value in values):
+            continue
+        row = {headers[column_index]: value for column_index, value in enumerate(values) if column_index < len(headers)}
+        nombre = _upper(_excel_value(row, "nombres_apellidos", "nombre", "nombres", "estudiante"))
+        cedula = _clean(_excel_value(row, "numero_cedula", "cedula", "numero_de_cedula", "documento"))
+        carrera = _clean(_excel_value(row, "carrera", "nombre_carrera"))
+        errors: list[str] = []
+        if not nombre:
+            errors.append("nombres_apellidos")
+        if not cedula:
+            errors.append("numero_cedula")
+        if not carrera:
+            errors.append("carrera")
+        matricula_base, arancel_base = _matricula_excel_costs(carrera, row)
+        rows.append(
+            {
+                "row": index,
+                "nombre": nombre,
+                "cedula": cedula,
+                "carrera": carrera,
+                "semestre": 1,
+                "matricula_base": matricula_base,
+                "arancel_base": arancel_base,
+                "errors": errors,
+            }
+        )
+    return rows
+
+
+def _matricula_excel_context(row: dict[str, Any], period: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "codigo_estud": "",
+        "cedula": row["cedula"],
+        "nombre": row["nombre"],
+        "correo_personal": "",
+        "correo_intec": "",
+        "estado": "",
+        "cod_anio_basica": "",
+        "carrera": row["carrera"],
+        "periodo": period,
+        "periodo_matricula": period,
+        "cabecera_matricula": {},
+        "num_matricula": "",
+        "tipo_beca": "Sin Beca",
+        "porcentaje_beca": 0,
+        "es_suzuki": False,
+        "is_presencial": False,
+        "subjects": [],
+        "semestre": row["semestre"],
+        "semestre_matricula": row["semestre"],
+        "matricula_base": row["matricula_base"],
+        "arancel_base": row["arancel_base"],
+        "matricula_financiada": 0,
+        "arancel_financiado": 0,
+        "total_financiado": 0,
+    }
+
+
 def _fetch_subjects(cursor: Any, codigo_estud: str, codigo_periodo: str) -> list[dict[str, Any]]:
     cursor.execute(
         """
@@ -1193,6 +1339,93 @@ def catalog(_: SessionUser = Depends(_CERTIFICATES_ACCESS)) -> dict[str, Any]:
             {"value": "4", "label": "Cuarto"},
         ],
     }
+
+
+@router.get("/matricula-excel/plantilla")
+def download_matricula_excel_template(_: SessionUser = Depends(_CERTIFICATES_ACCESS)) -> StreamingResponse:
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    TRY_CONVERT(varchar(50), cod_periodo) AS cod_periodo,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Detalle_Periodo))) AS detalle_periodo,
+                    fechain AS fecha_inicio,
+                    fechafin AS fecha_fin,
+                    TRY_CONVERT(int, Orden) AS orden
+                FROM dbo.PERIODO
+                ORDER BY Orden ASC
+                """
+            )
+            periodos = [_period_row(row) for row in _rows_from_cursor(cursor)]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo generar la plantilla de matricula",
+        ) from exc
+
+    return StreamingResponse(
+        _build_matricula_excel_template(periodos),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="plantilla_matricula_certificados.xlsx"'},
+    )
+
+
+@router.post("/matricula-excel/generar")
+async def generate_matricula_from_excel(
+    periodo: str = Form(...),
+    file: UploadFile = File(...),
+    _: SessionUser = Depends(_CERTIFICATES_ACCESS),
+) -> StreamingResponse:
+    period_code = _clean(periodo)
+    if not period_code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona un periodo")
+    filename = (file.filename or "").lower()
+    if not filename.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sube un archivo Excel .xlsx")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo esta vacio")
+
+    rows = _parse_matricula_excel(file_bytes)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El Excel no contiene filas para procesar")
+
+    invalid_rows = [row for row in rows if row["errors"]]
+    if invalid_rows:
+        details = [
+            f"Fila {row['row']}: {', '.join(row['errors'])}"
+            for row in invalid_rows[:12]
+        ]
+        suffix = f" y {len(invalid_rows) - 12} mas" if len(invalid_rows) > 12 else ""
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Corrige el Excel antes de generar: {'; '.join(details)}{suffix}",
+        )
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            period = _period_meta(cursor, period_code)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo validar el periodo seleccionado",
+        ) from exc
+
+    if not period:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El periodo seleccionado no existe")
+
+    contexts = [_matricula_excel_context(row, period) for row in rows]
+    pdf_bytes = _build_matricula_pdf_bundle(contexts)
+    filename = f"certificados_matricula_excel_{period_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/estudiantes")

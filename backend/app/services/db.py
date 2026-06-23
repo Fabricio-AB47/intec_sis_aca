@@ -56,6 +56,10 @@ def _connect_with_fallback(
             "encryption not supported" in message
             or "ssl provider" in message
             or "security package" in message
+            or "data source name not found" in message
+            or "no se encuentra el nombre del origen de datos" in message
+            or "can't open lib" in message
+            or "driver" in message and "not found" in message
         )
 
         if should_retry_driver_17:

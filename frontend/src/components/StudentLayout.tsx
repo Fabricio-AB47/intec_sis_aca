@@ -34,6 +34,7 @@ type StudentLayoutProps = {
   onOpenValidarExcel: () => void
   onOpenRangoEdades: () => void
   onOpenCertificados: () => void
+  onOpenMatriculaExcelCertificados: () => void
   onOpenCertificateRenamer: () => void
   onOpenCredentialGenerator: () => void
   onOpenMassEmail: () => void
@@ -349,6 +350,7 @@ export function StudentLayout({
   onOpenPeriodoAcademico,
   onOpenRangoEdades,
   onOpenCertificados,
+  onOpenMatriculaExcelCertificados,
   onOpenCertificateRenamer,
   onOpenCredentialGenerator,
   onOpenMassEmail,
@@ -537,6 +539,12 @@ export function StudentLayout({
           description: 'Generar y revisar certificados institucionales.',
           page: 'certificados',
           action: onOpenCertificados,
+        },
+        {
+          label: 'Matrícula en Excel',
+          description: 'Generar certificados de matrícula desde plantilla Excel.',
+          page: 'matricula-excel-certificados',
+          action: onOpenMatriculaExcelCertificados,
         },
         {
           label: 'Renombrar certificados',
@@ -1004,6 +1012,12 @@ export function StudentLayout({
           description: 'Generar y revisar certificados institucionales.',
           page: 'certificados',
           action: onOpenCertificados,
+        },
+        {
+          label: 'Matrícula en Excel',
+          description: 'Generar certificados de matrícula desde plantilla Excel.',
+          page: 'matricula-excel-certificados',
+          action: onOpenMatriculaExcelCertificados,
         },
         {
           label: 'Renombrar certificados',

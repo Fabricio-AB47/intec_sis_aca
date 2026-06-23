@@ -44,19 +44,19 @@ Edita `backend/.env` con los datos reales de SQL Server, Microsoft Graph, sesion
 Para iniciar la API:
 
 ```powershell
-fastapi dev app/main.py --host 127.0.0.1 --port 8001
+fastapi dev app/main.py --host 127.0.0.1 --port 8002
 ```
 
 Alternativa:
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload
 ```
 
 La documentacion queda disponible en:
 
 ```text
-http://127.0.0.1:8001/docs
+http://127.0.0.1:8002/docs
 ```
 
 Si aparece `WinError 10013` o puerto ocupado, usa otro puerto y ajusta `VITE_API_TARGET` en el frontend.
@@ -79,7 +79,7 @@ http://localhost:5173
 El proxy de Vite apunta por defecto a:
 
 ```text
-http://127.0.0.1:8001
+http://127.0.0.1:8002
 ```
 
 Para cambiarlo temporalmente:
