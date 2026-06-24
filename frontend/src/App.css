@@ -19805,6 +19805,51 @@ body .student-sidebar .logout-button {
   overflow: auto;
 }
 
+.teacher-evaluation__scale {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid rgba(141, 187, 199, 0.55);
+  border-radius: 12px;
+  background: #f8fbfc;
+}
+
+.teacher-evaluation__scale-label {
+  margin: 0 0 4px;
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.teacher-evaluation__scale strong {
+  display: block;
+  color: #0c1f42;
+  font-size: 0.92rem;
+}
+
+.teacher-evaluation__scale-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 8px;
+}
+
+.teacher-evaluation__scale-options span {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid #d8e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0c1f42;
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .teacher-evaluation__question-section {
   margin-bottom: 14px;
   padding: 14px;
@@ -19818,7 +19863,7 @@ body .student-sidebar .logout-button {
 
 .teacher-evaluation__question-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
   gap: 14px;
   align-items: center;
   padding: 12px 0;
@@ -19831,6 +19876,10 @@ body .student-sidebar .logout-button {
 
 .teacher-evaluation__question-row p {
   margin: 0;
+}
+
+.teacher-evaluation__question-row select {
+  width: 100%;
 }
 
 .teacher-evaluation__modal-actions {
@@ -19849,6 +19898,7 @@ body .student-sidebar .logout-button {
   }
 
   .teacher-evaluation__lookup-row,
+  .teacher-evaluation__scale,
   .teacher-evaluation__question-row {
     grid-template-columns: 1fr;
   }
@@ -20140,7 +20190,7 @@ body .student-sidebar .logout-button {
 }
 
 .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__question-row {
-  grid-template-columns: minmax(0, 1fr) 132px;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
 }
 
 .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__modal-actions {

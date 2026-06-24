@@ -21,6 +21,11 @@ type TeacherEvaluationViewProps = {
   onBackToLogin?: () => void
 }
 
+type ScoreOption = {
+  value: number
+  label: string
+}
+
 const FLOW_COPY: Record<
   TeacherEvaluationFlow,
   { eyebrow: string; title: string; description: string; empty: string; action: string }
@@ -102,16 +107,37 @@ function getQuestionCategory(question: TeacherEvaluationQuestion) {
 
 function getQuestionText(question: TeacherEvaluationQuestion) {
   return (question.detalle_preg || '')
-    .replace(/^\s*(?:\d+|[ivxlcdm]+)\s*[\).\-\u2013:]?\s*/iu, '')
+    .replace(/^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:\d+(?:\.\d+)*|[ivxlcdm]+)\s*(?:[\).\-\u2013\u2014:]|\s)+/iu, '')
     .trim()
 }
 
-function getScoreOptions(question: TeacherEvaluationQuestion) {
+function getScoreOptions(question: TeacherEvaluationQuestion): ScoreOption[] {
+  if (question.escala_likert?.length) {
+    return question.escala_likert
+      .map((option) => {
+        const value = Number(option.valor)
+        const label = option.texto || `${option.valor} - ${option.etiqueta}`
+        return Number.isFinite(value) ? { value, label } : null
+      })
+      .filter((option): option is ScoreOption => Boolean(option))
+  }
+
   const rawMin = Number(question.puntaje_min)
   const rawMax = Number(question.puntaje_max)
   const min = Number.isFinite(rawMin) && rawMin > 0 ? Math.max(1, Math.floor(rawMin)) : 1
-  const max = Number.isFinite(rawMax) && rawMax >= min ? Math.min(10, Math.floor(rawMax)) : 10
-  return Array.from({ length: max - min + 1 }, (_, index) => min + index)
+  const max = Number.isFinite(rawMax) && rawMax >= min ? Math.min(10, Math.floor(rawMax)) : 5
+  const likertLabels: Record<number, string> = {
+    1: 'Nunca',
+    2: 'Rara vez',
+    3: 'A veces',
+    4: 'Casi siempre',
+    5: 'Siempre',
+  }
+  return Array.from({ length: max - min + 1 }, (_, index) => {
+    const value = min + index
+    const label = min === 1 && max === 5 ? `${value} - ${likertLabels[value] || value}` : String(value)
+    return { value, label }
+  })
 }
 
 function coursesForFlow(identity: TeacherEvaluationIdentityResponse | null, flow: TeacherEvaluationFlow | null) {
@@ -191,6 +217,10 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
   const currentCourses = useMemo(() => coursesForFlow(identity, flow), [identity, flow])
   const currentCopy = flow ? FLOW_COPY[flow] : null
   const answeredCount = orderedQuestions.filter((question) => answers[question.id_pregunta]).length
+  const scoreLegend = useMemo(
+    () => (orderedQuestions[0] ? getScoreOptions(orderedQuestions[0]) : []),
+    [orderedQuestions],
+  )
 
   async function activateFlow(nextFlow: TeacherEvaluationFlow, data = identity) {
     setError(null)
@@ -715,6 +745,20 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
 
             <form onSubmit={handleSubmitEvaluation}>
               <div className="teacher-evaluation__modal-body">
+                {scoreLegend.length ? (
+                  <section className="teacher-evaluation__scale" aria-label="Escala de calificación">
+                    <div>
+                      <p className="teacher-evaluation__scale-label">Escala de calificación 360</p>
+                      <strong>Seleccione una opción en cada pregunta.</strong>
+                    </div>
+                    <div className="teacher-evaluation__scale-options">
+                      {scoreLegend.map((score) => (
+                        <span key={score.value}>{score.label}</span>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
                 {groupedQuestions.map((group) => (
                   <section className="teacher-evaluation__question-section" key={group.category}>
                     <h3>{group.category}</h3>
@@ -731,10 +775,10 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                           }
                           required
                         >
-                          <option value="">Puntaje</option>
+                          <option value="">Seleccione escala</option>
                           {getScoreOptions(question).map((score) => (
-                            <option key={score} value={score}>
-                              {score}
+                            <option key={score.value} value={score.value}>
+                              {score.label}
                             </option>
                           ))}
                         </select>

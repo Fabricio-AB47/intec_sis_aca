@@ -32,8 +32,18 @@ _REPORT_TEMPLATE_PATH = _PROJECT_ROOT / "frontend" / "doc" / "Plantilla word (1)
 _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.svg"
 
 _NUMBER_PATTERN = re.compile(r"\d+")
-_QUESTION_PREFIX_PATTERN = re.compile(r"^(\s*(?:\d+|[ivxlcdm]+)\s*(?:[.)-]|\s+)\s*)+", re.IGNORECASE)
+_QUESTION_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:\d+(?:\.\d+)*|[ivxlcdm]+)\s*(?:[.)\-–—:]|\s+)+",
+    re.IGNORECASE,
+)
 _SUBMITTED_STATES = ("ENVIADA", "FINALIZADA", "COMPLETADA", "REGISTRADA")
+_LIKERT_5_LABELS = {
+    1: "Nunca",
+    2: "Rara vez",
+    3: "A veces",
+    4: "Casi siempre",
+    5: "Siempre",
+}
 
 _EVALUATION_FLOWS: dict[str, dict[str, Any]] = {
     "student": {
@@ -157,6 +167,25 @@ def _display_question_text(value: Any) -> str:
         previous = cleaned
         cleaned = _QUESTION_PREFIX_PATTERN.sub("", cleaned).strip()
     return cleaned or text
+
+
+def _likert_scale_options(min_score: float, max_score: float) -> list[dict[str, Any]]:
+    min_value = max(1, int(min_score or 1))
+    max_value = min(10, int(max_score or 5))
+    if max_value < min_value:
+        max_value = min_value
+
+    options: list[dict[str, Any]] = []
+    for value in range(min_value, max_value + 1):
+        label = _LIKERT_5_LABELS.get(value, str(value)) if min_value == 1 and max_value == 5 else str(value)
+        options.append(
+            {
+                "valor": value,
+                "etiqueta": label,
+                "texto": f"{value} - {label}",
+            }
+        )
+    return options
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -894,12 +923,14 @@ def _question_from_row(data: dict[str, Any]) -> dict[str, Any]:
     puntaje_max = _safe_float(data.get("Puntaje_Max"), 5)
     id_dimension = _safe_int(data.get("Id_Dimension"), 0)
     tipo_preg = _safe_int(data.get("TipoPreg"), id_dimension)
+    tipo_preg_codigo = _clean_text(data.get("TipoPreg"))
     category = _fallback_question_category(data, id_dimension, tipo_preg)
     return {
         "id_pregunta": _safe_int(data.get("Id_Pregunta")),
         "id_dimension": id_dimension,
         "no_pregunta": _safe_int(data.get("NoPregunta"), _safe_int(data.get("Orden"), 0)),
         "tipo_preg": tipo_preg,
+        "tipo_preg_codigo": tipo_preg_codigo,
         "tipo_label": category,
         "categoria": category,
         "categoria_pregunta": category,
@@ -915,6 +946,7 @@ def _question_from_row(data: dict[str, Any]) -> dict[str, Any]:
         "peso_pregunta": _safe_float(data.get("Peso_Pregunta"), 1),
         "puntaje_min": puntaje_min,
         "puntaje_max": puntaje_max,
+        "escala_likert": _likert_scale_options(puntaje_min, puntaje_max),
         "orden": _safe_int(data.get("Orden")),
     }
 

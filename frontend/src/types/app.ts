@@ -66,6 +66,7 @@ export type TeacherEvaluationQuestion = {
   id_dimension?: number | null
   no_pregunta: number
   tipo_preg: number
+  tipo_preg_codigo?: string | null
   tipo_label?: string | null
   categoria?: string | null
   categoria_pregunta?: string | null
@@ -82,6 +83,11 @@ export type TeacherEvaluationQuestion = {
   peso_pregunta?: number | null
   puntaje_min?: number | null
   puntaje_max?: number | null
+  escala_likert?: Array<{
+    valor: number
+    etiqueta: string
+    texto?: string
+  }>
   orden?: number | null
   control?: string | number | null
   comentario_coord?: string | null
