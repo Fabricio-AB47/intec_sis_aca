@@ -122,6 +122,10 @@ import type {
   TeacherEvaluationFlow,
   TeacherEvaluationAdminPendingResponse,
   TeacherEvaluationAdminPeriodsResponse,
+  TeacherEvaluationAutoStudentListResponse,
+  TeacherEvaluationProgressDetailResponse,
+  TeacherEvaluationProgressParticipantsResponse,
+  TeacherEvaluationStudentGradesResponse,
   TeacherEvaluationGradedTeachersResponse,
   TeacherEvaluationStudentProgressResponse,
   TeacherEvaluationIdentityResponse,
@@ -1649,10 +1653,49 @@ export async function fetchTeacherEvaluationAdminPending(
   return request<TeacherEvaluationAdminPendingResponse>(`/api/evaluacion-docente/admin/pendientes?${params.toString()}`)
 }
 
+export async function fetchTeacherEvaluationProgressDetail(
+  periodo: string,
+  codigoDocente: string,
+  codigoMateria: string,
+  flow: TeacherEvaluationFlow | 'all' = 'all',
+): Promise<TeacherEvaluationProgressDetailResponse> {
+  const params = new URLSearchParams({
+    periodo,
+    codigo_docente: codigoDocente,
+    codigo_materia: codigoMateria,
+    flow,
+  })
+  return request<TeacherEvaluationProgressDetailResponse>(
+    `/api/evaluacion-docente/admin/progreso-detalle?${params.toString()}`,
+  )
+}
+
+export async function fetchTeacherEvaluationProgressParticipants(
+  periodo: string,
+  codigoDocente: string,
+  codigoMateria: string,
+  flow: TeacherEvaluationFlow | 'all',
+  estado: 'completadas' | 'pendientes',
+  limit = 1000,
+): Promise<TeacherEvaluationProgressParticipantsResponse> {
+  const params = new URLSearchParams({
+    periodo,
+    codigo_docente: codigoDocente,
+    codigo_materia: codigoMateria,
+    flow,
+    estado,
+    limit: String(limit),
+  })
+  return request<TeacherEvaluationProgressParticipantsResponse>(
+    `/api/evaluacion-docente/admin/progreso-participantes?${params.toString()}`,
+  )
+}
+
 export async function fetchTeacherEvaluationGradedTeachers(
-  periodo: string
+  periodo: string,
+  flow: TeacherEvaluationFlow | 'all' = 'all',
 ): Promise<TeacherEvaluationGradedTeachersResponse> {
-  const params = new URLSearchParams({ periodo })
+  const params = new URLSearchParams({ periodo, flow })
   return request<TeacherEvaluationGradedTeachersResponse>(
     `/api/evaluacion-docente/admin/docentes-calificados?${params.toString()}`,
   )
@@ -1668,8 +1711,34 @@ export async function fetchTeacherEvaluationStudentProgress(
   )
 }
 
-export async function downloadTeacherEvaluationGradesPdf(periodo: string, codigoDocente: string = ''): Promise<Blob> {
-  const params = new URLSearchParams({ periodo })
+export async function fetchTeacherEvaluationAutoStudents(
+  periodo: string,
+  estado: 'pendientes' | 'realizadas' | 'todos' = 'pendientes',
+  limit = 500,
+): Promise<TeacherEvaluationAutoStudentListResponse> {
+  const params = new URLSearchParams({ periodo, estado, limit: String(limit) })
+  return request<TeacherEvaluationAutoStudentListResponse>(
+    `/api/evaluacion-docente/admin/autoevaluacion-estudiantes?${params.toString()}`,
+  )
+}
+
+export async function fetchTeacherEvaluationStudentGrades(
+  periodo: string,
+  codigoEstud: number,
+): Promise<TeacherEvaluationStudentGradesResponse> {
+  const params = new URLSearchParams({ periodo, codigo_estud: String(codigoEstud) })
+  return request<TeacherEvaluationStudentGradesResponse>(
+    `/api/evaluacion-docente/admin/estudiante-notas?${params.toString()}`,
+  )
+}
+
+export async function downloadTeacherEvaluationGradesPdf(
+  periodo: string,
+  codigoDocente: string = '',
+  flow: TeacherEvaluationFlow | 'all' = 'all',
+  documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+): Promise<Blob> {
+  const params = new URLSearchParams({ periodo, flow, document_type: documentType })
   if (codigoDocente) params.set('codigo_docente', codigoDocente)
   return request<Blob>(`/api/evaluacion-docente/admin/reporte-docentes.pdf?${params.toString()}`, {
     responseType: 'blob',

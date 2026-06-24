@@ -190,6 +190,8 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
   const [showFlowModal, setShowFlowModal] = useState(false)
   const [showCoursesModal, setShowCoursesModal] = useState(false)
   const [detailCourse, setDetailCourse] = useState<TeacherEvaluationCourse | null>(null)
+  const [coursePeriodFilter, setCoursePeriodFilter] = useState('')
+  const [courseTeacherFilter, setCourseTeacherFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [questionLoading, setQuestionLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -224,6 +226,31 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     () => (orderedQuestions[0] ? getScoreOptions(orderedQuestions[0]) : []),
     [orderedQuestions],
   )
+  const coursePeriodOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    currentCourses.forEach((course) => {
+      const value = String(course.codigo_periodo || '')
+      if (value) map.set(value, course.detalle_periodo || value)
+    })
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
+  }, [currentCourses])
+  const courseTeacherOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    currentCourses.forEach((course) => {
+      const value = String(course.codigo_docente_eval || '')
+      if (value) map.set(value, course.docente || `Docente ${value}`)
+    })
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
+  }, [currentCourses])
+  const filteredCourses = useMemo(
+    () =>
+      currentCourses.filter((course) => {
+        const periodMatches = !coursePeriodFilter || String(course.codigo_periodo || '') === coursePeriodFilter
+        const teacherMatches = !courseTeacherFilter || String(course.codigo_docente_eval || '') === courseTeacherFilter
+        return periodMatches && teacherMatches
+      }),
+    [coursePeriodFilter, courseTeacherFilter, currentCourses],
+  )
 
   async function activateFlow(nextFlow: TeacherEvaluationFlow, data = identity) {
     setError(null)
@@ -231,6 +258,8 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     setQuestionLoading(true)
     setSelectedCourse(null)
     setAnswers({})
+    setCoursePeriodFilter('')
+    setCourseTeacherFilter('')
     try {
       const questionResponse = await fetchTeacherEvaluationQuestions(nextFlow)
       setQuestions(questionResponse.items || [])
@@ -277,6 +306,8 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     setShowFlowModal(false)
     setShowCoursesModal(false)
     setDetailCourse(null)
+    setCoursePeriodFilter('')
+    setCourseTeacherFilter('')
 
     try {
       const data = await fetchTeacherEvaluationIdentity(cleanCedula)
@@ -596,7 +627,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                 <p>{currentCopy.description}</p>
               </div>
               <div className="teacher-evaluation__modal-header-actions">
-                <strong>{currentCourses.length} curso(s)</strong>
+                <strong>{filteredCourses.length}/{currentCourses.length} curso(s)</strong>
                 <button type="button" className="teacher-evaluation__secondary" onClick={() => setShowCoursesModal(false)}>
                   Cerrar
                 </button>
@@ -605,43 +636,70 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
 
             <div className="teacher-evaluation__modal-body">
               {currentCourses.length > 0 ? (
-                <div className="teacher-evaluation__course-grid">
-                  {currentCourses.map((course) => {
-                    const done = isEvaluated(course)
-                    return (
-                      <article
-                        key={getCourseKey(course)}
-                        className={`teacher-evaluation__course-card ${done ? 'is-done' : ''}`}
-                      >
-                        <div className="teacher-evaluation__course-card-head">
-                          <h3>{courseTitle(course)}</h3>
+                <>
+                  <div className="teacher-evaluation__course-filters">
+                    <select value={coursePeriodFilter} onChange={(event) => setCoursePeriodFilter(event.target.value)}>
+                      <option value="">Todos los periodos</option>
+                      {coursePeriodOptions.map((period) => (
+                        <option key={period.value} value={period.value}>
+                          {period.label}
+                        </option>
+                      ))}
+                    </select>
+                    {flow === 'academico_docente' ? (
+                      <select value={courseTeacherFilter} onChange={(event) => setCourseTeacherFilter(event.target.value)}>
+                        <option value="">Todos los docentes</option>
+                        {courseTeacherOptions.map((teacher) => (
+                          <option key={teacher.value} value={teacher.value}>
+                            {teacher.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
+
+                  <div className="teacher-evaluation__course-grid">
+                    {filteredCourses.map((course) => {
+                      const done = isEvaluated(course)
+                      return (
+                        <article
+                          key={getCourseKey(course)}
+                          className={`teacher-evaluation__course-card ${done ? 'is-done' : ''}`}
+                        >
+                          <div className="teacher-evaluation__course-card-head">
+                            <h3>{courseTitle(course)}</h3>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__icon-button"
+                              onClick={() => openCourseDetail(course)}
+                              aria-label="Ver carreras vinculadas"
+                              title="Ver carreras vinculadas"
+                            >
+                              i
+                            </button>
+                          </div>
+                          <strong>{coursePersonLabel(flow, course, identity)}</strong>
+                          <p>{courseMeta(course)}</p>
+                          <span className={`teacher-evaluation__badge ${done ? 'is-done' : ''}`}>
+                            {done ? 'Evaluación registrada' : 'Pendiente de evaluación'}
+                          </span>
                           <button
                             type="button"
-                            className="teacher-evaluation__icon-button"
-                            onClick={() => openCourseDetail(course)}
-                            aria-label="Ver carreras vinculadas"
-                            title="Ver carreras vinculadas"
+                            className="teacher-evaluation__course-action"
+                            onClick={() => openCourse(course)}
+                            disabled={done}
                           >
-                            i
+                            {done ? 'Registrada' : 'Evaluar materia'}
                           </button>
-                        </div>
-                        <strong>{coursePersonLabel(flow, course, identity)}</strong>
-                        <p>{courseMeta(course)}</p>
-                        <span className={`teacher-evaluation__badge ${done ? 'is-done' : ''}`}>
-                          {done ? 'Evaluación registrada' : 'Pendiente de evaluación'}
-                        </span>
-                        <button
-                          type="button"
-                          className="teacher-evaluation__course-action"
-                          onClick={() => openCourse(course)}
-                          disabled={done}
-                        >
-                          {done ? 'Registrada' : 'Evaluar materia'}
-                        </button>
-                      </article>
-                    )
-                  })}
-                </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+
+                  {filteredCourses.length === 0 ? (
+                    <div className="teacher-evaluation__empty">No hay materias para los filtros seleccionados.</div>
+                  ) : null}
+                </>
               ) : (
                 <div className="teacher-evaluation__empty">{currentCopy.empty}</div>
               )}

@@ -36,7 +36,7 @@ _QUESTION_PREFIX_PATTERN = re.compile(
     r"^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:(?:\d+(?:\.\d+)*)\s*(?:[.)\-–—:]|\s+)+|(?:[ivxlcdm]+)\s*[.)\-–—:]+)",
     re.IGNORECASE,
 )
-_SUBMITTED_STATES = ("ENVIADA", "FINALIZADA", "COMPLETADA", "REGISTRADA")
+_SUBMITTED_STATES = ("FINALIZADA",)
 _LIKERT_5_LABELS = {
     1: "Nunca",
     2: "Rara vez",
@@ -157,6 +157,13 @@ def _clean_text(value: Any) -> str:
     return str(value or "").replace("\xa0", " ").strip()
 
 
+def _safe_filename(value: Any) -> str:
+    text = _clean_text(value)
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
+    text = re.sub(r"\s+", "_", text).strip("._ ")
+    return text[:120] or "archivo"
+
+
 def _display_question_text(value: Any) -> str:
     text = re.sub(r"\s+", " ", _clean_text(value)).strip()
     if not text:
@@ -219,6 +226,23 @@ def _safe_float(value: Any, default: float = 0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _score_to_100(value: Any) -> float:
+    score = _safe_float(value)
+    if score <= 0:
+        return 0.0
+    if score <= 5:
+        return round(score * 20, 2)
+    return round(score, 2)
+
+
+def _normalize_teacher_score_fields(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    normalized = dict(row)
+    for field in fields:
+        if field in normalized:
+            normalized[field] = _score_to_100(normalized.get(field))
+    return normalized
 
 
 def _digits(value: str) -> str:
@@ -522,17 +546,18 @@ def _course_from_row(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _course_subject_key(course: dict[str, Any]) -> str:
+def _course_subject_key(course: dict[str, Any], *, include_teacher: bool = False) -> str:
     subject_code = _clean_text(course.get("codigo_materia_interno")) or str(_safe_int(course.get("codigo_materia")))
-    return "|".join(
-        [
-            str(_safe_int(course.get("codigo_periodo"))),
-            subject_code.upper(),
-        ]
-    )
+    parts = [
+        str(_safe_int(course.get("codigo_periodo"))),
+        subject_code.upper(),
+    ]
+    if include_teacher:
+        parts.append(str(_safe_int(course.get("codigo_docente_eval"))))
+    return "|".join(parts)
 
 
-def _deduplicate_subject_courses(courses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _deduplicate_subject_courses(courses: list[dict[str, Any]], *, include_teacher: bool = False) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     careers_by_key: dict[str, set[str]] = {}
     parallels_by_key: dict[str, set[str]] = {}
@@ -541,7 +566,7 @@ def _deduplicate_subject_courses(courses: list[dict[str, Any]]) -> list[dict[str
     component_seen_by_key: dict[str, set[str]] = {}
     subject_ids_by_key: dict[str, set[int]] = {}
     for course in courses:
-        key = _course_subject_key(course)
+        key = _course_subject_key(course, include_teacher=include_teacher)
         if key not in grouped:
             grouped[key] = dict(course)
             grouped[key]["key"] = key.replace("|", "-")
@@ -648,6 +673,7 @@ def _courses_query(extra_where: str = "") -> str:
             AND cm.cod_anio_Basica = ce.cod_anio_Basica
             AND cm.codigo_periodo = ce.codigo_periodo
         WHERE ce.codigo_estud = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
           AND {_active_state_condition("du.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, ce.codigo_periodo DESC, pen.Semestre, LTRIM(RTRIM(pen.Nomb_Materia))
@@ -684,6 +710,16 @@ def _teacher_courses_query(extra_where: str = "") -> str:
             ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         WHERE cxd.codigo_doc = ?
+          AND EXISTS (
+              SELECT 1
+              FROM dbo.CARRERAXESTUD ce
+              WHERE ce.codigo_materia = cxd.codigo_materia
+                AND ce.codigo_periodo = cxd.codigo_periodo
+                AND ce.cod_anio_Basica = cxd.cod_Anio_Basica
+                AND LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                    LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+                AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+          )
           AND {_active_state_condition("u.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, cxd.codigo_periodo DESC, pen.Semestre, LTRIM(RTRIM(pen.Nomb_Materia))
@@ -725,6 +761,16 @@ def _peer_courses_query(extra_where: str = "") -> str:
             ON REPLACE(REPLACE(LTRIM(RTRIM(peer_u.cedula)), '-', ''), ' ', '') =
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         WHERE mine.codigo_doc = ?
+          AND EXISTS (
+              SELECT 1
+              FROM dbo.CARRERAXESTUD ce
+              WHERE ce.codigo_materia = peer.codigo_materia
+                AND ce.codigo_periodo = peer.codigo_periodo
+                AND ce.cod_anio_Basica = peer.cod_Anio_Basica
+                AND LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                    LTRIM(RTRIM(CAST(peer.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+                AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+          )
           AND {_active_state_condition("peer_u.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, peer.codigo_periodo DESC, LTRIM(RTRIM(car.Nombre_Basica)), LTRIM(RTRIM(pen.Nomb_Materia)), LTRIM(RTRIM(dd.apellidos_nombre))
@@ -752,15 +798,21 @@ def _authority_courses_query(extra_where: str = "") -> str:
             CAST(cxd.Cod_Jornada AS varchar(20)) AS cod_jornada,
             CAST(cxd.Cod_Jornada AS varchar(50)) AS jornada,
             CAST(0 AS int) AS respuestas_registradas
-        FROM dbo.CARRERAXDOCENTE cxd
-        INNER JOIN dbo.PERIODO per ON cxd.codigo_periodo = per.cod_periodo
-        INNER JOIN dbo.PENSUM pen ON cxd.codigo_materia = pen.codigo_materia
-        INNER JOIN dbo.CARRERAS car ON cxd.cod_Anio_Basica = car.Cod_AnioBasica
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+            AND cxd.codigo_periodo = ce.codigo_periodo
+            AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+            AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+        INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+        INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+        INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
         INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
         INNER JOIN dbo.USUARIOS u
             ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         WHERE LTRIM(RTRIM(CAST(cxd.cod_Anio_Basica AS varchar(50)))) = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
           AND {_active_state_condition("u.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, cxd.codigo_periodo DESC, LTRIM(RTRIM(car.Nombre_Basica)), LTRIM(RTRIM(pen.Nomb_Materia)), LTRIM(RTRIM(dd.apellidos_nombre))
@@ -769,7 +821,7 @@ def _authority_courses_query(extra_where: str = "") -> str:
 
 def _authority_all_courses_query(extra_where: str = "") -> str:
     return f"""
-        SELECT DISTINCT TOP 300
+        SELECT DISTINCT TOP 2000
             cxd.codigo_doc,
             cxd.cod_Anio_Basica AS cod_anio_Basica,
             cxd.codigo_materia,
@@ -788,15 +840,21 @@ def _authority_all_courses_query(extra_where: str = "") -> str:
             CAST(cxd.Cod_Jornada AS varchar(20)) AS cod_jornada,
             CAST(cxd.Cod_Jornada AS varchar(50)) AS jornada,
             CAST(0 AS int) AS respuestas_registradas
-        FROM dbo.CARRERAXDOCENTE cxd
-        INNER JOIN dbo.PERIODO per ON cxd.codigo_periodo = per.cod_periodo
-        INNER JOIN dbo.PENSUM pen ON cxd.codigo_materia = pen.codigo_materia
-        INNER JOIN dbo.CARRERAS car ON cxd.cod_Anio_Basica = car.Cod_AnioBasica
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+            AND cxd.codigo_periodo = ce.codigo_periodo
+            AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+            AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+        INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+        INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+        INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
         INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
         INNER JOIN dbo.USUARIOS u
             ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         WHERE 1 = 1
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
           AND {_active_state_condition("u.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, cxd.codigo_periodo DESC, LTRIM(RTRIM(car.Nombre_Basica)), LTRIM(RTRIM(pen.Nomb_Materia)), LTRIM(RTRIM(dd.apellidos_nombre))
@@ -876,15 +934,21 @@ def _authority_courses_from_assignments(
                 CAST(cxd.Cod_Jornada AS varchar(20)) AS cod_jornada,
                 CAST(cxd.Cod_Jornada AS varchar(50)) AS jornada,
                 CAST(0 AS int) AS respuestas_registradas
-            FROM dbo.CARRERAXDOCENTE cxd
-            INNER JOIN dbo.PERIODO per ON cxd.codigo_periodo = per.cod_periodo
-            INNER JOIN dbo.PENSUM pen ON cxd.codigo_materia = pen.codigo_materia
-            INNER JOIN dbo.CARRERAS car ON cxd.cod_Anio_Basica = car.Cod_AnioBasica
+            FROM dbo.CARRERAXESTUD ce
+            INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+                AND cxd.codigo_periodo = ce.codigo_periodo
+                AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+                AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                    LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+            INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+            INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+            INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
             INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
             INNER JOIN dbo.USUARIOS u
                 ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                    REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
             WHERE {" AND ".join(filters)}
+              AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
               AND {_active_state_condition("u.Estado")}
             ORDER BY per.Orden DESC, cxd.codigo_periodo DESC, LTRIM(RTRIM(car.Nombre_Basica)), LTRIM(RTRIM(pen.Nomb_Materia)), LTRIM(RTRIM(dd.apellidos_nombre))
             """,
@@ -1120,14 +1184,15 @@ def _fetch_question_rows(cursor: pyodbc.Cursor, flow: str) -> tuple[dict[str, An
 
 
 def _origin_key(actor_code: int, course: dict[str, Any], flow: str) -> str:
-    return "|".join(
-        [
-            flow,
-            str(actor_code),
-            str(course.get("codigo_periodo") or ""),
-            str(course.get("codigo_materia") or ""),
-        ]
-    )
+    parts = [
+        flow,
+        str(actor_code),
+        str(course.get("codigo_periodo") or ""),
+        str(course.get("codigo_materia") or ""),
+    ]
+    if flow == "academico_docente":
+        parts.append(str(course.get("codigo_docente_eval") or ""))
+    return "|".join(parts)
 
 
 def _evaluation_count(
@@ -1145,6 +1210,11 @@ def _evaluation_count(
     if not subject_ids:
         subject_ids = [_safe_int(course.get("codigo_materia"))]
     subject_placeholders = ", ".join("?" for _ in subject_ids)
+    teacher_filter = ""
+    teacher_params: list[Any] = []
+    if flow == "academico_docente":
+        teacher_filter = " AND Cod_Docente_Evaluado = ?"
+        teacher_params.append(str(_safe_int(course.get("codigo_docente_eval"))))
     cursor.execute(
         f"""
         SELECT COUNT(1)
@@ -1154,6 +1224,7 @@ def _evaluation_count(
           AND Cod_Periodo = ?
           AND Cod_Materia IN ({subject_placeholders})
           AND Estado IN ({states})
+          {teacher_filter}
           AND (Cod_Evaluador = ? OR Origen_Evaluador_Clave = ? OR Origen_Clave = ?)
         """,
         _safe_int(instrument.get("Id_Tipo_Evaluacion")),
@@ -1161,6 +1232,7 @@ def _evaluation_count(
         str(_safe_int(course.get("codigo_periodo"))),
         *[str(value) for value in subject_ids],
         *_SUBMITTED_STATES,
+        *teacher_params,
         str(evaluator_code),
         str(evaluator_code),
         origin_key or "",
@@ -1180,6 +1252,11 @@ def _evaluation_any_authority_count(
     if not subject_ids:
         subject_ids = [_safe_int(course.get("codigo_materia"))]
     subject_placeholders = ", ".join("?" for _ in subject_ids)
+    teacher_filter = ""
+    teacher_params: list[Any] = []
+    if _safe_int(course.get("codigo_docente_eval")):
+        teacher_filter = " AND Cod_Docente_Evaluado = ?"
+        teacher_params.append(str(_safe_int(course.get("codigo_docente_eval"))))
     cursor.execute(
         f"""
         SELECT COUNT(1)
@@ -1188,21 +1265,80 @@ def _evaluation_any_authority_count(
           AND Tipo_Evaluador = 'AUTORIDAD'
           AND Cod_Periodo = ?
           AND Cod_Materia IN ({subject_placeholders})
+          {teacher_filter}
           AND Estado IN ({states})
         """,
         _safe_int(instrument.get("Id_Tipo_Evaluacion")),
         str(_safe_int(course.get("codigo_periodo"))),
         *[str(value) for value in subject_ids],
+        *teacher_params,
         *_SUBMITTED_STATES,
     )
     row = cursor.fetchone()
     return _safe_int(row[0] if row else 0)
 
 
-def _evaluation_type_weight(cursor: pyodbc.Cursor, instrument: dict[str, Any]) -> float:
+def _evaluation_weights_for_period(cursor: pyodbc.Cursor, periodo: str) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT
+            te.Id_Tipo_Evaluacion,
+            te.Codigo,
+            te.Nombre,
+            COALESCE(p.Peso_Porcentaje, te.Peso_Default, 0) AS Peso_Porcentaje,
+            te.Peso_Default
+        FROM eval360.TipoEvaluacion te
+        OUTER APPLY (
+            SELECT TOP 1
+                pon.Peso_Porcentaje
+            FROM eval360.Ponderacion pon
+            WHERE pon.Id_Tipo_Evaluacion = te.Id_Tipo_Evaluacion
+              AND (
+                    TRY_CONVERT(varchar(50), pon.Cod_Periodo) = ?
+                 OR UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), pon.Cod_Periodo)))) = 'DEFAULT'
+              )
+              AND ISNULL(pon.Activo, 1) = 1
+            ORDER BY
+                CASE WHEN TRY_CONVERT(varchar(50), pon.Cod_Periodo) = ? THEN 0 ELSE 1 END,
+                pon.Fecha_Creacion DESC,
+                pon.Id_Ponderacion DESC
+        ) p
+        WHERE te.Activo = 1
+        """,
+        periodo,
+        periodo,
+    )
+    columns = [column[0] for column in cursor.description]
+    return [{column: _clean(value) for column, value in zip(columns, row)} for row in cursor.fetchall()]
+
+
+def _evaluation_type_weight(cursor: pyodbc.Cursor, instrument: dict[str, Any], periodo: str | None = None) -> float:
     type_id = _safe_int(instrument.get("Id_Tipo_Evaluacion"))
     if not type_id:
         return 0
+    if periodo:
+        cursor.execute(
+            """
+            SELECT TOP 1 Peso_Porcentaje
+            FROM eval360.Ponderacion
+            WHERE Id_Tipo_Evaluacion = ?
+              AND (
+                    TRY_CONVERT(varchar(50), Cod_Periodo) = ?
+                 OR UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), Cod_Periodo)))) = 'DEFAULT'
+              )
+              AND ISNULL(Activo, 1) = 1
+            ORDER BY
+                CASE WHEN TRY_CONVERT(varchar(50), Cod_Periodo) = ? THEN 0 ELSE 1 END,
+                Fecha_Creacion DESC,
+                Id_Ponderacion DESC
+            """,
+            type_id,
+            periodo,
+            periodo,
+        )
+        row = cursor.fetchone()
+        if row and row[0] is not None:
+            return _safe_float(row[0])
     cursor.execute(
         """
         SELECT TOP 1 Peso_Default
@@ -1213,6 +1349,37 @@ def _evaluation_type_weight(cursor: pyodbc.Cursor, instrument: dict[str, Any]) -
     )
     row = cursor.fetchone()
     return _safe_float(row[0] if row else 0)
+
+
+def _flow_weight_from_rows(weights: list[dict[str, Any]], flow: str) -> float:
+    component = _result_component_for_flow(flow)
+    if not component:
+        return 0.0
+    _, type_code = component
+    for row in weights or []:
+        if _clean_text(row.get("Codigo")).upper() == type_code:
+            return _safe_float(row.get("Peso_Porcentaje") if row.get("Peso_Porcentaje") is not None else row.get("Peso_Default"))
+    return 0.0
+
+
+def _weighted_teacher_result_score(row: dict[str, Any], weights: list[dict[str, Any]]) -> float:
+    components = [
+        ("student", "Promedio_Estudiantes"),
+        ("par_docente", "Promedio_Par_Docente"),
+        ("academico_docente", "Promedio_Autoridad"),
+        ("auto_docente", "Promedio_Autoevaluacion"),
+    ]
+    total = 0.0
+    used_weight = 0.0
+    for flow, field in components:
+        score = _score_to_100(row.get(field))
+        weight = _flow_weight_from_rows(weights, flow)
+        if score > 0 and weight > 0:
+            total += score * (weight / 100.0)
+            used_weight += weight
+    if used_weight <= 0:
+        return _score_to_100(row.get("Puntaje_Final_360"))
+    return round(total, 2)
 
 
 def _apply_evaluation_status(actor_code: int, courses: list[dict[str, Any]], flow: str) -> list[dict[str, Any]]:
@@ -1257,7 +1424,7 @@ def _get_or_create_campaign(
         SELECT TOP 1 Id_Campania
         FROM eval360.Campania
         WHERE Cod_Periodo = ?
-          AND Estado = 'ACTIVO'
+          AND Estado = 'ABIERTA'
           AND ? BETWEEN Fecha_Inicio AND Fecha_Fin
         ORDER BY Id_Campania DESC
         """,
@@ -1275,7 +1442,7 @@ def _get_or_create_campaign(
         INSERT INTO eval360.Campania
             (Codigo, Nombre, Cod_Periodo, Fecha_Inicio, Fecha_Fin, Estado, Observacion)
         OUTPUT INSERTED.Id_Campania
-        VALUES (?, ?, ?, ?, ?, 'ACTIVO', ?)
+        VALUES (?, ?, ?, ?, ?, 'ABIERTA', ?)
         """,
         campaign_code,
         campaign_name,
@@ -1505,13 +1672,14 @@ def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: 
                 AND cm.cod_anio_Basica = ce.cod_anio_Basica
                 AND cm.codigo_periodo = ce.codigo_periodo
             WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+              AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
               AND {_active_state_condition("de.Estado")}
               AND {_active_state_condition("du.Estado")}
             ORDER BY LTRIM(RTRIM(de.Apellidos_nombre)), LTRIM(RTRIM(pen.Nomb_Materia))
             """,
             periodo,
         )
-    elif flow == "auto_docente":
+    elif flow in {"auto_docente", "par_docente"}:
         cursor.execute(
             f"""
             SELECT DISTINCT TOP {limit}
@@ -1536,15 +1704,21 @@ def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: 
                 CAST(cxd.Cod_Jornada AS varchar(20)) AS cod_jornada,
                 CAST(cxd.Cod_Jornada AS varchar(50)) AS jornada,
                 CAST(0 AS int) AS respuestas_registradas
-            FROM dbo.CARRERAXDOCENTE cxd
-            INNER JOIN dbo.PERIODO per ON cxd.codigo_periodo = per.cod_periodo
-            INNER JOIN dbo.PENSUM pen ON cxd.codigo_materia = pen.codigo_materia
-            INNER JOIN dbo.CARRERAS car ON cxd.cod_Anio_Basica = car.Cod_AnioBasica
+            FROM dbo.CARRERAXESTUD ce
+            INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+                AND cxd.codigo_periodo = ce.codigo_periodo
+                AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+                AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                    LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+            INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+            INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+            INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
             INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
             INNER JOIN dbo.USUARIOS u
                 ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                    REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
-            WHERE TRY_CONVERT(varchar(50), cxd.codigo_periodo) = ?
+            WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+              AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
               AND {_active_state_condition("u.Estado")}
             ORDER BY LTRIM(RTRIM(dd.apellidos_nombre)), LTRIM(RTRIM(pen.Nomb_Materia))
             """,
@@ -1584,6 +1758,16 @@ def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: 
                 ON REPLACE(REPLACE(LTRIM(RTRIM(u.cedula)), '-', ''), ' ', '') =
                    REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
             WHERE TRY_CONVERT(varchar(50), cxd.codigo_periodo) = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM dbo.CARRERAXESTUD ce
+                  WHERE ce.codigo_materia = cxd.codigo_materia
+                    AND ce.codigo_periodo = cxd.codigo_periodo
+                    AND ce.cod_anio_Basica = cxd.cod_Anio_Basica
+                    AND LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                        LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+                    AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+              )
               AND {_active_state_condition("u.Estado")}
             ORDER BY LTRIM(RTRIM(dd.apellidos_nombre)), LTRIM(RTRIM(pen.Nomb_Materia))
             """,
@@ -1651,6 +1835,7 @@ def _student_progress_expected(cursor: pyodbc.Cursor, periodo: str, limit: int) 
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         INNER JOIN dbo.CARRERAS car ON car.Cod_AnioBasica = ce.cod_anio_Basica
         WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
           AND {_active_state_condition("de.Estado")}
           AND {_active_state_condition("du.Estado")}
         GROUP BY ce.codigo_estud, de.Cedula_Est, de.Apellidos_nombre
@@ -1709,6 +1894,74 @@ def _student_progress_completed(
     return {_safe_int(row.codigo_estud): _safe_int(row.completadas) for row in cursor.fetchall()}
 
 
+def _student_period_grades(cursor: pyodbc.Cursor, periodo: str, codigo_estud: int) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT
+            ce.codigo_estud,
+            ce.codigo_materia,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), pen.Nomb_Materia))) AS materia,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), car.Nombre_Basica))) AS carrera,
+            LTRIM(RTRIM(TRY_CONVERT(varchar(20), ce.paralelo))) AS paralelo,
+            TRY_CONVERT(float, ce.PromedioFinal) AS promedio_final
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.PENSUM pen ON pen.codigo_materia = ce.codigo_materia
+        INNER JOIN dbo.CARRERAS car ON car.Cod_AnioBasica = ce.cod_anio_Basica
+        WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+          AND ce.codigo_estud = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+        ORDER BY LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), pen.Nomb_Materia)))
+        """,
+        periodo,
+        codigo_estud,
+    )
+    return [
+        {
+            "codigo_materia": _clean(row.codigo_materia),
+            "materia": _clean(row.materia),
+            "carrera": _clean(row.carrera),
+            "paralelo": _clean(row.paralelo),
+            "promedio_final": _safe_float(row.promedio_final),
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def _expected_students_for_teacher_subject(
+    cursor: pyodbc.Cursor,
+    periodo: str,
+    codigo_docente: str,
+    codigo_materia: str,
+) -> int:
+    cursor.execute(
+        f"""
+        SELECT COUNT(DISTINCT ce.codigo_estud)
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.DATOS_ESTUD de ON de.codigo_estud = ce.codigo_estud
+        INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+            AND cxd.codigo_periodo = ce.codigo_periodo
+            AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+            AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+        INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
+        INNER JOIN dbo.USUARIOS du
+            ON REPLACE(REPLACE(LTRIM(RTRIM(du.cedula)), '-', ''), ' ', '') =
+               REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
+        WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+          AND TRY_CONVERT(varchar(50), cxd.codigo_doc) = ?
+          AND TRY_CONVERT(varchar(50), ce.codigo_materia) = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+          AND {_active_state_condition("de.Estado")}
+          AND {_active_state_condition("du.Estado")}
+        """,
+        periodo,
+        codigo_docente,
+        codigo_materia,
+    )
+    row = cursor.fetchone()
+    return _safe_int(row[0] if row else 0)
+
+
 def _teacher_evaluation_academic_maps(periodo: str) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str]:
     teachers: dict[str, dict[str, Any]] = {}
     subjects: dict[str, dict[str, Any]] = {}
@@ -1765,8 +2018,38 @@ def _teacher_evaluation_academic_maps(periodo: str) -> tuple[dict[str, dict[str,
     return teachers, subjects, period_label
 
 
-def _fetch_teacher_grade_report(periodo: str, codigo_docente: str | None = None) -> dict[str, Any]:
+def _result_component_for_flow(flow: str) -> tuple[str, str] | None:
+    return {
+        "student": ("Promedio_Estudiantes", "ESTUDIANTE_DOCENTE"),
+        "par_docente": ("Promedio_Par_Docente", "PAR_DOCENTE"),
+        "academico_docente": ("Promedio_Autoridad", "AUTORIDAD_COORDINADOR"),
+        "auto_docente": ("Promedio_Autoevaluacion", "AUTO_DOCENTE"),
+    }.get(flow)
+
+
+def _flow_from_type_text(value: Any) -> str:
+    text = _clean_text(value).upper()
+    if "AUTO" in text and "ESTUDIANTE" not in text:
+        return "auto_docente"
+    if "PAR" in text:
+        return "par_docente"
+    if "AUTORIDAD" in text or "ADMIN" in text or "COORD" in text or "ACADEMIC" in text:
+        return "academico_docente"
+    if "ESTUDIANTE" in text and "DOCENTE" in text:
+        return "student"
+    return ""
+
+
+def _fetch_teacher_grade_report(
+    periodo: str,
+    codigo_docente: str | None = None,
+    flow: str = "all",
+    document_type: str = "certificado",
+) -> dict[str, Any]:
     selected_teacher = _clean_text(codigo_docente)
+    report_flow = _clean_text(flow or "all")
+    if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
+        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el PDF.")
     teachers, subjects, period_label = _teacher_evaluation_academic_maps(periodo)
     with get_evaluation_connection() as conn:
         cursor = conn.cursor()
@@ -1796,7 +2079,19 @@ def _fetch_teacher_grade_report(periodo: str, codigo_docente: str | None = None)
             *params,
         )
         result_columns = [column[0] for column in cursor.description]
-        results = [{column: _clean(value) for column, value in zip(result_columns, row)} for row in cursor.fetchall()]
+        results = [
+            _normalize_teacher_score_fields(
+                {column: _clean(value) for column, value in zip(result_columns, row)},
+                (
+                    "Promedio_Estudiantes",
+                    "Promedio_Par_Docente",
+                    "Promedio_Autoridad",
+                    "Promedio_Autoevaluacion",
+                    "Puntaje_Final_360",
+                ),
+            )
+            for row in cursor.fetchall()
+        ]
 
         cursor.execute(
             f"""
@@ -1818,7 +2113,13 @@ def _fetch_teacher_grade_report(periodo: str, codigo_docente: str | None = None)
             *params,
         )
         type_columns = [column[0] for column in cursor.description]
-        type_rows = [{column: _clean(value) for column, value in zip(type_columns, row)} for row in cursor.fetchall()]
+        type_rows = [
+            _normalize_teacher_score_fields(
+                {column: _clean(value) for column, value in zip(type_columns, row)},
+                ("Promedio_Tipo",),
+            )
+            for row in cursor.fetchall()
+        ]
 
         cursor.execute(
             f"""
@@ -1840,20 +2141,54 @@ def _fetch_teacher_grade_report(periodo: str, codigo_docente: str | None = None)
             *params,
         )
         dimension_columns = [column[0] for column in cursor.description]
-        dimension_rows = [{column: _clean(value) for column, value in zip(dimension_columns, row)} for row in cursor.fetchall()]
+        dimension_rows = [
+            _normalize_teacher_score_fields(
+                {column: _clean(value) for column, value in zip(dimension_columns, row)},
+                ("Promedio_Dimension",),
+            )
+            for row in cursor.fetchall()
+        ]
 
-        cursor.execute(
-            """
-            SELECT
-                Codigo,
-                Nombre,
-                Peso_Default
-            FROM eval360.TipoEvaluacion
-            WHERE Activo = 1
-            """
-        )
-        weight_columns = [column[0] for column in cursor.description]
-        weight_rows = [{column: _clean(value) for column, value in zip(weight_columns, row)} for row in cursor.fetchall()]
+        weight_rows = _evaluation_weights_for_period(cursor, periodo)
+
+    if report_flow == "all":
+        for item in results:
+            item["Puntaje_Final_360"] = _weighted_teacher_result_score(item, weight_rows)
+
+    if report_flow != "all":
+        component = _result_component_for_flow(report_flow)
+        if component:
+            component_field, type_code = component
+            results = []
+            for item in type_rows:
+                if _clean_text(item.get("Codigo_Tipo_Evaluacion")).upper() != type_code:
+                    continue
+                score = _score_to_100(item.get("Promedio_Tipo"))
+                row = {
+                    "Cod_Periodo": periodo,
+                    "Cod_Docente_Evaluado": item.get("Cod_Docente_Evaluado"),
+                    "Cod_Materia": item.get("Cod_Materia"),
+                    "Jornada": item.get("Jornada"),
+                    "Paralelo": item.get("Paralelo"),
+                    "Promedio_Estudiantes": 0,
+                    "Promedio_Par_Docente": 0,
+                    "Promedio_Autoridad": 0,
+                    "Promedio_Autoevaluacion": 0,
+                    "Puntaje_Final_360": score,
+                }
+                row[component_field] = score
+                results.append(row)
+            type_rows = [
+                item
+                for item in type_rows
+                if _clean_text(item.get("Codigo_Tipo_Evaluacion")).upper() == type_code
+            ]
+            dimension_rows = [
+                item
+                for item in dimension_rows
+                if _clean_text(item.get("Tipo_Evaluacion")).upper()
+                == _clean_text(type_rows[0].get("Tipo_Evaluacion")).upper()
+            ] if type_rows else []
 
     def key_for(item: dict[str, Any]) -> str:
         return "|".join(
@@ -1900,6 +2235,8 @@ def _fetch_teacher_grade_report(periodo: str, codigo_docente: str | None = None)
         "periodo": periodo,
         "periodo_detalle": period_label,
         "codigo_docente": selected_teacher,
+        "flow": report_flow,
+        "document_type": _clean_text(document_type or "certificado"),
         "teachers": list(grouped.values()),
         "weights": weight_rows,
     }
@@ -2001,14 +2338,32 @@ def _average(values: list[Any]) -> float:
     return round(sum(numbers) / len(numbers), 2)
 
 
-def _teacher_group_averages(rows: list[dict[str, Any]]) -> dict[str, float]:
-    return {
+def _teacher_group_averages(rows: list[dict[str, Any]], report: dict[str, Any] | None = None) -> dict[str, float]:
+    averages = {
         "estudiantes": _average([row.get("Promedio_Estudiantes") for row in rows]),
         "par": _average([row.get("Promedio_Par_Docente") for row in rows]),
         "autoridad": _average([row.get("Promedio_Autoridad") for row in rows]),
         "auto": _average([row.get("Promedio_Autoevaluacion") for row in rows]),
         "final": _average([row.get("Puntaje_Final_360") for row in rows]),
     }
+    if report and _clean_text(report.get("flow") or "all") == "all":
+        flow_map = {
+            "student": "estudiantes",
+            "par_docente": "par",
+            "academico_docente": "autoridad",
+            "auto_docente": "auto",
+        }
+        weighted_total = 0.0
+        weight_total = 0.0
+        for flow, key in flow_map.items():
+            score = averages.get(key, 0.0)
+            weight = _flow_weight_from_rows(report.get("weights") or [], flow)
+            if score > 0 and weight > 0:
+                weighted_total += score * (weight / 100.0)
+                weight_total += weight
+        if weight_total > 0:
+            averages["final"] = round(weighted_total, 2)
+    return averages
 
 
 def _component_targets(report: dict[str, Any], averages: dict[str, float]) -> dict[str, float]:
@@ -2046,7 +2401,26 @@ def _pdf_grade_styles() -> dict[str, ParagraphStyle]:
 
 
 def _p(value: Any, style: ParagraphStyle) -> Paragraph:
-    return Paragraph(escape(_clean(value)) or "-", style)
+    cleaned = _clean(value)
+    return Paragraph(escape(str(cleaned)) if cleaned not in (None, "") else "-", style)
+
+
+def _report_document_title(report: dict[str, Any]) -> str:
+    flow = _clean_text(report.get("flow") or "all")
+    document_type = _clean_text(report.get("document_type") or "certificado")
+    flow_label = {
+        "all": "EVALUACIÓN DESEMPEÑO DOCENTE 360",
+        "student": "EVALUACIÓN DEL ESTUDIANTE AL DOCENTE",
+        "auto_docente": "AUTOEVALUACIÓN DOCENTE",
+        "par_docente": "EVALUACIÓN PAR DOCENTE",
+        "academico_docente": "EVALUACIÓN ADMINISTRATIVA DOCENTE",
+    }.get(flow, "EVALUACIÓN DOCENTE")
+    prefix = {
+        "certificado": "CERTIFICADO",
+        "resumen": "REPORTE RESUMEN",
+        "detalle": "REPORTE DETALLADO",
+    }.get(document_type, "CERTIFICADO")
+    return f"{prefix} DE {flow_label}"
 
 
 def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
@@ -2067,12 +2441,14 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
     story: list[Any] = []
 
     teachers = report.get("teachers") or []
+    document_title = _report_document_title(report)
+    document_type = _clean_text(report.get("document_type") or "certificado")
     if not teachers:
         story.extend(
             [
                 _SvgLogo(_LOGO_PATH, 4.8 * cm),
                 Spacer(1, 0.35 * cm),
-                Paragraph("CERTIFICADO DE EVALUACIÓN DESEMPEÑO DOCENTE", styles["EvalTitle"]),
+                Paragraph(document_title, styles["EvalTitle"]),
                 Paragraph(
                     f"Periodo: {escape(report.get('periodo_detalle') or report.get('periodo') or '-')}",
                     styles["EvalSubtitle"],
@@ -2086,7 +2462,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
             story.append(PageBreak())
         teacher = teacher_group["teacher"]
         rows = teacher_group.get("rows") or []
-        averages = _teacher_group_averages(rows)
+        averages = _teacher_group_averages(rows, report)
         document_number = _document_number(_clean(report.get("periodo")), teacher)
         period_label = _clean(report.get("periodo_detalle")) or _clean(report.get("periodo"))
         final_score = averages["final"]
@@ -2101,7 +2477,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     Paragraph(
                         "<b>INSTITUTO TECNOLÓGICO SUPERIOR INTEC</b><br/>"
                         "QUITO - ECUADOR<br/>"
-                        "<font size='13'><b>CERTIFICADO DE EVALUACIÓN DESEMPEÑO DOCENTE</b></font>",
+                        f"<font size='13'><b>{escape(document_title)}</b></font>",
                         styles["EvalSubtitle"],
                     ),
                     Paragraph(f"<b>Documento # {escape(document_number)}</b>", styles["EvalBody"]),
@@ -2140,7 +2516,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                         f"<b>Carrera:</b> {escape(_clean(first_row.get('carrera')) or '-')}<br/>"
                         f"<b>Materias evaluadas:</b> {len(rows)}<br/>"
                         f"<b>Fecha de emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}<br/>"
-                        "<b>Modelo:</b> Evaluación docente 360",
+                        f"<b>Modelo:</b> {escape(_clean_text(report.get('flow')) or 'all').upper()} · {escape(_clean_text(report.get('document_type')) or 'certificado').upper()}",
                         styles["EvalBody"],
                     ),
                 ],
@@ -2202,6 +2578,41 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         story.append(table)
 
         story.append(Spacer(1, 0.2 * cm))
+        if _clean_text(report.get("flow") or "all") == "all":
+            weights_table_rows: list[list[Any]] = [[
+                _p("Componente", styles["EvalCellBold"]),
+                _p("Ponderación aplicada", styles["EvalCellBold"]),
+                _p("Promedio", styles["EvalCellBold"]),
+                _p("Aporte", styles["EvalCellBold"]),
+            ]]
+            weight_components = [
+                ("Evaluación estudiante-docente", "student", "estudiantes"),
+                ("Evaluación par docente", "par_docente", "par"),
+                ("Evaluación administrativa docente", "academico_docente", "autoridad"),
+                ("Autoevaluación docente", "auto_docente", "auto"),
+            ]
+            for label, flow_key, average_key in weight_components:
+                weight = _flow_weight_from_rows(report.get("weights") or [], flow_key)
+                average = _safe_float(averages.get(average_key))
+                weights_table_rows.append([
+                    _p(label, styles["EvalCell"]),
+                    _p(f"{weight:.2f}%", styles["EvalCell"]),
+                    _p(f"{average:.2f}", styles["EvalCell"]),
+                    _p(f"{(average * weight / 100.0):.2f}", styles["EvalCell"]),
+                ])
+            weights_table = Table(weights_table_rows, colWidths=[7.4 * cm, 3.8 * cm, 3.2 * cm, 3.2 * cm], repeatRows=1)
+            weights_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d8d8d8")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#8e8e8e")),
+                ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            story.append(Paragraph("<b>PONDERACIONES DEL PERIODO</b>", styles["EvalSection"]))
+            story.append(weights_table)
+            story.append(Spacer(1, 0.2 * cm))
+
         score_table = Table(
             [
                 [
@@ -2242,6 +2653,40 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         )
         story.append(score_table)
         story.append(Spacer(1, 0.28 * cm))
+
+        if document_type == "detalle":
+            detail_rows: list[list[Any]] = [[
+                _p("Materia", styles["EvalCellBold"]),
+                _p("Tipo", styles["EvalCellBold"]),
+                _p("Dimensión", styles["EvalCellBold"]),
+                _p("Evaluaciones", styles["EvalCellBold"]),
+                _p("Respuestas", styles["EvalCellBold"]),
+                _p("Promedio", styles["EvalCellBold"]),
+            ]]
+            for row in rows:
+                for dimension in row.get("dimensiones") or []:
+                    detail_rows.append([
+                        _p(row.get("materia"), styles["EvalCell"]),
+                        _p(dimension.get("Tipo_Evaluacion"), styles["EvalCell"]),
+                        _p(dimension.get("Dimension_Global"), styles["EvalCell"]),
+                        _p(dimension.get("Total_Evaluaciones"), styles["EvalCell"]),
+                        _p(dimension.get("Total_Respuestas"), styles["EvalCell"]),
+                        _p(dimension.get("Promedio_Dimension"), styles["EvalCell"]),
+                    ])
+            if len(detail_rows) > 1:
+                detail_table = Table(detail_rows, colWidths=[4.2 * cm, 3.4 * cm, 4.5 * cm, 2.1 * cm, 2.1 * cm, 2.0 * cm], repeatRows=1)
+                detail_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d8d8d8")),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#8e8e8e")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f8fb")]),
+                    ("ALIGN", (3, 1), (-1, -1), "CENTER"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]))
+                story.append(Paragraph("<b>DETALLE POR DIMENSIÓN</b>", styles["EvalSection"]))
+                story.append(detail_table)
+                story.append(Spacer(1, 0.2 * cm))
 
         note = (
             "Nota: El personal académico que no esté de acuerdo con los resultados de su evaluación "
@@ -2312,7 +2757,7 @@ def _save_application(
              Origen_Evaluado_Tabla, Origen_Evaluado_Clave)
         OUTPUT INSERTED.Id_Aplicacion
         VALUES
-            (NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'ENVIADA',
+            (NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'FINALIZADA',
              NULL, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         campaign_id,
@@ -2417,7 +2862,7 @@ def get_teacher_evaluation_admin_pending(
     flow: str = Query(default="all"),
     limit: int = Query(default=500, ge=1, le=1000),
 ) -> dict[str, Any]:
-    allowed_flows = ("student", "auto_estudiante", "auto_docente", "academico_docente")
+    allowed_flows = ("student", "auto_estudiante", "auto_docente", "par_docente", "academico_docente")
     flows = list(allowed_flows) if flow == "all" else [flow]
     for item in flows:
         if item not in allowed_flows:
@@ -2437,6 +2882,8 @@ def get_teacher_evaluation_admin_pending(
         for item in flows
     }
     period_label = periodo
+    teacher_progress: dict[str, dict[str, Any]] = {}
+    flow_weights: dict[str, float] = {}
 
     try:
         with get_connection() as academic_conn, get_evaluation_connection() as evaluation_conn:
@@ -2456,7 +2903,9 @@ def get_teacher_evaluation_admin_pending(
 
             for current_flow in flows:
                 instrument = _get_instrument(evaluation_cursor, current_flow)
-                summary[current_flow]["ponderacion"] = _evaluation_type_weight(evaluation_cursor, instrument)
+                flow_weight = _evaluation_type_weight(evaluation_cursor, instrument, periodo)
+                flow_weights[current_flow] = flow_weight
+                summary[current_flow]["ponderacion"] = flow_weight
                 expected_rows = _admin_expected_rows(academic_cursor, periodo, current_flow, limit)
                 summary[current_flow]["expected"] = len(expected_rows)
                 for expected in expected_rows:
@@ -2473,6 +2922,48 @@ def get_teacher_evaluation_admin_pending(
                             course=course,
                             origin_key=origin_key,
                         )
+                    teacher_code = _safe_int(course.get("codigo_docente_eval"))
+                    if teacher_code:
+                        progress_flow = current_flow
+                        progress_flow_label = _flow_config(current_flow)["label"]
+                        progress_key = "|".join(
+                            [
+                                progress_flow,
+                                str(teacher_code),
+                                _course_subject_key(course, include_teacher=True),
+                            ]
+                        )
+                        if progress_key not in teacher_progress:
+                            teacher_progress[progress_key] = {
+                                "flow": progress_flow,
+                                "flow_label": progress_flow_label,
+                                "codigo_doc": str(teacher_code),
+                                "docente": _clean_text(course.get("docente")) or f"Docente {teacher_code}",
+                                "cedula_doc": _clean_text(course.get("cedula_docente")),
+                                "codigo_periodo": str(_safe_int(course.get("codigo_periodo"))),
+                                "periodo_detalle": period_label,
+                                "codigo_materia": str(_safe_int(course.get("codigo_materia"))),
+                                "codigo_materia_interno": _clean_text(course.get("codigo_materia_interno")),
+                                "materia": _clean_text(course.get("materia")) or f"Materia {course.get('codigo_materia')}",
+                                "carrera": _clean_text(course.get("carrera")),
+                                "paralelo": _clean_text(course.get("paralelo")),
+                                "expected": 0,
+                                "completed": 0,
+                                "pending": 0,
+                                "progress_percent": 0,
+                                "ponderacion": 0,
+                                "ponderacion_aplicada": 0,
+                                "flows": {},
+                            }
+                        teacher_progress[progress_key]["expected"] += 1
+                        flow_detail = teacher_progress[progress_key]["flows"].setdefault(
+                            current_flow,
+                            {"expected": 0, "completed": 0, "ponderacion": flow_weight},
+                        )
+                        flow_detail["expected"] += 1
+                        if completed > 0:
+                            teacher_progress[progress_key]["completed"] += 1
+                            flow_detail["completed"] += 1
                     if completed > 0:
                         summary[current_flow]["completed"] += 1
                         continue
@@ -2489,11 +2980,40 @@ def get_teacher_evaluation_admin_pending(
                 completed_total = _safe_int(summary[current_flow]["completed"])
                 summary[current_flow]["progress_percent"] = round((completed_total / expected_total) * 100, 2) if expected_total else 0
 
+        teacher_progress_items = []
+        for progress in teacher_progress.values():
+            expected = _safe_int(progress.get("expected"))
+            completed = _safe_int(progress.get("completed"))
+            progress["pending"] = max(expected - completed, 0)
+            progress["progress_percent"] = round((completed / expected) * 100, 2) if expected else 0
+            assigned_weight = 0.0
+            applied_weight = 0.0
+            for flow_detail in (progress.get("flows") or {}).values():
+                flow_expected = _safe_int(flow_detail.get("expected"))
+                flow_completed = _safe_int(flow_detail.get("completed"))
+                flow_weight = _safe_float(flow_detail.get("ponderacion"))
+                if flow_expected <= 0:
+                    continue
+                assigned_weight += flow_weight
+                applied_weight += (flow_completed / flow_expected) * flow_weight
+            progress["ponderacion"] = round(assigned_weight, 2)
+            progress["ponderacion_aplicada"] = round(applied_weight, 2)
+            progress.pop("flows", None)
+            teacher_progress_items.append(progress)
+        teacher_progress_items.sort(
+            key=lambda row: (
+                _clean_text(row.get("materia")).upper(),
+                _clean_text(row.get("docente")).upper(),
+                _clean_text(row.get("flow_label")).upper(),
+            )
+        )
+
         return {
             "periodo": periodo,
             "periodo_detalle": period_label,
             "flow": flow,
             "summary": list(summary.values()),
+            "teacher_progress": teacher_progress_items,
             "items": items[:limit],
             "total": len(items[:limit]),
         }
@@ -2503,6 +3023,209 @@ def get_teacher_evaluation_admin_pending(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo consultar pendientes de evaluacion docente: {exc}") from exc
+
+
+@router.get("/admin/progreso-detalle")
+def get_teacher_evaluation_progress_detail(
+    periodo: str = Query(..., min_length=1),
+    codigo_docente: str = Query(..., min_length=1),
+    codigo_materia: str = Query(..., min_length=1),
+    flow: str = Query(default="all"),
+) -> dict[str, Any]:
+    report_flow = _clean_text(flow or "all")
+    if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
+        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el grafico.")
+    try:
+        teachers, subjects, period_label = _teacher_evaluation_academic_maps(periodo)
+        teacher = teachers.get(
+            _clean_text(codigo_docente),
+            {"codigo_doc": _clean_text(codigo_docente), "docente": f"Docente {codigo_docente}", "cedula_doc": ""},
+        )
+        subject = subjects.get(
+            f"{_clean_text(codigo_docente)}|{_clean_text(codigo_materia)}",
+            {"materia": _clean_text(codigo_materia), "carrera": ""},
+        )
+        with get_connection() as academic_conn:
+            expected_student_total = _expected_students_for_teacher_subject(
+                academic_conn.cursor(),
+                periodo,
+                codigo_docente,
+                codigo_materia,
+            )
+        with get_evaluation_connection() as conn:
+            cursor = conn.cursor()
+            weights = _evaluation_weights_for_period(cursor, periodo)
+            cursor.execute(
+                """
+                SELECT
+                    Tipo_Evaluacion,
+                    Dimension_Global,
+                    SUM(ISNULL(Total_Evaluaciones, 0)) AS Total_Evaluaciones,
+                    SUM(ISNULL(Total_Respuestas, 0)) AS Total_Respuestas,
+                    AVG(TRY_CONVERT(float, Promedio_Dimension)) AS Promedio_Dimension
+                FROM eval360.vw_Resultado_Dimension_Docente
+                WHERE Cod_Periodo = ?
+                  AND Cod_Docente_Evaluado = ?
+                  AND Cod_Materia = ?
+                GROUP BY Tipo_Evaluacion, Dimension_Global
+                ORDER BY Tipo_Evaluacion, Dimension_Global
+                """,
+                periodo,
+                codigo_docente,
+                codigo_materia,
+            )
+            rows = [_row_dict(cursor, row) for row in cursor.fetchall()]
+
+        prepared_rows: list[tuple[dict[str, Any], str]] = []
+        flow_category_counts: dict[str, int] = {}
+        for row in rows:
+            item_flow = _flow_from_type_text(row.get("Tipo_Evaluacion"))
+            if report_flow != "all" and item_flow != report_flow:
+                continue
+            prepared_rows.append((row, item_flow))
+            flow_category_counts[item_flow] = flow_category_counts.get(item_flow, 0) + 1
+
+        items: list[dict[str, Any]] = []
+        for row, item_flow in prepared_rows:
+            average = _score_to_100(row.get("Promedio_Dimension"))
+            evaluations = _safe_int(row.get("Total_Evaluaciones"))
+            coverage_expected = expected_student_total if item_flow == "student" else evaluations
+            coverage = min(evaluations / coverage_expected, 1.0) if coverage_expected > 0 else 0.0
+            adjusted_average = round(average * coverage, 2) if item_flow == "student" else average
+            type_weight = _flow_weight_from_rows(weights, item_flow) if item_flow else 0.0
+            category_count = max(flow_category_counts.get(item_flow, 0), 1)
+            category_weight = type_weight / category_count if type_weight else 0.0
+            items.append(
+                {
+                    "flow": item_flow or "all",
+                    "flow_label": _clean_text(row.get("Tipo_Evaluacion")) or "Evaluacion",
+                    "categoria": _clean_text(row.get("Dimension_Global")) or "Categoria general",
+                    "promedio": average,
+                    "promedio_ajustado": adjusted_average,
+                    "ponderacion": round(category_weight, 2),
+                    "ponderacion_tipo": round(type_weight, 2),
+                    "aporte": round(adjusted_average * category_weight / 100.0, 2),
+                    "cobertura": round(coverage * 100.0, 2),
+                    "esperadas": coverage_expected,
+                    "evaluaciones": evaluations,
+                    "respuestas": _safe_int(row.get("Total_Respuestas")),
+                }
+            )
+
+        return {
+            "periodo": periodo,
+            "periodo_detalle": period_label,
+            "flow": report_flow,
+            "codigo_docente": _clean_text(codigo_docente),
+            "codigo_materia": _clean_text(codigo_materia),
+            "docente": teacher.get("docente"),
+            "cedula_doc": teacher.get("cedula_doc"),
+            "materia": subject.get("materia"),
+            "carrera": subject.get("carrera"),
+            "weights": weights,
+            "items": items,
+            "total": len(items),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar detalle de progreso docente: {exc}") from exc
+
+
+@router.get("/admin/progreso-participantes")
+def get_teacher_evaluation_progress_participants(
+    periodo: str = Query(..., min_length=1),
+    codigo_docente: str = Query(..., min_length=1),
+    codigo_materia: str = Query(..., min_length=1),
+    flow: str = Query(default="all"),
+    estado: str = Query(default="completadas"),
+    limit: int = Query(default=1000, ge=1, le=2000),
+) -> dict[str, Any]:
+    report_flow = _clean_text(flow or "all")
+    status = _clean_text(estado).lower()
+    if report_flow != "all" and report_flow not in _EVALUATION_FLOWS:
+        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para participantes.")
+    if status not in {"completadas", "pendientes"}:
+        raise HTTPException(status_code=400, detail="Estado no valido para participantes.")
+    flows = ("student", "auto_estudiante", "auto_docente", "par_docente", "academico_docente") if report_flow == "all" else (report_flow,)
+
+    try:
+        with get_connection() as academic_conn, get_evaluation_connection() as evaluation_conn:
+            academic_cursor = academic_conn.cursor()
+            evaluation_cursor = evaluation_conn.cursor()
+            academic_cursor.execute(
+                """
+                SELECT TOP 1 LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Detalle_Periodo)))
+                FROM dbo.PERIODO
+                WHERE TRY_CONVERT(varchar(50), cod_periodo) = ?
+                """,
+                periodo,
+            )
+            period_row = academic_cursor.fetchone()
+            period_label = _clean_text(period_row[0]) if period_row and period_row[0] else periodo
+
+            items: list[dict[str, Any]] = []
+            subject_label = _clean_text(codigo_materia)
+            teacher_label = f"Docente {codigo_docente}"
+            for current_flow in flows:
+                if current_flow not in _EVALUATION_FLOWS:
+                    continue
+                instrument = _get_instrument(evaluation_cursor, current_flow)
+                expected_rows = _admin_expected_rows(academic_cursor, periodo, current_flow, limit)
+                for expected in expected_rows:
+                    course = expected.get("course") or {}
+                    if _clean_text(course.get("codigo_docente_eval")) != _clean_text(codigo_docente):
+                        continue
+                    if _clean_text(course.get("codigo_materia")) != _clean_text(codigo_materia):
+                        continue
+                    subject_label = _clean_text(course.get("materia")) or subject_label
+                    teacher_label = _clean_text(course.get("docente")) or teacher_label
+                    if current_flow == "academico_docente":
+                        completed = _evaluation_any_authority_count(evaluation_cursor, instrument=instrument, course=course)
+                    else:
+                        origin_key = _origin_key(expected.get("evaluator_code") or 0, course, current_flow)
+                        completed = _evaluation_count(
+                            evaluation_cursor,
+                            flow=current_flow,
+                            instrument=instrument,
+                            evaluator_code=_safe_int(expected.get("evaluator_code")),
+                            course=course,
+                            origin_key=origin_key,
+                        )
+                    is_completed = completed > 0
+                    if status == "completadas" and not is_completed:
+                        continue
+                    if status == "pendientes" and is_completed:
+                        continue
+                    evaluator_code = _safe_int(expected.get("evaluator_code"))
+                    items.append(
+                        {
+                            "flow": current_flow,
+                            "flow_label": _flow_config(current_flow)["label"],
+                            "estado": "COMPLETADA" if is_completed else "PENDIENTE",
+                            "evaluator_code": evaluator_code,
+                            "evaluator_name": _clean_text(expected.get("evaluator_name")) or "Administrativo",
+                            "evaluator_cedula": _clean_text(expected.get("evaluator_cedula")),
+                            "can_view_grades": current_flow in {"student", "auto_estudiante"} and evaluator_code > 0,
+                            "completed_count": completed,
+                        }
+                    )
+        return {
+            "periodo": periodo,
+            "periodo_detalle": period_label,
+            "codigo_docente": _clean_text(codigo_docente),
+            "codigo_materia": _clean_text(codigo_materia),
+            "docente": teacher_label,
+            "materia": subject_label,
+            "flow": report_flow,
+            "estado": status,
+            "items": items,
+            "total": len(items),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar participantes de evaluacion: {exc}") from exc
 
 
 @router.get("/admin/avance-estudiantes")
@@ -2593,37 +3316,184 @@ def get_teacher_evaluation_student_progress(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar avance por estudiante: {exc}") from exc
 
 
+@router.get("/admin/autoevaluacion-estudiantes")
+def get_teacher_evaluation_auto_student_list(
+    periodo: str = Query(..., min_length=1),
+    estado: str = Query(default="pendientes"),
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> dict[str, Any]:
+    normalized_status = _clean_text(estado).lower()
+    if normalized_status not in {"pendientes", "realizadas", "todos"}:
+        raise HTTPException(status_code=400, detail="Estado no valido para autoevaluacion estudiantil.")
+    try:
+        with get_connection() as academic_conn, get_evaluation_connection() as evaluation_conn:
+            academic_cursor = academic_conn.cursor()
+            evaluation_cursor = evaluation_conn.cursor()
+            expected = _student_progress_expected(academic_cursor, periodo, limit)
+            completed = _student_progress_completed(
+                evaluation_cursor,
+                periodo,
+                [_safe_int(item.get("codigo_estud")) for item in expected],
+                "auto_estudiante",
+            )
+            items: list[dict[str, Any]] = []
+            for item in expected:
+                code = _safe_int(item.get("codigo_estud"))
+                expected_count = _safe_int(item.get("materias_evaluables"))
+                done = min(_safe_int(completed.get(code)), expected_count)
+                pending = max(expected_count - done, 0)
+                is_complete = expected_count > 0 and pending == 0
+                if normalized_status == "pendientes" and is_complete:
+                    continue
+                if normalized_status == "realizadas" and not is_complete:
+                    continue
+                items.append(
+                    {
+                        **item,
+                        "esperadas": expected_count,
+                        "completadas": done,
+                        "pendientes": pending,
+                        "avance_percent": round((done / expected_count) * 100, 2) if expected_count else 0,
+                        "estado": "REALIZADA" if is_complete else "PENDIENTE",
+                    }
+                )
+        return {"periodo": periodo, "estado": normalized_status, "items": items, "total": len(items)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar autoevaluacion estudiantil: {exc}") from exc
+
+
+@router.get("/admin/estudiante-notas")
+def get_teacher_evaluation_student_grades(
+    periodo: str = Query(..., min_length=1),
+    codigo_estud: int = Query(..., ge=1),
+) -> dict[str, Any]:
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP 1
+                    de.codigo_estud,
+                    LTRIM(RTRIM(de.Cedula_Est)) AS cedula,
+                    LTRIM(RTRIM(de.Apellidos_nombre)) AS estudiante
+                FROM dbo.DATOS_ESTUD de
+                WHERE de.codigo_estud = ?
+                """,
+                codigo_estud,
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="No se encontro el estudiante.")
+            grades = _student_period_grades(cursor, periodo, codigo_estud)
+            return {
+                "periodo": periodo,
+                "codigo_estud": _safe_int(row.codigo_estud),
+                "cedula": _clean(row.cedula),
+                "estudiante": _clean(row.estudiante),
+                "items": grades,
+                "total": len(grades),
+            }
+    except HTTPException:
+        raise
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar notas del estudiante: {exc}") from exc
+
+
 @router.get("/admin/docentes-calificados")
-def get_teacher_evaluation_graded_teachers(periodo: str = Query(..., min_length=1)) -> dict[str, Any]:
+def get_teacher_evaluation_graded_teachers(
+    periodo: str = Query(..., min_length=1),
+    flow: str = Query(default="all"),
+) -> dict[str, Any]:
     try:
         teachers, _, period_label = _teacher_evaluation_academic_maps(periodo)
         with get_evaluation_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT
-                    Cod_Docente_Evaluado,
-                    COUNT(1) AS total_registros,
-                    AVG(TRY_CONVERT(float, Puntaje_Final_360)) AS promedio_final
-                FROM eval360.vw_Resultado_360_Docente
-                WHERE Cod_Periodo = ?
-                GROUP BY Cod_Docente_Evaluado
-                ORDER BY Cod_Docente_Evaluado
-                """,
-                periodo,
-            )
+            report_flow = _clean_text(flow or "all")
+            if report_flow == "all":
+                flow_label = "Resultado final 360"
+                weight_rows = _evaluation_weights_for_period(cursor, periodo)
+                cursor.execute(
+                    """
+                    SELECT
+                        Cod_Docente_Evaluado,
+                        COUNT(1) AS total_registros,
+                        SUM(1) AS total_evaluaciones,
+                        SUM(0) AS total_respuestas,
+                        AVG(TRY_CONVERT(float, Promedio_Estudiantes)) AS Promedio_Estudiantes,
+                        AVG(TRY_CONVERT(float, Promedio_Par_Docente)) AS Promedio_Par_Docente,
+                        AVG(TRY_CONVERT(float, Promedio_Autoridad)) AS Promedio_Autoridad,
+                        AVG(TRY_CONVERT(float, Promedio_Autoevaluacion)) AS Promedio_Autoevaluacion,
+                        AVG(TRY_CONVERT(float, Puntaje_Final_360)) AS promedio_final
+                    FROM eval360.vw_Resultado_360_Docente
+                    WHERE Cod_Periodo = ?
+                    GROUP BY Cod_Docente_Evaluado
+                    ORDER BY Cod_Docente_Evaluado
+                    """,
+                    periodo,
+                )
+            else:
+                weight_rows = []
+                if report_flow not in _EVALUATION_FLOWS or report_flow == "auto_estudiante":
+                    raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para docentes calificados.")
+                instrument = _get_instrument(cursor, report_flow)
+                flow_label = _flow_config(report_flow)["label"]
+                cursor.execute(
+                    """
+                    SELECT
+                        Cod_Docente_Evaluado,
+                        Codigo_Tipo_Evaluacion,
+                        MAX(Tipo_Evaluacion) AS Tipo_Evaluacion,
+                        COUNT(1) AS total_registros,
+                        SUM(ISNULL(Total_Evaluaciones, 0)) AS total_evaluaciones,
+                        SUM(ISNULL(Total_Respuestas, 0)) AS total_respuestas,
+                        AVG(TRY_CONVERT(float, Promedio_Tipo)) AS promedio_final
+                    FROM eval360.vw_Resultado_Tipo_Docente
+                    WHERE Cod_Periodo = ?
+                      AND Codigo_Tipo_Evaluacion = ?
+                    GROUP BY Cod_Docente_Evaluado, Codigo_Tipo_Evaluacion
+                    ORDER BY Cod_Docente_Evaluado
+                    """,
+                    periodo,
+                    _clean_text(instrument.get("tipo_evaluacion_codigo")),
+                )
             items: list[dict[str, Any]] = []
             for row in cursor.fetchall():
                 code = _clean_text(row.Cod_Docente_Evaluado)
                 teacher = teachers.get(code, {"codigo_doc": code, "docente": f"Docente {code}", "cedula_doc": ""})
+                if report_flow == "all":
+                    promedio_final = _weighted_teacher_result_score(
+                        {
+                            "Promedio_Estudiantes": row.Promedio_Estudiantes,
+                            "Promedio_Par_Docente": row.Promedio_Par_Docente,
+                            "Promedio_Autoridad": row.Promedio_Autoridad,
+                            "Promedio_Autoevaluacion": row.Promedio_Autoevaluacion,
+                            "Puntaje_Final_360": row.promedio_final,
+                        },
+                        weight_rows,
+                    )
+                else:
+                    promedio_final = _score_to_100(row.promedio_final)
                 items.append(
                     {
                         **teacher,
                         "total_registros": _safe_int(row.total_registros),
-                        "promedio_final": _safe_float(row.promedio_final),
+                        "total_evaluaciones": _safe_int(row.total_evaluaciones),
+                        "total_respuestas": _safe_int(row.total_respuestas),
+                        "promedio_final": promedio_final,
+                        "flow": report_flow,
+                        "flow_label": _clean_text(getattr(row, "Tipo_Evaluacion", "")) or flow_label,
                     }
                 )
-            return {"periodo": periodo, "periodo_detalle": period_label, "items": items, "total": len(items)}
+            return {
+                "periodo": periodo,
+                "periodo_detalle": period_label,
+                "flow": report_flow,
+                "flow_label": flow_label,
+                "items": items,
+                "total": len(items),
+            }
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
@@ -2634,10 +3504,12 @@ def get_teacher_evaluation_graded_teachers(periodo: str = Query(..., min_length=
 def download_teacher_evaluation_grades_pdf(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(default=""),
+    flow: str = Query(default="all"),
+    document_type: str = Query(default="certificado"),
 ) -> StreamingResponse:
     try:
         teacher_code = _clean_text(codigo_docente)
-        report = _fetch_teacher_grade_report(periodo, teacher_code or None)
+        report = _fetch_teacher_grade_report(periodo, teacher_code or None, flow=flow, document_type=document_type)
         pdf_bytes = _build_teacher_grade_pdf(report)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2645,7 +3517,10 @@ def download_teacher_evaluation_grades_pdf(
         raise HTTPException(status_code=500, detail=f"No se pudo generar el PDF de calificaciones docentes: {exc}") from exc
 
     teacher_suffix = f"_{_safe_filename(teacher_code)}" if teacher_code else "_todos"
-    filename = f"calificacion_docente_{_safe_int(periodo)}{teacher_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    filename = (
+        f"{_safe_filename(document_type or 'certificado')}_evaluacion_docente_"
+        f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}{teacher_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    )
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -2732,7 +3607,7 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
                 else:
                     cursor.execute(_authority_all_courses_query())
                     authority_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
-                authority_courses = _deduplicate_subject_courses(authority_courses)
+                authority_courses = _deduplicate_subject_courses(authority_courses, include_teacher=True)
 
                 authority_evaluator_code = _authority_evaluator_code(authority)
                 if authority_courses and authority_evaluator_code:

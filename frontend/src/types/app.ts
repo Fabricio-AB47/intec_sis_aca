@@ -265,11 +265,86 @@ export type TeacherEvaluationAdminPendingItem = {
   course: TeacherEvaluationCourse
 }
 
+export type TeacherEvaluationTeacherProgressItem = {
+  flow: TeacherEvaluationFlow | 'all'
+  flow_label: string
+  codigo_doc: string
+  docente: string
+  cedula_doc?: string | null
+  codigo_periodo: string
+  periodo_detalle?: string | null
+  codigo_materia: string
+  codigo_materia_interno?: string | null
+  materia: string
+  carrera?: string | null
+  paralelo?: string | null
+  expected: number
+  completed: number
+  pending: number
+  progress_percent: number
+  ponderacion?: number
+  ponderacion_aplicada?: number
+}
+
+export type TeacherEvaluationProgressDetailItem = {
+  flow: TeacherEvaluationFlow | 'all'
+  flow_label: string
+  categoria: string
+  promedio: number
+  promedio_ajustado?: number
+  ponderacion: number
+  ponderacion_tipo?: number
+  aporte: number
+  cobertura?: number
+  esperadas?: number
+  evaluaciones: number
+  respuestas: number
+}
+
+export type TeacherEvaluationProgressDetailResponse = {
+  periodo: string
+  periodo_detalle: string
+  flow: TeacherEvaluationFlow | 'all'
+  codigo_docente: string
+  codigo_materia: string
+  docente: string
+  cedula_doc?: string | null
+  materia: string
+  carrera?: string | null
+  items: TeacherEvaluationProgressDetailItem[]
+  total: number
+}
+
+export type TeacherEvaluationProgressParticipantItem = {
+  flow: TeacherEvaluationFlow
+  flow_label: string
+  estado: string
+  evaluator_code: number
+  evaluator_name: string
+  evaluator_cedula?: string | null
+  can_view_grades: boolean
+  completed_count: number
+}
+
+export type TeacherEvaluationProgressParticipantsResponse = {
+  periodo: string
+  periodo_detalle: string
+  codigo_docente: string
+  codigo_materia: string
+  docente: string
+  materia: string
+  flow: TeacherEvaluationFlow | 'all'
+  estado: 'completadas' | 'pendientes'
+  items: TeacherEvaluationProgressParticipantItem[]
+  total: number
+}
+
 export type TeacherEvaluationAdminPendingResponse = {
   periodo: string
   periodo_detalle: string
   flow: TeacherEvaluationFlow | 'all'
   summary: TeacherEvaluationAdminSummaryItem[]
+  teacher_progress?: TeacherEvaluationTeacherProgressItem[]
   items: TeacherEvaluationAdminPendingItem[]
   total: number
 }
@@ -279,12 +354,18 @@ export type TeacherEvaluationGradedTeacher = {
   docente: string
   cedula_doc?: string | null
   total_registros: number
+  total_evaluaciones?: number
+  total_respuestas?: number
   promedio_final: number
+  flow?: TeacherEvaluationFlow | 'all'
+  flow_label?: string | null
 }
 
 export type TeacherEvaluationGradedTeachersResponse = {
   periodo: string
   periodo_detalle: string
+  flow?: TeacherEvaluationFlow | 'all'
+  flow_label?: string
   items: TeacherEvaluationGradedTeacher[]
   total: number
 }
@@ -306,6 +387,43 @@ export type TeacherEvaluationStudentProgressItem = {
   evaluacion_docente: TeacherEvaluationStudentProgressMetric
   autoevaluacion_estudiante: TeacherEvaluationStudentProgressMetric
   avance_total_percent: number
+}
+
+export type TeacherEvaluationAutoStudentListItem = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  carreras?: string | null
+  materias_evaluables: number
+  esperadas: number
+  completadas: number
+  pendientes: number
+  avance_percent: number
+  estado: string
+}
+
+export type TeacherEvaluationAutoStudentListResponse = {
+  periodo: string
+  estado: string
+  items: TeacherEvaluationAutoStudentListItem[]
+  total: number
+}
+
+export type TeacherEvaluationStudentGradeItem = {
+  codigo_materia: string | number
+  materia: string
+  carrera: string
+  paralelo?: string | null
+  promedio_final: number
+}
+
+export type TeacherEvaluationStudentGradesResponse = {
+  periodo: string
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  items: TeacherEvaluationStudentGradeItem[]
+  total: number
 }
 
 export type TeacherEvaluationStudentProgressResponse = {
