@@ -33,7 +33,7 @@ _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.s
 
 _NUMBER_PATTERN = re.compile(r"\d+")
 _QUESTION_PREFIX_PATTERN = re.compile(
-    r"^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:\d+(?:\.\d+)*|[ivxlcdm]+)\s*(?:[.)\-–—:]|\s+)+",
+    r"^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:(?:\d+(?:\.\d+)*)\s*(?:[.)\-–—:]|\s+)+|(?:[ivxlcdm]+)\s*[.)\-–—:]+)",
     re.IGNORECASE,
 )
 _SUBMITTED_STATES = ("ENVIADA", "FINALIZADA", "COMPLETADA", "REGISTRADA")
