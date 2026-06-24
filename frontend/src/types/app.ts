@@ -50,13 +50,16 @@ export type Page =
   | 'correos-masivos'
   | 'carnet-institucional'
   | 'evaluacion-docente'
+  | 'evaluacion-docente-admin'
+  | 'evaluacion-docente-avance'
+  | 'evaluacion-docente-reportes'
   | 'portal-estudiante'
   | 'portal-docente'
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
-export type TeacherEvaluationFlow = 'student' | 'auto_docente' | 'par_docente'
+export type TeacherEvaluationFlow = 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente' | 'academico_docente'
 
 export type TeacherEvaluationQuestion = {
   id_pregunta: number
@@ -104,6 +107,23 @@ export type TeacherEvaluationCourse = {
   jornada?: string | null
   respuestas_registradas?: number
   evaluado?: boolean
+  carreras_relacionadas?: string[]
+  paralelos_relacionados?: string[]
+  docentes_relacionados?: string[]
+  codigos_materia_relacionados?: number[]
+  componentes_relacionados?: Array<{
+    periodo?: string | number | null
+    codigo_periodo?: number | string | null
+    codigo_materia?: number | string | null
+    codigo_materia_interno?: string | null
+    materia?: string | null
+    carrera?: string | null
+    cod_anio_basica?: number | string | null
+    paralelo?: string | null
+    docente?: string | null
+    cedula_docente?: string | null
+    jornada?: string | null
+  }>
 }
 
 export type TeacherEvaluationStudent = {
@@ -129,6 +149,23 @@ export type TeacherEvaluationTeacher = {
   usuario?: string | null
 }
 
+export type TeacherEvaluationAuthority = {
+  codigo_autoridad: number
+  id_autoridad_eval360?: number | null
+  id_usuarios?: number | string | null
+  cedula: string
+  login?: string | null
+  nombres: string
+  autoridad?: string | null
+  email?: string | null
+  coordcarrera?: string | number | null
+  cod_carrera_autoridad?: string | number | null
+  cargo?: string | null
+  tipousuario?: string | null
+  tp_us?: string | null
+  estado?: string | null
+}
+
 export type TeacherEvaluationTeacherResponse = {
   teacher: TeacherEvaluationTeacher
   auto_courses: TeacherEvaluationCourse[]
@@ -140,12 +177,15 @@ export type TeacherEvaluationTeacherResponse = {
 
 export type TeacherEvaluationIdentityResponse = {
   cedula: string
-  roles: Array<'student' | 'teacher'>
+  roles: Array<'student' | 'teacher' | 'authority'>
   student: TeacherEvaluationStudentResponse['student'] | null
   teacher: TeacherEvaluationTeacherResponse['teacher'] | null
+  authority?: TeacherEvaluationAuthority | null
   student_courses: TeacherEvaluationCourse[]
+  auto_student_courses?: TeacherEvaluationCourse[]
   auto_courses: TeacherEvaluationCourse[]
   peer_courses: TeacherEvaluationCourse[]
+  authority_courses?: TeacherEvaluationCourse[]
   advertencias?: string[]
 }
 
@@ -157,6 +197,7 @@ export type TeacherEvaluationQuestionsResponse = {
 }
 
 export type TeacherEvaluationSubmitPayload = {
+  flow?: Extract<TeacherEvaluationFlow, 'student' | 'auto_estudiante'>
   cedula: string
   codigo_periodo: number
   codigo_materia: number
@@ -178,11 +219,100 @@ export type TeacherEvaluationSubmitResponse = {
   message: string
   student?: TeacherEvaluationStudent
   teacher?: TeacherEvaluationTeacher
+  authority?: TeacherEvaluationAuthority
   course: TeacherEvaluationCourse
 }
 
-export type TeacherRoleEvaluationSubmitPayload = TeacherEvaluationSubmitPayload & {
-  flow: Exclude<TeacherEvaluationFlow, 'student'>
+export type TeacherRoleEvaluationSubmitPayload = Omit<TeacherEvaluationSubmitPayload, 'flow'> & {
+  flow: Exclude<TeacherEvaluationFlow, 'student' | 'auto_estudiante'>
+}
+
+export type TeacherEvaluationAdminPeriod = {
+  codigo_periodo: string
+  detalle_periodo: string
+}
+
+export type TeacherEvaluationAdminPeriodsResponse = {
+  items: TeacherEvaluationAdminPeriod[]
+  total: number
+}
+
+export type TeacherEvaluationAdminSummaryItem = {
+  flow: TeacherEvaluationFlow
+  flow_label: string
+  expected: number
+  completed: number
+  pending: number
+  progress_percent?: number
+  ponderacion?: number
+}
+
+export type TeacherEvaluationAdminPendingItem = {
+  flow: TeacherEvaluationFlow
+  flow_label: string
+  evaluator_code?: number | null
+  evaluator_name?: string | null
+  evaluator_cedula?: string | null
+  periodo: string
+  periodo_detalle: string
+  estado: 'PENDIENTE' | string
+  course: TeacherEvaluationCourse
+}
+
+export type TeacherEvaluationAdminPendingResponse = {
+  periodo: string
+  periodo_detalle: string
+  flow: TeacherEvaluationFlow | 'all'
+  summary: TeacherEvaluationAdminSummaryItem[]
+  items: TeacherEvaluationAdminPendingItem[]
+  total: number
+}
+
+export type TeacherEvaluationGradedTeacher = {
+  codigo_doc: string
+  docente: string
+  cedula_doc?: string | null
+  total_registros: number
+  promedio_final: number
+}
+
+export type TeacherEvaluationGradedTeachersResponse = {
+  periodo: string
+  periodo_detalle: string
+  items: TeacherEvaluationGradedTeacher[]
+  total: number
+}
+
+export type TeacherEvaluationStudentProgressMetric = {
+  ponderacion: number
+  esperadas?: number
+  completadas: number
+  pendientes: number
+  avance_percent: number
+}
+
+export type TeacherEvaluationStudentProgressItem = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  carreras?: string | null
+  materias_evaluables: number
+  evaluacion_docente: TeacherEvaluationStudentProgressMetric
+  autoevaluacion_estudiante: TeacherEvaluationStudentProgressMetric
+  avance_total_percent: number
+}
+
+export type TeacherEvaluationStudentProgressResponse = {
+  periodo: string
+  periodo_detalle: string
+  summary: {
+    estudiantes: number
+    materias_evaluables: number
+    evaluacion_docente: TeacherEvaluationStudentProgressMetric
+    autoevaluacion_estudiante: TeacherEvaluationStudentProgressMetric
+  }
+  items: TeacherEvaluationStudentProgressItem[]
+  total: number
 }
 
 export type GraphTeam = {
@@ -813,7 +943,7 @@ export type CertificateRenameItem = {
   codigo_estud?: string
   carrera?: string
   periodo?: string
-  status?: 'LISTO' | 'SIN_CEDULA' | 'CEDULA_NO_ENCONTRADA' | 'NO_PDF' | string
+  status?: 'LISTO' | 'RENOMBRADO_DOCUMENTO' | 'SIN_CEDULA' | 'CEDULA_NO_ENCONTRADA' | 'NO_PDF' | string
   detail?: string
 }
 

@@ -40,6 +40,8 @@ type StudentLayoutProps = {
   onOpenMassEmail: () => void
   onOpenCarnetInstitucional: () => void
   onOpenTeacherEvaluation: () => void
+  onOpenTeacherEvaluationProgress: () => void
+  onOpenTeacherEvaluationReports: () => void
   onLogout: () => void
   children: ReactNode
 }
@@ -131,6 +133,7 @@ function sortNavGroups(groups: NavGroup[]) {
     inicio: 0,
     'actualizacion-estados': 10,
     administracion: 20,
+    desempeno: 25,
     'admision-matriculas': 30,
     migracion: 35,
     carnetizacion: 50,
@@ -180,6 +183,7 @@ function groupIconName(groupKey: string): GroupIconName {
     'portal-estudiante': 'student',
     'portal-docente': 'teacher',
     administracion: 'users',
+    desempeno: 'academic',
     carnetizacion: 'id-card',
     vinculacion: 'briefcase',
     catalogos: 'catalog',
@@ -356,6 +360,8 @@ export function StudentLayout({
   onOpenMassEmail,
   onOpenCarnetInstitucional,
   onOpenTeacherEvaluation,
+  onOpenTeacherEvaluationProgress,
+  onOpenTeacherEvaluationReports,
   onLogout,
   children,
 }: Readonly<StudentLayoutProps>) {
@@ -364,7 +370,7 @@ export function StudentLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
-    () => new Set(['inicio', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'migracion', 'certificados', 'carnetizacion'])
+    () => new Set(['inicio', 'desempeno', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'migracion', 'certificados', 'carnetizacion'])
   )
 
   useEffect(() => {
@@ -713,6 +719,25 @@ export function StudentLayout({
           page: 'gestion-sisacademico',
           sectionKey: 'fechas_autoevaluacion',
           action: () => onOpenGestionSisAcademico('fechas_autoevaluacion'),
+        },
+      ],
+    },
+    {
+      key: 'desempeno',
+      title: 'Desempeño',
+      summary: 'Evaluación, calificación y documentos',
+      items: [
+        {
+          label: 'Avance y ponderación',
+          description: 'Porcentaje de avance y peso de cada evaluación.',
+          page: 'evaluacion-docente-avance',
+          action: onOpenTeacherEvaluationProgress,
+        },
+        {
+          label: 'Generar documento de evaluación',
+          description: 'Pendientes por periodo y PDF de calificación docente.',
+          page: 'evaluacion-docente-reportes',
+          action: onOpenTeacherEvaluationReports,
         },
       ],
     },

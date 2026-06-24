@@ -54,7 +54,7 @@ def _safe_filename(value: str, fallback: str = "SIN_NOMBRE") -> str:
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     safe = re.sub(r"[^A-Za-z0-9._ -]+", " ", ascii_text)
     safe = re.sub(r"\s+", " ", safe).strip(" ._-")
-    return safe[:140] or fallback
+    return safe[:210] or fallback
 
 
 def _normalize_for_search(value: str) -> str:
@@ -67,6 +67,7 @@ def _normalize_for_search(value: str) -> str:
 
 def _pdf_literal_unescape(value: str) -> str:
     value = value.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
+    value = re.sub(r"\\([0-7]{1,3})", lambda match: chr(int(match.group(1), 8)), value)
     value = re.sub(r"\\([nrtbf])", " ", value)
     return value
 
@@ -79,18 +80,17 @@ def _decode_pdf_stream(stream: bytes, dictionary: bytes) -> str:
         if "ASCII85Decode" in filters or "/A85" in filters:
             import base64
 
-            prepared = data
-            if not prepared.startswith(b"<~"):
-                prepared = b"<~" + prepared
-            if not prepared.rstrip().endswith(b"~>"):
-                prepared = prepared.rstrip(b">") + b"~>"
-            data = base64.a85decode(prepared, adobe=True)
+            prepared = re.sub(rb"\s+", b"", data)
+            if prepared.endswith(b"~>"):
+                data = base64.a85decode(prepared, adobe=True)
+            else:
+                data = base64.a85decode(prepared.rstrip(b">"), adobe=False)
         if "FlateDecode" in filters or "/Fl" in filters:
             data = zlib.decompress(data)
     except Exception:
         return ""
 
-    text = data.decode("latin-1", errors="ignore")
+    text = _pdf_literal_unescape(data.decode("latin-1", errors="ignore"))
     literals = [_pdf_literal_unescape(match) for match in re.findall(r"\((.*?)\)", text, flags=re.DOTALL)]
     return "\n".join([text, *literals])
 
@@ -154,7 +154,73 @@ def _tesseract_executable() -> str:
 
 
 def _ocr_is_available() -> bool:
-    return bool(_tesseract_executable() and (shutil.which("pdftoppm") or shutil.which("pdftocairo")))
+    if not _tesseract_executable():
+        return False
+    if shutil.which("pdftoppm") or shutil.which("pdftocairo"):
+        return True
+    try:
+        import pypdfium2  # type: ignore[import-not-found]  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+def _extract_text_with_pdfium_ocr(data: bytes) -> str:
+    tesseract = _tesseract_executable()
+    if not tesseract:
+        return ""
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-not-found]
+        import pytesseract  # type: ignore[import-not-found]
+    except Exception:
+        return ""
+
+    try:
+        pytesseract.pytesseract.tesseract_cmd = tesseract
+    except Exception:
+        pass
+
+    try:
+        document = pdfium.PdfDocument(data)
+    except Exception:
+        return ""
+
+    text_parts: list[str] = []
+    try:
+        page_count = min(len(document), MAX_OCR_PAGES)
+        for page_index in range(page_count):
+            page = document[page_index]
+            try:
+                bitmap = page.render(scale=3.2, rotation=0)
+                image = bitmap.to_pil()
+                width, height = image.size
+                crops = [
+                    image,
+                    image.crop((0, int(height * 0.18), width, int(height * 0.62))),
+                ]
+                for crop in crops:
+                    for config in ("--psm 6", "--psm 11"):
+                        try:
+                            text = pytesseract.image_to_string(crop, lang="spa+eng", config=config)
+                        except Exception:
+                            text = pytesseract.image_to_string(crop, config=config)
+                        if text:
+                            text_parts.append(text)
+                            joined = "\n".join(text_parts)
+                            if _cedula_candidates(joined) and _document_info_from_text(joined).get("nombres"):
+                                return joined
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+    finally:
+        try:
+            document.close()
+        except Exception:
+            pass
+    return "\n".join(text_parts)
 
 
 def _extract_text_with_tesseract_cli(data: bytes) -> str:
@@ -226,6 +292,9 @@ def _extract_text_with_optional_ocr(data: bytes) -> str:
     tesseract = _tesseract_executable()
     if not tesseract:
         return ""
+    pdfium_text = _extract_text_with_pdfium_ocr(data)
+    if pdfium_text:
+        return pdfium_text
     if not shutil.which("pdftoppm") and not shutil.which("pdftocairo"):
         return ""
 
@@ -288,7 +357,12 @@ def _extract_pdf_text(data: bytes) -> str:
     raw_text = data.decode("latin-1", errors="ignore")
     parts.append(raw_text)
 
-    for match in re.finditer(rb"(<<.*?>>)\s*stream\r?\n(.*?)\r?\nendstream", data, flags=re.DOTALL):
+    for match in re.finditer(rb"(<<.*?>>)\s*stream\s*(.*?)\s*endstream", data, flags=re.DOTALL):
+        decoded = _decode_pdf_stream(match.group(2), match.group(1))
+        if decoded:
+            parts.append(decoded)
+
+    for match in re.finditer(rb"(<<.*?/Filter.*?>>)\s*stream\s*(.*?)\s*endstream", data, flags=re.DOTALL):
         decoded = _decode_pdf_stream(match.group(2), match.group(1))
         if decoded:
             parts.append(decoded)
@@ -302,24 +376,173 @@ def _cedula_candidates(text: str) -> list[str]:
 
     def append_candidate(value: str, *, validate: bool = True) -> None:
         digits = re.sub(r"\D+", "", value)
+        if len(digits) == 9 and not validate:
+            digits = f"0{digits}"
         if len(digits) == 10 and (not validate or _is_valid_ecuador_cedula(digits)) and digits not in seen:
             seen.add(digits)
             candidates.append(digits)
 
-    normalized_text = _normalize_for_search(text)
+    normalized_text = _normalize_for_search(_pdf_literal_unescape(text))
     specific_patterns = [
-        r"titular\s+de\s+la\s+cedula\s*(?:no|nro|num|numero|#)?\.?\s*[:\-]?\s*(\d[\d\s.\-]{8,18}\d)",
-        r"titular\s+de\s+la\s+cedula\D{0,35}(\d[\d\s.\-]{8,18}\d)",
-        r"cedula\s*(?:no|nro|num|numero|#)?\.?\s*[:\-]?\s*(\d[\d\s.\-]{8,18}\d)",
-        r"cedula\D{0,35}(\d[\d\s.\-]{8,18}\d)",
+        r"titular\s+de\s+la\s+cedula\s*(?:no|nro|num|numero|#)?\.?\s*[:\-]?\s*(\d[\d\s.\-]{7,18}\d)",
+        r"titular\s+de\s+la\s+cedula\D{0,35}(\d[\d\s.\-]{7,18}\d)",
+        r"cedula\s*(?:no|nro|num|numero|#)?\.?\s*[:\-]?\s*(\d[\d\s.\-]{7,18}\d)",
+        r"cedula\D{0,35}(\d[\d\s.\-]{7,18}\d)",
     ]
     for pattern in specific_patterns:
         for match in re.findall(pattern, normalized_text, flags=re.IGNORECASE):
             append_candidate(match, validate=False)
+    if candidates:
+        return candidates
 
     for match in re.findall(r"(?<!\d)(\d[\d\s.\-]{8,18}\d)(?!\d)", text):
         append_candidate(match)
     return candidates
+
+
+def _single_line(value: str) -> str:
+    value = _pdf_literal_unescape(value)
+    value = re.sub(r"\s+", " ", value)
+    value = re.sub(
+        r"\b(?:cedula|c[eé]dula|titular|carrera|semestre|periodo|fecha)\b.*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return _clean(value.strip(" :;,.|-"))
+
+
+def _visible_pdf_lines(text: str) -> list[str]:
+    return [
+        _pdf_literal_unescape(line)
+        for line in text.splitlines()
+        if line.strip() and " Tj" not in line and " Tm " not in line and not line.lstrip().startswith(("BT", "ET", "/F"))
+    ]
+
+
+def _extract_document_field(text: str, label_pattern: str) -> str:
+    visible_lines = _visible_pdf_lines(text)
+    patterns = [
+        rf"^\s*(?:{label_pattern})\s*[:\-]\s*([^\n\r]+)",
+        rf"^\s*(?:{label_pattern})\s+([^\n\r]+)",
+    ]
+    for line in visible_lines:
+        for pattern in patterns:
+            match = re.search(pattern, line, flags=re.IGNORECASE)
+            if match:
+                value = _single_line(match.group(1))
+                if value:
+                    return value
+
+    fallback_patterns = [
+        rf"(?:{label_pattern})\s*[:\-]\s*([^\n\r]+)",
+        rf"(?:{label_pattern})\s+([^\n\r]+)",
+    ]
+    for pattern in fallback_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _single_line(match.group(1))
+    return ""
+
+
+def _extract_certificate_type(text: str) -> str:
+    visible_text = "\n".join(_visible_pdf_lines(text))
+    normalized = _normalize_for_search(visible_text or text)
+    if "matricula" in normalized:
+        return "CERTIFICADO_MATRICULA"
+    if "promocion" in normalized:
+        return "CERTIFICADO_PROMOCION"
+    if "asistencia" in normalized:
+        return "CERTIFICADO_ASISTENCIA"
+    if "calificaciones" in normalized or "notas" in normalized:
+        return "CERTIFICADO_CALIFICACIONES"
+
+    candidates = [
+        r"certificado\s+de\s+([a-záéíóúñü\s]{3,80})",
+        r"certifica(?:do)?\s+que",
+    ]
+    for pattern in candidates:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        if match.groups():
+            value = _single_line(match.group(1))
+            if value:
+                return f"CERTIFICADO_{_safe_filename(value).replace(' ', '_').upper()}"
+        return "CERTIFICADO"
+    if "matricula" in normalized:
+        return "CERTIFICADO_MATRICULA"
+    return "CERTIFICADO"
+
+
+def _extract_document_student_name(text: str) -> str:
+    visible_text = "\n".join(_visible_pdf_lines(text))
+    patterns = [
+        r"estudiante\s*:\s*(.*?)\s*,?\s*titular\s+de\s+la\s+c[eé]dula",
+        r"el/la\s+estudiante\s*:\s*(.*?)\s*,?\s*titular",
+        r"el\s*/?\s*la\s+estudiante\s*:\s*(.*?)\s*,?\s*titular",
+        r"(?:el|la)\s+estudiante\s*:\s*(.*?)\s*,?\s*titular",
+        r"(?:a\s+petici[oó]n\s+de|se\s+certifica\s+que)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{8,120})",
+        r"estudiante\s*:\s*([^\n\r]+)",
+        r"estudiante\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{8,120})",
+        r"nombre\s*:\s*([^\n\r]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, visible_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            name = _single_line(match.group(1))
+            if name:
+                return name
+
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            name = _single_line(match.group(1))
+            if name:
+                return name
+    return ""
+
+
+def _document_info_from_text(text: str) -> dict[str, str]:
+    return {
+        "tipo_certificado": _extract_certificate_type(text),
+        "nombres": _extract_document_student_name(text),
+        "carrera": _extract_document_field(text, r"carrera"),
+        "periodo": _extract_document_field(text, r"periodo\s+acad[eé]mico|periodo"),
+    }
+
+
+def _rename_from_document(
+    *,
+    original_name: str,
+    selected_cedula: str,
+    text: str,
+    detail: str,
+) -> dict[str, Any]:
+    document_info = _document_info_from_text(text)
+    tipo_certificado = _clean(document_info.get("tipo_certificado")) or "CERTIFICADO"
+    nombres = _clean(document_info.get("nombres")) or _safe_filename(Path(original_name).stem)
+    carrera = _clean(document_info.get("carrera"))
+    periodo = _clean(document_info.get("periodo"))
+    name_parts = [
+        tipo_certificado,
+        selected_cedula,
+        nombres,
+        carrera,
+        periodo,
+    ]
+    new_name = f"{_safe_filename(' - '.join(part for part in name_parts if part))}.pdf"
+    return {
+        "original_name": original_name,
+        "new_name": new_name,
+        "cedula": selected_cedula,
+        "nombres": nombres,
+        "codigo_estud": "",
+        "carrera": carrera,
+        "periodo": periodo,
+        "status": "RENOMBRADO_DOCUMENTO",
+        "detail": detail,
+    }
 
 
 def _is_valid_ecuador_cedula(cedula: str) -> bool:
@@ -431,37 +654,26 @@ def _analyze_pdf(original_name: str, data: bytes, index: int) -> dict[str, Any]:
     student = students.get(selected_cedula, {})
 
     if not selected_cedula:
-        detail = "No se encontro una cedula ecuatoriana valida dentro del PDF."
+        detail = "No se encontro una cedula valida; se renombro con informacion detectada en el PDF."
         if not _ocr_is_available():
             detail = (
-                "El PDF parece estar escaneado y no tiene texto seleccionable. "
-                "Instala Tesseract OCR o agrega tesseract.exe al PATH para leer la cedula despues de 'titular de la Cedula No.'."
+                "No se encontro una cedula valida y OCR no esta disponible; "
+                "se renombro con el texto seleccionable o el nombre original del documento."
             )
-        return {
-            "original_name": original_name,
-            "new_name": "",
-            "cedula": "",
-            "nombres": "",
-            "codigo_estud": "",
-            "carrera": "",
-            "periodo": "",
-            "status": "SIN_CEDULA",
-            "detail": detail,
-        }
+        return _rename_from_document(
+            original_name=original_name,
+            selected_cedula="",
+            text=text,
+            detail=detail,
+        )
 
     if not student:
-        new_name = f"{index:03d}_CEDULA_{selected_cedula}_{_safe_filename(Path(original_name).stem)}.pdf"
-        return {
-            "original_name": original_name,
-            "new_name": new_name,
-            "cedula": selected_cedula,
-            "nombres": "",
-            "codigo_estud": "",
-            "carrera": "",
-            "periodo": "",
-            "status": "CEDULA_NO_ENCONTRADA",
-            "detail": "La cedula esta en el PDF, pero no existe en DATOS_ESTUD/PREINSCRIPCION.",
-        }
+        return _rename_from_document(
+            original_name=original_name,
+            selected_cedula=selected_cedula,
+            text=text,
+            detail="La cedula no existe en DATOS_ESTUD/PREINSCRIPCION; se renombro con informacion detectada en el PDF.",
+        )
 
     nombres = _clean(student.get("nombres"))
     codigo = _clean(student.get("codigo_estud"))
@@ -580,7 +792,7 @@ def _unique_name(name: str, used: set[str]) -> str:
 def _analysis_summary(items: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "total": len(items),
-        "ready": sum(1 for item in items if item.get("status") == "LISTO"),
+        "ready": sum(1 for item in items if item.get("status") in {"LISTO", "RENOMBRADO_DOCUMENTO"}),
         "without_cedula": sum(1 for item in items if item.get("status") == "SIN_CEDULA"),
         "not_found": sum(1 for item in items if item.get("status") == "CEDULA_NO_ENCONTRADA"),
         "not_pdf": sum(1 for item in items if item.get("status") == "NO_PDF"),
@@ -614,7 +826,7 @@ def _report_csv_bytes(items: list[dict[str, Any]]) -> bytes:
 
 
 def _renamed_archive_name(item: dict[str, Any], used_names: set[str]) -> str:
-    if item.get("status") in {"LISTO", "CEDULA_NO_ENCONTRADA"} and item.get("new_name"):
+    if item.get("status") in {"LISTO", "CEDULA_NO_ENCONTRADA", "RENOMBRADO_DOCUMENTO"} and item.get("new_name"):
         filename = _unique_name(_clean(item["new_name"]), used_names)
     else:
         filename = _unique_name(f"SIN_RENOMBRAR_{_safe_filename(_clean(item.get('original_name')), 'archivo.pdf')}", used_names)

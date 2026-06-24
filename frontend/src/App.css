@@ -20044,10 +20044,95 @@ body .student-sidebar .logout-button {
 }
 
 .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__mode-card:hover,
-.teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__course-card:hover:not(:disabled) {
+.teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__course-card:hover {
   border-color: #931913;
   box-shadow: 0 12px 26px rgba(147, 25, 19, 0.12);
   transform: translateY(-1px);
+}
+
+.teacher-evaluation__course-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.teacher-evaluation__icon-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(141, 187, 199, 0.8);
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0c1f42;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.teacher-evaluation__icon-button:hover {
+  border-color: #931913;
+  color: #931913;
+}
+
+.teacher-evaluation__course-action {
+  width: fit-content;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: #0c1f42;
+  color: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.teacher-evaluation__course-action:disabled {
+  background: rgba(141, 187, 199, 0.5);
+  color: #4d5a78;
+  cursor: not-allowed;
+}
+
+.teacher-evaluation__linked-list {
+  display: grid;
+  gap: 10px;
+}
+
+.teacher-evaluation__linked-item {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.45fr) minmax(180px, 1.05fr) minmax(140px, 0.72fr) minmax(80px, 0.42fr) minmax(240px, 1.35fr) minmax(76px, 0.42fr) minmax(92px, 0.5fr);
+  gap: 10px;
+  align-items: stretch;
+  padding: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.45);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.teacher-evaluation__linked-item > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.teacher-evaluation__linked-item span {
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.teacher-evaluation__linked-item strong {
+  color: #0c1f42;
+  font-size: 0.88rem;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.teacher-evaluation__linked-career strong,
+.teacher-evaluation__linked-teacher strong {
+  font-size: 0.92rem;
 }
 
 .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__question-section {
@@ -20104,6 +20189,16 @@ body .student-sidebar .logout-button {
   .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__modal-body,
   .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__modal-actions {
     padding: 14px;
+  }
+
+  .teacher-evaluation__linked-item {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .teacher-evaluation__linked-item {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

@@ -45,6 +45,7 @@ function valueOrDash(value: unknown) {
 
 function statusLabel(status?: string) {
   if (status === 'LISTO') return 'Listo'
+  if (status === 'RENOMBRADO_DOCUMENTO') return 'Renombrado con documento'
   if (status === 'SIN_CEDULA') return 'Sin cedula'
   if (status === 'CEDULA_NO_ENCONTRADA') return 'Cedula sin registro'
   if (status === 'NO_PDF') return 'No PDF'
@@ -110,7 +111,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     (summary.without_cedula || 0) +
       (summary.not_found || 0) +
       (summary.not_pdf || 0) ||
-    items.filter((item) => item.status !== 'LISTO').length
+    items.filter((item) => item.status !== 'LISTO' && item.status !== 'RENOMBRADO_DOCUMENTO').length
   const overallProgress = analysisProgress.length
     ? Math.round(analysisProgress.reduce((total, item) => total + item.progress, 0) / analysisProgress.length)
     : items.length
@@ -216,7 +217,12 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
               name: item.original_name,
               size: 0,
               progress: 100,
-              stage: item.status === 'LISTO' ? 'Renombrado con datos de la base' : statusLabel(item.status),
+              stage:
+                item.status === 'LISTO'
+                  ? 'Renombrado con datos de la base'
+                  : item.status === 'RENOMBRADO_DOCUMENTO'
+                    ? 'Renombrado con datos del documento'
+                    : statusLabel(item.status),
               status: item.status,
             }))
           : files.map((file, index) => ({

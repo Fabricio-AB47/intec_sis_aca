@@ -120,6 +120,10 @@ import type {
   TeamsActionResponse,
   TeamsCatalogResponse,
   TeacherEvaluationFlow,
+  TeacherEvaluationAdminPendingResponse,
+  TeacherEvaluationAdminPeriodsResponse,
+  TeacherEvaluationGradedTeachersResponse,
+  TeacherEvaluationStudentProgressResponse,
   TeacherEvaluationIdentityResponse,
   TeacherEvaluationQuestionsResponse,
   TeacherEvaluationStudentResponse,
@@ -1629,6 +1633,46 @@ export async function saveTeacherRoleEvaluation(
   return request<TeacherEvaluationSubmitResponse>('/api/evaluacion-docente/teacher/evaluate', {
     method: 'POST',
     body: payload,
+  })
+}
+
+export async function fetchTeacherEvaluationAdminPeriods(): Promise<TeacherEvaluationAdminPeriodsResponse> {
+  return request<TeacherEvaluationAdminPeriodsResponse>('/api/evaluacion-docente/admin/periodos')
+}
+
+export async function fetchTeacherEvaluationAdminPending(
+  periodo: string,
+  flow: TeacherEvaluationFlow | 'all' = 'all',
+  limit = 500,
+): Promise<TeacherEvaluationAdminPendingResponse> {
+  const params = new URLSearchParams({ periodo, flow, limit: String(limit) })
+  return request<TeacherEvaluationAdminPendingResponse>(`/api/evaluacion-docente/admin/pendientes?${params.toString()}`)
+}
+
+export async function fetchTeacherEvaluationGradedTeachers(
+  periodo: string
+): Promise<TeacherEvaluationGradedTeachersResponse> {
+  const params = new URLSearchParams({ periodo })
+  return request<TeacherEvaluationGradedTeachersResponse>(
+    `/api/evaluacion-docente/admin/docentes-calificados?${params.toString()}`,
+  )
+}
+
+export async function fetchTeacherEvaluationStudentProgress(
+  periodo: string,
+  limit = 1000,
+): Promise<TeacherEvaluationStudentProgressResponse> {
+  const params = new URLSearchParams({ periodo, limit: String(limit) })
+  return request<TeacherEvaluationStudentProgressResponse>(
+    `/api/evaluacion-docente/admin/avance-estudiantes?${params.toString()}`,
+  )
+}
+
+export async function downloadTeacherEvaluationGradesPdf(periodo: string, codigoDocente: string = ''): Promise<Blob> {
+  const params = new URLSearchParams({ periodo })
+  if (codigoDocente) params.set('codigo_docente', codigoDocente)
+  return request<Blob>(`/api/evaluacion-docente/admin/reporte-docentes.pdf?${params.toString()}`, {
+    responseType: 'blob',
   })
 }
 

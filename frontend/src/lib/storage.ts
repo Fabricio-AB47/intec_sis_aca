@@ -30,6 +30,9 @@ function isPage(value: string): value is Page {
     value === 'correos-masivos' ||
     value === 'carnet-institucional' ||
     value === 'evaluacion-docente' ||
+    value === 'evaluacion-docente-admin' ||
+    value === 'evaluacion-docente-avance' ||
+    value === 'evaluacion-docente-reportes' ||
     value === 'portal-estudiante' ||
     value === 'portal-docente'
   )

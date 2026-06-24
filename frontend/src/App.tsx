@@ -10,6 +10,7 @@ import { SessionStatusView } from './features/auth/SessionStatusView'
 import { CruceDatosView } from './features/cruce/CruceDatosView'
 import { ExcelValidationView } from './features/cruce/ExcelValidationView'
 import { DashboardView } from './features/dashboard/DashboardView'
+import { TeacherEvaluationAdminView } from './features/evaluacion/TeacherEvaluationAdminView'
 import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
 import { ActualizarDatosEstudianteView } from './features/matricula/ActualizarDatosEstudianteView'
 import { CertificateRenamerView } from './features/matricula/CertificateRenamerView'
@@ -197,6 +198,10 @@ function App() {
           defaultCedula={app.session.cedula || ''}
         />
       )
+    } else if (app.activePage === 'evaluacion-docente-admin' || app.activePage === 'evaluacion-docente-avance') {
+      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="progress" />
+    } else if (app.activePage === 'evaluacion-docente-reportes') {
+      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="reports" />
     } else if (app.activePage === 'portal-estudiante') {
       pageContent = (
         <PortalEstudianteView
@@ -291,6 +296,8 @@ function App() {
           onOpenMassEmail={app.openMassEmailPage}
           onOpenCarnetInstitucional={app.openCarnetInstitucionalPage}
           onOpenTeacherEvaluation={app.openTeacherEvaluationPage}
+          onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
+          onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
           onLogout={() => {
             void app.logout()
           }}

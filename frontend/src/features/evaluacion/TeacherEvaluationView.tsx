@@ -12,7 +12,7 @@ import type {
   TeacherEvaluationQuestion,
 } from '../../types/app'
 
-type TeacherRoleFlow = Exclude<TeacherEvaluationFlow, 'student'>
+type TeacherRoleFlow = Exclude<TeacherEvaluationFlow, 'student' | 'auto_estudiante'>
 
 type TeacherEvaluationViewProps = {
   publicMode?: boolean
@@ -28,32 +28,46 @@ const FLOW_COPY: Record<
   student: {
     eyebrow: 'Estudiante',
     title: 'Evaluación al docente',
-    description: 'Evalúa al docente de cada materia matriculada.',
+    description: 'Evalúa una sola vez cada materia activa del periodo, aunque esté relacionada con varias carreras.',
     empty: 'No se encontraron materias con docente asignado para esta cédula.',
     action: 'Evaluar docente',
+  },
+  auto_estudiante: {
+    eyebrow: 'Estudiante',
+    title: 'Autoevaluación estudiantil',
+    description: 'Registra tu autoevaluación una sola vez por materia del periodo.',
+    empty: 'No se encontraron materias disponibles para autoevaluación estudiantil.',
+    action: 'Autoevaluar',
   },
   auto_docente: {
     eyebrow: 'Docente',
     title: 'Autoevaluación docente',
-    description: 'Registra la autoevaluación de tus materias asignadas.',
+    description: 'Registra la autoevaluación una sola vez por materia activa del periodo.',
     empty: 'No se encontraron materias asignadas para esta cédula.',
     action: 'Autoevaluar',
   },
   par_docente: {
     eyebrow: 'Docente',
     title: 'Evaluación par docente',
-    description: 'Evalúa docentes pares vinculados a tus materias.',
+    description: 'Evalúa una sola vez por materia del periodo, consolidando carreras relacionadas.',
     empty: 'No se encontraron docentes pares disponibles para esta cédula.',
     action: 'Evaluar par',
+  },
+  academico_docente: {
+    eyebrow: 'Administrativo',
+    title: 'Evaluación administrativa docente',
+    description: 'Evalúa una sola vez por materia del periodo desde la autoridad activa registrada en USUARIO_SIS.',
+    empty: 'No se encontraron docentes asignados para evaluación administrativa.',
+    action: 'Evaluar docente',
   },
 }
 
 function normalizeCedula(value: string) {
-  return value.replace(/\D/g, '').slice(0, 13)
+  return value.replace(/\D/g, '').slice(0, 10)
 }
 
 function isTeacherFlow(flow: TeacherEvaluationFlow | null): flow is TeacherRoleFlow {
-  return flow === 'auto_docente' || flow === 'par_docente'
+  return flow === 'auto_docente' || flow === 'par_docente' || flow === 'academico_docente'
 }
 
 function isEvaluated(course: TeacherEvaluationCourse) {
@@ -103,8 +117,10 @@ function getScoreOptions(question: TeacherEvaluationQuestion) {
 function coursesForFlow(identity: TeacherEvaluationIdentityResponse | null, flow: TeacherEvaluationFlow | null) {
   if (!identity || !flow) return []
   if (flow === 'student') return identity.student_courses || []
+  if (flow === 'auto_estudiante') return identity.auto_student_courses || []
   if (flow === 'auto_docente') return identity.auto_courses || []
-  return identity.peer_courses || []
+  if (flow === 'par_docente') return identity.peer_courses || []
+  return identity.authority_courses || []
 }
 
 function flowCount(identity: TeacherEvaluationIdentityResponse | null, flow: TeacherEvaluationFlow) {
@@ -117,6 +133,8 @@ function courseTitle(course: TeacherEvaluationCourse) {
 
 function coursePersonLabel(flow: TeacherEvaluationFlow | null, course: TeacherEvaluationCourse, identity: TeacherEvaluationIdentityResponse | null) {
   if (flow === 'auto_docente') return identity?.teacher?.docente || course.docente || 'Docente'
+  if (flow === 'auto_estudiante') return identity?.student?.estudiante || 'Estudiante'
+  if (flow === 'academico_docente') return course.docente || 'Docente'
   return course.docente || 'Docente por asignar'
 }
 
@@ -142,6 +160,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
   const [answers, setAnswers] = useState<Record<number, number>>({})
   const [showFlowModal, setShowFlowModal] = useState(false)
   const [showCoursesModal, setShowCoursesModal] = useState(false)
+  const [detailCourse, setDetailCourse] = useState<TeacherEvaluationCourse | null>(null)
   const [loading, setLoading] = useState(false)
   const [questionLoading, setQuestionLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -205,7 +224,11 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     event.preventDefault()
     const cleanCedula = normalizeCedula(cedula)
     if (!cleanCedula) {
-      setError('Ingrese un número de cédula para buscar la evaluación.')
+      setError('Ingrese su número de cédula para buscar la evaluación.')
+      return
+    }
+    if (cleanCedula.length < 10) {
+      setError('Ingrese un número de cédula válido de 10 dígitos.')
       return
     }
 
@@ -220,33 +243,45 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     setAnswers({})
     setShowFlowModal(false)
     setShowCoursesModal(false)
+    setDetailCourse(null)
 
     try {
       const data = await fetchTeacherEvaluationIdentity(cleanCedula)
       const hasStudent = Boolean(data.student)
       const hasTeacher = Boolean(data.teacher)
+      const hasAuthority = Boolean(data.authority)
 
-      if (!hasStudent && !hasTeacher) {
-        setError('No se encontró un estudiante o docente con esa cédula.')
+      if (!hasStudent && !hasTeacher && !hasAuthority) {
+        setError('No se encontró un estudiante, docente o usuario académico activo con esa cédula.')
         return
       }
 
       setIdentity(data)
 
-      if (hasStudent && !hasTeacher) {
-        await activateFlow('student', data)
+      const availableOptions: TeacherEvaluationFlow[] = []
+      if (hasStudent) {
+        availableOptions.push('student', 'auto_estudiante')
+      }
+      if (hasTeacher) {
+        availableOptions.push('auto_docente', 'par_docente')
+      }
+      if (hasAuthority) {
+        availableOptions.push('academico_docente')
+      }
+
+      if (availableOptions.length === 1) {
+        await activateFlow(availableOptions[0], data)
         setShowCoursesModal(true)
         return
       }
 
-      if (hasStudent && hasTeacher) {
-        setSuccess('La cédula pertenece a estudiante y docente. Seleccione el tipo de evaluación que desea realizar.')
+      if (availableOptions.length > 1) {
+        setSuccess('Seleccione el tipo de evaluación que desea realizar.')
         setShowFlowModal(true)
         return
       }
 
-      setSuccess('Docente identificado. Seleccione autoevaluación o evaluación par docente.')
-      setShowFlowModal(true)
+      setError('No hay procesos de evaluación disponibles para esta cédula.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo consultar la evaluación docente.')
     } finally {
@@ -279,6 +314,10 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
   function closeEvaluationModal() {
     setSelectedCourse(null)
     setAnswers({})
+  }
+
+  function openCourseDetail(course: TeacherEvaluationCourse) {
+    setDetailCourse(course)
   }
 
   async function handleSubmitEvaluation(event: FormEvent<HTMLFormElement>) {
@@ -318,7 +357,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     try {
       const response = isTeacherFlow(flow)
         ? await saveTeacherRoleEvaluation({ ...payload, flow })
-        : await saveTeacherEvaluation(payload)
+        : await saveTeacherEvaluation({ ...payload, flow })
       const refreshed = await fetchTeacherEvaluationIdentity(normalizeCedula(cedula))
       setIdentity(refreshed)
       setSelectedCourse(null)
@@ -334,11 +373,15 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
 
   const roleOptions = useMemo(() => {
     const options: TeacherEvaluationFlow[] = []
-    if (identity?.student) options.push('student')
+    if (identity?.student) {
+      options.push('student')
+      options.push('auto_estudiante')
+    }
     if (identity?.teacher) {
       options.push('auto_docente')
       options.push('par_docente')
     }
+    if (identity?.authority) options.push('academico_docente')
     return options
   }, [identity])
 
@@ -365,6 +408,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
               placeholder="Ej. 1726240565"
               inputMode="numeric"
               autoComplete="off"
+              maxLength={10}
             />
             <button type="submit" className="teacher-evaluation__primary" disabled={loading || questionLoading}>
               {loading ? 'Buscando...' : 'Buscar evaluación'}
@@ -409,6 +453,23 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                 <div className="teacher-evaluation__profile-card">
                   <span>Usuario / correo</span>
                   <strong>{identity.teacher.usuario || identity.teacher.correo_intec || '-'}</strong>
+                </div>
+              </>
+            ) : null}
+
+            {identity.authority ? (
+              <>
+                <div className="teacher-evaluation__profile-card">
+                  <span>Administrativo</span>
+                  <strong>{identity.authority.autoridad || identity.authority.nombres}</strong>
+                </div>
+                <div className="teacher-evaluation__profile-card">
+                  <span>Usuario</span>
+                  <strong>{identity.authority.login || '-'}</strong>
+                </div>
+                <div className="teacher-evaluation__profile-card">
+                  <span>Coordinación</span>
+                  <strong>{identity.authority.coordcarrera || '-'}</strong>
                 </div>
               </>
             ) : null}
@@ -515,25 +576,112 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                   {currentCourses.map((course) => {
                     const done = isEvaluated(course)
                     return (
-                      <button
+                      <article
                         key={getCourseKey(course)}
-                        type="button"
                         className={`teacher-evaluation__course-card ${done ? 'is-done' : ''}`}
-                        onClick={() => openCourse(course)}
-                        disabled={done}
                       >
-                        <h3>{courseTitle(course)}</h3>
+                        <div className="teacher-evaluation__course-card-head">
+                          <h3>{courseTitle(course)}</h3>
+                          <button
+                            type="button"
+                            className="teacher-evaluation__icon-button"
+                            onClick={() => openCourseDetail(course)}
+                            aria-label="Ver carreras vinculadas"
+                            title="Ver carreras vinculadas"
+                          >
+                            i
+                          </button>
+                        </div>
                         <strong>{coursePersonLabel(flow, course, identity)}</strong>
                         <p>{courseMeta(course)}</p>
                         <span className={`teacher-evaluation__badge ${done ? 'is-done' : ''}`}>
                           {done ? 'Evaluación registrada' : 'Pendiente de evaluación'}
                         </span>
-                      </button>
+                        <button
+                          type="button"
+                          className="teacher-evaluation__course-action"
+                          onClick={() => openCourse(course)}
+                          disabled={done}
+                        >
+                          {done ? 'Registrada' : 'Evaluar materia'}
+                        </button>
+                      </article>
                     )
                   })}
                 </div>
               ) : (
                 <div className="teacher-evaluation__empty">{currentCopy.empty}</div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {detailCourse ? (
+        <div className="teacher-evaluation__modal-backdrop" role="presentation">
+          <section
+            className="teacher-evaluation__modal teacher-evaluation__modal--selector"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="teacher-evaluation-detail-title"
+          >
+            <header className="teacher-evaluation__modal-header">
+              <div>
+                <p className="teacher-evaluation__eyebrow">Materia consolidada</p>
+                <h2 id="teacher-evaluation-detail-title">{courseTitle(detailCourse)}</h2>
+                <p>
+                  Periodo {detailCourse.detalle_periodo || detailCourse.codigo_periodo} · Código materia {detailCourse.codigo_materia}
+                </p>
+                {detailCourse.codigo_materia_interno ? (
+                  <p>Código único académico: {detailCourse.codigo_materia_interno}</p>
+                ) : null}
+              </div>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => setDetailCourse(null)}>
+                Cerrar
+              </button>
+            </header>
+
+            <div className="teacher-evaluation__modal-body">
+              {(detailCourse.componentes_relacionados || []).length > 0 ? (
+                <div className="teacher-evaluation__linked-list">
+                  {(detailCourse.componentes_relacionados || []).map((item, index) => (
+                    <article
+                      className="teacher-evaluation__linked-item"
+                      key={`${item.cod_anio_basica || index}-${item.paralelo || ''}-${item.cedula_docente || ''}`}
+                    >
+                      <div className="teacher-evaluation__linked-career">
+                        <span>Carrera</span>
+                        <strong>{item.carrera || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>Materia</span>
+                        <strong>{item.materia || detailCourse.materia || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>Código único</span>
+                        <strong>{item.codigo_materia_interno || detailCourse.codigo_materia_interno || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>Paralelo</span>
+                        <strong>{item.paralelo || '-'}</strong>
+                      </div>
+                      <div className="teacher-evaluation__linked-teacher">
+                        <span>Docente</span>
+                        <strong>{item.docente || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>Jornada</span>
+                        <strong>{item.jornada || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>ID vinculado</span>
+                        <strong>{item.codigo_materia || '-'}</strong>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="teacher-evaluation__empty">No hay carreras vinculadas adicionales para esta materia.</div>
               )}
             </div>
           </section>

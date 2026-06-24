@@ -351,6 +351,12 @@ export function useReporteriaApp() {
       setActivePage('matricula-acad')
     } else if (openPage === 'matricula-docente') {
       setActivePage('matricula-docente')
+    } else if (openPage === 'evaluacion-docente-admin') {
+      setActivePage('evaluacion-docente-avance')
+    } else if (openPage === 'evaluacion-docente-avance') {
+      setActivePage('evaluacion-docente-avance')
+    } else if (openPage === 'evaluacion-docente-reportes') {
+      setActivePage('evaluacion-docente-reportes')
     } else if (openPage === 'estado-docente') {
       setActivePage('estado-docente')
     } else if (openPage === 'senescyt-estudiantes') {
@@ -818,6 +824,15 @@ export function useReporteriaApp() {
   const openTeacherEvaluationPage = () => {
     setActivePage('evaluacion-docente')
   }
+  const openTeacherEvaluationAdminPage = () => {
+    setActivePage('evaluacion-docente-avance')
+  }
+  const openTeacherEvaluationProgressPage = () => {
+    setActivePage('evaluacion-docente-avance')
+  }
+  const openTeacherEvaluationReportsPage = () => {
+    setActivePage('evaluacion-docente-reportes')
+  }
   const openTeamsPage = () => setActivePage('teams')
   const openTeamsMatriculaPage = () => {
     setActivePage('teams-matricula')
@@ -985,6 +1000,9 @@ export function useReporteriaApp() {
     setPortalStudentSection,
     openPortalDocentePage,
     openTeacherEvaluationPage,
+    openTeacherEvaluationAdminPage,
+    openTeacherEvaluationProgressPage,
+    openTeacherEvaluationReportsPage,
     openTeamsPage,
     openTeamsMatriculaPage,
     openMatriculaPage,
