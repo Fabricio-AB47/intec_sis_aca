@@ -1264,7 +1264,38 @@ def _validate_questions(
     *,
     instrument_id: int,
 ) -> dict[int, dict[str, Any]]:
+    if not answers:
+        raise HTTPException(status_code=400, detail="Debe responder todas las preguntas obligatorias antes de enviar.")
+
     question_ids = sorted({answer.id_pregunta for answer in answers})
+    if len(question_ids) != len(answers):
+        raise HTTPException(status_code=400, detail="Existen preguntas duplicadas en la evaluación enviada.")
+
+    cursor.execute(
+        """
+        SELECT p.Id_Pregunta, p.Puntaje_Min, p.Puntaje_Max
+        FROM eval360.Pregunta p
+        INNER JOIN eval360.DimensionInstrumento di
+            ON di.Id_Dimension = p.Id_Dimension
+           AND di.Id_Instrumento = ?
+           AND di.Activo = 1
+        WHERE p.Activo = 1
+        """,
+        instrument_id,
+    )
+    all_rows = {_safe_int(row.Id_Pregunta): _row_dict(cursor, row) for row in cursor.fetchall()}
+    if not all_rows:
+        raise HTTPException(status_code=400, detail="No existen preguntas activas para este instrumento.")
+
+    required_ids = set(all_rows)
+    answer_ids = set(question_ids)
+    missing_required = sorted(required_ids - answer_ids)
+    if missing_required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Debe responder todas las preguntas obligatorias. Faltan {len(missing_required)} pregunta(s).",
+        )
+
     cursor.execute(
         f"""
         SELECT p.Id_Pregunta, p.Puntaje_Min, p.Puntaje_Max
@@ -2784,7 +2815,7 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
             if existing > 0:
                 raise HTTPException(
                     status_code=409,
-                    detail="Ya registraste la evaluacion de esta materia con este docente. La evaluacion quedo cerrada.",
+                    detail="Ya registraste la evaluacion de esta materia en este periodo. La evaluacion quedo cerrada.",
                 )
 
             campaign_id = _get_or_create_campaign(
@@ -2881,7 +2912,7 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
                 if existing > 0:
                     raise HTTPException(
                         status_code=409,
-                        detail="Ya registraste esta evaluacion para la materia seleccionada. La evaluacion quedo cerrada.",
+                        detail="Ya registraste esta evaluacion para la materia seleccionada en este periodo. La evaluacion quedo cerrada.",
                     )
 
                 campaign_id = _get_or_create_campaign(
