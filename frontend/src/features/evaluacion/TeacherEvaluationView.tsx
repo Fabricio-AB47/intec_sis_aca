@@ -359,6 +359,10 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
       setError('Esta evaluación ya fue registrada para la materia seleccionada.')
       return
     }
+    if (flow === 'student' && Number(course.codigo_docente_eval || 0) <= 0) {
+      setError('Esta materia tiene nota, pero no tiene docente asignado para registrar la evaluación.')
+      return
+    }
     if (orderedQuestions.length === 0) {
       setError('No existen preguntas activas para este tipo de evaluación.')
       return
@@ -680,17 +684,19 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                           </div>
                           <strong>{coursePersonLabel(flow, course, identity)}</strong>
                           <p>{courseMeta(course)}</p>
-                          <span className={`teacher-evaluation__badge ${done ? 'is-done' : ''}`}>
-                            {done ? 'Evaluación registrada' : 'Pendiente de evaluación'}
-                          </span>
-                          <button
-                            type="button"
-                            className="teacher-evaluation__course-action"
-                            onClick={() => openCourse(course)}
-                            disabled={done}
-                          >
-                            {done ? 'Registrada' : 'Evaluar materia'}
-                          </button>
+                          <div className="teacher-evaluation__course-card-actions">
+                            <span className={`teacher-evaluation__badge ${done ? 'is-done' : ''}`}>
+                              {done ? 'Evaluación registrada' : 'Pendiente de evaluación'}
+                            </span>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__course-action"
+                              onClick={() => openCourse(course)}
+                              disabled={done}
+                            >
+                              {done ? 'Registrada' : 'Evaluar materia'}
+                            </button>
+                          </div>
                         </article>
                       )
                     })}

@@ -650,31 +650,100 @@ def _courses_query(extra_where: str = "") -> str:
             LTRIM(RTRIM(pen.cod_materia)) AS codigo_materia_interno,
             pen.Semestre AS nivel,
             LTRIM(RTRIM(car.Nombre_Basica)) AS carrera,
-            cxd.codigo_doc AS codigo_docente_eval,
-            LTRIM(RTRIM(dd.apellidos_nombre)) AS docente,
-            LTRIM(RTRIM(dd.cedula_doc)) AS cedula_doc,
-            CAST(cxd.Cod_Jornada AS varchar(20)) AS cod_jornada,
+            COALESCE(doc_exact.codigo_doc, doc_hist.codigo_doc, 0) AS codigo_docente_eval,
+            COALESCE(
+                LTRIM(RTRIM(doc_exact.apellidos_nombre)),
+                LTRIM(RTRIM(doc_hist.apellidos_nombre)),
+                'Docente por asignar'
+            ) AS docente,
+            COALESCE(LTRIM(RTRIM(doc_exact.cedula_doc)), LTRIM(RTRIM(doc_hist.cedula_doc)), '') AS cedula_doc,
+            CAST(COALESCE(doc_exact.Cod_Jornada, doc_hist.Cod_Jornada, cm.Jornada) AS varchar(20)) AS cod_jornada,
             LTRIM(RTRIM(CAST(cm.Jornada AS varchar(50)))) AS jornada,
             CAST(0 AS int) AS respuestas_registradas
         FROM dbo.CARRERAXESTUD ce
         INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
         INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
         INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
-        INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
-            AND cxd.codigo_periodo = ce.codigo_periodo
-            AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
-            AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
-                LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
-        INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
-        INNER JOIN dbo.USUARIOS du
-            ON REPLACE(REPLACE(LTRIM(RTRIM(du.cedula)), '-', ''), ' ', '') =
-               REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
+        LEFT JOIN dbo.CABECERA_MATRICULA cm ON cm.codigo_estud = ce.codigo_estud
+            AND cm.cod_anio_Basica = ce.cod_anio_Basica
+            AND cm.codigo_periodo = ce.codigo_periodo
+        OUTER APPLY (
+            SELECT TOP 1
+                cxd.codigo_doc,
+                cxd.Cod_Jornada,
+                dd.apellidos_nombre,
+                dd.cedula_doc
+            FROM dbo.CARRERAXDOCENTE cxd
+            INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
+            INNER JOIN dbo.USUARIOS du
+                ON REPLACE(REPLACE(LTRIM(RTRIM(du.cedula)), '-', ''), ' ', '') =
+                   REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
+            WHERE cxd.codigo_materia = ce.codigo_materia
+              AND cxd.codigo_periodo = ce.codigo_periodo
+              AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
+              AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                  LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
+              AND {_active_state_condition("du.Estado")}
+            ORDER BY cxd.codigo_doc
+        ) doc_exact
+        OUTER APPLY (
+            SELECT TOP 1
+                cxd.codigo_doc,
+                cxd.Cod_Jornada,
+                dd.apellidos_nombre,
+                dd.cedula_doc
+            FROM dbo.CARRERAXDOCENTE cxd
+            INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
+            INNER JOIN dbo.USUARIOS du
+                ON REPLACE(REPLACE(LTRIM(RTRIM(du.cedula)), '-', ''), ' ', '') =
+                   REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
+            WHERE cxd.codigo_materia = ce.codigo_materia
+              AND {_active_state_condition("du.Estado")}
+            ORDER BY
+                CASE WHEN cxd.codigo_periodo = ce.codigo_periodo THEN 0 ELSE 1 END,
+                CASE WHEN cxd.cod_Anio_Basica = ce.cod_anio_Basica THEN 0 ELSE 1 END,
+                CASE WHEN LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
+                          LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS THEN 0 ELSE 1 END,
+                ABS(TRY_CONVERT(int, cxd.codigo_periodo) - TRY_CONVERT(int, ce.codigo_periodo)),
+                cxd.codigo_doc
+        ) doc_hist
+        WHERE ce.codigo_estud = ?
+          AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+        {extra_where}
+        ORDER BY per.Orden DESC, ce.codigo_periodo DESC, pen.Semestre, LTRIM(RTRIM(pen.Nomb_Materia))
+    """
+
+
+def _auto_student_courses_query(extra_where: str = "") -> str:
+    return f"""
+        SELECT DISTINCT
+            ce.codigo_estud,
+            ce.cod_anio_Basica,
+            ce.codigo_materia,
+            ce.codigo_periodo,
+            LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) AS paralelo,
+            LTRIM(RTRIM(CAST(ce.TipoMatricula AS varchar(5)))) AS tipo_matricula,
+            LTRIM(RTRIM(per.Detalle_Periodo)) AS detalle_periodo,
+            per.Orden,
+            LTRIM(RTRIM(pen.Nomb_Materia)) AS materia,
+            LTRIM(RTRIM(pen.cod_materia)) AS codigo_materia_interno,
+            pen.Semestre AS nivel,
+            LTRIM(RTRIM(car.Nombre_Basica)) AS carrera,
+            CAST(0 AS int) AS codigo_docente_eval,
+            CAST('Autoevaluación estudiantil' AS nvarchar(250)) AS docente,
+            CAST('' AS varchar(50)) AS cedula_doc,
+            LTRIM(RTRIM(CAST(cm.Jornada AS varchar(20)))) AS cod_jornada,
+            LTRIM(RTRIM(CAST(cm.Jornada AS varchar(50)))) AS jornada,
+            CAST(0 AS int) AS respuestas_registradas
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+        INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+        INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
         LEFT JOIN dbo.CABECERA_MATRICULA cm ON cm.codigo_estud = ce.codigo_estud
             AND cm.cod_anio_Basica = ce.cod_anio_Basica
             AND cm.codigo_periodo = ce.codigo_periodo
         WHERE ce.codigo_estud = ?
           AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
-          AND {_active_state_condition("du.Estado")}
         {extra_where}
         ORDER BY per.Orden DESC, ce.codigo_periodo DESC, pen.Semestre, LTRIM(RTRIM(pen.Nomb_Materia))
     """
@@ -1528,8 +1597,9 @@ def _validate_questions(
 
 
 def _find_student_course(cursor: pyodbc.Cursor, student_code: int, payload: TeacherEvaluationSubmitPayload) -> dict[str, Any]:
+    query = _auto_student_courses_query if payload.flow == "auto_estudiante" else _courses_query
     cursor.execute(
-        _courses_query(
+        query(
             """
             AND ce.codigo_periodo = ?
             AND ce.codigo_materia = ?
@@ -1541,11 +1611,19 @@ def _find_student_course(cursor: pyodbc.Cursor, student_code: int, payload: Teac
     )
     row = cursor.fetchone()
     if not row:
+        detail = (
+            "La materia seleccionada no tiene promedio final registrado para la autoevaluación estudiantil."
+            if payload.flow == "auto_estudiante"
+            else "La materia seleccionada no está asignada al estudiante en ese periodo."
+        )
+        raise HTTPException(status_code=404, detail=detail)
+    course = _course_from_row(_row_dict(cursor, row))
+    if payload.flow != "auto_estudiante" and _safe_int(course.get("codigo_docente_eval")) <= 0:
         raise HTTPException(
             status_code=404,
-            detail="La materia seleccionada no está asignada al estudiante en ese periodo.",
+            detail="La materia tiene promedio final, pero no tiene docente asignado para registrar la evaluación.",
         )
-    return _course_from_row(_row_dict(cursor, row))
+    return course
 
 
 def _find_teacher_course(
@@ -1639,7 +1717,7 @@ def _find_authority_course(
 
 def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: int) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 1000))
-    if flow in {"student", "auto_estudiante"}:
+    if flow == "student":
         cursor.execute(
             f"""
             SELECT DISTINCT TOP {limit}
@@ -1685,6 +1763,46 @@ def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: 
               AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
               AND {_active_state_condition("de.Estado")}
               AND {_active_state_condition("du.Estado")}
+            ORDER BY LTRIM(RTRIM(de.Apellidos_nombre)), LTRIM(RTRIM(pen.Nomb_Materia))
+            """,
+            periodo,
+        )
+    elif flow == "auto_estudiante":
+        cursor.execute(
+            f"""
+            SELECT DISTINCT TOP {limit}
+                ce.codigo_estud AS evaluator_code,
+                LTRIM(RTRIM(de.Apellidos_nombre)) AS evaluator_name,
+                LTRIM(RTRIM(de.Cedula_Est)) AS evaluator_cedula,
+                ce.codigo_estud,
+                ce.cod_anio_Basica,
+                ce.codigo_materia,
+                ce.codigo_periodo,
+                LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) AS paralelo,
+                LTRIM(RTRIM(CAST(ce.TipoMatricula AS varchar(5)))) AS tipo_matricula,
+                LTRIM(RTRIM(per.Detalle_Periodo)) AS detalle_periodo,
+                per.Orden,
+                LTRIM(RTRIM(pen.Nomb_Materia)) AS materia,
+                LTRIM(RTRIM(pen.cod_materia)) AS codigo_materia_interno,
+                pen.Semestre AS nivel,
+                LTRIM(RTRIM(car.Nombre_Basica)) AS carrera,
+                CAST(0 AS int) AS codigo_docente_eval,
+                CAST('Autoevaluación estudiantil' AS nvarchar(250)) AS docente,
+                CAST('' AS varchar(50)) AS cedula_doc,
+                LTRIM(RTRIM(CAST(cm.Jornada AS varchar(20)))) AS cod_jornada,
+                LTRIM(RTRIM(CAST(cm.Jornada AS varchar(50)))) AS jornada,
+                CAST(0 AS int) AS respuestas_registradas
+            FROM dbo.CARRERAXESTUD ce
+            INNER JOIN dbo.DATOS_ESTUD de ON de.codigo_estud = ce.codigo_estud
+            INNER JOIN dbo.PERIODO per ON ce.codigo_periodo = per.cod_periodo
+            INNER JOIN dbo.PENSUM pen ON ce.codigo_materia = pen.codigo_materia
+            INNER JOIN dbo.CARRERAS car ON ce.cod_anio_Basica = car.Cod_AnioBasica
+            LEFT JOIN dbo.CABECERA_MATRICULA cm ON cm.codigo_estud = ce.codigo_estud
+                AND cm.cod_anio_Basica = ce.cod_anio_Basica
+                AND cm.codigo_periodo = ce.codigo_periodo
+            WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
+              AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
+              AND {_active_state_condition("de.Estado")}
             ORDER BY LTRIM(RTRIM(de.Apellidos_nombre)), LTRIM(RTRIM(pen.Nomb_Materia))
             """,
             periodo,
@@ -1830,24 +1948,28 @@ def _student_progress_expected(cursor: pyodbc.Cursor, periodo: str, limit: int) 
             ce.codigo_estud,
             LTRIM(RTRIM(de.Cedula_Est)) AS cedula,
             LTRIM(RTRIM(de.Apellidos_nombre)) AS estudiante,
-            COUNT(DISTINCT TRY_CONVERT(varchar(50), ce.codigo_materia)) AS materias_evaluables,
+            COUNT(DISTINCT TRY_CONVERT(varchar(50), ce.codigo_materia)) AS materias_autoevaluables,
+            COUNT(DISTINCT CASE
+                WHEN cxd.codigo_doc IS NOT NULL THEN TRY_CONVERT(varchar(50), ce.codigo_materia)
+                ELSE NULL
+            END) AS materias_evaluables,
             STRING_AGG(CONVERT(nvarchar(max), LTRIM(RTRIM(car.Nombre_Basica))), N' / ') AS carreras
         FROM dbo.CARRERAXESTUD ce
         INNER JOIN dbo.DATOS_ESTUD de ON de.codigo_estud = ce.codigo_estud
-        INNER JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
+        LEFT JOIN dbo.CARRERAXDOCENTE cxd ON cxd.codigo_materia = ce.codigo_materia
             AND cxd.codigo_periodo = ce.codigo_periodo
             AND cxd.cod_Anio_Basica = ce.cod_anio_Basica
             AND LTRIM(RTRIM(CAST(cxd.Paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS =
                 LTRIM(RTRIM(CAST(ce.paralelo AS varchar(20)))) COLLATE SQL_Latin1_General_CP1_CI_AS
-        INNER JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
-        INNER JOIN dbo.USUARIOS du
+        LEFT JOIN dbo.DATOSDOCENTE dd ON dd.codigo_doc = cxd.codigo_doc
+        LEFT JOIN dbo.USUARIOS du
             ON REPLACE(REPLACE(LTRIM(RTRIM(du.cedula)), '-', ''), ' ', '') =
                REPLACE(REPLACE(LTRIM(RTRIM(dd.cedula_doc)), '-', ''), ' ', '')
         INNER JOIN dbo.CARRERAS car ON car.Cod_AnioBasica = ce.cod_anio_Basica
         WHERE TRY_CONVERT(varchar(50), ce.codigo_periodo) = ?
           AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
           AND {_active_state_condition("de.Estado")}
-          AND {_active_state_condition("du.Estado")}
+          AND (du.cedula IS NULL OR {_active_state_condition("du.Estado")})
         GROUP BY ce.codigo_estud, de.Cedula_Est, de.Apellidos_nombre
         ORDER BY LTRIM(RTRIM(de.Apellidos_nombre))
         """,
@@ -1865,6 +1987,7 @@ def _student_progress_expected(cursor: pyodbc.Cursor, periodo: str, limit: int) 
                 "estudiante": _clean_text(item.get("estudiante")),
                 "carreras": " / ".join(carreras[:4]) + (" / ..." if len(carreras) > 4 else ""),
                 "materias_evaluables": _safe_int(item.get("materias_evaluables")),
+                "materias_autoevaluables": _safe_int(item.get("materias_autoevaluables")),
             }
         )
     return rows
@@ -3164,7 +3287,7 @@ def get_teacher_evaluation_progress_detail(
     if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
         raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el grafico.")
     try:
-        teachers, subjects, period_label = _teacher_evaluation_academic_maps(periodo)
+        teachers, subjects, _, period_label = _teacher_evaluation_academic_maps(periodo)
         teacher = teachers.get(
             _clean_text(codigo_docente),
             {"codigo_doc": _clean_text(codigo_docente), "docente": f"Docente {codigo_docente}", "cedula_doc": ""},
@@ -3385,14 +3508,17 @@ def get_teacher_evaluation_student_progress(
 
         items: list[dict[str, Any]] = []
         total_expected = 0
+        total_auto_expected = 0
         total_student_completed = 0
         total_auto_completed = 0
         for item in expected:
             code = _safe_int(item.get("codigo_estud"))
             expected_count = _safe_int(item.get("materias_evaluables"))
+            auto_expected_count = _safe_int(item.get("materias_autoevaluables")) or expected_count
             student_done = min(_safe_int(completed_student.get(code)), expected_count)
-            auto_done = min(_safe_int(completed_auto.get(code)), expected_count)
+            auto_done = min(_safe_int(completed_auto.get(code)), auto_expected_count)
             total_expected += expected_count
+            total_auto_expected += auto_expected_count
             total_student_completed += student_done
             total_auto_completed += auto_done
             item_payload = {
@@ -3406,18 +3532,20 @@ def get_teacher_evaluation_student_progress(
                 },
                 "autoevaluacion_estudiante": {
                     "ponderacion": auto_weight,
-                    "esperadas": expected_count,
+                    "esperadas": auto_expected_count,
                     "completadas": auto_done,
-                    "pendientes": max(expected_count - auto_done, 0),
-                    "avance_percent": round((auto_done / expected_count) * 100, 2) if expected_count else 0,
+                    "pendientes": max(auto_expected_count - auto_done, 0),
+                    "avance_percent": round((auto_done / auto_expected_count) * 100, 2) if auto_expected_count else 0,
                 },
             }
-            item_payload["avance_total_percent"] = round(((student_done + auto_done) / (expected_count * 2)) * 100, 2) if expected_count else 0
+            combined_expected = expected_count + auto_expected_count
+            item_payload["avance_total_percent"] = round(((student_done + auto_done) / combined_expected) * 100, 2) if combined_expected else 0
             items.append(item_payload)
 
         summary = {
             "estudiantes": len(items),
             "materias_evaluables": total_expected,
+            "materias_autoevaluables": total_auto_expected,
             "evaluacion_docente": {
                 "ponderacion": student_weight,
                 "completadas": total_student_completed,
@@ -3427,8 +3555,8 @@ def get_teacher_evaluation_student_progress(
             "autoevaluacion_estudiante": {
                 "ponderacion": auto_weight,
                 "completadas": total_auto_completed,
-                "pendientes": max(total_expected - total_auto_completed, 0),
-                "avance_percent": round((total_auto_completed / total_expected) * 100, 2) if total_expected else 0,
+                "pendientes": max(total_auto_expected - total_auto_completed, 0),
+                "avance_percent": round((total_auto_completed / total_auto_expected) * 100, 2) if total_auto_expected else 0,
             },
         }
         return {
@@ -3467,7 +3595,7 @@ def get_teacher_evaluation_auto_student_list(
             items: list[dict[str, Any]] = []
             for item in expected:
                 code = _safe_int(item.get("codigo_estud"))
-                expected_count = _safe_int(item.get("materias_evaluables"))
+                expected_count = _safe_int(item.get("materias_autoevaluables")) or _safe_int(item.get("materias_evaluables"))
                 done = min(_safe_int(completed.get(code)), expected_count)
                 pending = max(expected_count - done, 0)
                 is_complete = expected_count > 0 and pending == 0
@@ -3535,7 +3663,7 @@ def get_teacher_evaluation_graded_teachers(
     flow: str = Query(default="all"),
 ) -> dict[str, Any]:
     try:
-        teachers, _, period_label = _teacher_evaluation_academic_maps(periodo)
+        teachers, _, _, period_label = _teacher_evaluation_academic_maps(periodo)
         with get_evaluation_connection() as conn:
             cursor = conn.cursor()
             report_flow = _clean_text(flow or "all")
@@ -3689,12 +3817,16 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
                 student_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
                 student_courses = _deduplicate_subject_courses(student_courses)
                 student_courses = _apply_evaluation_status(student["codigo_estud"], student_courses, "student")
-                auto_student_courses = [dict(course) for course in student_courses]
+                cursor.execute(_auto_student_courses_query(), student["codigo_estud"])
+                auto_student_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
+                auto_student_courses = _deduplicate_subject_courses(auto_student_courses)
                 auto_student_courses = _apply_evaluation_status(
                     student["codigo_estud"], auto_student_courses, "auto_estudiante"
                 )
                 if not student_courses:
                     warnings.append("No existen materias con docente asignado para esta cedula.")
+                if not auto_student_courses:
+                    warnings.append("No existen materias con promedio final para autoevaluacion estudiantil.")
 
             if teacher:
                 cursor.execute(_teacher_courses_query(), teacher["codigo_doc"])
