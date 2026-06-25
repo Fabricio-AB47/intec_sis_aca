@@ -2570,7 +2570,7 @@ def _weighted_average(rows: list[dict[str, Any]], value_field: str, weight_field
     for row in rows:
         value = _safe_float(row.get(value_field))
         weight = _safe_float(row.get(weight_field))
-        if value <= 0 or weight <= 0:
+        if weight <= 0:
             continue
         total += value * weight
         total_weight += weight
@@ -2609,11 +2609,44 @@ def _teacher_group_averages(rows: list[dict[str, Any]], report: dict[str, Any] |
     return averages
 
 
+def _teacher_component_breakdown(averages: dict[str, float], report: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+    flow_map = {
+        "student": "estudiantes",
+        "par_docente": "par",
+        "academico_docente": "autoridad",
+        "auto_docente": "auto",
+    }
+    labels = {
+        "student": "Evaluación estudiante-docente",
+        "par_docente": "Evaluación par docente",
+        "academico_docente": "Evaluación administrativa docente",
+        "auto_docente": "Autoevaluación docente",
+    }
+    report_flow = _clean_text((report or {}).get("flow") or "all")
+    components: dict[str, dict[str, float]] = {}
+    final = 0.0
+    for flow, average_key in flow_map.items():
+        score = _safe_float(averages.get(average_key))
+        weight = _flow_weight_from_rows((report or {}).get("weights") or [], flow)
+        if report_flow != "all":
+            weight = 100.0 if report_flow == flow else 0.0
+        aporte = round(score * (weight / 100.0), 2) if weight > 0 else 0.0
+        final += aporte
+        components[flow] = {
+            "label": labels[flow],
+            "score": round(score, 2),
+            "weight": round(weight, 2),
+            "aporte": aporte,
+        }
+    components["final"] = {"score": round(final, 2), "weight": 100.0, "aporte": round(final, 2)}
+    return components
+
+
 def _component_targets(report: dict[str, Any], averages: dict[str, float]) -> dict[str, float]:
     targets = {"estudiantes": 0.0, "par": 0.0, "autoridad": 0.0, "auto": 0.0}
     for row in report.get("weights") or []:
         text = f"{_clean(row.get('Codigo'))} {_clean(row.get('Nombre'))}".upper()
-        weight = _safe_float(row.get("Peso_Default"))
+        weight = _safe_float(row.get("Peso_Porcentaje") if row.get("Peso_Porcentaje") is not None else row.get("Peso_Default"))
         if weight <= 0:
             continue
         if "AUTO" in text and "ESTUDIANTE" not in text:
@@ -2706,9 +2739,10 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         teacher = teacher_group["teacher"]
         rows = teacher_group.get("rows") or []
         averages = _teacher_group_averages(rows, report)
+        components = _teacher_component_breakdown(averages, report)
         document_number = _document_number(_clean(report.get("periodo")), teacher)
         period_label = _clean(report.get("periodo_detalle")) or _clean(report.get("periodo"))
-        final_score = averages["final"]
+        final_score = _safe_float(components.get("final", {}).get("aporte")) or averages["final"]
         level = _grade_level(final_score)
         first_row = rows[0] if rows else {}
         targets = _component_targets(report, averages)
@@ -2832,9 +2866,9 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         if _clean_text(report.get("flow") or "all") == "all":
             weights_table_rows: list[list[Any]] = [[
                 _p("Componente", styles["EvalCellBold"]),
-                _p("Ponderación aplicada", styles["EvalCellBold"]),
-                _p("Promedio", styles["EvalCellBold"]),
-                _p("Aporte", styles["EvalCellBold"]),
+                _p("Ponderación máxima", styles["EvalCellBold"]),
+                _p("Promedio ajustado", styles["EvalCellBold"]),
+                _p("Aporte real", styles["EvalCellBold"]),
             ]]
             weight_components = [
                 ("Evaluación estudiante-docente", "student", "estudiantes"),
@@ -2843,13 +2877,15 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 ("Autoevaluación docente", "auto_docente", "auto"),
             ]
             for label, flow_key, average_key in weight_components:
-                weight = _flow_weight_from_rows(report.get("weights") or [], flow_key)
-                average = _safe_float(averages.get(average_key))
+                component = components.get(flow_key, {})
+                weight = _safe_float(component.get("weight"))
+                average = _safe_float(component.get("score") or averages.get(average_key))
+                aporte = _safe_float(component.get("aporte"))
                 weights_table_rows.append([
                     _p(label, styles["EvalCell"]),
                     _p(f"{weight:.2f}%", styles["EvalCell"]),
                     _p(f"{average:.2f}", styles["EvalCell"]),
-                    _p(f"{(average * weight / 100.0):.2f}", styles["EvalCell"]),
+                    _p(f"{aporte:.2f}", styles["EvalCell"]),
                 ])
             weights_table = Table(weights_table_rows, colWidths=[7.4 * cm, 3.8 * cm, 3.2 * cm, 3.2 * cm], repeatRows=1)
             weights_table.setStyle(TableStyle([
@@ -2874,11 +2910,11 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 [
                     _ComplianceBars(
                         [
-                            ("Heteroevaluación", averages["estudiantes"], targets["estudiantes"]),
-                            ("Coevaluación pares", averages["par"], targets["par"]),
-                            ("Evaluación autoridad", averages["autoridad"], targets["autoridad"]),
-                            ("Autoevaluación", averages["auto"], targets["auto"]),
-                            ("Final 360", averages["final"], 100.0),
+                            ("Heteroevaluación", _safe_float(components.get("student", {}).get("aporte")), _safe_float(components.get("student", {}).get("weight"))),
+                            ("Coevaluación pares", _safe_float(components.get("par_docente", {}).get("aporte")), _safe_float(components.get("par_docente", {}).get("weight"))),
+                            ("Evaluación autoridad", _safe_float(components.get("academico_docente", {}).get("aporte")), _safe_float(components.get("academico_docente", {}).get("weight"))),
+                            ("Autoevaluación", _safe_float(components.get("auto_docente", {}).get("aporte")), _safe_float(components.get("auto_docente", {}).get("weight"))),
+                            ("Final 360", final_score, 100.0),
                         ],
                         width=9.2 * cm,
                     ),

@@ -156,6 +156,13 @@ type ErrorPayload = {
   detail?: string
 }
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
+
+function resolveApiPath(path: string): string {
+  if (!API_BASE_URL || !path.startsWith('/')) return path
+  return `${API_BASE_URL}${path}`
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -203,7 +210,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     resolvedHeaders.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiPath(path), {
     credentials: credentials ?? 'include',
     headers: resolvedHeaders,
     body: resolvedBody,

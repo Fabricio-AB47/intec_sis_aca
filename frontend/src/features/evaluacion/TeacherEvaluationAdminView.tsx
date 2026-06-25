@@ -120,7 +120,11 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
   }
 
-  async function downloadPdf(mode: 'all' | 'teacher', documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado') {
+  async function handlePdf(
+    mode: 'all' | 'teacher',
+    action: 'download' | 'preview',
+    documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+  ) {
     if (!periodo) {
       setError('Selecciona un periodo.')
       return
@@ -139,6 +143,16 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         documentType,
       )
       const url = URL.createObjectURL(blob)
+      if (action === 'preview') {
+        const opened = window.open(url, '_blank', 'noopener,noreferrer')
+        if (!opened) {
+          setError('No se pudo abrir la vista previa. Revisa si el navegador bloqueó ventanas emergentes.')
+          URL.revokeObjectURL(url)
+          return
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+        return
+      }
       const link = document.createElement('a')
       link.href = url
       link.download = mode === 'teacher'
@@ -316,17 +330,14 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                   </option>
                 ))}
               </select>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void downloadPdf('teacher', 'certificado')} disabled={pdfLoading || !periodo || !selectedTeacher}>
-                {pdfLoading ? 'Generando...' : 'Certificado'}
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'preview')} disabled={pdfLoading || !periodo || !selectedTeacher}>
+                {pdfLoading ? 'Generando...' : 'Vista previa'}
               </button>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void downloadPdf('teacher', 'resumen')} disabled={pdfLoading || !periodo || !selectedTeacher}>
-                {pdfLoading ? 'Generando...' : 'Resumen'}
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'download')} disabled={pdfLoading || !periodo || !selectedTeacher}>
+                {pdfLoading ? 'Generando...' : 'Descargar individual'}
               </button>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void downloadPdf('teacher', 'detalle')} disabled={pdfLoading || !periodo || !selectedTeacher}>
-                {pdfLoading ? 'Generando...' : 'Detalle'}
-              </button>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void downloadPdf('all', 'certificado')} disabled={pdfLoading || !periodo}>
-                {pdfLoading ? 'Generando...' : 'PDF masivo'}
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('all', 'download')} disabled={pdfLoading || !periodo}>
+                {pdfLoading ? 'Generando...' : 'Descarga masiva'}
               </button>
             </>
           ) : null}
