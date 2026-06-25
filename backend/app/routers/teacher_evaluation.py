@@ -3312,6 +3312,28 @@ def get_teacher_evaluation_admin_pending(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar pendientes de evaluacion docente: {exc}") from exc
 
 
+def _related_subject_codes(cursor: pyodbc.Cursor, codigo_materia: str) -> list[str]:
+    code = _clean_text(codigo_materia)
+    if not code:
+        return []
+    cursor.execute(
+        """
+        SELECT DISTINCT TRY_CONVERT(varchar(50), related.codigo_materia) AS codigo_materia
+        FROM dbo.PENSUM selected
+        INNER JOIN dbo.PENSUM related
+            ON LTRIM(RTRIM(related.cod_materia)) = LTRIM(RTRIM(selected.cod_materia))
+        WHERE TRY_CONVERT(varchar(50), selected.codigo_materia) = ?
+          AND NULLIF(LTRIM(RTRIM(selected.cod_materia)), '') IS NOT NULL
+        ORDER BY TRY_CONVERT(varchar(50), related.codigo_materia)
+        """,
+        code,
+    )
+    codes = [_clean_text(row.codigo_materia) for row in cursor.fetchall() if _clean_text(row.codigo_materia)]
+    if code not in codes:
+        codes.insert(0, code)
+    return codes
+
+
 @router.get("/admin/progreso-detalle")
 def get_teacher_evaluation_progress_detail(
     periodo: str = Query(..., min_length=1),
@@ -3333,17 +3355,24 @@ def get_teacher_evaluation_progress_detail(
             {"materia": _clean_text(codigo_materia), "carrera": ""},
         )
         with get_connection() as academic_conn:
-            expected_student_total = _expected_students_for_teacher_subject(
-                academic_conn.cursor(),
-                periodo,
-                codigo_docente,
-                codigo_materia,
+            academic_cursor = academic_conn.cursor()
+            subject_codes = _related_subject_codes(academic_cursor, codigo_materia)
+            expected_student_total = sum(
+                _expected_students_for_teacher_subject(
+                    academic_cursor,
+                    periodo,
+                    codigo_docente,
+                    subject_code,
+                )
+                for subject_code in subject_codes
             )
         with get_evaluation_connection() as conn:
             cursor = conn.cursor()
             weights = _evaluation_weights_for_period(cursor, periodo)
+            subject_codes = subject_codes or [_clean_text(codigo_materia)]
+            placeholders = ", ".join("?" for _ in subject_codes)
             cursor.execute(
-                """
+                f"""
                 SELECT
                     Tipo_Evaluacion,
                     Dimension_Global,
@@ -3353,13 +3382,13 @@ def get_teacher_evaluation_progress_detail(
                 FROM eval360.vw_Resultado_Dimension_Docente
                 WHERE Cod_Periodo = ?
                   AND Cod_Docente_Evaluado = ?
-                  AND Cod_Materia = ?
+                  AND Cod_Materia IN ({placeholders})
                 GROUP BY Tipo_Evaluacion, Dimension_Global
                 ORDER BY Tipo_Evaluacion, Dimension_Global
                 """,
                 periodo,
                 codigo_docente,
-                codigo_materia,
+                *subject_codes,
             )
             rows = [_row_dict(cursor, row) for row in cursor.fetchall()]
 

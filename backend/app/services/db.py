@@ -14,15 +14,19 @@ def _build_connection_string(
     encrypt: str,
     trust_cert: str,
 ) -> str:
-    return (
+    connection_string = (
         f"DRIVER={{{driver}}};"
         f"SERVER={host},{port};"
         f"DATABASE={database};"
         f"UID={user};"
         f"PWD={password};"
-        f"Encrypt={encrypt};"
-        f"TrustServerCertificate={trust_cert};"
     )
+    if driver.strip().lower() != "sql server":
+        connection_string += (
+            f"Encrypt={encrypt};"
+            f"TrustServerCertificate={trust_cert};"
+        )
+    return connection_string
 
 
 def _connect_with_fallback(
@@ -48,12 +52,22 @@ def _connect_with_fallback(
     )
 
     try:
-        return pyodbc.connect(connection_string, timeout=10)
+        return pyodbc.connect(connection_string, timeout=30)
     except pyodbc.Error as exc:
         message = str(exc).lower()
-        fallback_drivers = ("ODBC Driver 17 for SQL Server", "SQL Server")
+        is_login_timeout = (
+            "login timeout" in message
+            or "timeout error" in message
+            or "unable to complete login process" in message
+        )
+        fallback_drivers = (
+            ("SQL Server", "ODBC Driver 17 for SQL Server")
+            if is_login_timeout
+            else ("ODBC Driver 17 for SQL Server", "SQL Server")
+        )
         should_retry_driver_17 = (
-            "encryption not supported" in message
+            is_login_timeout
+            or "encryption not supported" in message
             or "ssl provider" in message
             or "security package" in message
             or "data source name not found" in message
@@ -77,7 +91,7 @@ def _connect_with_fallback(
                                 encrypt=encrypt,
                                 trust_cert=trust_cert,
                             ),
-                            timeout=10,
+                            timeout=30,
                         )
                     except pyodbc.Error:
                         continue
