@@ -220,10 +220,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const payload = responseType === 'blob' && response.ok ? await response.blob() : await readResponsePayload(response)
 
   if (!response.ok) {
+    const rawDetail: unknown = typeof payload === 'string'
+      ? payload
+      : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
     const detail =
-      typeof payload === 'string'
-        ? payload
-        : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+      typeof rawDetail === 'string'
+        ? rawDetail
+        : Array.isArray(rawDetail)
+          ? rawDetail
+            .map((item) => typeof item === 'string' ? item : JSON.stringify(item))
+            .join('; ')
+          : JSON.stringify(rawDetail)
     throw new ApiError(detail, response.status)
   }
 

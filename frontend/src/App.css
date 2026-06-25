@@ -20413,6 +20413,93 @@ body .student-sidebar .logout-button {
   text-align: center;
 }
 
+.teacher-evaluation__student-progress-table {
+  width: 100%;
+  min-width: 1380px;
+  table-layout: fixed;
+}
+
+.teacher-evaluation__student-progress-table th,
+.teacher-evaluation__student-progress-table td {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(1),
+.teacher-evaluation__student-progress-table td:nth-child(1) {
+  width: 260px;
+  text-align: left;
+  color: var(--ink-soft);
+  font-weight: 800;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(2),
+.teacher-evaluation__student-progress-table td:nth-child(2) {
+  width: 120px;
+  text-align: center;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(3),
+.teacher-evaluation__student-progress-table td:nth-child(3) {
+  width: 260px;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(4),
+.teacher-evaluation__student-progress-table td:nth-child(4),
+.teacher-evaluation__student-progress-table th:nth-child(5),
+.teacher-evaluation__student-progress-table td:nth-child(5),
+.teacher-evaluation__student-progress-table th:nth-child(6),
+.teacher-evaluation__student-progress-table td:nth-child(6),
+.teacher-evaluation__student-progress-table th:nth-child(7),
+.teacher-evaluation__student-progress-table td:nth-child(7),
+.teacher-evaluation__student-progress-table th:nth-child(8),
+.teacher-evaluation__student-progress-table td:nth-child(8),
+.teacher-evaluation__student-progress-table th:nth-child(9),
+.teacher-evaluation__student-progress-table td:nth-child(9) {
+  width: 108px;
+  text-align: center;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(10),
+.teacher-evaluation__student-progress-table td:nth-child(10) {
+  width: 126px;
+  text-align: center;
+}
+
+.teacher-evaluation__student-progress-table th:nth-child(11),
+.teacher-evaluation__student-progress-table td:nth-child(11) {
+  width: 118px;
+  text-align: center;
+}
+
+.teacher-evaluation__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.teacher-evaluation__status--done {
+  background: #e8f7ee;
+  color: #146c3c;
+}
+
+.teacher-evaluation__status--progress {
+  background: #fff5d6;
+  color: #7a4d00;
+}
+
+.teacher-evaluation__status--pending {
+  background: #fde7e5;
+  color: #931913;
+}
+
 .teacher-evaluation__table-action {
   min-height: 38px;
   width: 100%;

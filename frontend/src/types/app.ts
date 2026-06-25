@@ -384,6 +384,7 @@ export type TeacherEvaluationStudentProgressItem = {
   estudiante: string
   carreras?: string | null
   materias_evaluables: number
+  materias_autoevaluables?: number
   evaluacion_docente: TeacherEvaluationStudentProgressMetric
   autoevaluacion_estudiante: TeacherEvaluationStudentProgressMetric
   avance_total_percent: number

@@ -8,6 +8,7 @@ import {
   fetchTeacherEvaluationProgressDetail,
   fetchTeacherEvaluationProgressParticipants,
   fetchTeacherEvaluationStudentGrades,
+  fetchTeacherEvaluationStudentProgress,
 } from '../../lib/api'
 import type {
   TeacherEvaluationAdminPendingResponse,
@@ -17,6 +18,7 @@ import type {
   TeacherEvaluationProgressDetailResponse,
   TeacherEvaluationProgressParticipantsResponse,
   TeacherEvaluationStudentGradesResponse,
+  TeacherEvaluationStudentProgressResponse,
   TeacherEvaluationTeacherProgressItem,
 } from '../../types/app'
 
@@ -59,6 +61,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
   const [detail, setDetail] = useState<TeacherEvaluationProgressDetailResponse | null>(null)
   const [participants, setParticipants] = useState<TeacherEvaluationProgressParticipantsResponse | null>(null)
   const [studentGrades, setStudentGrades] = useState<TeacherEvaluationStudentGradesResponse | null>(null)
+  const [studentProgress, setStudentProgress] = useState<TeacherEvaluationStudentProgressResponse | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -93,10 +96,18 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     setLoading(true)
     setError('')
     try {
-      const response = await fetchTeacherEvaluationAdminPending(selectedPeriod, selectedFlow)
+      const [response, studentResponse] = await Promise.all([
+        fetchTeacherEvaluationAdminPending(selectedPeriod, selectedFlow),
+        selectedFlow === 'auto_estudiante'
+          ? fetchTeacherEvaluationStudentProgress(selectedPeriod, 2000)
+          : Promise.resolve(null),
+      ])
       setData(response)
+      setStudentProgress(studentResponse)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo consultar pendientes.')
+      setData(null)
+      setStudentProgress(null)
     } finally {
       setLoading(false)
     }
@@ -244,6 +255,16 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     )
   }, [data])
 
+  const isStudentProgressFlow = showProgress && flow === 'auto_estudiante'
+  const studentProgressTotals = studentProgress?.summary.autoevaluacion_estudiante
+  const displayTotals = isStudentProgressFlow && studentProgressTotals
+    ? {
+      expected: studentProgressTotals.esperadas || 0,
+      completed: studentProgressTotals.completadas || 0,
+      pending: studentProgressTotals.pendientes || 0,
+    }
+    : totals
+
   const chartItems = detail?.items || []
   const chartSize = 560
   const chartCenter = chartSize / 2
@@ -350,15 +371,17 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
           <div className="teacher-evaluation__progress-overview">
             <div className="teacher-evaluation__summary-actions teacher-evaluation__progress-summary">
               <span className="teacher-evaluation__summary-pill">
-                Docente/materia: {data.teacher_progress?.length || 0}
+                {isStudentProgressFlow
+                  ? `Estudiantes: ${studentProgress?.summary.estudiantes || studentProgress?.items.length || 0}`
+                  : `Docente/materia: ${data.teacher_progress?.length || 0}`}
               </span>
               <span className="teacher-evaluation__summary-pill">Periodo: {data.periodo_detalle || data.periodo}</span>
               <span className="teacher-evaluation__summary-pill">
-                Avance total: {totals.expected ? Number((totals.completed / totals.expected) * 100).toFixed(2) : '0.00'}%
+                Avance total: {displayTotals.expected ? Number((displayTotals.completed / displayTotals.expected) * 100).toFixed(2) : '0.00'}%
               </span>
-              <span className="teacher-evaluation__summary-pill">Esperadas: {totals.expected}</span>
-              <span className="teacher-evaluation__summary-pill">Completadas: {totals.completed}</span>
-              <span className="teacher-evaluation__summary-pill">Pendientes: {totals.pending}</span>
+              <span className="teacher-evaluation__summary-pill">Esperadas: {displayTotals.expected}</span>
+              <span className="teacher-evaluation__summary-pill">Completadas: {displayTotals.completed}</span>
+              <span className="teacher-evaluation__summary-pill">Pendientes: {displayTotals.pending}</span>
             </div>
             <div className="teacher-evaluation__flow-cards">
               {(data.summary || []).map((item) => (
@@ -376,72 +399,141 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               ))}
             </div>
           </div>
-          <div className="matricula-table-wrap teacher-evaluation__progress-table-wrap">
-            <table className="matricula-table teacher-evaluation__progress-table">
-              <thead>
-                <tr>
-                  <th>Docente</th>
-                  <th>Materia única</th>
-                  <th>Paralelo</th>
-                  <th>Evaluación</th>
-                  <th>Avance</th>
-                  <th>Ponderación</th>
-                  <th>Cumplimiento</th>
-                  <th>Esperadas</th>
-                  <th>Completadas</th>
-                  <th>Pendientes</th>
-                  <th>Gráfico</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data.teacher_progress || []).map((item) => (
-                  <tr key={`${item.flow}-${item.codigo_doc}-${item.codigo_periodo}-${item.codigo_materia}-${item.paralelo || ''}`}>
-                    <td>{item.docente || `Docente ${item.codigo_doc}`}</td>
-                    <td>{item.materia || item.codigo_materia}</td>
-                    <td>{item.paralelo || '-'}</td>
-                    <td>{item.flow_label}</td>
-                    <td>{Number(item.progress_percent || 0).toFixed(2)}%</td>
-                    <td>{Number(item.ponderacion || 0).toFixed(2)}%</td>
-                    <td>{Number(item.ponderacion_aplicada || 0).toFixed(2)}%</td>
-                    <td>{item.expected}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="teacher-evaluation__count-button"
-                        onClick={() => void openProgressParticipants(item, 'completadas')}
-                        disabled={detailLoading || item.completed <= 0}
-                      >
-                        {item.completed}
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="teacher-evaluation__count-button"
-                        onClick={() => void openProgressParticipants(item, 'pendientes')}
-                        disabled={detailLoading || item.pending <= 0}
-                      >
-                        {item.pending}
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="teacher-evaluation__secondary teacher-evaluation__table-action"
-                        onClick={() => void openProgressDetail(item)}
-                        disabled={detailLoading}
-                      >
-                        Ver gráfico
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(data.teacher_progress || []).length === 0 ? (
-            <div className="teacher-evaluation__empty">No hay docentes con materias evaluables para el periodo seleccionado.</div>
-          ) : null}
+          {isStudentProgressFlow ? (
+            <>
+              <div className="matricula-table-wrap teacher-evaluation__progress-table-wrap">
+                <table className="matricula-table teacher-evaluation__student-progress-table">
+                  <thead>
+                    <tr>
+                      <th>Estudiante</th>
+                      <th>Cédula</th>
+                      <th>Carrera</th>
+                      <th>Materias</th>
+                      <th>Avance</th>
+                      <th>Ponderación</th>
+                      <th>Esperadas</th>
+                      <th>Completadas</th>
+                      <th>Pendientes</th>
+                      <th>Estado</th>
+                      <th>Notas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(studentProgress?.items || []).map((item) => {
+                      const metric = item.autoevaluacion_estudiante
+                      const expectedCount = metric?.esperadas || 0
+                      const completedCount = metric?.completadas || 0
+                      const status = expectedCount > 0 && completedCount >= expectedCount
+                        ? 'Realizada'
+                        : completedCount > 0
+                          ? 'En progreso'
+                          : 'Pendiente'
+                      return (
+                        <tr key={`student-progress-${item.codigo_estud}`}>
+                          <td>{item.estudiante || `Estudiante ${item.codigo_estud}`}</td>
+                          <td>{item.cedula || '-'}</td>
+                          <td>{item.carreras || '-'}</td>
+                          <td>{item.materias_autoevaluables ?? item.materias_evaluables}</td>
+                          <td>{Number(metric?.avance_percent || 0).toFixed(2)}%</td>
+                          <td>{Number(metric?.ponderacion || 0).toFixed(2)}%</td>
+                          <td>{metric?.esperadas || 0}</td>
+                          <td>{metric?.completadas || 0}</td>
+                          <td>{metric?.pendientes || 0}</td>
+                          <td>
+                            <span className={`teacher-evaluation__status teacher-evaluation__status--${status === 'Realizada' ? 'done' : status === 'En progreso' ? 'progress' : 'pending'}`}>
+                              {status}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                              onClick={() => void openStudentGrades(item)}
+                              disabled={detailLoading}
+                            >
+                              Ver notas
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {(studentProgress?.items || []).length === 0 ? (
+                <div className="teacher-evaluation__empty">No hay estudiantes con materias calificadas para el periodo seleccionado.</div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="matricula-table-wrap teacher-evaluation__progress-table-wrap">
+                <table className="matricula-table teacher-evaluation__progress-table">
+                  <thead>
+                    <tr>
+                      <th>Docente</th>
+                      <th>Materia única</th>
+                      <th>Paralelo</th>
+                      <th>Evaluación</th>
+                      <th>Avance</th>
+                      <th>Ponderación</th>
+                      <th>Cumplimiento</th>
+                      <th>Esperadas</th>
+                      <th>Completadas</th>
+                      <th>Pendientes</th>
+                      <th>Gráfico</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.teacher_progress || []).map((item) => (
+                      <tr key={`${item.flow}-${item.codigo_doc}-${item.codigo_periodo}-${item.codigo_materia}-${item.paralelo || ''}`}>
+                        <td>{item.docente || `Docente ${item.codigo_doc}`}</td>
+                        <td>{item.materia || item.codigo_materia}</td>
+                        <td>{item.paralelo || '-'}</td>
+                        <td>{item.flow_label}</td>
+                        <td>{Number(item.progress_percent || 0).toFixed(2)}%</td>
+                        <td>{Number(item.ponderacion || 0).toFixed(2)}%</td>
+                        <td>{Number(item.ponderacion_aplicada || 0).toFixed(2)}%</td>
+                        <td>{item.expected}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="teacher-evaluation__count-button"
+                            onClick={() => void openProgressParticipants(item, 'completadas')}
+                            disabled={detailLoading || item.completed <= 0}
+                          >
+                            {item.completed}
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="teacher-evaluation__count-button"
+                            onClick={() => void openProgressParticipants(item, 'pendientes')}
+                            disabled={detailLoading || item.pending <= 0}
+                          >
+                            {item.pending}
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                            onClick={() => void openProgressDetail(item)}
+                            disabled={detailLoading}
+                          >
+                            Ver gráfico
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {(data.teacher_progress || []).length === 0 ? (
+                <div className="teacher-evaluation__empty">No hay docentes con materias evaluables para el periodo seleccionado.</div>
+              ) : null}
+            </>
+          )}
         </section>
       ) : null}
 

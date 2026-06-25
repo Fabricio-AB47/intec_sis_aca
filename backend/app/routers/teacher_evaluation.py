@@ -3613,12 +3613,14 @@ def get_teacher_evaluation_student_progress(
             "materias_autoevaluables": total_auto_expected,
             "evaluacion_docente": {
                 "ponderacion": student_weight,
+                "esperadas": total_expected,
                 "completadas": total_student_completed,
                 "pendientes": max(total_expected - total_student_completed, 0),
                 "avance_percent": round((total_student_completed / total_expected) * 100, 2) if total_expected else 0,
             },
             "autoevaluacion_estudiante": {
                 "ponderacion": auto_weight,
+                "esperadas": total_auto_expected,
                 "completadas": total_auto_completed,
                 "pendientes": max(total_auto_expected - total_auto_completed, 0),
                 "avance_percent": round((total_auto_completed / total_auto_expected) * 100, 2) if total_auto_expected else 0,
