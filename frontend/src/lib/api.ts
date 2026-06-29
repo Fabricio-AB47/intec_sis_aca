@@ -49,6 +49,10 @@ import type {
   DashboardMatriculaTrendStudentsResponse,
   ExcelSqlCrossResponse,
   ExcelValidationResponse,
+  FechaGradoCatalogResponse,
+  FechaGradoSavePayload,
+  FechaGradoSaveResponse,
+  FechaGradoStudentsResponse,
   IngresoVentasResponse,
   LegacyReportFilters,
   LegacyReportsCatalogResponse,
@@ -709,6 +713,33 @@ export async function createSisAcademicoRecord(
 
 export async function fetchCertificadosCatalog(): Promise<CertificadosCatalogResponse> {
   return request<CertificadosCatalogResponse>('/api/certificados/catalog')
+}
+
+export async function fetchFechaGradoCatalog(periodo = ''): Promise<FechaGradoCatalogResponse> {
+  const params = new URLSearchParams()
+  if (periodo) params.set('periodo', periodo)
+  const query = params.toString()
+  return request<FechaGradoCatalogResponse>(`/api/students/fecha-grado/catalog${query ? `?${query}` : ''}`)
+}
+
+export async function fetchFechaGradoStudents(filters: {
+  periodo: string
+  carrera?: string
+  busqueda?: string
+  limit?: number
+}): Promise<FechaGradoStudentsResponse> {
+  const params = new URLSearchParams({ periodo: filters.periodo })
+  if (filters.carrera) params.set('carrera', filters.carrera)
+  if (filters.busqueda) params.set('busqueda', filters.busqueda)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  return request<FechaGradoStudentsResponse>(`/api/students/fecha-grado/estudiantes?${params.toString()}`)
+}
+
+export async function saveFechaGrado(payload: FechaGradoSavePayload): Promise<FechaGradoSaveResponse> {
+  return request<FechaGradoSaveResponse>('/api/students/fecha-grado/guardar', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function fetchCertificadosStudents(filters: {
@@ -1662,7 +1693,7 @@ export async function fetchTeacherEvaluationAdminPeriods(): Promise<TeacherEvalu
 export async function fetchTeacherEvaluationAdminPending(
   periodo: string,
   flow: TeacherEvaluationFlow | 'all' = 'all',
-  limit = 500,
+  limit = 5000,
 ): Promise<TeacherEvaluationAdminPendingResponse> {
   const params = new URLSearchParams({ periodo, flow, limit: String(limit) })
   return request<TeacherEvaluationAdminPendingResponse>(`/api/evaluacion-docente/admin/pendientes?${params.toString()}`)
@@ -1673,6 +1704,7 @@ export async function fetchTeacherEvaluationProgressDetail(
   codigoDocente: string,
   codigoMateria: string,
   flow: TeacherEvaluationFlow | 'all' = 'all',
+  paralelo: string = '',
 ): Promise<TeacherEvaluationProgressDetailResponse> {
   const params = new URLSearchParams({
     periodo,
@@ -1680,6 +1712,7 @@ export async function fetchTeacherEvaluationProgressDetail(
     codigo_materia: codigoMateria,
     flow,
   })
+  if (paralelo) params.set('paralelo', paralelo)
   return request<TeacherEvaluationProgressDetailResponse>(
     `/api/evaluacion-docente/admin/progreso-detalle?${params.toString()}`,
   )
@@ -1691,7 +1724,8 @@ export async function fetchTeacherEvaluationProgressParticipants(
   codigoMateria: string,
   flow: TeacherEvaluationFlow | 'all',
   estado: 'completadas' | 'pendientes',
-  limit = 1000,
+  paralelo: string = '',
+  limit = 1500,
 ): Promise<TeacherEvaluationProgressParticipantsResponse> {
   const params = new URLSearchParams({
     periodo,
@@ -1701,6 +1735,7 @@ export async function fetchTeacherEvaluationProgressParticipants(
     estado,
     limit: String(limit),
   })
+  if (paralelo) params.set('paralelo', paralelo)
   return request<TeacherEvaluationProgressParticipantsResponse>(
     `/api/evaluacion-docente/admin/progreso-participantes?${params.toString()}`,
   )
@@ -1741,8 +1776,10 @@ export async function fetchTeacherEvaluationAutoStudents(
   periodo: string,
   estado: 'pendientes' | 'realizadas' | 'todos' = 'pendientes',
   limit = 500,
+  codigoEstud?: number,
 ): Promise<TeacherEvaluationAutoStudentListResponse> {
   const params = new URLSearchParams({ periodo, estado, limit: String(limit) })
+  if (codigoEstud) params.set('codigo_estud', String(codigoEstud))
   return request<TeacherEvaluationAutoStudentListResponse>(
     `/api/evaluacion-docente/admin/autoevaluacion-estudiantes?${params.toString()}`,
   )

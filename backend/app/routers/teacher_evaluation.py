@@ -1716,7 +1716,7 @@ def _find_authority_course(
 
 
 def _admin_expected_rows(cursor: pyodbc.Cursor, periodo: str, flow: str, limit: int) -> list[dict[str, Any]]:
-    limit = max(1, min(limit, 1000))
+    limit = max(1, min(limit, 10000))
     if flow == "student":
         cursor.execute(
             f"""
@@ -2058,6 +2058,109 @@ def _student_period_grades(cursor: pyodbc.Cursor, periodo: str, codigo_estud: in
         }
         for row in cursor.fetchall()
     ]
+
+
+def _auto_student_course_result(
+    cursor: pyodbc.Cursor,
+    *,
+    instrument: dict[str, Any],
+    student_code: int,
+    course: dict[str, Any],
+) -> dict[str, Any] | None:
+    subject_ids = sorted({_safe_int(value) for value in (course.get("codigos_materia_relacionados") or []) if _safe_int(value)})
+    if not subject_ids:
+        subject_ids = [_safe_int(course.get("codigo_materia"))]
+    subject_ids = [value for value in subject_ids if value]
+    if not subject_ids:
+        return None
+    subject_placeholders = ", ".join("?" for _ in subject_ids)
+    states = ", ".join("?" for _ in _SUBMITTED_STATES)
+    origin_key = _origin_key(student_code, course, "auto_estudiante")
+    cursor.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT a.Id_Aplicacion) AS aplicaciones,
+            COUNT(r.Id_Respuesta) AS respuestas,
+            AVG(TRY_CONVERT(float, r.Puntaje)) AS promedio,
+            MAX(a.Fecha_Envio) AS fecha_envio
+        FROM eval360.Aplicacion a
+        LEFT JOIN eval360.Respuesta r ON r.Id_Aplicacion = a.Id_Aplicacion
+        WHERE a.Id_Tipo_Evaluacion = ?
+          AND a.Tipo_Evaluador = ?
+          AND a.Cod_Periodo = ?
+          AND a.Cod_Materia IN ({subject_placeholders})
+          AND a.Estado IN ({states})
+          AND (a.Cod_Evaluador = ? OR a.Origen_Evaluador_Clave = ? OR a.Origen_Clave = ?)
+        """,
+        _safe_int(instrument.get("Id_Tipo_Evaluacion")),
+        _flow_config("auto_estudiante")["evaluator_type"],
+        str(_safe_int(course.get("codigo_periodo"))),
+        *[str(value) for value in subject_ids],
+        *_SUBMITTED_STATES,
+        str(student_code),
+        str(student_code),
+        origin_key,
+    )
+    row = cursor.fetchone()
+    if not row or _safe_int(row.aplicaciones) <= 0:
+        return None
+    average = _safe_float(row.promedio)
+    return {
+        "aplicaciones": _safe_int(row.aplicaciones),
+        "respuestas": _safe_int(row.respuestas),
+        "promedio": round(average, 2),
+        "nota_100": _score_to_100(average),
+        "fecha_envio": _clean(row.fecha_envio),
+    }
+
+
+def _auto_student_subjects(
+    academic_cursor: pyodbc.Cursor,
+    evaluation_cursor: pyodbc.Cursor,
+    periodo: str,
+    student_code: int,
+    estado: str,
+) -> list[dict[str, Any]]:
+    academic_cursor.execute(
+        _auto_student_courses_query(
+            """
+            AND ce.codigo_periodo = ?
+            """
+        ),
+        student_code,
+        periodo,
+    )
+    courses = [_course_from_row(_row_dict(academic_cursor, row)) for row in academic_cursor.fetchall()]
+    courses = _deduplicate_subject_courses(courses)
+    instrument = _get_instrument(evaluation_cursor, "auto_estudiante")
+    subjects: list[dict[str, Any]] = []
+    for course in courses:
+        result = _auto_student_course_result(
+            evaluation_cursor,
+            instrument=instrument,
+            student_code=student_code,
+            course=course,
+        )
+        is_done = result is not None
+        if estado == "realizadas" and not is_done:
+            continue
+        if estado == "pendientes" and is_done:
+            continue
+        subjects.append(
+            {
+                "codigo_materia": _safe_int(course.get("codigo_materia")),
+                "codigo_materia_interno": _clean_text(course.get("codigo_materia_interno")),
+                "materia": _clean_text(course.get("materia")) or f"Materia {course.get('codigo_materia')}",
+                "carrera": _clean_text(course.get("carrera")),
+                "paralelo": _clean_text(course.get("paralelo")),
+                "estado": "REALIZADA" if is_done else "PENDIENTE",
+                "respuestas": _safe_int((result or {}).get("respuestas")),
+                "promedio": (result or {}).get("promedio"),
+                "nota_100": (result or {}).get("nota_100"),
+                "fecha_envio": (result or {}).get("fecha_envio"),
+            }
+        )
+    return subjects
 
 
 def _expected_students_for_teacher_subject(
@@ -3162,7 +3265,7 @@ def get_teacher_evaluation_admin_periods(limit: int = Query(default=20, ge=1, le
 def get_teacher_evaluation_admin_pending(
     periodo: str = Query(..., min_length=1),
     flow: str = Query(default="all"),
-    limit: int = Query(default=500, ge=1, le=1000),
+    limit: int = Query(default=5000, ge=1, le=10000),
 ) -> dict[str, Any]:
     allowed_flows = ("student", "auto_estudiante", "auto_docente", "par_docente", "academico_docente")
     flows = list(allowed_flows) if flow == "all" else [flow]
@@ -3233,6 +3336,7 @@ def get_teacher_evaluation_admin_pending(
                                 progress_flow,
                                 str(teacher_code),
                                 _course_subject_key(course, include_teacher=True),
+                                _clean_text(course.get("paralelo")),
                             ]
                         )
                         if progress_key not in teacher_progress:
@@ -3349,12 +3453,24 @@ def _related_subject_codes(cursor: pyodbc.Cursor, codigo_materia: str) -> list[s
     return codes
 
 
+def _course_matches_subject(course: dict[str, Any], subject_codes: list[str]) -> bool:
+    selected_codes = {_clean_text(value) for value in subject_codes if _clean_text(value)}
+    if not selected_codes:
+        return False
+    course_codes = {
+        _clean_text(course.get("codigo_materia")),
+        *(_clean_text(value) for value in (course.get("codigos_materia_relacionados") or [])),
+    }
+    return bool(selected_codes.intersection(course_codes))
+
+
 @router.get("/admin/progreso-detalle")
 def get_teacher_evaluation_progress_detail(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(..., min_length=1),
     codigo_materia: str = Query(..., min_length=1),
     flow: str = Query(default="all"),
+    paralelo: str = Query(default=""),
 ) -> dict[str, Any]:
     report_flow = _clean_text(flow or "all")
     if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
@@ -3386,6 +3502,11 @@ def get_teacher_evaluation_progress_detail(
             weights = _evaluation_weights_for_period(cursor, periodo)
             subject_codes = subject_codes or [_clean_text(codigo_materia)]
             placeholders = ", ".join("?" for _ in subject_codes)
+            parallel_filter = ""
+            parallel_params: list[Any] = []
+            if _clean_text(paralelo) and "/" not in _clean_text(paralelo):
+                parallel_filter = " AND LTRIM(RTRIM(TRY_CONVERT(varchar(20), Paralelo))) = ?"
+                parallel_params.append(_clean_text(paralelo))
             cursor.execute(
                 f"""
                 SELECT
@@ -3398,12 +3519,14 @@ def get_teacher_evaluation_progress_detail(
                 WHERE Cod_Periodo = ?
                   AND Cod_Docente_Evaluado = ?
                   AND Cod_Materia IN ({placeholders})
+                  {parallel_filter}
                 GROUP BY Tipo_Evaluacion, Dimension_Global
                 ORDER BY Tipo_Evaluacion, Dimension_Global
                 """,
                 periodo,
                 codigo_docente,
                 *subject_codes,
+                *parallel_params,
             )
             rows = [_row_dict(cursor, row) for row in cursor.fetchall()]
 
@@ -3449,6 +3572,7 @@ def get_teacher_evaluation_progress_detail(
             "flow": report_flow,
             "codigo_docente": _clean_text(codigo_docente),
             "codigo_materia": _clean_text(codigo_materia),
+            "paralelo": _clean_text(paralelo),
             "docente": teacher.get("docente"),
             "cedula_doc": teacher.get("cedula_doc"),
             "materia": subject.get("materia"),
@@ -3470,7 +3594,8 @@ def get_teacher_evaluation_progress_participants(
     codigo_materia: str = Query(..., min_length=1),
     flow: str = Query(default="all"),
     estado: str = Query(default="completadas"),
-    limit: int = Query(default=1000, ge=1, le=2000),
+    paralelo: str = Query(default=""),
+    limit: int = Query(default=1500, ge=1, le=10000),
 ) -> dict[str, Any]:
     report_flow = _clean_text(flow or "all")
     status = _clean_text(estado).lower()
@@ -3498,6 +3623,8 @@ def get_teacher_evaluation_progress_participants(
             items: list[dict[str, Any]] = []
             subject_label = _clean_text(codigo_materia)
             teacher_label = f"Docente {codigo_docente}"
+            subject_codes = _related_subject_codes(academic_cursor, codigo_materia) or [_clean_text(codigo_materia)]
+            selected_parallel = _clean_text(paralelo)
             for current_flow in flows:
                 if current_flow not in _EVALUATION_FLOWS:
                     continue
@@ -3507,7 +3634,9 @@ def get_teacher_evaluation_progress_participants(
                     course = expected.get("course") or {}
                     if _clean_text(course.get("codigo_docente_eval")) != _clean_text(codigo_docente):
                         continue
-                    if _clean_text(course.get("codigo_materia")) != _clean_text(codigo_materia):
+                    if not _course_matches_subject(course, subject_codes):
+                        continue
+                    if selected_parallel and "/" not in selected_parallel and _clean_text(course.get("paralelo")) != selected_parallel:
                         continue
                     subject_label = _clean_text(course.get("materia")) or subject_label
                     teacher_label = _clean_text(course.get("docente")) or teacher_label
@@ -3546,6 +3675,7 @@ def get_teacher_evaluation_progress_participants(
             "periodo_detalle": period_label,
             "codigo_docente": _clean_text(codigo_docente),
             "codigo_materia": _clean_text(codigo_materia),
+            "paralelo": _clean_text(paralelo),
             "docente": teacher_label,
             "materia": subject_label,
             "flow": report_flow,
@@ -3658,6 +3788,7 @@ def get_teacher_evaluation_student_progress(
 def get_teacher_evaluation_auto_student_list(
     periodo: str = Query(..., min_length=1),
     estado: str = Query(default="pendientes"),
+    codigo_estud: int = Query(default=0, ge=0),
     limit: int = Query(default=500, ge=1, le=2000),
 ) -> dict[str, Any]:
     normalized_status = _clean_text(estado).lower()
@@ -3677,24 +3808,44 @@ def get_teacher_evaluation_auto_student_list(
             items: list[dict[str, Any]] = []
             for item in expected:
                 code = _safe_int(item.get("codigo_estud"))
+                if codigo_estud and code != codigo_estud:
+                    continue
                 expected_count = _safe_int(item.get("materias_autoevaluables")) or _safe_int(item.get("materias_evaluables"))
                 done = min(_safe_int(completed.get(code)), expected_count)
                 pending = max(expected_count - done, 0)
                 is_complete = expected_count > 0 and pending == 0
-                if normalized_status == "pendientes" and is_complete:
-                    continue
-                if normalized_status == "realizadas" and not is_complete:
-                    continue
-                items.append(
-                    {
-                        **item,
-                        "esperadas": expected_count,
-                        "completadas": done,
-                        "pendientes": pending,
-                        "avance_percent": round((done / expected_count) * 100, 2) if expected_count else 0,
-                        "estado": "REALIZADA" if is_complete else "PENDIENTE",
-                    }
-                )
+                if codigo_estud:
+                    if normalized_status == "pendientes" and pending <= 0:
+                        continue
+                    if normalized_status == "realizadas" and done <= 0:
+                        continue
+                else:
+                    if normalized_status == "pendientes" and is_complete:
+                        continue
+                    if normalized_status == "realizadas" and not is_complete:
+                        continue
+                payload = {
+                    **item,
+                    "esperadas": expected_count,
+                    "completadas": done,
+                    "pendientes": pending,
+                    "avance_percent": round((done / expected_count) * 100, 2) if expected_count else 0,
+                    "estado": "REALIZADA" if is_complete else "PENDIENTE",
+                }
+                if codigo_estud:
+                    subjects = _auto_student_subjects(
+                        academic_cursor,
+                        evaluation_cursor,
+                        periodo,
+                        code,
+                        normalized_status,
+                    )
+                    payload["materias"] = subjects
+                    if normalized_status == "realizadas":
+                        payload["completadas"] = len(subjects)
+                    if normalized_status == "pendientes":
+                        payload["pendientes"] = len(subjects)
+                items.append(payload)
         return {"periodo": periodo, "estado": normalized_status, "items": items, "total": len(items)}
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

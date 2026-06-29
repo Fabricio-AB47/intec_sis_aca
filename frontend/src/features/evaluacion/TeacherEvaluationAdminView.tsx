@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import {
   downloadTeacherEvaluationGradesPdf,
@@ -244,6 +244,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         item.codigo_doc,
         item.codigo_materia,
         item.flow,
+        item.paralelo || '',
       )
       setDetail(response)
     } catch (err) {
@@ -276,6 +277,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         item.codigo_materia,
         item.flow,
         estado,
+        item.paralelo || '',
         1500,
       )
       setParticipants(response)
@@ -286,7 +288,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
   }
 
-  async function openAutoStudentList(estado: 'realizadas' | 'pendientes') {
+  async function openAutoStudentList(estado: 'realizadas' | 'pendientes', codigoEstud?: number) {
     if (!periodo) {
       setError('Selecciona un periodo.')
       return
@@ -294,7 +296,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     setDetailLoading(true)
     setError('')
     try {
-      const response = await fetchTeacherEvaluationAutoStudents(periodo, estado, 2000)
+      const response = await fetchTeacherEvaluationAutoStudents(periodo, estado, 2000, codigoEstud)
       setAutoStudentList(response)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo consultar estudiantes de autoevaluacion.')
@@ -584,7 +586,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                             <button
                               type="button"
                               className="teacher-evaluation__count-button"
-                              onClick={() => void openAutoStudentList('realizadas')}
+                              onClick={() => void openAutoStudentList('realizadas', item.codigo_estud)}
                               disabled={detailLoading || (metric?.completadas || 0) <= 0}
                             >
                               {metric?.completadas || 0}
@@ -594,7 +596,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                             <button
                               type="button"
                               className="teacher-evaluation__count-button"
-                              onClick={() => void openAutoStudentList('pendientes')}
+                              onClick={() => void openAutoStudentList('pendientes', item.codigo_estud)}
                               disabled={detailLoading || (metric?.pendientes || 0) <= 0}
                             >
                               {metric?.pendientes || 0}
@@ -993,30 +995,55 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                       <th>Completadas</th>
                       <th>Pendientes</th>
                       <th>Avance</th>
-                      <th>Notas</th>
                     </tr>
                   </thead>
                   <tbody>
                     {autoStudentList.items.map((item) => (
-                      <tr key={`auto-list-${item.codigo_estud}`}>
-                        <td>{item.estudiante}</td>
-                        <td>{item.cedula || '-'}</td>
-                        <td>{item.carreras || '-'}</td>
-                        <td>{item.esperadas}</td>
-                        <td>{item.completadas}</td>
-                        <td>{item.pendientes}</td>
-                        <td>{Number(item.avance_percent || 0).toFixed(2)}%</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="teacher-evaluation__secondary teacher-evaluation__table-action"
-                            onClick={() => void openStudentGrades({ codigo_estud: item.codigo_estud })}
-                            disabled={detailLoading}
-                          >
-                            Ver notas
-                          </button>
-                        </td>
-                      </tr>
+                      <Fragment key={`auto-list-group-${item.codigo_estud}`}>
+                        <tr key={`auto-list-${item.codigo_estud}`}>
+                          <td>{item.estudiante}</td>
+                          <td>{item.cedula || '-'}</td>
+                          <td>{item.carreras || '-'}</td>
+                          <td>{item.esperadas}</td>
+                          <td>{item.completadas}</td>
+                          <td>{item.pendientes}</td>
+                          <td>{Number(item.avance_percent || 0).toFixed(2)}%</td>
+                        </tr>
+                        {item.materias?.length ? (
+                          <tr key={`auto-subjects-${item.codigo_estud}`}>
+                            <td colSpan={7}>
+                              <div className="matricula-table-wrap">
+                                <table className="matricula-table teacher-evaluation__chart-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Materia</th>
+                                      <th>Carrera</th>
+                                      <th>Paralelo</th>
+                                      <th>Estado</th>
+                                      <th>Respuestas</th>
+                                      <th>Promedio</th>
+                                      <th>Nota</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {item.materias.map((subject) => (
+                                      <tr key={`auto-subject-${item.codigo_estud}-${subject.codigo_materia}-${subject.paralelo || ''}`}>
+                                        <td>{subject.materia || subject.codigo_materia}</td>
+                                        <td>{subject.carrera || '-'}</td>
+                                        <td>{subject.paralelo || '-'}</td>
+                                        <td>{subject.estado}</td>
+                                        <td>{subject.respuestas ?? '-'}</td>
+                                        <td>{subject.promedio != null ? Number(subject.promedio).toFixed(2) : '-'}</td>
+                                        <td>{subject.nota_100 != null ? Number(subject.nota_100).toFixed(2) : '-'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

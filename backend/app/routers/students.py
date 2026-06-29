@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import pandas as pd
+from pydantic import BaseModel, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_roles
@@ -57,6 +58,15 @@ _SPANISH_MONTHS = {
     "NOVIEMBRE": 11,
     "DICIEMBRE": 12,
 }
+
+
+class GraduationDateItem(BaseModel):
+    codigo_estud: str = Field(min_length=1, max_length=50)
+    fecha_grado: str | None = None
+
+
+class GraduationDateSavePayload(BaseModel):
+    items: list[GraduationDateItem] = Field(min_length=1, max_length=1000)
 
 
 class _HtmlTableParser(HTMLParser):
@@ -3839,6 +3849,195 @@ def ingreso_ventas(
         return _build_ingreso_ventas_payload(top_limit)
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando ingreso por ventas: {exc}") from exc
+
+
+def _parse_graduation_date(value: Any) -> date | None:
+    text = _clean_cell(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Fecha de grado invalida: {text}") from exc
+
+
+@router.get("/fecha-grado/catalog")
+def graduation_date_catalog(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    periodo: Annotated[str, Query(max_length=50)] = "",
+) -> dict[str, Any]:
+    del current_user
+    period_code = _clean_cell(periodo)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (500)
+                    TRY_CONVERT(varchar(50), p.cod_periodo) AS codigo_periodo,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS detalle_periodo,
+                    p.fechain,
+                    p.fechafin,
+                    p.anio
+                FROM dbo.PERIODO p
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM dbo.CARRERAXESTUD cx
+                    WHERE TRY_CONVERT(varchar(50), cx.codigo_periodo) = TRY_CONVERT(varchar(50), p.cod_periodo)
+                )
+                ORDER BY COALESCE(p.anio, 0) DESC, p.fechain DESC, p.cod_periodo DESC
+                """
+            )
+            periods = [
+                {
+                    "codigo_periodo": _clean_cell(row.codigo_periodo),
+                    "detalle_periodo": _clean_cell(row.detalle_periodo),
+                    "fecha_inicio": row.fechain.isoformat() if row.fechain else "",
+                    "fecha_fin": row.fechafin.isoformat() if row.fechafin else "",
+                    "anio": int(row.anio) if row.anio is not None else None,
+                }
+                for row in cursor.fetchall()
+            ]
+            careers: list[dict[str, Any]] = []
+            if period_code:
+                cursor.execute(
+                    """
+                    SELECT
+                        TRY_CONVERT(varchar(50), c.Cod_AnioBasica) AS codigo_carrera,
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), c.Nombre_Basica))) AS nombre_carrera,
+                        COUNT(DISTINCT cx.codigo_estud) AS total_estudiantes
+                    FROM dbo.CARRERAXESTUD cx
+                    LEFT JOIN dbo.CARRERAS c
+                        ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cx.cod_anio_Basica)
+                    WHERE TRY_CONVERT(varchar(50), cx.codigo_periodo) = ?
+                    GROUP BY c.Cod_AnioBasica, c.Nombre_Basica
+                    ORDER BY c.Nombre_Basica
+                    """,
+                    period_code,
+                )
+                careers = [
+                    {
+                        "codigo_carrera": _clean_cell(row.codigo_carrera),
+                        "nombre_carrera": _clean_cell(row.nombre_carrera) or "Sin carrera",
+                        "total_estudiantes": int(row.total_estudiantes or 0),
+                    }
+                    for row in cursor.fetchall()
+                ]
+            return {"periodos": periods, "carreras": careers}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar el catalogo de fecha de grado: {exc}") from exc
+
+
+@router.get("/fecha-grado/estudiantes")
+def graduation_date_students(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    periodo: Annotated[str, Query(min_length=1, max_length=50)],
+    carrera: Annotated[str, Query(max_length=50)] = "",
+    busqueda: Annotated[str, Query(max_length=120)] = "",
+    limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
+) -> dict[str, Any]:
+    del current_user
+    period_code = _clean_cell(periodo)
+    career_code = _clean_cell(carrera)
+    search = _clean_cell(busqueda)
+    params: list[Any] = [period_code]
+    wheres = ["TRY_CONVERT(varchar(50), cx.codigo_periodo) = ?"]
+    if career_code:
+        wheres.append("TRY_CONVERT(varchar(50), cx.cod_anio_Basica) = ?")
+        params.append(career_code)
+    if search:
+        needle = f"%{search}%"
+        document_needle = re.sub(r"\D+", "", search) or search
+        wheres.append(
+            """
+            (
+                TRY_CONVERT(nvarchar(max), d.Apellidos_nombre) LIKE ?
+                OR TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
+                OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.Cedula_Est), '-', ''), ' ', '') LIKE ?
+                OR TRY_CONVERT(nvarchar(max), c.Nombre_Basica) LIKE ?
+            )
+            """
+        )
+        params.extend([needle, needle, f"%{document_needle}%", needle])
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT TOP ({limit})
+                    TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
+                    LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))) AS cedula,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), d.Apellidos_nombre))) AS nombres,
+                    LTRIM(RTRIM(TRY_CONVERT(varchar(50), cx.cod_anio_Basica))) AS codigo_carrera,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), c.Nombre_Basica))) AS carrera,
+                    TRY_CONVERT(varchar(50), cx.codigo_periodo) AS codigo_periodo,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS periodo,
+                    d.Fecha_Grado AS fecha_grado
+                FROM dbo.CARRERAXESTUD cx
+                INNER JOIN dbo.DATOS_ESTUD d
+                    ON TRY_CONVERT(varchar(50), d.codigo_estud) = TRY_CONVERT(varchar(50), cx.codigo_estud)
+                LEFT JOIN dbo.CARRERAS c
+                    ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cx.cod_anio_Basica)
+                LEFT JOIN dbo.PERIODO p
+                    ON TRY_CONVERT(varchar(50), p.cod_periodo) = TRY_CONVERT(varchar(50), cx.codigo_periodo)
+                WHERE {" AND ".join(wheres)}
+                GROUP BY
+                    d.codigo_estud, d.Cedula_Est, d.Apellidos_nombre,
+                    cx.cod_anio_Basica, c.Nombre_Basica, cx.codigo_periodo, p.Detalle_Periodo,
+                    d.Fecha_Grado
+                ORDER BY d.Apellidos_nombre, c.Nombre_Basica
+                """,
+                *params,
+            )
+            items = [
+                {
+                    "codigo_estud": _clean_cell(row.codigo_estud),
+                    "cedula": _clean_cell(row.cedula),
+                    "nombres": _clean_cell(row.nombres),
+                    "codigo_carrera": _clean_cell(row.codigo_carrera),
+                    "carrera": _clean_cell(row.carrera),
+                    "codigo_periodo": _clean_cell(row.codigo_periodo),
+                    "periodo": _clean_cell(row.periodo),
+                    "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+                }
+                for row in cursor.fetchall()
+            ]
+            return {"items": items, "total": len(items), "periodo": period_code, "carrera": career_code}
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar estudiantes para fecha de grado: {exc}") from exc
+
+
+@router.post("/fecha-grado/guardar")
+def save_graduation_dates(
+    payload: GraduationDateSavePayload,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            updated = 0
+            for item in payload.items:
+                code = _clean_cell(item.codigo_estud)
+                graduation_date = _parse_graduation_date(item.fecha_grado)
+                cursor.execute(
+                    """
+                    UPDATE dbo.DATOS_ESTUD
+                    SET Fecha_Grado = ?
+                    WHERE TRY_CONVERT(varchar(50), codigo_estud) = ?
+                    """,
+                    graduation_date,
+                    code,
+                )
+                updated += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            conn.commit()
+            return {"ok": True, "actualizados": updated}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudieron guardar las fechas de grado: {exc}") from exc
 
 
 

@@ -74,6 +74,15 @@ def _is_gastronomia_career(value: Any) -> bool:
     return "GASTRONOMIA" in _text_key(value)
 
 
+def _is_futuro_femenino_scholarship(value: Any) -> bool:
+    key = _text_key(value)
+    return "FUTURO" in key and "FEMENINO" in key
+
+
+def _is_mintel_scholarship(value: Any) -> bool:
+    return "MINTEL" in _text_key(value)
+
+
 def _date_text(value: Any) -> str:
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -145,11 +154,11 @@ def _legacy_certificate_scholarship(cursor: Any, codigo_estud: str) -> dict[str,
     )
     row = _one_from_cursor(cursor) or {}
     tipo_beca = _clean(row.get("tipo_beca")) or "Sin Beca"
-    porcentaje_beca = 50.0 if tipo_beca == "Beca Futuro Femenino" else _percentage(row.get("porcentaje_beca"))
+    porcentaje_beca = 50.0 if _is_futuro_femenino_scholarship(tipo_beca) else _percentage(row.get("porcentaje_beca"))
     es_suzuki = "suzuki" in tipo_beca.lower()
 
     matricula_base = 75.0
-    arancel_base = 725.0 if tipo_beca == "Beca Mintel" else 750.0
+    arancel_base = 725.0 if _is_mintel_scholarship(tipo_beca) else 750.0
     matricula_financiada = round(matricula_base * (porcentaje_beca / 100), 2)
     arancel_financiado = round(arancel_base * (porcentaje_beca / 100), 2)
 
@@ -167,12 +176,15 @@ def _legacy_certificate_scholarship(cursor: Any, codigo_estud: str) -> dict[str,
 
 def _certificate_costs_for_career(scholarship: dict[str, Any], carrera: Any) -> dict[str, float]:
     porcentaje_beca = _percentage(scholarship.get("porcentaje_beca"))
+    tipo_beca = scholarship.get("tipo_beca")
     if _is_gastronomia_career(carrera):
         matricula_base = _GASTRONOMIA_MATRICULA_BASE
         arancel_base = _GASTRONOMIA_ARANCEL_BASE
     else:
         matricula_base = _number(scholarship.get("matricula_base")) or 0.0
         arancel_base = _number(scholarship.get("arancel_base")) or 0.0
+    if _is_mintel_scholarship(tipo_beca):
+        porcentaje_beca = 100.0
     matricula_financiada = round(matricula_base * (porcentaje_beca / 100), 2)
     arancel_financiado = round(arancel_base * (porcentaje_beca / 100), 2)
     return {
@@ -780,7 +792,7 @@ def _build_promocion_pdf(context: dict[str, Any]) -> bytes:
         rightMargin=0.45 * inch,
         topMargin=0.55 * inch,
         bottomMargin=0.45 * inch,
-        title="Certificado de Promocion",
+        title="Certificado de Promoción",
     ).build(story)
     output.seek(0)
     return output.getvalue()
@@ -802,7 +814,7 @@ def _build_promocion_pdf_bundle(contexts: list[dict[str, Any]]) -> bytes:
         rightMargin=0.45 * inch,
         topMargin=0.55 * inch,
         bottomMargin=0.45 * inch,
-        title="Certificados de Promocion",
+        title="Certificados de Promoción",
     ).build(story)
     output.seek(0)
     return output.getvalue()
@@ -904,6 +916,44 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
         10.2,
     )
 
+    if _percentage(context.get("porcentaje_beca")) > 0 or (_number(context.get("total_financiado")) or 0.0) > 0:
+        cost_y = _draw_rich_wrapped(
+            canv,
+            [
+                ("Costo Matrícula Financiada (por periodo académico):", "Times-Bold"),
+                (f"${context['matricula_financiada']:.2f}", "Times-Roman"),
+            ],
+            left,
+            cost_y,
+            max_width,
+            8.8,
+            10.2,
+        )
+        cost_y = _draw_rich_wrapped(
+            canv,
+            [
+                ("Costo Arancel Financiado (por periodo académico):", "Times-Bold"),
+                (f"${context['arancel_financiado']:.2f}", "Times-Roman"),
+            ],
+            left,
+            cost_y,
+            max_width,
+            8.8,
+            10.2,
+        )
+        cost_y = _draw_rich_wrapped(
+            canv,
+            [
+                ("Total Financiado (por periodo académico):", "Times-Bold"),
+                (f"${context['total_financiado']:.2f}", "Times-Roman"),
+            ],
+            left,
+            cost_y,
+            max_width,
+            8.8,
+            10.2,
+        )
+
     closing_y = cost_y - 18
     closing_y = _draw_wrapped(
         canv,
@@ -924,7 +974,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
 def _build_matricula_pdf(context: dict[str, Any]) -> bytes:
     output = BytesIO()
     canv = pdf_canvas.Canvas(output, pagesize=letter)
-    canv.setTitle("Certificado de Matricula")
+    canv.setTitle("Certificado de Matrícula")
     _draw_matricula_certificate_page(canv, context)
     canv.showPage()
     canv.save()
@@ -935,7 +985,7 @@ def _build_matricula_pdf(context: dict[str, Any]) -> bytes:
 def _build_matricula_pdf_bundle(contexts: list[dict[str, Any]]) -> bytes:
     output = BytesIO()
     canv = pdf_canvas.Canvas(output, pagesize=letter)
-    canv.setTitle("Certificados de Matricula")
+    canv.setTitle("Certificados de Matrícula")
     for context in contexts:
         _draw_matricula_certificate_page(canv, context)
         canv.showPage()
@@ -2147,6 +2197,9 @@ def _certificate_excel_row(
         "Porcentaje beca": (context or {}).get("porcentaje_beca"),
         "Costo matrícula": (context or {}).get("matricula_base"),
         "Costo arancel": (context or {}).get("arancel_base"),
+        "Costo matrícula financiada": (context or {}).get("matricula_financiada"),
+        "Costo arancel financiado": (context or {}).get("arancel_financiado"),
+        "Total financiado": (context or {}).get("total_financiado"),
         "Reprobadas": len(reprobadas or []),
         "Detalle reprobadas": _reprobadas_text(reprobadas or []),
         "Archivo sugerido": _certificate_excel_filename(code, certificate_type, generation_period, context),
@@ -2186,6 +2239,9 @@ def _build_certificates_workbook(rows: list[dict[str, Any]], payload: Certificat
         "Porcentaje beca",
         "Costo matrícula",
         "Costo arancel",
+        "Costo matrícula financiada",
+        "Costo arancel financiado",
+        "Total financiado",
         "Reprobadas",
         "Detalle reprobadas",
         "Archivo sugerido",

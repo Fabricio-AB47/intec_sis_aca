@@ -909,6 +909,9 @@ export function useReporteriaApp() {
   const openRangoEdadesPage = () => {
     setActivePage('rango-edades')
   }
+  const openFechaGradoPage = () => {
+    setActivePage('fecha-grado')
+  }
   const openCertificadosPage = () => {
     setActivePage('certificados')
   }
@@ -1024,6 +1027,7 @@ export function useReporteriaApp() {
     openCruceDatosPage,
     openValidarExcelPage,
     openRangoEdadesPage,
+    openFechaGradoPage,
     openCertificadosPage,
     openMatriculaExcelCertificadosPage,
     openCertificateRenamerPage,

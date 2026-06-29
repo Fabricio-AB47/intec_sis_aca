@@ -17,6 +17,7 @@ import { CertificateRenamerView } from './features/matricula/CertificateRenamerV
 import { CertificadosView } from './features/matricula/CertificadosView'
 import { EstadoDocenteView } from './features/matricula/EstadoDocenteView'
 import { GestionSisAcademicoView } from './features/matricula/GestionSisAcademicoView'
+import { FechaGradoView } from './features/matricula/FechaGradoView'
 import { IngresoVentasView } from './features/matricula/IngresoVentasView'
 import { MatriculaAcadView } from './features/matricula/MatriculaAcadView'
 import { MatriculaDocenteView } from './features/matricula/MatriculaDocenteView'
@@ -179,6 +180,8 @@ function App() {
       pageContent = <ExcelValidationView displayName={app.displayName} />
     } else if (app.activePage === 'rango-edades') {
       pageContent = <RangoEdadesView displayName={app.displayName} />
+    } else if (app.activePage === 'fecha-grado') {
+      pageContent = <FechaGradoView displayName={app.displayName} />
     } else if (app.activePage === 'certificados') {
       pageContent = <CertificadosView displayName={app.displayName} />
     } else if (app.activePage === 'matricula-excel-certificados') {
@@ -289,6 +292,7 @@ function App() {
           onOpenCruceDatos={app.openCruceDatosPage}
           onOpenValidarExcel={app.openValidarExcelPage}
           onOpenRangoEdades={app.openRangoEdadesPage}
+          onOpenFechaGrado={app.openFechaGradoPage}
           onOpenCertificados={app.openCertificadosPage}
           onOpenMatriculaExcelCertificados={app.openMatriculaExcelCertificadosPage}
           onOpenCertificateRenamer={app.openCertificateRenamerPage}

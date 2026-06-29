@@ -33,6 +33,7 @@ type StudentLayoutProps = {
   onOpenCruceDatos: () => void
   onOpenValidarExcel: () => void
   onOpenRangoEdades: () => void
+  onOpenFechaGrado: () => void
   onOpenCertificados: () => void
   onOpenMatriculaExcelCertificados: () => void
   onOpenCertificateRenamer: () => void
@@ -353,6 +354,7 @@ export function StudentLayout({
   onOpenGestionSisAcademico,
   onOpenPeriodoAcademico,
   onOpenRangoEdades,
+  onOpenFechaGrado,
   onOpenCertificados,
   onOpenMatriculaExcelCertificados,
   onOpenCertificateRenamer,
@@ -545,6 +547,12 @@ export function StudentLayout({
           description: 'Generar y revisar certificados institucionales.',
           page: 'certificados',
           action: onOpenCertificados,
+        },
+        {
+          label: 'Fecha de grado',
+          description: 'Registrar fecha de grado por periodo y carrera.',
+          page: 'fecha-grado',
+          action: onOpenFechaGrado,
         },
         {
           label: 'Matrícula en Excel',
@@ -1037,6 +1045,12 @@ export function StudentLayout({
           description: 'Generar y revisar certificados institucionales.',
           page: 'certificados',
           action: onOpenCertificados,
+        },
+        {
+          label: 'Fecha de grado',
+          description: 'Registrar fecha de grado por periodo y carrera.',
+          page: 'fecha-grado',
+          action: onOpenFechaGrado,
         },
         {
           label: 'Matrícula en Excel',

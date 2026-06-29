@@ -43,6 +43,7 @@ export type Page =
   | 'cruce-datos'
   | 'validar-excel'
   | 'rango-edades'
+  | 'fecha-grado'
   | 'certificados'
   | 'matricula-excel-certificados'
   | 'renombrar-certificados'
@@ -307,6 +308,7 @@ export type TeacherEvaluationProgressDetailResponse = {
   flow: TeacherEvaluationFlow | 'all'
   codigo_docente: string
   codigo_materia: string
+  paralelo?: string | null
   docente: string
   cedula_doc?: string | null
   materia: string
@@ -424,6 +426,18 @@ export type TeacherEvaluationAutoStudentListItem = {
   pendientes: number
   avance_percent: number
   estado: string
+  materias?: Array<{
+    codigo_materia: string | number
+    codigo_materia_interno?: string | null
+    materia: string
+    carrera?: string | null
+    paralelo?: string | null
+    estado: string
+    respuestas?: number
+    promedio?: number | null
+    nota_100?: number | null
+    fecha_envio?: string | null
+  }>
 }
 
 export type TeacherEvaluationAutoStudentListResponse = {
@@ -1043,6 +1057,55 @@ export type CertificadosCatalogResponse = {
   periodos?: CertificadosPeriodOption[]
   semestres?: CertificadosSemesterOption[]
   detail?: string
+}
+
+export type FechaGradoPeriodOption = {
+  codigo_periodo: string
+  detalle_periodo?: string
+  fecha_inicio?: string
+  fecha_fin?: string
+  anio?: number | null
+}
+
+export type FechaGradoCareerOption = {
+  codigo_carrera: string
+  nombre_carrera: string
+  total_estudiantes?: number
+}
+
+export type FechaGradoCatalogResponse = {
+  periodos?: FechaGradoPeriodOption[]
+  carreras?: FechaGradoCareerOption[]
+}
+
+export type FechaGradoStudent = {
+  codigo_estud: string
+  cedula?: string
+  nombres: string
+  codigo_carrera?: string
+  carrera?: string
+  codigo_periodo?: string
+  periodo?: string
+  fecha_grado?: string
+}
+
+export type FechaGradoStudentsResponse = {
+  items?: FechaGradoStudent[]
+  total?: number
+  periodo?: string
+  carrera?: string
+}
+
+export type FechaGradoSavePayload = {
+  items: Array<{
+    codigo_estud: string
+    fecha_grado?: string | null
+  }>
+}
+
+export type FechaGradoSaveResponse = {
+  ok: boolean
+  actualizados: number
 }
 
 export type CertificadosReprobada = {

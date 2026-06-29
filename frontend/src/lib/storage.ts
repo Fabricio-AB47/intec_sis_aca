@@ -24,6 +24,7 @@ function isPage(value: string): value is Page {
     value === 'cruce-datos' ||
     value === 'validar-excel' ||
     value === 'rango-edades' ||
+    value === 'fecha-grado' ||
     value === 'certificados' ||
     value === 'renombrar-certificados' ||
     value === 'credenciales' ||
