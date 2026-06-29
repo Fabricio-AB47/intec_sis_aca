@@ -4,6 +4,7 @@ import {
   downloadTeacherEvaluationGradesPdf,
   fetchTeacherEvaluationAdminPending,
   fetchTeacherEvaluationAdminPeriods,
+  fetchTeacherEvaluationAutoStudents,
   fetchTeacherEvaluationGradedSubjects,
   fetchTeacherEvaluationGradedTeachers,
   fetchTeacherEvaluationProgressDetail,
@@ -14,6 +15,7 @@ import {
 import type {
   TeacherEvaluationAdminPendingResponse,
   TeacherEvaluationAdminPeriod,
+  TeacherEvaluationAutoStudentListResponse,
   TeacherEvaluationFlow,
   TeacherEvaluationGradedSubject,
   TeacherEvaluationGradedTeacher,
@@ -66,6 +68,8 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
   const [participants, setParticipants] = useState<TeacherEvaluationProgressParticipantsResponse | null>(null)
   const [studentGrades, setStudentGrades] = useState<TeacherEvaluationStudentGradesResponse | null>(null)
   const [studentProgress, setStudentProgress] = useState<TeacherEvaluationStudentProgressResponse | null>(null)
+  const [autoStudentList, setAutoStudentList] = useState<TeacherEvaluationAutoStudentListResponse | null>(null)
+  const [lastProgressUpdate, setLastProgressUpdate] = useState<Date | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -92,13 +96,15 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
   }, [])
 
-  async function loadPending(selectedPeriod = periodo, selectedFlow = flow) {
+  async function loadPending(selectedPeriod = periodo, selectedFlow = flow, silent = false) {
     if (!selectedPeriod) {
       setError('Selecciona un periodo.')
       return
     }
-    setLoading(true)
-    setError('')
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
     try {
       const [response, studentResponse] = await Promise.all([
         fetchTeacherEvaluationAdminPending(selectedPeriod, selectedFlow),
@@ -108,12 +114,15 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       ])
       setData(response)
       setStudentProgress(studentResponse)
+      setLastProgressUpdate(new Date())
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo consultar pendientes.')
-      setData(null)
-      setStudentProgress(null)
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'No se pudo consultar pendientes.')
+        setData(null)
+        setStudentProgress(null)
+      }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -277,6 +286,23 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
   }
 
+  async function openAutoStudentList(estado: 'realizadas' | 'pendientes') {
+    if (!periodo) {
+      setError('Selecciona un periodo.')
+      return
+    }
+    setDetailLoading(true)
+    setError('')
+    try {
+      const response = await fetchTeacherEvaluationAutoStudents(periodo, estado, 2000)
+      setAutoStudentList(response)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo consultar estudiantes de autoevaluacion.')
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (periodo) {
       if (showProgress) {
@@ -288,6 +314,16 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodo, flow, reportFlow, showProgress, showReports])
+
+  useEffect(() => {
+    if (!showProgress || !periodo) return undefined
+    const interval = window.setInterval(() => {
+      if (document.hidden) return
+      void loadPending(periodo, flow, true)
+    }, 10000)
+    return () => window.clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showProgress, periodo, flow])
 
   useEffect(() => {
     if (showReports) {
@@ -449,9 +485,47 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                 Avance total: {displayTotals.expected ? Number((displayTotals.completed / displayTotals.expected) * 100).toFixed(2) : '0.00'}%
               </span>
               <span className="teacher-evaluation__summary-pill">Esperadas: {displayTotals.expected}</span>
-              <span className="teacher-evaluation__summary-pill">Completadas: {displayTotals.completed}</span>
-              <span className="teacher-evaluation__summary-pill">Pendientes: {displayTotals.pending}</span>
+              <span className="teacher-evaluation__summary-pill">
+                Completadas:{' '}
+                {isStudentProgressFlow ? (
+                  <button
+                    type="button"
+                    className="teacher-evaluation__pill-button"
+                    onClick={() => void openAutoStudentList('realizadas')}
+                    disabled={detailLoading}
+                  >
+                    {displayTotals.completed}
+                  </button>
+                ) : displayTotals.completed}
+              </span>
+              <span className="teacher-evaluation__summary-pill">
+                Pendientes:{' '}
+                {isStudentProgressFlow ? (
+                  <button
+                    type="button"
+                    className="teacher-evaluation__pill-button teacher-evaluation__pill-button--danger"
+                    onClick={() => void openAutoStudentList('pendientes')}
+                    disabled={detailLoading}
+                  >
+                    {displayTotals.pending}
+                  </button>
+                ) : displayTotals.pending}
+              </span>
+              <span className="teacher-evaluation__summary-pill">
+                Actualizado: {lastProgressUpdate ? lastProgressUpdate.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
+              </span>
+              <button
+                type="button"
+                className="teacher-evaluation__summary-pill teacher-evaluation__summary-pill--button"
+                onClick={() => void loadPending()}
+                disabled={loading}
+              >
+                Actualizar ahora
+              </button>
             </div>
+            <p className="teacher-evaluation__live-note">
+              Actualización automática cada 10 segundos mientras esta pantalla permanezca abierta.
+            </p>
             <div className="teacher-evaluation__flow-cards">
               {(data.summary || []).map((item) => (
                 <article className="teacher-evaluation__flow-card" key={`flow-card-${item.flow}`}>
@@ -506,8 +580,26 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                           <td>{Number(metric?.avance_percent || 0).toFixed(2)}%</td>
                           <td>{Number(metric?.ponderacion || 0).toFixed(2)}%</td>
                           <td>{metric?.esperadas || 0}</td>
-                          <td>{metric?.completadas || 0}</td>
-                          <td>{metric?.pendientes || 0}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__count-button"
+                              onClick={() => void openAutoStudentList('realizadas')}
+                              disabled={detailLoading || (metric?.completadas || 0) <= 0}
+                            >
+                              {metric?.completadas || 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__count-button"
+                              onClick={() => void openAutoStudentList('pendientes')}
+                              disabled={detailLoading || (metric?.pendientes || 0) <= 0}
+                            >
+                              {metric?.pendientes || 0}
+                            </button>
+                          </td>
                           <td>
                             <span className={`teacher-evaluation__status teacher-evaluation__status--${status === 'Realizada' ? 'done' : status === 'En progreso' ? 'progress' : 'pending'}`}>
                               {status}
@@ -871,6 +963,65 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                 </table>
               </div>
               {participants.items.length === 0 ? <div className="teacher-evaluation__empty">No hay registros para mostrar.</div> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {autoStudentList ? (
+        <div className="teacher-evaluation__modal-backdrop" role="presentation">
+          <section className="teacher-evaluation__modal teacher-evaluation__modal--chart" role="dialog" aria-modal="true">
+            <header className="teacher-evaluation__modal-header">
+              <div>
+                <p className="teacher-evaluation__eyebrow">Autoevaluación estudiantil</p>
+                <h2>{autoStudentList.estado === 'realizadas' ? 'Estudiantes que completaron' : 'Estudiantes pendientes'}</h2>
+                <p>Periodo {autoStudentList.periodo} · {autoStudentList.total} registro(s)</p>
+              </div>
+              <button type="button" className="teacher-evaluation__ghost" onClick={() => setAutoStudentList(null)}>
+                Cerrar
+              </button>
+            </header>
+            <div className="teacher-evaluation__modal-body">
+              <div className="matricula-table-wrap">
+                <table className="matricula-table teacher-evaluation__chart-table">
+                  <thead>
+                    <tr>
+                      <th>Estudiante</th>
+                      <th>Cédula</th>
+                      <th>Carrera</th>
+                      <th>Esperadas</th>
+                      <th>Completadas</th>
+                      <th>Pendientes</th>
+                      <th>Avance</th>
+                      <th>Notas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {autoStudentList.items.map((item) => (
+                      <tr key={`auto-list-${item.codigo_estud}`}>
+                        <td>{item.estudiante}</td>
+                        <td>{item.cedula || '-'}</td>
+                        <td>{item.carreras || '-'}</td>
+                        <td>{item.esperadas}</td>
+                        <td>{item.completadas}</td>
+                        <td>{item.pendientes}</td>
+                        <td>{Number(item.avance_percent || 0).toFixed(2)}%</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                            onClick={() => void openStudentGrades({ codigo_estud: item.codigo_estud })}
+                            disabled={detailLoading}
+                          >
+                            Ver notas
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {autoStudentList.items.length === 0 ? <div className="teacher-evaluation__empty">No hay estudiantes para mostrar.</div> : null}
             </div>
           </section>
         </div>

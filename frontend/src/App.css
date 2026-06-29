@@ -20092,6 +20092,55 @@ body .student-sidebar .logout-button {
   margin-right: 0;
 }
 
+.teacher-evaluation__summary-pill--button,
+.teacher-evaluation__pill-button {
+  border: 1px solid rgba(141, 187, 199, 0.7);
+  cursor: pointer;
+}
+
+.teacher-evaluation__summary-pill--button {
+  font: inherit;
+}
+
+.teacher-evaluation__summary-pill--button:hover:not(:disabled),
+.teacher-evaluation__pill-button:hover:not(:disabled) {
+  border-color: #931913;
+  color: #931913;
+}
+
+.teacher-evaluation__summary-pill--button:disabled,
+.teacher-evaluation__pill-button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.teacher-evaluation__pill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 26px;
+  margin-left: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0c1f42;
+  font: inherit;
+  font-weight: 900;
+}
+
+.teacher-evaluation__pill-button--danger {
+  color: #931913;
+}
+
+.teacher-evaluation__live-note {
+  margin: -4px 0 0;
+  color: #5b6684;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .teacher-evaluation.teacher-evaluation--compact .teacher-evaluation__modal-backdrop {
   padding: clamp(12px, 2vw, 22px);
   background: rgba(6, 20, 58, 0.56);
