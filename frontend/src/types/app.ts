@@ -370,6 +370,29 @@ export type TeacherEvaluationGradedTeachersResponse = {
   total: number
 }
 
+export type TeacherEvaluationGradedSubject = {
+  codigo_docente: string
+  docente: string
+  codigo_materia: string
+  materia: string
+  carrera: string
+  paralelo?: string | null
+  jornada?: string | null
+  estudiantes_esperados: number
+  estudiantes_completaron: number
+  cobertura_estudiantes: number
+  puntaje_final: number
+}
+
+export type TeacherEvaluationGradedSubjectsResponse = {
+  periodo: string
+  periodo_detalle: string
+  codigo_docente: string
+  flow?: TeacherEvaluationFlow | 'all'
+  items: TeacherEvaluationGradedSubject[]
+  total: number
+}
+
 export type TeacherEvaluationStudentProgressMetric = {
   ponderacion: number
   esperadas?: number

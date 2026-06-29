@@ -4,6 +4,7 @@ import {
   downloadTeacherEvaluationGradesPdf,
   fetchTeacherEvaluationAdminPending,
   fetchTeacherEvaluationAdminPeriods,
+  fetchTeacherEvaluationGradedSubjects,
   fetchTeacherEvaluationGradedTeachers,
   fetchTeacherEvaluationProgressDetail,
   fetchTeacherEvaluationProgressParticipants,
@@ -14,6 +15,7 @@ import type {
   TeacherEvaluationAdminPendingResponse,
   TeacherEvaluationAdminPeriod,
   TeacherEvaluationFlow,
+  TeacherEvaluationGradedSubject,
   TeacherEvaluationGradedTeacher,
   TeacherEvaluationProgressDetailResponse,
   TeacherEvaluationProgressParticipantsResponse,
@@ -52,6 +54,8 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
   const [gradedTeachers, setGradedTeachers] = useState<TeacherEvaluationGradedTeacher[]>([])
   const [periodo, setPeriodo] = useState('')
   const [selectedTeacher, setSelectedTeacher] = useState('')
+  const [gradedSubjects, setGradedSubjects] = useState<TeacherEvaluationGradedSubject[]>([])
+  const [selectedSubjectKey, setSelectedSubjectKey] = useState('')
   const [flow, setFlow] = useState<TeacherEvaluationFlow>('student')
   const [reportFlow, setReportFlow] = useState<Exclude<TeacherEvaluationFlow, 'auto_estudiante'> | 'all'>('all')
   const [data, setData] = useState<TeacherEvaluationAdminPendingResponse | null>(null)
@@ -128,6 +132,35 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     } catch {
       setGradedTeachers([])
       setSelectedTeacher('')
+      setGradedSubjects([])
+      setSelectedSubjectKey('')
+    }
+  }
+
+  async function loadGradedSubjects(
+    selectedPeriod = periodo,
+    teacherCode = selectedTeacher,
+    selectedFlow = reportFlow,
+  ) {
+    if (!selectedPeriod || !teacherCode) {
+      setGradedSubjects([])
+      setSelectedSubjectKey('')
+      return
+    }
+    try {
+      const response = await fetchTeacherEvaluationGradedSubjects(selectedPeriod, teacherCode, selectedFlow)
+      const subjects = response.items || []
+      setGradedSubjects(subjects)
+      setSelectedSubjectKey((current) =>
+        current && subjects.some((item) => reportSubjectKey(item) === current)
+          ? current
+          : subjects[0]
+            ? reportSubjectKey(subjects[0])
+            : '',
+      )
+    } catch {
+      setGradedSubjects([])
+      setSelectedSubjectKey('')
     }
   }
 
@@ -135,6 +168,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     mode: 'all' | 'teacher',
     action: 'download' | 'preview',
     documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+    subjectOverride?: TeacherEvaluationGradedSubject,
   ) {
     if (!periodo) {
       setError('Selecciona un periodo.')
@@ -142,6 +176,11 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     }
     if (mode === 'teacher' && !selectedTeacher) {
       setError('Selecciona un docente.')
+      return
+    }
+    const selectedSubject = subjectOverride || gradedSubjects.find((item) => reportSubjectKey(item) === selectedSubjectKey)
+    if (mode === 'teacher' && !selectedSubject) {
+      setError('Selecciona una materia del docente.')
       return
     }
     setPdfLoading(true)
@@ -152,6 +191,13 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         mode === 'teacher' ? selectedTeacher : '',
         reportFlow,
         documentType,
+        mode === 'teacher' && selectedSubject
+          ? {
+            codigo_materia: selectedSubject.codigo_materia,
+            carrera: selectedSubject.carrera,
+            paralelo: selectedSubject.paralelo,
+          }
+          : undefined,
       )
       const url = URL.createObjectURL(blob)
       if (action === 'preview') {
@@ -167,7 +213,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       const link = document.createElement('a')
       link.href = url
       link.download = mode === 'teacher'
-        ? `${documentType}_evaluacion_${reportFlow}_${periodo}_${selectedTeacher}.pdf`
+        ? `${documentType}_evaluacion_${reportFlow}_${periodo}_${selectedTeacher}_${selectedSubject?.codigo_materia || 'materia'}.pdf`
         : `${documentType}_evaluacion_${reportFlow}_${periodo}_todos.pdf`
       document.body.appendChild(link)
       link.click()
@@ -243,6 +289,13 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodo, flow, reportFlow, showProgress, showReports])
 
+  useEffect(() => {
+    if (showReports) {
+      void loadGradedSubjects(periodo, selectedTeacher, reportFlow)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodo, selectedTeacher, reportFlow, showReports])
+
   const totals = useMemo(() => {
     const summary = data?.summary || []
     return summary.reduce(
@@ -291,6 +344,14 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         return `${point.x},${point.y}`
       })
       .join(' ')
+
+  function reportSubjectKey(subject: TeacherEvaluationGradedSubject) {
+    return [
+      subject.codigo_materia || '',
+      subject.carrera || '',
+      subject.paralelo || '',
+    ].join('|')
+  }
 
   return (
     <main className="teacher-evaluation teacher-evaluation--compact">
@@ -351,10 +412,18 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                   </option>
                 ))}
               </select>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'preview')} disabled={pdfLoading || !periodo || !selectedTeacher}>
+              <select value={selectedSubjectKey} onChange={(event) => setSelectedSubjectKey(event.target.value)} disabled={pdfLoading || gradedSubjects.length === 0}>
+                <option value="">Materia y carrera</option>
+                {gradedSubjects.map((subject) => (
+                  <option key={reportSubjectKey(subject)} value={reportSubjectKey(subject)}>
+                    {subject.materia || subject.codigo_materia} · {subject.carrera || 'Sin carrera'} · {subject.paralelo || '-'}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'preview')} disabled={pdfLoading || !periodo || !selectedTeacher || !selectedSubjectKey}>
                 {pdfLoading ? 'Generando...' : 'Vista previa'}
               </button>
-              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'download')} disabled={pdfLoading || !periodo || !selectedTeacher}>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'download')} disabled={pdfLoading || !periodo || !selectedTeacher || !selectedSubjectKey}>
                 {pdfLoading ? 'Generando...' : 'Descargar individual'}
               </button>
               <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('all', 'download')} disabled={pdfLoading || !periodo}>
@@ -586,6 +655,72 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
             </table>
           </div>
           {gradedTeachers.length === 0 ? <div className="teacher-evaluation__empty">No hay docentes calificados para el periodo seleccionado.</div> : null}
+          {selectedTeacher ? (
+            <div className="teacher-evaluation__report-subjects">
+              <div className="teacher-evaluation__summary-actions">
+                <span className="teacher-evaluation__summary-pill">Materias del docente: {gradedSubjects.length}</span>
+                <span className="teacher-evaluation__summary-pill">
+                  Docente: {gradedTeachers.find((teacher) => teacher.codigo_doc === selectedTeacher)?.docente || selectedTeacher}
+                </span>
+              </div>
+              <div className="matricula-table-wrap">
+                <table className="matricula-table teacher-evaluation__report-subjects-table">
+                  <thead>
+                    <tr>
+                      <th>Materia</th>
+                      <th>Carrera</th>
+                      <th>Paralelo</th>
+                      <th>Base estudiantes</th>
+                      <th>Cobertura</th>
+                      <th>Puntaje</th>
+                      <th>Documento</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gradedSubjects.map((subject) => (
+                      <tr key={reportSubjectKey(subject)}>
+                        <td>{subject.materia || subject.codigo_materia}</td>
+                        <td>{subject.carrera || '-'}</td>
+                        <td>{subject.paralelo || '-'}</td>
+                        <td>{subject.estudiantes_completaron}/{subject.estudiantes_esperados}</td>
+                        <td>{Number(subject.cobertura_estudiantes || 0).toFixed(2)}%</td>
+                        <td>{Number(subject.puntaje_final || 0).toFixed(2)}</td>
+                        <td>
+                          <div className="teacher-evaluation__inline-actions">
+                            <button
+                              type="button"
+                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                              onClick={() => setSelectedSubjectKey(reportSubjectKey(subject))}
+                              disabled={pdfLoading}
+                            >
+                              Seleccionar
+                            </button>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                              onClick={() => void handlePdf('teacher', 'preview', 'certificado', subject)}
+                              disabled={pdfLoading}
+                            >
+                              Vista previa
+                            </button>
+                            <button
+                              type="button"
+                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                              onClick={() => void handlePdf('teacher', 'download', 'certificado', subject)}
+                              disabled={pdfLoading}
+                            >
+                              Descargar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {gradedSubjects.length === 0 ? <div className="teacher-evaluation__empty">No hay materias calificadas para el docente seleccionado.</div> : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
 

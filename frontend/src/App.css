@@ -20507,6 +20507,58 @@ body .student-sidebar .logout-button {
   font-size: 12px;
 }
 
+.teacher-evaluation__report-subjects {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(141, 187, 199, 0.45);
+}
+
+.teacher-evaluation__report-subjects-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.teacher-evaluation__report-subjects-table th,
+.teacher-evaluation__report-subjects-table td {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.teacher-evaluation__report-subjects-table th:nth-child(1),
+.teacher-evaluation__report-subjects-table td:nth-child(1) {
+  width: 270px;
+}
+
+.teacher-evaluation__report-subjects-table th:nth-child(2),
+.teacher-evaluation__report-subjects-table td:nth-child(2) {
+  width: 230px;
+}
+
+.teacher-evaluation__report-subjects-table th:nth-child(3),
+.teacher-evaluation__report-subjects-table td:nth-child(3),
+.teacher-evaluation__report-subjects-table th:nth-child(4),
+.teacher-evaluation__report-subjects-table td:nth-child(4),
+.teacher-evaluation__report-subjects-table th:nth-child(5),
+.teacher-evaluation__report-subjects-table td:nth-child(5),
+.teacher-evaluation__report-subjects-table th:nth-child(6),
+.teacher-evaluation__report-subjects-table td:nth-child(6) {
+  width: 110px;
+  text-align: center;
+}
+
+.teacher-evaluation__report-subjects-table th:nth-child(7),
+.teacher-evaluation__report-subjects-table td:nth-child(7) {
+  width: 300px;
+}
+
+.teacher-evaluation__inline-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .teacher-evaluation__count-button {
   min-width: 34px;
   min-height: 30px;

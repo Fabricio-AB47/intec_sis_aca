@@ -127,6 +127,7 @@ import type {
   TeacherEvaluationProgressParticipantsResponse,
   TeacherEvaluationStudentGradesResponse,
   TeacherEvaluationGradedTeachersResponse,
+  TeacherEvaluationGradedSubjectsResponse,
   TeacherEvaluationStudentProgressResponse,
   TeacherEvaluationIdentityResponse,
   TeacherEvaluationQuestionsResponse,
@@ -1715,6 +1716,17 @@ export async function fetchTeacherEvaluationGradedTeachers(
   )
 }
 
+export async function fetchTeacherEvaluationGradedSubjects(
+  periodo: string,
+  codigoDocente: string,
+  flow: TeacherEvaluationFlow | 'all' = 'all',
+): Promise<TeacherEvaluationGradedSubjectsResponse> {
+  const params = new URLSearchParams({ periodo, codigo_docente: codigoDocente, flow })
+  return request<TeacherEvaluationGradedSubjectsResponse>(
+    `/api/evaluacion-docente/admin/docente-materias-calificadas?${params.toString()}`,
+  )
+}
+
 export async function fetchTeacherEvaluationStudentProgress(
   periodo: string,
   limit = 1000,
@@ -1751,9 +1763,13 @@ export async function downloadTeacherEvaluationGradesPdf(
   codigoDocente: string = '',
   flow: TeacherEvaluationFlow | 'all' = 'all',
   documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+  subject?: { codigo_materia?: string; carrera?: string; paralelo?: string | null },
 ): Promise<Blob> {
   const params = new URLSearchParams({ periodo, flow, document_type: documentType })
   if (codigoDocente) params.set('codigo_docente', codigoDocente)
+  if (subject?.codigo_materia) params.set('codigo_materia', subject.codigo_materia)
+  if (subject?.carrera) params.set('carrera', subject.carrera)
+  if (subject?.paralelo) params.set('paralelo', subject.paralelo)
   return request<Blob>(`/api/evaluacion-docente/admin/reporte-docentes.pdf?${params.toString()}`, {
     responseType: 'blob',
   })

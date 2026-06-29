@@ -2249,9 +2249,15 @@ def _fetch_teacher_grade_report(
     codigo_docente: str | None = None,
     flow: str = "all",
     document_type: str = "certificado",
+    codigo_materia: str | None = None,
+    carrera: str | None = None,
+    paralelo: str | None = None,
 ) -> dict[str, Any]:
     selected_teacher = _clean_text(codigo_docente)
     report_flow = _clean_text(flow or "all")
+    selected_subject = _clean_text(codigo_materia)
+    selected_career = _clean_text(carrera)
+    selected_parallel = _clean_text(paralelo)
     if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
         raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el PDF.")
     teachers, subjects, student_coverage, period_label = _teacher_evaluation_academic_maps(periodo)
@@ -2441,6 +2447,14 @@ def _fetch_teacher_grade_report(
         teacher = teachers.get(doc_code, {"codigo_doc": doc_code, "docente": f"Docente {doc_code}", "cedula_doc": ""})
         subject = subjects.get(subject_key, {"materia": _clean(item.get("Cod_Materia")), "carrera": ""})
         row_key = key_for(item)
+        row_career = _clean_text(item.get("Carreras_Detalle")) or subject["carrera"]
+        row_parallel = _clean_text(item.get("Paralelo"))
+        if selected_subject and _clean_text(item.get("Cod_Materia")) != selected_subject:
+            continue
+        if selected_career and _clean_text(row_career).upper() != selected_career.upper():
+            continue
+        if selected_parallel and row_parallel.upper() != selected_parallel.upper():
+            continue
         grouped.setdefault(
             doc_code,
             {
@@ -2451,7 +2465,7 @@ def _fetch_teacher_grade_report(
             {
                 **item,
                 "materia": subject["materia"],
-                "carrera": _clean_text(item.get("Carreras_Detalle")) or subject["carrera"],
+                "carrera": row_career,
                 "tipos": types_by_key.get(row_key, []),
                 "dimensiones": dimensions_by_key.get(row_key, []),
             }
@@ -2461,6 +2475,9 @@ def _fetch_teacher_grade_report(
         "periodo": periodo,
         "periodo_detalle": period_label,
         "codigo_docente": selected_teacher,
+        "codigo_materia": selected_subject,
+        "carrera": selected_career,
+        "paralelo": selected_parallel,
         "flow": report_flow,
         "document_type": _clean_text(document_type or "certificado"),
         "teachers": list(grouped.values()),
@@ -2785,15 +2802,13 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     Paragraph(
                         f"<b>Cédula:</b> {escape(_clean(teacher.get('cedula_doc')) or '-')}<br/>"
                         f"<b>Docente:</b> {escape(_clean(teacher.get('docente')) or '-')}<br/>"
-                        f"<b>Código docente:</b> {escape(_clean(teacher.get('codigo_doc')) or '-')}<br/>"
                         f"<b>Periodo:</b> {escape(period_label or '-')}",
                         styles["EvalBody"],
                     ),
                     Paragraph(
                         f"<b>Carrera:</b> {escape(_clean(first_row.get('carrera')) or '-')}<br/>"
                         f"<b>Materias evaluadas:</b> {len(rows)}<br/>"
-                        f"<b>Fecha de emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}<br/>"
-                        f"<b>Modelo:</b> {escape(_clean_text(report.get('flow')) or 'all').upper()} · {escape(_clean_text(report.get('document_type')) or 'certificado').upper()}",
+                        f"<b>Fecha de emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
                         styles["EvalBody"],
                     ),
                 ],
@@ -2846,7 +2861,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
             ])
         table = Table(
             summary_rows,
-            colWidths=[3.25 * cm, 3.25 * cm, 1.25 * cm, 1.45 * cm, 1.35 * cm, 1.35 * cm, 1.35 * cm, 1.55 * cm, 1.25 * cm, 1.55 * cm],
+            colWidths=[3.35 * cm, 3.0 * cm, 1.25 * cm, 1.45 * cm, 1.35 * cm, 1.35 * cm, 1.35 * cm, 1.55 * cm, 1.25 * cm, 1.5 * cm],
             repeatRows=1,
         )
         table.setStyle(TableStyle([
@@ -3823,16 +3838,74 @@ def get_teacher_evaluation_graded_teachers(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar docentes calificados: {exc}") from exc
 
 
+@router.get("/admin/docente-materias-calificadas")
+def get_teacher_evaluation_graded_subjects(
+    periodo: str = Query(..., min_length=1),
+    codigo_docente: str = Query(..., min_length=1),
+    flow: str = Query(default="all"),
+) -> dict[str, Any]:
+    try:
+        report = _fetch_teacher_grade_report(periodo, codigo_docente, flow=flow, document_type="certificado")
+        items: list[dict[str, Any]] = []
+        for teacher_group in report.get("teachers") or []:
+            for row in teacher_group.get("rows") or []:
+                items.append(
+                    {
+                        "codigo_docente": _clean_text((teacher_group.get("teacher") or {}).get("codigo_doc")),
+                        "docente": _clean_text((teacher_group.get("teacher") or {}).get("docente")),
+                        "codigo_materia": _clean_text(row.get("Cod_Materia")),
+                        "materia": _clean_text(row.get("materia")),
+                        "carrera": _clean_text(row.get("carrera")),
+                        "paralelo": _clean_text(row.get("Paralelo")),
+                        "jornada": _clean_text(row.get("Jornada")),
+                        "estudiantes_esperados": _safe_int(row.get("Estudiantes_Esperados")),
+                        "estudiantes_completaron": _safe_int(row.get("Estudiantes_Completaron")),
+                        "cobertura_estudiantes": _safe_float(row.get("Cobertura_Estudiantes")),
+                        "puntaje_final": _safe_float(row.get("Puntaje_Final_360")),
+                    }
+                )
+        items.sort(
+            key=lambda row: (
+                _clean_text(row.get("materia")).upper(),
+                _clean_text(row.get("carrera")).upper(),
+                _clean_text(row.get("paralelo")).upper(),
+            )
+        )
+        return {
+            "periodo": report.get("periodo"),
+            "periodo_detalle": report.get("periodo_detalle"),
+            "codigo_docente": _clean_text(codigo_docente),
+            "flow": report.get("flow"),
+            "items": items,
+            "total": len(items),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar materias calificadas del docente: {exc}") from exc
+
+
 @router.get("/admin/reporte-docentes.pdf")
 def download_teacher_evaluation_grades_pdf(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(default=""),
     flow: str = Query(default="all"),
     document_type: str = Query(default="certificado"),
+    codigo_materia: str = Query(default=""),
+    carrera: str = Query(default=""),
+    paralelo: str = Query(default=""),
 ) -> StreamingResponse:
     try:
         teacher_code = _clean_text(codigo_docente)
-        report = _fetch_teacher_grade_report(periodo, teacher_code or None, flow=flow, document_type=document_type)
+        report = _fetch_teacher_grade_report(
+            periodo,
+            teacher_code or None,
+            flow=flow,
+            document_type=document_type,
+            codigo_materia=codigo_materia,
+            carrera=carrera,
+            paralelo=paralelo,
+        )
         pdf_bytes = _build_teacher_grade_pdf(report)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -3840,9 +3913,11 @@ def download_teacher_evaluation_grades_pdf(
         raise HTTPException(status_code=500, detail=f"No se pudo generar el PDF de calificaciones docentes: {exc}") from exc
 
     teacher_suffix = f"_{_safe_filename(teacher_code)}" if teacher_code else "_todos"
+    subject_suffix = f"_{_safe_filename(codigo_materia)}" if _clean_text(codigo_materia) else ""
+    career_suffix = f"_{_safe_filename(carrera)}" if _clean_text(carrera) else ""
     filename = (
         f"{_safe_filename(document_type or 'certificado')}_evaluacion_docente_"
-        f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}{teacher_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}{teacher_suffix}{subject_suffix}{career_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     )
     return StreamingResponse(
         BytesIO(pdf_bytes),
