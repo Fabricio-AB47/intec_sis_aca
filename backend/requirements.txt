@@ -15,6 +15,8 @@ pypdfium2==5.10.1
 pytesseract==0.3.13
 python-dotenv==1.2.2
 python-multipart==0.0.26
+python-docx==1.2.0
+pywin32==311
 reportlab==4.5.1
 svglib==1.6.0
 uvicorn==0.44.0

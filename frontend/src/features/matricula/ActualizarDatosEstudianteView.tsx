@@ -152,6 +152,8 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   const [message, setMessage] = useState('')
 
   const columns = detail?.report_columns || []
+  const datosEstudColumns = detail?.datos_estud_columns || []
+  const datosEstudFields = detail?.datos_estud_fields || {}
   const fieldGroups = useMemo(() => groupedColumns(columns), [columns])
   const changedFields = useMemo(() => buildChangedFields(formFields, originalFields), [formFields, originalFields])
   const changedCount = Object.keys(changedFields).length
@@ -342,6 +344,19 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                     </div>
                   </section>
                 ))}
+                {datosEstudColumns.length > 0 ? (
+                  <section className="senescyt-update-group senescyt-update-group--full">
+                    <h3>Campos reales DATOS_ESTUD</h3>
+                    <div className="senescyt-update-fields senescyt-update-fields--readonly">
+                      {datosEstudColumns.map((field) => (
+                        <label key={field}>
+                          <span>{field}</span>
+                          <input value={valueText(datosEstudFields[field])} readOnly />
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </>
           ) : (

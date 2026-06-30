@@ -56,6 +56,9 @@ export type Page =
   | 'evaluacion-docente-reportes'
   | 'portal-estudiante'
   | 'portal-docente'
+  | 'portal-docente-informe'
+  | 'formato-informe-docente'
+
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
@@ -2187,6 +2190,27 @@ export type PortalTeacherGradeSaveResponse = {
   detail?: string
 }
 
+export type TeacherComplianceReportFormat = {
+  title: string
+  pea_heading: string
+  pea_instruction: string
+  syllabus_update_heading: string
+  syllabus_update_default: string
+  virtual_classroom_heading: string
+  virtual_classroom_intro: string
+  resources: string[]
+  teams_heading: string
+  attendance_heading: string
+  grades_heading: string
+  grades_instruction: string
+  annexes_heading: string
+  annexes_intro: string
+  annexes: string[]
+  closing: string
+  signature_label: string
+  signature_role: string
+}
+
 export type AcademicTeacherEnrollmentPayload = {
   codigo_doc: number
   cod_anio_basica: number
@@ -2981,6 +3005,8 @@ export type SenescytStudentDataDetailResponse = {
   student?: SenescytStudentDataSearchItem
   fields?: Record<string, string | number | null>
   report_columns?: string[]
+  datos_estud_fields?: Record<string, string | number | null>
+  datos_estud_columns?: string[]
   updated_fields?: string[]
   affected_rows?: number
   detail?: string
@@ -3038,6 +3064,7 @@ export type SenescytAuditRow = {
   campos_totales?: number
   porcentaje_lleno?: number
   campos_faltantes?: string[]
+  fields?: Record<string, string | number | null>
 }
 
 export type SenescytAuditField = {

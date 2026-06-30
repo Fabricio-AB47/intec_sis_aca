@@ -427,7 +427,33 @@ def _normalize_payload_value(value: Any) -> Any:
     if isinstance(value, str):
         text = value.strip()
         return text if text != "" else None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
     return value
+
+
+def _fetch_datos_estud_raw(codigo_estud: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM dbo.DATOS_ESTUD
+            WHERE TRY_CONVERT(varchar(50), codigo_estud) = TRY_CONVERT(varchar(50), ?)
+            """,
+            codigo_estud,
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"columns": [], "fields": {}}
+        columns = [column[0] for column in cursor.description]
+        values = {column: _normalize_payload_value(value) for column, value in zip(columns, row)}
+        return {"columns": columns, "fields": values}
 
 
 def _student_summary(row: pd.Series) -> dict[str, Any]:
@@ -461,10 +487,13 @@ def _find_student_row(codigo_estud: str) -> pd.Series:
 
 
 def _student_detail_response(row: pd.Series) -> dict[str, Any]:
+    raw = _fetch_datos_estud_raw(str(row.get("codigoEstud") or ""))
     return {
         "student": _student_summary(row),
         "fields": {column: _normalize_payload_value(row.get(column)) for column in _REPORT_COLUMNS},
         "report_columns": _REPORT_COLUMNS,
+        "datos_estud_fields": raw["fields"],
+        "datos_estud_columns": raw["columns"],
     }
 
 
@@ -1585,6 +1614,7 @@ def _build_senescyt_audit_from_dataframe(
             "campos_totales": len(report_columns),
             "porcentaje_lleno": round((filled / max(len(report_columns), 1)) * 100, 2),
             "campos_faltantes": missing,
+            "fields": {column: _excel_value(row.get(column)) for column in report_columns},
         }
         row_summaries.append(row_summary)
         if missing:

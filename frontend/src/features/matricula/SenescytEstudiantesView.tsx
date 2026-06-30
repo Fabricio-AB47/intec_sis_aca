@@ -550,6 +550,20 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
                   )}
                 </div>
               </div>
+
+              {detailRow.fields ? (
+                <div className="senescyt-detail-block">
+                  <h4>Valores registrados</h4>
+                  <div className="senescyt-detail-values">
+                    {Object.entries(detailRow.fields).map(([field, value]) => (
+                      <div key={field} className="senescyt-detail-field">
+                        <span>{field}</span>
+                        <strong>{value === null || value === undefined || value === '' ? '-' : String(value)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         </div>

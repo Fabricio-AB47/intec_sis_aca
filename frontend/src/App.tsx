@@ -5,6 +5,7 @@ import { StudentLayout } from './components/StudentLayout'
 import { CarnetInstitucionalView } from './features/admin/CarnetInstitucionalView'
 import { CredentialGeneratorView } from './features/admin/CredentialGeneratorView'
 import { MassEmailView } from './features/admin/MassEmailView'
+import { TeacherComplianceFormatView } from './features/admin/TeacherComplianceFormatView'
 import { LoginView } from './features/auth/LoginView'
 import { SessionStatusView } from './features/auth/SessionStatusView'
 import { CruceDatosView } from './features/cruce/CruceDatosView'
@@ -215,6 +216,10 @@ function App() {
       )
     } else if (app.activePage === 'portal-docente') {
       pageContent = <PortalDocenteView displayName={app.displayName} />
+    } else if (app.activePage === 'portal-docente-informe') {
+      pageContent = <PortalDocenteView displayName={app.displayName} initialMode="compliance" />
+    } else if (app.activePage === 'formato-informe-docente') {
+      pageContent = <TeacherComplianceFormatView displayName={app.displayName} />
     } else if (app.activePage === 'teams-matricula') {
       pageContent = (
         <TeamsEnrollmentView
@@ -273,6 +278,7 @@ function App() {
           onOpenDashboard={app.openDashboard}
           onOpenPortalEstudiante={app.openPortalEstudiantePage}
           onOpenPortalDocente={app.openPortalDocentePage}
+          onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}
           onOpenTeams={app.openTeamsPage}
           onOpenTeamsMatricula={app.openTeamsMatriculaPage}
           onOpenMatricula={app.openMatriculaPage}
@@ -302,6 +308,7 @@ function App() {
           onOpenTeacherEvaluation={app.openTeacherEvaluationPage}
           onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
           onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
+          onOpenTeacherComplianceFormat={app.openTeacherComplianceFormatPage}
           onLogout={() => {
             void app.logout()
           }}

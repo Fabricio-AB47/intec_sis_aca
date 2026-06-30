@@ -2,24 +2,30 @@ from datetime import date, datetime
 from decimal import Decimal
 from html import escape
 from io import BytesIO
+import json
 from pathlib import Path
 import re
+from tempfile import TemporaryDirectory
 from typing import Annotated, Any
 from zipfile import ZipFile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm, Pt
 from openpyxl import Workbook
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
 import pyodbc
 from reportlab.graphics import renderPDF
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4, landscape, letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Flowable, Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
@@ -30,10 +36,15 @@ router = APIRouter(prefix="/api/portal", tags=["portal-academico"])
 
 _STUDENT_ACCESS = require_roles("ESTUDIANTE")
 _TEACHER_ACCESS = require_roles("DOCENTE")
+_PORTAL_ADMIN_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 _REPORT_TEMPLATE_PATH = _PROJECT_ROOT / "frontend" / "doc" / "Plantilla word (1) - copia (1).docx"
+_TEACHER_COMPLIANCE_WORD_TEMPLATE_PATH = Path.home() / "Documents" / "FABRICIO BORJA" / "FABRICIO BORJA CUMPLIMIENTO GRSI.docx"
+_TEACHER_COMPLIANCE_BACKGROUND_PATH = _BACKEND_ROOT.parent / "backend" / ".codex_template_image1.png"
 _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.svg"
+_PORTAL_CONFIG_ROOT = _BACKEND_ROOT / "data"
+_TEACHER_COMPLIANCE_FORMAT_PATH = _PORTAL_CONFIG_ROOT / "teacher_compliance_format.json"
 
 
 class TeacherGradePayload(BaseModel):
@@ -65,6 +76,51 @@ class TeacherGradePayload(BaseModel):
     caprueba: str | None = Field(default=None, max_length=10)
 
 
+class TeacherComplianceReportFormat(BaseModel):
+    title: str = Field(default="REPORTE ACADÉMICO", max_length=180)
+    pea_heading: str = Field(default="Cumplimiento del PEA y sílabo", max_length=180)
+    pea_instruction: str = Field(
+        default="Evidenciar el sílabo y PEA cargado en el sistema de aulas virtuales, debidamente firmado electrónicamente.",
+        max_length=1000,
+    )
+    syllabus_update_heading: str = Field(default="Reporte de actualización del sílabo", max_length=180)
+    syllabus_update_default: str = Field(default="Sin cambios realizados.", max_length=1000)
+    virtual_classroom_heading: str = Field(default="Reporte del aula virtual", max_length=180)
+    virtual_classroom_intro: str = Field(
+        default="En el reporte consolidado se evidencia en el sistema de aulas virtuales que se cargaron los siguientes recursos en material académico:",
+        max_length=1200,
+    )
+    resources: list[str] = Field(
+        default_factory=lambda: [
+            "Bibliografía del material académico",
+            "Presentación PPT cargada como PDF por cada clase",
+            "Link de grabaciones de cada clase o tutoría impartida",
+            "Simulador de examen y banco de preguntas, para los casos que aplique",
+            "Evaluación(es) teórica(s)",
+            "Componente(s) práctico(s)",
+        ]
+    )
+    teams_heading: str = Field(default="Evidencia de clases grabadas en TEAMS", max_length=180)
+    attendance_heading: str = Field(default="Asistencias", max_length=180)
+    grades_heading: str = Field(default="Reporte de notas", max_length=180)
+    grades_instruction: str = Field(
+        default="Se incluye resumen de nota máxima, nota mínima y casos reprobados según el reporte de notas registrado en el sistema académico.",
+        max_length=1000,
+    )
+    annexes_heading: str = Field(default="Anexos", max_length=180)
+    annexes_intro: str = Field(default="El presente informe debe ir acompañado de la siguiente documentación de respaldo:", max_length=1000)
+    annexes: list[str] = Field(
+        default_factory=lambda: [
+            "Contrato firmado electrónicamente",
+            "Reporte de notas firmado electrónicamente",
+            "Factura electrónica emitida de acuerdo al número de contrato y valor",
+        ]
+    )
+    closing: str = Field(default="Saludos cordiales,", max_length=300)
+    signature_label: str = Field(default="Firma electrónica", max_length=120)
+    signature_role: str = Field(default="DOCENTE", max_length=120)
+
+
 _GRADE_COLUMN_MAP = {
     "teoria_homo": "teoriaHomo",
     "practica_homo": "practicahomo",
@@ -86,6 +142,76 @@ _GRADE_COLUMN_MAP = {
     "promedio_final": "PromedioFinal",
     "caprueba": "caprueba",
 }
+
+
+def _default_teacher_compliance_format() -> dict[str, Any]:
+    return TeacherComplianceReportFormat().model_dump()
+
+
+def _sanitize_text_list(values: list[str]) -> list[str]:
+    return [_clean(item) for item in values if _clean(item)]
+
+
+def _read_teacher_compliance_format() -> dict[str, Any]:
+    defaults = _default_teacher_compliance_format()
+    if not _TEACHER_COMPLIANCE_FORMAT_PATH.exists():
+        return defaults
+    try:
+        payload = json.loads(_TEACHER_COMPLIANCE_FORMAT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(payload, dict):
+        return defaults
+    merged = {**defaults, **payload}
+    merged["resources"] = _sanitize_text_list(merged.get("resources") or defaults["resources"]) or defaults["resources"]
+    merged["annexes"] = _sanitize_text_list(merged.get("annexes") or defaults["annexes"]) or defaults["annexes"]
+    return TeacherComplianceReportFormat(**merged).model_dump()
+
+
+def _write_teacher_compliance_format(payload: TeacherComplianceReportFormat) -> dict[str, Any]:
+    data = payload.model_dump()
+    data["resources"] = _sanitize_text_list(data.get("resources") or [])
+    data["annexes"] = _sanitize_text_list(data.get("annexes") or [])
+    _PORTAL_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
+    _TEACHER_COMPLIANCE_FORMAT_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return data
+
+
+def _image_evidence_flowables(
+    images: list[dict[str, Any]],
+    styles: dict[str, ParagraphStyle],
+    max_width: float = 16.8 * cm,
+    max_height: float = 10.5 * cm,
+    show_labels: bool = False,
+) -> list[Any]:
+    flowables: list[Any] = []
+    for item in images:
+        content = item.get("content")
+        if not content:
+            continue
+        try:
+            image = PILImage.open(BytesIO(content))
+            image.verify()
+            image = PILImage.open(BytesIO(content))
+        except Exception:
+            continue
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            continue
+        ratio = min(max_width / width, max_height / height, 1)
+        label = _clean(item.get("label")) or "Captura de pantalla"
+        buffer = BytesIO(content)
+        flowables.append(Spacer(1, 0.08 * cm))
+        if show_labels:
+            flowables.append(Paragraph(f"<b>{_pdf_text(label)}</b>", styles["ComplianceSmall"]))
+        flowable = PdfImage(buffer, width=width * ratio, height=height * ratio)
+        flowable._evidence_buffer = buffer  # type: ignore[attr-defined]
+        flowables.append(flowable)
+        flowables.append(Spacer(1, 0.12 * cm))
+    return flowables
 
 
 def _clean(value: Any) -> str:
@@ -1582,6 +1708,39 @@ def _teacher_student_item(row: Any) -> dict[str, Any]:
     return item
 
 
+def _teacher_course_students_for_report(
+    current_user: SessionUser,
+    period_codes: list[int],
+    subject_filter: str,
+    parallel: str,
+    cod_anio_basica: int | None = None,
+) -> list[dict[str, Any]]:
+    students_by_key: dict[str, dict[str, Any]] = {}
+    chunks = [period_codes[index:index + 2] for index in range(0, len(period_codes), 2)]
+    for chunk in chunks:
+        payload = teacher_course_students(
+            current_user=current_user,
+            codigo_periodo=chunk,
+            codigo_materia=subject_filter,
+            paralelo=parallel,
+            cod_anio_basica=cod_anio_basica,
+        )
+        for item in payload.get("items") or []:
+            key = "|".join(
+                [
+                    _clean(item.get("codigo_estud")),
+                    _clean(item.get("codigo_periodo")),
+                    _clean(item.get("cod_anio_basica")),
+                    _clean(item.get("codigo_materia")),
+                    _clean(item.get("paralelo")),
+                    _clean(item.get("num_matricula")),
+                    _clean(item.get("num_grupo")),
+                ]
+            )
+            students_by_key[key] = item
+    return list(students_by_key.values())
+
+
 @router.get("/teacher/course-students")
 def teacher_course_students(
     current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
@@ -2287,6 +2446,884 @@ def _teacher_notes_report_pdf(
     return output.getvalue()
 
 
+def _teacher_compliance_report_pdf(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+    report_format: dict[str, Any],
+    params: dict[str, Any],
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> bytes:
+    return _teacher_compliance_model_pdf(teacher, meta, students, report_format, params, evidence_images)
+
+
+def _teacher_compliance_model_pdf(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+    report_format: dict[str, Any],
+    params: dict[str, Any],
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> bytes:
+    output = BytesIO()
+    canvas = Canvas(output, pagesize=A4)
+    width, height = A4
+    margin_x = 72
+    body_x = 72
+    body_right = width - 58
+    content_width = body_right - body_x
+    dark = colors.HexColor("#111111")
+
+    def draw_page_background() -> None:
+        if not _TEACHER_COMPLIANCE_BACKGROUND_PATH.exists():
+            return
+        canvas.saveState()
+        canvas.drawImage(
+            ImageReader(str(_TEACHER_COMPLIANCE_BACKGROUND_PATH)),
+            0,
+            0,
+            width=width,
+            height=height,
+            preserveAspectRatio=False,
+            mask="auto",
+        )
+        canvas.restoreState()
+
+    def draw_logo() -> None:
+        drawing = svg2rlg(str(_LOGO_PATH)) if _LOGO_PATH.exists() else None
+        if drawing:
+            scale = 190 / float(drawing.width or 190)
+            canvas.saveState()
+            canvas.translate(34, height - 104)
+            canvas.scale(scale, scale)
+            renderPDF.draw(drawing, canvas, 0, 0)
+            canvas.restoreState()
+        else:
+            canvas.setFont("Helvetica-Bold", 58)
+            canvas.setFillColor(colors.HexColor("#808285"))
+            canvas.drawString(34, height - 86, "intec")
+
+    def draw_header(page_num: int) -> None:
+        if not _TEACHER_COMPLIANCE_BACKGROUND_PATH.exists():
+            draw_logo()
+        x = 242
+        y = height - 123
+        w = 322
+        bottom_h = 38
+        row_h = 24
+        canvas.setStrokeColor(colors.black)
+        canvas.setLineWidth(1)
+        canvas.rect(x, y, w, bottom_h + row_h * 2, stroke=1, fill=0)
+        canvas.line(x, y + bottom_h, x + w, y + bottom_h)
+        canvas.line(x, y + bottom_h + row_h, x + w, y + bottom_h + row_h)
+        canvas.line(x + 194, y, x + 194, y + bottom_h)
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 12)
+        canvas.drawCentredString(x + w / 2, y + bottom_h + row_h + 7, "Instituto Superior Tecnológico INTEC")
+        canvas.drawCentredString(x + w / 2, y + bottom_h + 7, "Vicerrectorado Académico")
+        canvas.setFont("Times-Roman", 12)
+        canvas.drawCentredString(x + 97, y + 21, "Informe de finalización de asignatura")
+        canvas.drawCentredString(x + 97, y + 8, "para pago")
+        canvas.setFont("Times-Roman", 14)
+        canvas.drawCentredString(x + 258, y + 15, f"Página {page_num} de 4")
+
+    def draw_watermark() -> None:
+        canvas.saveState()
+        canvas.setFillColor(colors.Color(0.55, 0.0, 0.0, alpha=0.13))
+        canvas.setFont("Helvetica-Bold", 620)
+        canvas.drawString(-150, -20, "e")
+        canvas.restoreState()
+
+    def draw_footer() -> None:
+        canvas.saveState()
+        canvas.setFillColor(gray)
+        canvas.setFont("Helvetica", 13)
+        text = canvas.beginText(width / 2 - 90, 34)
+        text.setCharSpace(6)
+        text.textLine("www.intec.edu.ec")
+        canvas.drawText(text)
+        canvas.restoreState()
+
+    def start_page(page_num: int) -> None:
+        draw_page_background()
+        draw_header(page_num)
+        if not _TEACHER_COMPLIANCE_BACKGROUND_PATH.exists():
+            draw_watermark()
+            draw_footer()
+        canvas.setFillColor(dark)
+
+    def new_page(page_num: int) -> None:
+        canvas.showPage()
+        start_page(page_num)
+
+    def line(text: str, x: float, y: float, size: int = 11, bold: bool = False) -> float:
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold" if bold else "Times-Roman", size)
+        canvas.drawString(x, y, text)
+        return y - (size + 4)
+
+    def wrapped(text: str, x: float, y: float, max_width: float, size: int = 11, bold: bool = False, leading: float = 13) -> float:
+        canvas.setFont("Times-Bold" if bold else "Times-Roman", size)
+        words = _clean(text).split()
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if canvas.stringWidth(candidate, "Times-Bold" if bold else "Times-Roman", size) <= max_width:
+                current = candidate
+            else:
+                canvas.drawString(x, y, current)
+                y -= leading
+                current = word
+        if current:
+            canvas.drawString(x, y, current)
+            y -= leading
+        return y
+
+    def highlight(text: str, x: float, y: float, size: int = 11) -> None:
+        canvas.setFont("Times-Bold", size)
+        tw = canvas.stringWidth(text, "Times-Bold", size)
+        canvas.setFillColor(colors.yellow)
+        canvas.rect(x - 1, y - 2, tw + 2, size + 2, stroke=0, fill=1)
+        canvas.setFillColor(dark)
+        canvas.drawString(x, y, text)
+
+    def evidence_group(*terms: str) -> list[dict[str, Any]]:
+        lowered_terms = [term.lower() for term in terms]
+        return [
+            item
+            for item in (evidence_images or [])
+            if any(term in _clean(item.get("label")).lower() for term in lowered_terms)
+        ]
+
+    def draw_image(content: bytes, x: float, y: float, max_w: float, max_h: float) -> float:
+        try:
+            image = PILImage.open(BytesIO(content))
+            image.verify()
+            image = PILImage.open(BytesIO(content))
+        except Exception:
+            return y
+        iw, ih = image.size
+        if iw <= 0 or ih <= 0:
+            return y
+        ratio = min(max_w / iw, max_h / ih, 1)
+        draw_w = iw * ratio
+        draw_h = ih * ratio
+        canvas.drawImage(ImageReader(BytesIO(content)), x, y - draw_h, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
+        return y - draw_h - 12
+
+    def draw_group(terms: tuple[str, ...], x: float, y: float, max_w: float, max_h_each: float, max_count: int | None = None) -> float:
+        items = evidence_group(*terms)
+        if max_count is not None:
+            items = items[:max_count]
+        for item in items:
+            content = item.get("content")
+            if content:
+                y = draw_image(content, x, y, max_w, max_h_each)
+        return y
+
+    teacher_name = _clean(teacher.get("docente"))
+    name_parts = teacher_name.split()
+    first_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else teacher_name
+    last_names = " ".join(name_parts[:2]) if len(name_parts) > 2 else "-"
+    course_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("cod_materia"))
+    grade_values = [_number(item.get("promedio_final")) for item in students]
+    grade_values = [value for value in grade_values if value is not None]
+    failed = sum(1 for value in grade_values if value < 7)
+
+    start_page(1)
+    y = 662
+    y = line("1.   DATOS DEL DOCENTE:", body_x, y, 12, True)
+    y = line(f"Nombres del Docente: {first_names}", body_x + 38, y, 11)
+    y = line(f"Apellidos del Docente: {last_names}", body_x + 38, y, 11)
+    y = line(f"Cédula: {_clean(teacher.get('cedula'))}", body_x + 38, y, 11)
+    y = line(f"Correo institucional: {_clean(teacher.get('correo')) or _clean(teacher.get('correo_personal'))}", body_x + 38, y, 11)
+    y = line(f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}", body_x + 38, y, 11)
+    y -= 14
+    canvas.setFont("Times-Bold", 12)
+    canvas.drawString(body_x, y, "2.   DATOS DE LA ASIGNATRURA:")
+    canvas.setFont("Times-Roman", 11)
+    canvas.drawString(body_x + 205, y, f"Asignatura: {course_name}")
+    y -= 16
+    y = line(f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}", body_x + 38, y, 11)
+    y = line(f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}", body_x + 38, y, 11)
+    y = line(f"Número de estudiantes matriculados: {len(students)}", body_x + 38, y, 11)
+    y = draw_group(("datos", "matriculados", "inicial"), body_x + 38, y + 4, 390, 76, 1)
+    y -= 14
+    y = line("3.   REPORTE ACADÉMICO", body_x, y, 12, True)
+    y -= 14
+    canvas.setFont("Times-Bold", 11)
+    canvas.drawString(body_x + 18, y, "3.1.")
+    canvas.drawString(body_x + 56, y, "Cumplimiento del PEA Y silabo")
+    highlight("(debidamente firmado)", body_x + 228, y, 11)
+    y -= 24
+    y = wrapped("Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.", body_x, y, content_width, 11)
+    y = line("Ejemplo:", body_x, y - 4, 11)
+    y = draw_group(("pea", "sílabo", "silabo"), body_x + 26, y, 468, 68, 1)
+    y -= 4
+    canvas.setFont("Times-Bold", 11)
+    canvas.drawString(body_x + 18, y, "3.2.")
+    canvas.drawString(body_x + 56, y, "Reporte de actualización del silabo")
+    highlight("(Describir actualizaciones realizadas al sílabo", body_x + 260, y, 11)
+    y -= 14
+    highlight("y su justificativo)", body_x + 56, y, 11)
+    y -= 28
+    y = line(_clean(params.get("actualizaciones")) or "Sin cambios realizados.", body_x, y, 11, True)
+    y -= 22
+    y = line("3.3.     Reporte del aula virtual.", body_x + 18, y, 11, True)
+    y -= 16
+    y = wrapped("En el reporte consolidado evidencia en el sistema de aulas virtuales que se cargaron los siguientes recursos en material académico a través de capturas de pantalla:", body_x, y, content_width, 11)
+    for item in [
+        "Bibliografía del material académico",
+        "Presentación PPT cargado como PDF por cada clase.",
+        "Link de grabaciones de cada clase o tutoría impartida",
+        "Simulador de examen (para los casos que aplique) y su banco de preguntas.",
+    ]:
+        y = line(f"•    {item}", body_x + 18, y - 1, 11)
+
+    new_page(2)
+    y = 702
+    for item in ["Evaluación(es) teórica(s)", "Componente(s) práctico(s)", "Evidencia de clases grabadas en TEAMS Ejemplo:"]:
+        y = line(f"•    {item}", body_x + 18, y, 11)
+    y = draw_group(("aula", "virtual", "recursos"), body_x + 18, y - 6, 494, 150, 3)
+
+    new_page(3)
+    y = 718
+    y = draw_group(("teams", "clases"), body_x + 18, y, 494, 105, 1)
+    y -= 42
+    y = line("3.4.     Asistencias", body_x + 18, y, 11, True)
+    y = draw_group(("asistencia",), body_x + 58, y - 6, 455, 105, 1)
+    y -= 12
+    y = line("3.5.     Reporte de Notas", body_x + 18, y, 11, True)
+    y -= 14
+    y = wrapped("Indicar la nota máxima obtenida y la nota mínima obtenida y si existieron casos de estudiantes reprobados, junto con captura de pantalla del reporte de notas debidamente firmado electrónicamente y de las notas subidas en el sistema académico:", body_x, y, content_width, 11)
+    y = line("Ejemplo:", body_x, y - 4, 11)
+    y = draw_group(("notas", "reporte"), body_x + 24, y, 470, 205, 1)
+    y = line(f"Resumen generado: Nota máxima: {_grade_text(max(grade_values) if grade_values else None)}. Nota mínima: {_grade_text(min(grade_values) if grade_values else None)}. Estudiantes reprobados: {failed}.", body_x + 24, y, 8)
+
+    new_page(4)
+    y = 662
+    y = line("3.6.     Anexos:", body_x + 18, y, 12, True)
+    y -= 16
+    y = wrapped("El presente informe debe ir acompañado de la siguiente documentación de respaldo:", body_x, y, content_width, 11)
+    for item in [
+        "Contrato firmado electrónicamente",
+        "Reporte de notas firmado electrónicamente",
+        "Factura electrónica, emitida de acuerdo al número de contrato y valor",
+    ]:
+        y = line(f"      -    {item}", body_x + 18, y - 2, 11)
+    y -= 34
+    y = line("Saludos cordiales,", body_x, y, 11)
+    y -= 84
+    y = line("Firma electrónica", body_x, y, 11)
+    y = line(teacher_name.title(), body_x, y, 11)
+    y = line("DOCENTE", body_x, y, 11)
+    line(f"Cédula: {_clean(teacher.get('cedula'))}", body_x, y, 11)
+    canvas.save()
+    output.seek(0)
+    return output.getvalue()
+
+def _teacher_compliance_report_pdf_legacy(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+    report_format: dict[str, Any],
+    params: dict[str, Any],
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> bytes:
+    light_gray = colors.HexColor("#F4F4F4")
+    dark = colors.HexColor("#111111")
+    border = colors.HexColor("#BFC7CC")
+
+    styles = getSampleStyleSheet()
+    styles.add(
+        ParagraphStyle(
+            name="ComplianceTitle",
+            parent=styles["Title"],
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=14,
+            textColor=dark,
+            spaceAfter=4,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ComplianceSection",
+            parent=styles["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=10.5,
+            leading=13,
+            textColor=dark,
+            spaceBefore=10,
+            spaceAfter=6,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ComplianceBody",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=12.5,
+            textColor=dark,
+            spaceAfter=2,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ComplianceJustify",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=12.5,
+            textColor=dark,
+            alignment=TA_JUSTIFY,
+            spaceAfter=2,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ComplianceSmall",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=7.4,
+            leading=9,
+            textColor=dark,
+        )
+    )
+
+    def p(value: Any, style: str = "ComplianceBody") -> Paragraph:
+        return Paragraph(_pdf_text(value), styles[style])
+
+    def bp(value: Any, style: str = "ComplianceBody") -> Paragraph:
+        return Paragraph(f"<b>{_pdf_text(value)}</b>", styles[style])
+
+    def section(title: Any, body: Any | None = None, body_style: str = "ComplianceBody") -> None:
+        story.append(bp(title, "ComplianceBody"))
+        if body:
+            story.append(p(body, body_style))
+            story.append(Spacer(1, 0.08 * cm))
+
+    def grade_cell(value: Any) -> Paragraph:
+        return Paragraph(_pdf_text(value), styles["ComplianceSmall"])
+
+    def add_grades_annex() -> None:
+        if not students:
+            story.append(p("No existen estudiantes seleccionados para adjuntar calificaciones.", "ComplianceSmall"))
+            return
+        story.append(Spacer(1, 0.1 * cm))
+        story.append(p("Cuadro de notas", "ComplianceBody"))
+        story.append(
+            p(
+                (
+                    f"Periodo: {_clean(meta.get('detalle_periodo')) or '-'} | "
+                    f"Paralelo: {_clean(meta.get('paralelo')) or '-'} | "
+                    f"Jornada: {_clean(meta.get('jornada')) or '-'} | "
+                    f"Semestre: {_clean(meta.get('semestre')) or '-'} | "
+                    f"Horas: {_grade_text(meta.get('horas'), 0)}"
+                ),
+                "ComplianceSmall",
+            )
+        )
+        rows: list[list[Any]] = [[
+            grade_cell("No."),
+            grade_cell("Carrera"),
+            grade_cell("Cédula"),
+            grade_cell("Apellidos y nombres"),
+            grade_cell("P1"),
+            grade_cell("P2"),
+            grade_cell("P3"),
+            grade_cell("Promedio"),
+            grade_cell("Recuperación"),
+            grade_cell("Final"),
+        ]]
+        for index, item in enumerate(students, start=1):
+            rows.append([
+                grade_cell(index),
+                grade_cell(item.get("nombre_carrera")),
+                grade_cell(item.get("cedula")),
+                grade_cell(item.get("nombre_estudiante")),
+                grade_cell(_legacy_grade_text(item.get("prom_p1"))),
+                grade_cell(_legacy_grade_text(item.get("prom_p2"))),
+                grade_cell(_legacy_grade_text(item.get("prom_p3"))),
+                grade_cell(_legacy_grade_text(item.get("promedio"))),
+                grade_cell(_legacy_grade_text(item.get("recuperacion"))),
+                grade_cell(_legacy_grade_text(item.get("promedio_final"))),
+            ])
+        table = Table(
+            rows,
+            repeatRows=1,
+            colWidths=[0.7 * cm, 2.5 * cm, 2.0 * cm, 4.3 * cm, 1.15 * cm, 1.15 * cm, 1.15 * cm, 1.45 * cm, 1.65 * cm, 1.25 * cm],
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), light_gray),
+                    ("BOX", (0, 0), (-1, -1), 0.45, border),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.3, border),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                    ("ALIGN", (4, 1), (-1, -1), "CENTER"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(table)
+
+    grade_values = [_number(item.get("promedio_final")) for item in students]
+    grade_values = [value for value in grade_values if value is not None]
+    failed = sum(1 for value in grade_values if value < 7)
+    max_grade = max(grade_values) if grade_values else None
+    min_grade = min(grade_values) if grade_values else None
+
+    def evidence_group(*terms: str) -> list[dict[str, Any]]:
+        lowered_terms = [term.lower() for term in terms]
+        return [
+            item
+            for item in (evidence_images or [])
+            if any(term in _clean(item.get("label")).lower() for term in lowered_terms)
+        ]
+
+    def add_evidence(*terms: str, always_example: bool = False) -> None:
+        flowables = _image_evidence_flowables(evidence_group(*terms), styles)
+        if flowables or always_example:
+            story.append(p("Ejemplo:", "ComplianceBody"))
+        if flowables:
+            story.extend(flowables)
+
+    teacher_name = _clean(teacher.get("docente"))
+    name_parts = teacher_name.split()
+    first_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else teacher_name
+    last_names = " ".join(name_parts[:2]) if len(name_parts) > 2 else "-"
+    course_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("cod_materia"))
+
+    story: list[Any] = []
+    story.append(bp("DATOS DEL DOCENTE:", "ComplianceBody"))
+    story.append(p(f"Nombres del Docente: {first_names}   Apellidos del Docente: {last_names}", "ComplianceBody"))
+    story.append(p(f"Cédula: {_clean(teacher.get('cedula'))}", "ComplianceBody"))
+    story.append(p(f"Correo institucional: {_clean(teacher.get('correo')) or _clean(teacher.get('correo_personal'))}", "ComplianceBody"))
+    story.append(p(f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}", "ComplianceBody"))
+    story.append(Spacer(1, 0.28 * cm))
+    story.append(Paragraph(f"<b>DATOS DE LA ASIGNATRURA:</b> Asignatura: {_pdf_text(course_name)}", styles["ComplianceBody"]))
+    story.append(p(f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}", "ComplianceBody"))
+    story.append(p(f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}", "ComplianceBody"))
+    story.append(p(f"Número de estudiantes matriculados: {len(students)}", "ComplianceBody"))
+    initial_flowables = _image_evidence_flowables(evidence_group("datos", "matriculados", "inicial"), styles)
+    if initial_flowables:
+        story.append(Spacer(1, 0.12 * cm))
+        story.extend(initial_flowables)
+    story.append(Spacer(1, 0.35 * cm))
+    story.append(bp("REPORTE ACADÉMICO", "ComplianceBody"))
+    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(bp("Cumplimiento del PEA Y silabo (debidamente firmado)", "ComplianceBody"))
+    story.append(p("Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.", "ComplianceBody"))
+    add_evidence("pea", "sílabo", "silabo", always_example=True)
+
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(bp("Reporte de actualización del silabo (Describir actualizaciones realizadas al sílabo y su justificativo)", "ComplianceBody"))
+    story.append(bp(_clean(params.get("actualizaciones")) or "Sin cambios realizados.", "ComplianceBody"))
+
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(bp("Reporte del aula virtual.", "ComplianceBody"))
+    story.append(p("En el reporte consolidado evidencia en el sistema de aulas virtuales que se cargaron los siguientes recursos en material académico a través de capturas de pantalla:", "ComplianceJustify"))
+    add_evidence("aula", "virtual", "recursos")
+    for item in report_format.get("resources") or []:
+        story.append(p(item, "ComplianceBody"))
+
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(p("Evidencia de clases grabadas en TEAMS Ejemplo:", "ComplianceBody"))
+    if _clean(params.get("observaciones")):
+        story.append(p(_clean(params.get("observaciones")), "ComplianceBody"))
+    add_evidence("teams", "clases")
+
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(bp("Asistencias", "ComplianceBody"))
+    add_evidence("asistencia")
+    section(
+        "Reporte de Notas",
+        (
+            "Indicar la nota máxima obtenida y la nota mínima obtenida y si existieron casos de estudiantes reprobados, "
+            "junto con captura de pantalla del reporte de notas debidamente firmado electrónicamente y de las notas subidas en el sistema académico:"
+        ),
+        "ComplianceJustify",
+    )
+    add_evidence("notas", "reporte", always_example=True)
+    story.append(
+        p(
+            (
+                f"Resumen generado: Nota máxima: {_grade_text(max_grade)}. "
+                f"Nota mínima: {_grade_text(min_grade)}. Estudiantes reprobados: {failed}."
+            ),
+            "ComplianceSmall",
+        )
+    )
+    add_grades_annex()
+    story.append(Spacer(1, 0.22 * cm))
+    story.append(bp("Anexos:", "ComplianceBody"))
+    story.append(p("El presente informe debe ir acompañado de la siguiente documentación de respaldo:", "ComplianceBody"))
+    for item in report_format.get("annexes") or []:
+        story.append(p(item, "ComplianceBody"))
+    story.append(Spacer(1, 0.55 * cm))
+    story.append(p("Saludos cordiales,", "ComplianceBody"))
+    story.append(Spacer(1, 0.9 * cm))
+    story.append(p("Firma electrónica", "ComplianceBody"))
+    story.append(p(teacher_name, "ComplianceBody"))
+    story.append(p("DOCENTE", "ComplianceBody"))
+    story.append(p(f"Cédula: {_clean(teacher.get('cedula'))}", "ComplianceBody"))
+
+    output = BytesIO()
+    SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=2.1 * cm,
+        leftMargin=2.1 * cm,
+        topMargin=2.0 * cm,
+        bottomMargin=2.0 * cm,
+        title="Informe de cumplimiento docente",
+    ).build(story)
+    output.seek(0)
+    return output.getvalue()
+
+
+def _docx_clear_body(document: Any) -> None:
+    body = document._element.body
+    for child in list(body):
+        if child.tag.endswith("sectPr"):
+            continue
+        body.remove(child)
+
+
+def _docx_paragraph(document: Any, text: str = "", bold: bool = False, justify: bool = False, space_after: int = 0) -> Any:
+    paragraph = document.add_paragraph()
+    if justify:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    paragraph.paragraph_format.space_after = Pt(space_after)
+    run = paragraph.add_run(text)
+    run.bold = bold
+    run.font.name = "Calibri"
+    run.font.size = Pt(11)
+    return paragraph
+
+
+def _docx_add_picture(document: Any, image_bytes: bytes, width_cm: float = 16.6) -> None:
+    try:
+        image = PILImage.open(BytesIO(image_bytes))
+        image.verify()
+    except Exception:
+        return
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run()
+    run.add_picture(BytesIO(image_bytes), width=Cm(width_cm))
+
+
+def _teacher_compliance_report_docx(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+    report_format: dict[str, Any],
+    params: dict[str, Any],
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> bytes:
+    template_path = _TEACHER_COMPLIANCE_WORD_TEMPLATE_PATH
+    document = Document(str(template_path)) if template_path.exists() else Document()
+    _docx_clear_body(document)
+
+    def evidence_group(*terms: str) -> list[dict[str, Any]]:
+        lowered_terms = [term.lower() for term in terms]
+        return [
+            item
+            for item in (evidence_images or [])
+            if any(term in _clean(item.get("label")).lower() for term in lowered_terms)
+        ]
+
+    def add_evidence(*terms: str, width_cm: float = 16.6, always_example: bool = False) -> None:
+        images = evidence_group(*terms)
+        if images or always_example:
+            _docx_paragraph(document, "Ejemplo:")
+        for item in images:
+            content = item.get("content")
+            if content:
+                _docx_add_picture(document, content, width_cm)
+
+    teacher_name = _clean(teacher.get("docente"))
+    name_parts = teacher_name.split()
+    first_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else teacher_name
+    last_names = " ".join(name_parts[:2]) if len(name_parts) > 2 else "-"
+    course_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("cod_materia"))
+
+    grade_values = [_number(item.get("promedio_final")) for item in students]
+    grade_values = [value for value in grade_values if value is not None]
+    failed = sum(1 for value in grade_values if value < 7)
+    max_grade = max(grade_values) if grade_values else None
+    min_grade = min(grade_values) if grade_values else None
+
+    _docx_paragraph(document, "DATOS DEL DOCENTE:", bold=True)
+    _docx_paragraph(document, f"Nombres del Docente: {first_names}")
+    _docx_paragraph(document, f"Apellidos del Docente: {last_names}")
+    _docx_paragraph(document, f"Cédula: {_clean(teacher.get('cedula'))}")
+    _docx_paragraph(document, f"Correo institucional: {_clean(teacher.get('correo')) or _clean(teacher.get('correo_personal'))}")
+    _docx_paragraph(document, f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}")
+    _docx_paragraph(document)
+    _docx_paragraph(document, f"DATOS DE LA ASIGNATRURA:  Asignatura: {course_name}", bold=True)
+    _docx_paragraph(document, f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}")
+    _docx_paragraph(document, f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}")
+    _docx_paragraph(document, f"Número de estudiantes matriculados: {len(students)}")
+    for item in evidence_group("datos", "matriculados", "inicial"):
+        if item.get("content"):
+            _docx_add_picture(document, item["content"], 13.4)
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "REPORTE ACADÉMICO", bold=True)
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Cumplimiento del PEA Y silabo (debidamente firmado)", bold=True)
+    _docx_paragraph(
+        document,
+        "Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.",
+    )
+    add_evidence("pea", "sílabo", "silabo", width_cm=16.6, always_example=True)
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Reporte de actualización del silabo (Describir actualizaciones realizadas al sílabo y su justificativo)", bold=True)
+    _docx_paragraph(document, _clean(params.get("actualizaciones")) or "Sin cambios realizados.", bold=True)
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Reporte del aula virtual.", bold=True)
+    _docx_paragraph(
+        document,
+        "En el reporte consolidado evidencia en el sistema de aulas virtuales que se cargaron los siguientes recursos en material académico a través de capturas de pantalla:",
+        justify=True,
+    )
+    for item in report_format.get("resources") or []:
+        _docx_paragraph(document, item)
+    for item in evidence_group("aula", "virtual", "recursos"):
+        if item.get("content"):
+            _docx_add_picture(document, item["content"], 16.6)
+
+    _docx_paragraph(document, "Evidencia de clases grabadas en TEAMS Ejemplo:")
+    if _clean(params.get("observaciones")):
+        _docx_paragraph(document, _clean(params.get("observaciones")))
+    for item in evidence_group("teams", "clases"):
+        if item.get("content"):
+            _docx_add_picture(document, item["content"], 16.6)
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Asistencias", bold=True)
+    for item in evidence_group("asistencia"):
+        if item.get("content"):
+            _docx_add_picture(document, item["content"], 16.6)
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Reporte de Notas", bold=True)
+    _docx_paragraph(
+        document,
+        (
+            "Indicar la nota máxima obtenida y la nota mínima obtenida y si existieron casos de estudiantes reprobados, "
+            "junto con captura de pantalla del reporte de notas debidamente firmado electrónicamente y de las notas subidas en el sistema académico:"
+        ),
+        justify=True,
+    )
+    add_evidence("notas", "reporte", width_cm=16.6, always_example=True)
+    _docx_paragraph(
+        document,
+        f"Resumen generado: Nota máxima: {_grade_text(max_grade)}. Nota mínima: {_grade_text(min_grade)}. Estudiantes reprobados: {failed}.",
+    )
+
+    if students:
+        _docx_paragraph(document, "Cuadro de notas", bold=True)
+        table = document.add_table(rows=1, cols=7)
+        try:
+            table.style = "Table Grid"
+        except KeyError:
+            pass
+        headers = ["No.", "Carrera", "Cédula", "Apellidos y nombres", "P1", "P2", "Final"]
+        for index, header in enumerate(headers):
+            table.rows[0].cells[index].text = header
+        for row_index, item in enumerate(students, start=1):
+            cells = table.add_row().cells
+            values = [
+                str(row_index),
+                _clean(item.get("nombre_carrera")),
+                _clean(item.get("cedula")),
+                _clean(item.get("nombre_estudiante")),
+                _legacy_grade_text(item.get("prom_p1")),
+                _legacy_grade_text(item.get("prom_p2")),
+                _legacy_grade_text(item.get("promedio_final")),
+            ]
+            for index, value in enumerate(values):
+                cells[index].text = value
+
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Anexos:", bold=True)
+    _docx_paragraph(document, "El presente informe debe ir acompañado de la siguiente documentación de respaldo:")
+    for item in report_format.get("annexes") or []:
+        _docx_paragraph(document, item)
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Saludos cordiales,")
+    _docx_paragraph(document)
+    _docx_paragraph(document)
+    _docx_paragraph(document, "Firma electrónica")
+    _docx_paragraph(document, teacher_name)
+    _docx_paragraph(document, "DOCENTE")
+    _docx_paragraph(document, f"Cédula: {_clean(teacher.get('cedula'))}")
+
+    output = BytesIO()
+    document.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+def _docx_bytes_to_pdf_bytes(docx_bytes: bytes, filename_stem: str) -> bytes:
+    try:
+        import pythoncom  # type: ignore[import-not-found]
+        import win32com.client  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se puede convertir el informe a PDF porque falta pywin32 en el entorno del backend.",
+        ) from exc
+
+    with TemporaryDirectory(prefix="intec_compliance_") as temp_dir:
+        temp_path = Path(temp_dir)
+        safe_stem = (_safe_filename(filename_stem) or "informe-cumplimiento")[:90]
+        docx_path = temp_path / f"{safe_stem}.docx"
+        pdf_path = temp_path / f"{safe_stem}.pdf"
+        docx_path.write_bytes(docx_bytes)
+
+        pythoncom.CoInitialize()
+        word = None
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = 0
+            document = word.Documents.Open(str(docx_path), ReadOnly=True)
+            try:
+                document.ExportAsFixedFormat(str(pdf_path), 17)
+            finally:
+                document.Close(False)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo convertir el informe Word a PDF. Verifica que Microsoft Word esté instalado y disponible en Windows.",
+            ) from exc
+        finally:
+            if word is not None:
+                word.Quit()
+            pythoncom.CoUninitialize()
+
+        if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+            raise HTTPException(status_code=500, detail="La conversión del informe a PDF no generó un archivo válido.")
+        return pdf_path.read_bytes()
+
+
+@router.get("/admin/teacher-compliance-format")
+def get_teacher_compliance_format(
+    current_user: Annotated[SessionUser, Depends(_PORTAL_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    return _read_teacher_compliance_format()
+
+
+@router.put("/admin/teacher-compliance-format")
+def update_teacher_compliance_format(
+    payload: TeacherComplianceReportFormat,
+    current_user: Annotated[SessionUser, Depends(_PORTAL_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    return _write_teacher_compliance_format(payload)
+
+
+def _teacher_compliance_response(
+    current_user: SessionUser,
+    codigo_periodo: list[int],
+    codigo_materia: str,
+    paralelo: str,
+    codigo_estud: list[int] | None = None,
+    cod_anio_basica: int | None = None,
+    fecha_inicio: str = "",
+    fecha_fin: str = "",
+    telefono: str = "",
+    actualizaciones: str = "",
+    observaciones: str = "",
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> StreamingResponse:
+    codigo_doc = _teacher_code(current_user)
+    parallel = paralelo.strip().upper()
+    subject_filter = _clean(codigo_materia).upper()
+    period_codes = list(dict.fromkeys(codigo_periodo))
+    if not period_codes:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+    if len(period_codes) > 4:
+        raise HTTPException(status_code=400, detail="Solo se pueden seleccionar hasta 4 periodos para el informe")
+    if not subject_filter:
+        raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
+
+    teacher = teacher_profile(current_user)["teacher"]
+    students = _teacher_course_students_for_report(
+        current_user=current_user,
+        period_codes=period_codes,
+        subject_filter=subject_filter,
+        parallel=parallel,
+        cod_anio_basica=cod_anio_basica,
+    )
+    selected_student_codes = {str(code) for code in (codigo_estud or [])}
+    if selected_student_codes:
+        students = [item for item in students if _clean(item.get("codigo_estud")) in selected_student_codes]
+    meta = _teacher_course_report_meta(codigo_doc, period_codes, subject_filter, parallel, cod_anio_basica)
+    if students:
+        first = students[0]
+        period_names: list[str] = []
+        career_names: list[str] = []
+        for item in students:
+            period = _clean(item.get("detalle_periodo")) or _clean(item.get("codigo_periodo"))
+            if period and period not in period_names:
+                period_names.append(period)
+            career = _clean(item.get("nombre_carrera"))
+            if career and career not in career_names:
+                career_names.append(career)
+        meta = {
+            **meta,
+            "nombre_carrera": meta.get("nombre_carrera") or (" / ".join(career_names) if len(career_names) <= 2 else f"{len(career_names)} carreras"),
+            "detalle_periodo": meta.get("detalle_periodo") or " / ".join(period_names),
+            "codigo_materia": meta.get("codigo_materia") or _clean(first.get("codigo_materia")),
+            "cod_materia": meta.get("cod_materia") or _clean(first.get("cod_materia")),
+            "nombre_materia": meta.get("nombre_materia") or _clean(first.get("nombre_materia")),
+            "paralelo": meta.get("paralelo") or _clean(first.get("paralelo")),
+            "jornada": meta.get("jornada") or _clean(first.get("jornada")),
+            "semestre": meta.get("semestre") or _int(first.get("semestre")),
+            "horas": meta.get("horas") or _number(first.get("horas")),
+        }
+    report_format = _read_teacher_compliance_format()
+    filename_stem = (
+        f"cumplimiento-docente-{_safe_filename(meta.get('nombre_materia') or subject_filter)}-"
+        f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}"
+    )[:110]
+    report_params = {
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin,
+        "telefono": telefono,
+        "actualizaciones": actualizaciones,
+        "observaciones": observaciones,
+    }
+    pdf_bytes = _teacher_compliance_report_pdf(
+        teacher,
+        meta,
+        students,
+        report_format,
+        report_params,
+        evidence_images=evidence_images,
+    )
+    filename = f"{filename_stem}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/teacher/course-report-pdf")
 def teacher_course_report_pdf(
     current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
@@ -2305,14 +3342,13 @@ def teacher_course_report_pdf(
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
 
     teacher = teacher_profile(current_user)["teacher"]
-    payload = teacher_course_students(
+    students = _teacher_course_students_for_report(
         current_user=current_user,
-        codigo_periodo=period_codes,
-        codigo_materia=subject_filter,
-        paralelo=parallel,
+        period_codes=period_codes,
+        subject_filter=subject_filter,
+        parallel=parallel,
         cod_anio_basica=cod_anio_basica,
     )
-    students = payload.get("items") or []
     meta = _teacher_course_report_meta(codigo_doc, period_codes, subject_filter, parallel, cod_anio_basica)
     if students:
         first = students[0]
@@ -2347,6 +3383,86 @@ def teacher_course_report_pdf(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/teacher/compliance-report-docx")
+@router.get("/teacher/compliance-report-pdf")
+def teacher_compliance_report_pdf(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Query()],
+    codigo_materia: Annotated[str, Query()],
+    paralelo: Annotated[str, Query(min_length=1)],
+    codigo_estud: Annotated[list[int] | None, Query()] = None,
+    cod_anio_basica: Annotated[int | None, Query()] = None,
+    fecha_inicio: Annotated[str, Query(max_length=40)] = "",
+    fecha_fin: Annotated[str, Query(max_length=40)] = "",
+    telefono: Annotated[str, Query(max_length=40)] = "",
+    actualizaciones: Annotated[str, Query(max_length=1000)] = "",
+    observaciones: Annotated[str, Query(max_length=1000)] = "",
+) -> StreamingResponse:
+    return _teacher_compliance_response(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        telefono=telefono,
+        actualizaciones=actualizaciones,
+        observaciones=observaciones,
+    )
+
+
+@router.post("/teacher/compliance-report-docx")
+@router.post("/teacher/compliance-report-pdf")
+async def teacher_compliance_report_pdf_with_evidence(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Form()],
+    codigo_materia: Annotated[str, Form()],
+    paralelo: Annotated[str, Form(min_length=1)],
+    codigo_estud: Annotated[list[int] | None, Form()] = None,
+    cod_anio_basica: Annotated[int | None, Form()] = None,
+    fecha_inicio: Annotated[str, Form(max_length=40)] = "",
+    fecha_fin: Annotated[str, Form(max_length=40)] = "",
+    telefono: Annotated[str, Form(max_length=40)] = "",
+    actualizaciones: Annotated[str, Form(max_length=1000)] = "",
+    observaciones: Annotated[str, Form(max_length=1000)] = "",
+    evidencia_label: Annotated[list[str] | None, Form()] = None,
+    evidencia: Annotated[list[UploadFile] | None, File()] = None,
+) -> StreamingResponse:
+    evidence_images: list[dict[str, Any]] = []
+    labels = evidencia_label or []
+    for index, upload in enumerate(evidencia or []):
+        if not upload.filename:
+            continue
+        content_type = (upload.content_type or "").lower()
+        if content_type and not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Las evidencias deben ser imágenes")
+        content = await upload.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Cada captura debe pesar máximo 5 MB")
+        evidence_images.append(
+            {
+                "label": labels[index] if index < len(labels) else upload.filename,
+                "content": content,
+            }
+        )
+    return _teacher_compliance_response(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        telefono=telefono,
+        actualizaciones=actualizaciones,
+        observaciones=observaciones,
+        evidence_images=evidence_images,
     )
 
 

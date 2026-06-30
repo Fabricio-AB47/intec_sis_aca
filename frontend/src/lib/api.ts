@@ -140,6 +140,7 @@ import type {
   TeacherRoleEvaluationSubmitPayload,
   TeacherEvaluationSubmitPayload,
   TeacherEvaluationSubmitResponse,
+  TeacherComplianceReportFormat,
   UserSession,
 } from '../types/app'
 
@@ -1588,6 +1589,62 @@ export async function downloadPortalTeacherCourseReport(params: {
   }
 
   return response.blob()
+}
+
+export async function fetchTeacherComplianceFormat(): Promise<TeacherComplianceReportFormat> {
+  return request<TeacherComplianceReportFormat>('/api/portal/admin/teacher-compliance-format')
+}
+
+export async function updateTeacherComplianceFormat(
+  payload: TeacherComplianceReportFormat
+): Promise<TeacherComplianceReportFormat> {
+  return request<TeacherComplianceReportFormat>('/api/portal/admin/teacher-compliance-format', {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function downloadPortalTeacherComplianceReport(params: {
+  codigoPeriodo?: string
+  codigoPeriodos?: string[]
+  codAnioBasica?: string
+  codigoMateria: string
+  paralelo: string
+  codigoEstudiantes?: Array<string | number>
+  fechaInicio?: string
+  fechaFin?: string
+  telefono?: string
+  actualizaciones?: string
+  observaciones?: string
+  evidencias?: Array<{ label: string; file: File }>
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('codigo_materia', params.codigoMateria)
+  formData.append('paralelo', params.paralelo)
+  if (params.codAnioBasica) formData.append('cod_anio_basica', params.codAnioBasica)
+  if (params.fechaInicio) formData.append('fecha_inicio', params.fechaInicio)
+  if (params.fechaFin) formData.append('fecha_fin', params.fechaFin)
+  if (params.telefono) formData.append('telefono', params.telefono)
+  if (params.actualizaciones) formData.append('actualizaciones', params.actualizaciones)
+  if (params.observaciones) formData.append('observaciones', params.observaciones)
+  const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
+  for (const codigoPeriodo of periodos) {
+    formData.append('codigo_periodo', codigoPeriodo)
+  }
+  for (const codigoEstud of params.codigoEstudiantes || []) {
+    if (codigoEstud !== undefined && codigoEstud !== null && String(codigoEstud).trim()) {
+      formData.append('codigo_estud', String(codigoEstud))
+    }
+  }
+  for (const evidence of params.evidencias || []) {
+    formData.append('evidencia_label', evidence.label)
+    formData.append('evidencia', evidence.file)
+  }
+  return request<Blob>('/api/portal/teacher/compliance-report-pdf', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
 }
 
 export async function saveAcademicTeacherEnrollment(

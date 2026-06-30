@@ -90,12 +90,12 @@ function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   if (normalizedRole === 'ESTUDIANTE') {
     return page === 'portal-estudiante' || page === 'carnet-institucional' || page === 'evaluacion-docente'
   }
-  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (page === 'credenciales') return normalizedRole === 'ADMINISTRADOR'
   if (page === 'correos-masivos') return MASS_EMAIL_ALLOWED_ROLES.has(normalizedRole || '')
   if (page === 'carnet-institucional') return Boolean(normalizedRole)
-  return page !== 'portal-estudiante' && page !== 'portal-docente'
+    return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe'
 }
 
 function admissionsSection(sectionKey: string | null): string {
@@ -313,7 +313,7 @@ export function useReporteriaApp() {
       return
     }
     if (session.rol === 'DOCENTE') {
-      if (activePage !== 'portal-docente' && activePage !== 'carnet-institucional') {
+      if (activePage !== 'portal-docente' && activePage !== 'portal-docente-informe' && activePage !== 'carnet-institucional') {
         setActivePage('portal-docente')
       }
       return
@@ -357,6 +357,8 @@ export function useReporteriaApp() {
       setActivePage('evaluacion-docente-avance')
     } else if (openPage === 'evaluacion-docente-reportes') {
       setActivePage('evaluacion-docente-reportes')
+    } else if (openPage === 'formato-informe-docente') {
+      setActivePage('formato-informe-docente')
     } else if (openPage === 'estado-docente') {
       setActivePage('estado-docente')
     } else if (openPage === 'senescyt-estudiantes') {
@@ -821,6 +823,9 @@ export function useReporteriaApp() {
   const openPortalDocentePage = () => {
     setActivePage('portal-docente')
   }
+  const openPortalDocenteInformePage = () => {
+    setActivePage('portal-docente-informe')
+  }
   const openTeacherEvaluationPage = () => {
     setActivePage('evaluacion-docente')
   }
@@ -832,6 +837,9 @@ export function useReporteriaApp() {
   }
   const openTeacherEvaluationReportsPage = () => {
     setActivePage('evaluacion-docente-reportes')
+  }
+  const openTeacherComplianceFormatPage = () => {
+    setActivePage('formato-informe-docente')
   }
   const openTeamsPage = () => setActivePage('teams')
   const openTeamsMatriculaPage = () => {
@@ -1002,10 +1010,12 @@ export function useReporteriaApp() {
     openPortalEstudiantePage,
     setPortalStudentSection,
     openPortalDocentePage,
+    openPortalDocenteInformePage,
     openTeacherEvaluationPage,
     openTeacherEvaluationAdminPage,
     openTeacherEvaluationProgressPage,
     openTeacherEvaluationReportsPage,
+    openTeacherComplianceFormatPage,
     openTeamsPage,
     openTeamsMatriculaPage,
     openMatriculaPage,

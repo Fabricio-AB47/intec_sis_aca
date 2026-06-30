@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  downloadPortalTeacherComplianceReport,
   downloadPortalTeacherCourseReport,
   fetchPortalTeacherCourses,
   fetchPortalTeacherStudents,
@@ -14,6 +15,7 @@ import type {
 
 type PortalDocenteViewProps = {
   displayName: string
+  initialMode?: 'courses' | 'compliance'
 }
 
 type GradePartial = 'P1' | 'P2' | 'P3'
@@ -24,6 +26,17 @@ const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
   { value: 'P2', label: 'Segundo parcial' },
   { value: 'P3', label: 'Tercer parcial' },
 ]
+
+const COMPLIANCE_EVIDENCE_OPTIONS = [
+  { key: 'datos', label: 'Captura estudiantes matriculados' },
+  { key: 'pea', label: 'Captura PEA y sílabo firmado' },
+  { key: 'aula', label: 'Captura aula virtual y recursos' },
+  { key: 'teams', label: 'Captura TEAMS y clases grabadas' },
+  { key: 'asistencia', label: 'Captura de asistencias' },
+  { key: 'notas', label: 'Captura reporte de notas firmado' },
+] as const
+
+type ComplianceEvidenceKey = (typeof COMPLIANCE_EVIDENCE_OPTIONS)[number]['key']
 
 type GradeDraft = {
   teoria_homo: string
@@ -126,6 +139,10 @@ function numberText(value: number | null | undefined) {
   return value.toFixed(2)
 }
 
+function hasFinalGrade(item: PortalAcademicRecordItem) {
+  return item.promedio_final !== null && item.promedio_final !== undefined && Number.isFinite(Number(item.promedio_final))
+}
+
 function isHomologation(
   item?: { tipo_matricula?: string; detalle_periodo?: string; esquema_calificacion?: string; es_homologacion?: boolean } | null
 ) {
@@ -212,7 +229,16 @@ function hasGradeUpdates(payload: PortalTeacherGradePayload) {
   ].some((value) => value !== null && value !== undefined && value !== '')
 }
 
-export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewProps>) {
+function evidencePayload(files: Record<ComplianceEvidenceKey, File[]>) {
+  return COMPLIANCE_EVIDENCE_OPTIONS.flatMap((option) =>
+    files[option.key].map((file) => ({
+      label: `${option.label}: ${file.name}`,
+      file,
+    }))
+  )
+}
+
+export function PortalDocenteView({ displayName, initialMode = 'courses' }: Readonly<PortalDocenteViewProps>) {
   const [courses, setCourses] = useState<PortalTeacherCourse[]>([])
   const [selectedCourseKey, setSelectedCourseKey] = useState('')
   const [periodFilter, setPeriodFilter] = useState<CoursePeriodFilter>('TODOS')
@@ -227,8 +253,29 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
   const [downloadingReport, setDownloadingReport] = useState(false)
   const [previewingReport, setPreviewingReport] = useState(false)
   const [reportPreviewUrl, setReportPreviewUrl] = useState('')
+  const [downloadingComplianceReport, setDownloadingComplianceReport] = useState(false)
+  const [previewingComplianceReport, setPreviewingComplianceReport] = useState(false)
+  const [compliancePreviewUrl, setCompliancePreviewUrl] = useState('')
+  const [complianceStartDate, setComplianceStartDate] = useState('')
+  const [complianceEndDate, setComplianceEndDate] = useState('')
+  const [compliancePhone, setCompliancePhone] = useState('')
+  const [complianceUpdates, setComplianceUpdates] = useState('Sin cambios realizados.')
+  const [complianceObservations, setComplianceObservations] = useState('')
+  const [compliancePeriodCodes, setCompliancePeriodCodes] = useState<string[]>([])
+  const [compliancePeriodToAdd, setCompliancePeriodToAdd] = useState('')
+  const [complianceStudents, setComplianceStudents] = useState<PortalAcademicRecordItem[]>([])
+  const [selectedComplianceStudentCodes, setSelectedComplianceStudentCodes] = useState<string[]>([])
+  const [loadingComplianceStudents, setLoadingComplianceStudents] = useState(false)
+  const [complianceEvidenceFiles, setComplianceEvidenceFiles] = useState<Record<ComplianceEvidenceKey, File[]>>({
+    datos: [],
+    pea: [],
+    aula: [],
+    teams: [],
+    asistencia: [],
+    notas: [],
+  })
   const [savingKey, setSavingKey] = useState('')
-  const [gradeScreenOpen, setGradeScreenOpen] = useState(false)
+  const [gradeScreenOpen, setGradeScreenOpen] = useState(initialMode === 'compliance' ? false : false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -291,6 +338,60 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
       { regular: 0, homo: 0, students: 0 }
     )
   }, [filteredCourses])
+  const complianceCourseOptions = useMemo(() => {
+    const grouped = new Map<string, { key: string; label: string; course: PortalTeacherCourse; periods: number }>()
+    for (const course of filteredCourses) {
+      const key = [courseSubjectKey(course), (course.paralelo || '').trim().toUpperCase(), course.cod_jornada || ''].join('|')
+      const periodCount = course.codigo_periodos?.length || (course.codigo_periodo ? 1 : 0)
+      const current = grouped.get(key)
+      if (current) {
+        current.periods += periodCount
+        continue
+      }
+      grouped.set(key, {
+        key: courseKey(course),
+        label: `${courseSubjectLabel(course)} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)}`,
+        course,
+        periods: periodCount,
+      })
+    }
+    return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, 'es'))
+  }, [filteredCourses])
+  const targetCourse = useMemo(
+    () => courses.find((item) => courseKey(item) === targetCourseKey) || complianceCourseOptions[0]?.course || filteredCourses[0] || null,
+    [complianceCourseOptions, courses, filteredCourses, targetCourseKey]
+  )
+  const targetCoursePeriodOptions = useMemo(() => {
+    if (!targetCourse) return []
+    const selectedSubject = courseSubjectKey(targetCourse)
+    const selectedParallel = (targetCourse.paralelo || '').trim().toUpperCase()
+    const options = new Map<string, { code: string; label: string }>()
+    for (const course of courses) {
+      if (courseSubjectKey(course) !== selectedSubject) continue
+      if ((course.paralelo || '').trim().toUpperCase() !== selectedParallel) continue
+      const codes = course.codigo_periodos?.length
+        ? course.codigo_periodos
+        : course.codigo_periodo
+          ? [course.codigo_periodo]
+          : []
+      const details = (course.detalle_periodos || course.detalle_periodo || '')
+        .split('/')
+        .map((item) => item.trim())
+        .filter(Boolean)
+      for (const [index, code] of codes.entries()) {
+        if (!code || options.has(code)) continue
+        options.set(code, {
+          code,
+          label: details[index] || course.detalle_periodo || code,
+        })
+      }
+    }
+    return Array.from(options.values()).sort((left, right) => right.label.localeCompare(left.label, 'es'))
+  }, [courses, targetCourse])
+  const availableCompliancePeriodOptions = useMemo(
+    () => targetCoursePeriodOptions.filter((option) => !compliancePeriodCodes.includes(option.code)),
+    [compliancePeriodCodes, targetCoursePeriodOptions]
+  )
   const courseUsesHomologation = useMemo(
     () => students.some((item) => isHomologation(item)) || isHomologation(selectedCourse),
     [selectedCourse, students]
@@ -365,9 +466,59 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
   }
 
   function openTargetCourse() {
-    const course = filteredCourses.find((item) => courseKey(item) === targetCourseKey) || filteredCourses[0]
-    if (course) {
-      selectCourse(course)
+    if (targetCourse) {
+      selectCourse(targetCourse)
+    }
+  }
+
+  async function loadComplianceStudents(course: PortalTeacherCourse | null = targetCourse) {
+    const subjectCode = course?.cod_materia || course?.codigo_materia || ''
+    const periodos = compliancePeriodCodes.length
+      ? compliancePeriodCodes
+      : course?.codigo_periodos?.length
+        ? course.codigo_periodos
+        : course?.codigo_periodo
+          ? [course.codigo_periodo]
+          : []
+    if (periodos.length > 4) {
+      setError('Seleccione máximo 4 periodos para generar el informe.')
+      return
+    }
+    if (!course || !periodos.length || !subjectCode || !course.paralelo) {
+      setComplianceStudents([])
+      setSelectedComplianceStudentCodes([])
+      setError('Seleccione una materia con periodo y paralelo para cargar estudiantes del informe.')
+      return
+    }
+    setLoadingComplianceStudents(true)
+    setError('')
+    setMessage('')
+    try {
+      const allItems: PortalAcademicRecordItem[] = []
+      for (let index = 0; index < periodos.length; index += 2) {
+        const chunk = periodos.slice(index, index + 2)
+        const payload = await fetchPortalTeacherStudents({
+          codigoPeriodos: chunk,
+          codigoMateria: subjectCode,
+          paralelo: course.paralelo,
+        })
+        allItems.push(...(payload.items || []))
+      }
+      const unique = new Map<string, PortalAcademicRecordItem>()
+      for (const item of allItems) {
+        unique.set(studentKey(item), item)
+      }
+      const items = Array.from(unique.values()).filter(hasFinalGrade).sort((left, right) =>
+        (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
+      )
+      setComplianceStudents(items)
+      setSelectedComplianceStudentCodes(Array.from(new Set(items.map((item) => String(item.codigo_estud)).filter(Boolean))))
+    } catch (apiError) {
+      setComplianceStudents([])
+      setSelectedComplianceStudentCodes([])
+      setError(apiError instanceof Error ? apiError.message : 'No se pudieron consultar estudiantes para el informe')
+    } finally {
+      setLoadingComplianceStudents(false)
     }
   }
 
@@ -463,22 +614,24 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
     }
   }
 
-  function reportRequestParams() {
-    if (!selectedCourse) return
-    const periodos = selectedCourse.codigo_periodos?.length
-      ? selectedCourse.codigo_periodos
-      : selectedCourse.codigo_periodo
-        ? [selectedCourse.codigo_periodo]
+  function reportRequestParams(course: PortalTeacherCourse | null = selectedCourse, selectedPeriodos: string[] = []) {
+    if (!course) return
+    const periodos = selectedPeriodos.length
+      ? selectedPeriodos
+      : course.codigo_periodos?.length
+      ? course.codigo_periodos
+      : course.codigo_periodo
+        ? [course.codigo_periodo]
         : []
-    const subjectCode = selectedCourse.cod_materia || selectedCourse.codigo_materia || ''
-    if (!periodos.length || !subjectCode || !selectedCourse.paralelo) {
+    const subjectCode = course.cod_materia || course.codigo_materia || ''
+    if (!periodos.length || !subjectCode || !course.paralelo) {
       setError('Seleccione una materia con periodo y paralelo para descargar el reporte.')
       return
     }
     return {
       periodos,
       subjectCode,
-      paralelo: selectedCourse.paralelo,
+      paralelo: course.paralelo,
     }
   }
 
@@ -489,6 +642,39 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
       codigoPeriodos: params.periodos,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
+    })
+  }
+
+  async function buildComplianceReportBlob(course: PortalTeacherCourse | null = selectedCourse) {
+    const params = reportRequestParams(course, compliancePeriodCodes)
+    if (!params) return null
+    if (params.periodos.length > 4) {
+      setError('Seleccione máximo 4 periodos para generar el informe.')
+      return null
+    }
+    if (complianceStudents.length === 0) {
+      setError('Cargue los estudiantes de los periodos seleccionados antes de generar el informe.')
+      return null
+    }
+    if (selectedComplianceStudentCodes.length === 0) {
+      setError('Seleccione al menos un estudiante para anexar calificaciones al informe.')
+      return null
+    }
+    if (complianceEvidenceFiles.notas.length === 0) {
+      setError('Debe subir al menos una captura de pantalla del reporte de notas para complementar el documento.')
+      return null
+    }
+    return downloadPortalTeacherComplianceReport({
+      codigoPeriodos: params.periodos,
+      codigoMateria: params.subjectCode,
+      paralelo: params.paralelo,
+      codigoEstudiantes: selectedComplianceStudentCodes,
+      fechaInicio: complianceStartDate,
+      fechaFin: complianceEndDate,
+      telefono: compliancePhone,
+      actualizaciones: complianceUpdates,
+      observaciones: complianceObservations,
+      evidencias: evidencePayload(complianceEvidenceFiles),
     })
   }
 
@@ -541,8 +727,63 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
     }
   }
 
+  async function previewComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
+    if (course) {
+      setSelectedCourseKey(courseKey(course))
+      setTargetCourseKey(courseKey(course))
+    }
+    setPreviewingComplianceReport(true)
+    setError('')
+    try {
+      const blob = await buildComplianceReportBlob(course)
+      if (!blob) return
+      const url = window.URL.createObjectURL(blob)
+      setCompliancePreviewUrl(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo generar la vista previa del informe de cumplimiento')
+    } finally {
+      setPreviewingComplianceReport(false)
+    }
+  }
+
+  async function downloadComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
+    if (!course) return
+    setSelectedCourseKey(courseKey(course))
+    setTargetCourseKey(courseKey(course))
+    setDownloadingComplianceReport(true)
+    setError('')
+    try {
+      const blob = await buildComplianceReportBlob(course)
+      if (!blob) return
+      const periodos = course.codigo_periodos?.length
+        ? course.codigo_periodos
+        : course.codigo_periodo
+          ? [course.codigo_periodo]
+          : []
+      const subjectCode = course.cod_materia || course.codigo_materia || ''
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const subject = safeFilenamePart(course.nombre_materia || subjectCode)
+      const period = safeFilenamePart(compliancePeriodCodes.join('-') || course.detalle_periodos || course.detalle_periodo || periodos.join('-'))
+      link.href = url
+      link.download = `cumplimiento-docente-${subject}-${period}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar el informe de cumplimiento')
+    } finally {
+      setDownloadingComplianceReport(false)
+    }
+  }
+
   function closeReportPreview() {
     setReportPreviewUrl('')
+  }
+
+  function closeCompliancePreview() {
+    setCompliancePreviewUrl('')
   }
 
   useEffect(() => {
@@ -555,6 +796,13 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
       window.URL.revokeObjectURL(reportPreviewUrl)
     }
   }, [reportPreviewUrl])
+
+  useEffect(() => {
+    if (!compliancePreviewUrl) return
+    return () => {
+      window.URL.revokeObjectURL(compliancePreviewUrl)
+    }
+  }, [compliancePreviewUrl])
 
   useEffect(() => {
     if (subjectFilter && !subjectOptions.some((option) => option.key === subjectFilter)) {
@@ -572,12 +820,25 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
     }
   }, [filteredCourses, targetCourseKey])
 
+  useEffect(() => {
+    const codes = targetCoursePeriodOptions.map((option) => option.code)
+    setCompliancePeriodCodes(codes.slice(0, 1))
+    setCompliancePeriodToAdd(codes[1] || codes[0] || '')
+    setComplianceStudents([])
+    setSelectedComplianceStudentCodes([])
+  }, [targetCoursePeriodOptions])
+
+  useEffect(() => {
+    if (availableCompliancePeriodOptions.some((option) => option.code === compliancePeriodToAdd)) return
+    setCompliancePeriodToAdd(availableCompliancePeriodOptions[0]?.code || '')
+  }, [availableCompliancePeriodOptions, compliancePeriodToAdd])
+
   return (
     <div className="student-dashboard portal-page">
       <header className="student-hero">
         <div>
           <p className="eyebrow">Portal docente</p>
-          <h1>Mis cursos y subida de notas</h1>
+          <h1>{initialMode === 'compliance' ? 'Informe de cumplimiento docente' : 'Mis cursos y subida de notas'}</h1>
           <p>{displayName}</p>
         </div>
         <div className="student-user-pill">
@@ -634,6 +895,7 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
             </label>
           </div>
 
+          {initialMode !== 'compliance' ? (
           <div className="portal-course-jump">
             <label>
               <span>Ir directamente a</span>
@@ -656,40 +918,302 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
               Limpiar filtros
             </button>
           </div>
+          ) : null}
 
-          <div className="portal-course-filter-summary">
-            <span>{filteredCourses.length} curso(s) visible(s)</span>
-            <span>{filteredSummary.regular} regular(es)</span>
-            <span>{filteredSummary.homo} homologación</span>
-            <span>{filteredSummary.students} estudiante(s)</span>
-          </div>
-
-          <div className="portal-course-stack">
-            {filteredCourses.map((course) => (
+          {initialMode === 'compliance' ? (
+          <div className="portal-compliance-launcher">
+            <div className="section-title">
+              <div>
+                <span>Documento docente</span>
+                <h2>Crear informe de cumplimiento</h2>
+              </div>
+              <strong>
+                {targetCourse
+                  ? `${targetCourse.nombre_materia || targetCourse.codigo_materia || 'Materia'} · Paralelo ${targetCourse.paralelo || '-'}`
+                  : 'Seleccione una materia'}
+              </strong>
+            </div>
+            <p>
+              El documento se genera con el formato configurado por administración y toma docente, materia,
+              carrera, periodo, paralelo, estudiantes y notas desde el sistema.
+            </p>
+            <div className="portal-compliance-panel portal-compliance-panel--launcher">
+              <label className="portal-compliance-course-select">
+                <span>Materia del informe</span>
+                <select
+                  value={targetCourseKey}
+                  onChange={(event) => {
+                    setTargetCourseKey(event.target.value)
+                    setComplianceStudents([])
+                    setSelectedComplianceStudentCodes([])
+                  }}
+                  disabled={complianceCourseOptions.length === 0}
+                >
+                  {complianceCourseOptions.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label} - {option.periods} periodo(s)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <fieldset className="portal-compliance-periods">
+                <legend>Periodos del informe</legend>
+                <div className="portal-compliance-period-picker">
+                  <select
+                    value={compliancePeriodToAdd}
+                    onChange={(event) => setCompliancePeriodToAdd(event.target.value)}
+                    disabled={availableCompliancePeriodOptions.length === 0 || compliancePeriodCodes.length >= 4}
+                  >
+                    <option value="">Seleccione periodo</option>
+                    {availableCompliancePeriodOptions.map((option) => (
+                      <option key={option.code} value={option.code}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      if (!compliancePeriodToAdd || compliancePeriodCodes.includes(compliancePeriodToAdd) || compliancePeriodCodes.length >= 4) return
+                      const next = [...compliancePeriodCodes, compliancePeriodToAdd].slice(0, 4)
+                      setCompliancePeriodCodes(next)
+                      setCompliancePeriodToAdd(availableCompliancePeriodOptions.find((option) => option.code !== compliancePeriodToAdd)?.code || '')
+                      setComplianceStudents([])
+                      setSelectedComplianceStudentCodes([])
+                    }}
+                    disabled={!compliancePeriodToAdd || compliancePeriodCodes.length >= 4}
+                  >
+                    Agregar periodo
+                  </button>
+                </div>
+                <div className="portal-compliance-selected-periods">
+                  {compliancePeriodCodes.map((code) => {
+                    const option = targetCoursePeriodOptions.find((item) => item.code === code)
+                    return (
+                      <span key={code}>
+                        {option?.label || code}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = compliancePeriodCodes.filter((item) => item !== code)
+                            setCompliancePeriodCodes(next)
+                            setCompliancePeriodToAdd(code)
+                            setComplianceStudents([])
+                            setSelectedComplianceStudentCodes([])
+                          }}
+                          aria-label={`Quitar periodo ${option?.label || code}`}
+                        >
+                          x
+                        </button>
+                      </span>
+                    )
+                  })}
+                </div>
+                {targetCoursePeriodOptions.length === 0 ? (
+                  <p>No hay periodos disponibles para esta materia.</p>
+                ) : null}
+              </fieldset>
+              <div className="portal-compliance-period-note">
+                Puede seleccionar hasta 4 periodos para cargar estudiantes y anexar calificaciones.
+              </div>
+              <label>
+                <span>Fecha inicio</span>
+                <input type="date" value={complianceStartDate} onChange={(event) => setComplianceStartDate(event.target.value)} />
+              </label>
+              <label>
+                <span>Fecha fin</span>
+                <input type="date" value={complianceEndDate} onChange={(event) => setComplianceEndDate(event.target.value)} />
+              </label>
+              <label>
+                <span>Teléfono contacto</span>
+                <input value={compliancePhone} onChange={(event) => setCompliancePhone(event.target.value)} placeholder="Ej. 09XXXXXXXX" />
+              </label>
+              <label>
+                <span>Actualización del sílabo</span>
+                <textarea value={complianceUpdates} onChange={(event) => setComplianceUpdates(event.target.value)} />
+              </label>
+              <label>
+                <span>Observaciones TEAMS</span>
+                <textarea value={complianceObservations} onChange={(event) => setComplianceObservations(event.target.value)} placeholder="Detalle opcional para el informe" />
+              </label>
+            </div>
+            <div className="portal-compliance-evidence">
+              <div className="section-title">
+                <div>
+                  <span>Capturas de pantalla</span>
+                  <h2>Evidencias del informe</h2>
+                </div>
+                <strong>{evidencePayload(complianceEvidenceFiles).length} archivo(s)</strong>
+              </div>
+              <div className="portal-compliance-evidence-grid">
+                {COMPLIANCE_EVIDENCE_OPTIONS.map((option) => (
+                  <label key={option.key}>
+                    <span>{option.label}{option.key === 'notas' ? ' *' : ''}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(event) => {
+                        const selectedFiles = Array.from(event.target.files || [])
+                        setComplianceEvidenceFiles((current) => ({
+                          ...current,
+                          [option.key]: [...current[option.key], ...selectedFiles],
+                        }))
+                        event.target.value = ''
+                      }}
+                    />
+                    {complianceEvidenceFiles[option.key].length > 0 ? (
+                      <ul className="portal-compliance-evidence-files">
+                        {complianceEvidenceFiles[option.key].map((file, fileIndex) => (
+                          <li key={`${file.name}-${file.lastModified}-${fileIndex}`}>
+                            <small>{file.name}</small>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setComplianceEvidenceFiles((current) => ({
+                                  ...current,
+                                  [option.key]: current[option.key].filter((_, index) => index !== fileIndex),
+                                }))
+                              }}
+                              aria-label={`Quitar ${file.name}`}
+                            >
+                              Quitar
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <small>Sin capturas seleccionadas</small>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="portal-compliance-students">
+              <div className="section-title">
+                <div>
+                  <span>Estudiantes para anexo de notas</span>
+                  <h2>{complianceStudents.length} calificado(s)</h2>
+                </div>
+                <div className="portal-compliance-actions">
+                  <button type="button" className="ghost-button" onClick={() => void loadComplianceStudents(targetCourse)} disabled={loadingComplianceStudents || !targetCourse || compliancePeriodCodes.length === 0}>
+                    {loadingComplianceStudents ? 'Cargando...' : 'Cargar estudiantes'}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => setSelectedComplianceStudentCodes(Array.from(new Set(complianceStudents.map((item) => String(item.codigo_estud)).filter(Boolean))))} disabled={complianceStudents.length === 0}>
+                    Todos
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => setSelectedComplianceStudentCodes([])} disabled={complianceStudents.length === 0}>
+                    Ninguno
+                  </button>
+                </div>
+              </div>
+              {complianceStudents.length > 0 ? (
+                <div className="excel-table-wrap portal-compliance-students-wrap">
+                  <table className="matricula-table portal-compliance-students-table">
+                    <thead>
+                      <tr>
+                        <th>Incluye</th>
+                        <th>Estudiante</th>
+                        <th>Cédula</th>
+                        <th>Carrera</th>
+                        <th>Periodo</th>
+                        <th>Final</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {complianceStudents.map((item) => {
+                        const code = String(item.codigo_estud)
+                        return (
+                          <tr key={studentKey(item)}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedComplianceStudentCodes.includes(code)}
+                                onChange={(event) => {
+                                  setSelectedComplianceStudentCodes((current) =>
+                                    event.target.checked
+                                      ? Array.from(new Set([...current, code]))
+                                      : current.filter((value) => value !== code)
+                                  )
+                                }}
+                              />
+                            </td>
+                            <td>{item.nombre_estudiante || item.codigo_estud}</td>
+                            <td>{item.cedula || '-'}</td>
+                            <td>{item.nombre_carrera || '-'}</td>
+                            <td>{item.detalle_periodo || item.codigo_periodo || '-'}</td>
+                            <td>{numberText(item.promedio_final)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="form-success">Carga los estudiantes calificados para anexar sus notas al informe.</p>
+              )}
+            </div>
+            <div className="portal-compliance-actions">
               <button
-                key={courseKey(course)}
                 type="button"
-                className={`portal-course-button ${courseKey(course) === selectedCourseKey ? 'portal-course-button--active' : ''}`}
-                onClick={() => selectCourse(course)}
+                className="ghost-button"
+                onClick={() => void previewComplianceReport(targetCourse)}
+                disabled={previewingComplianceReport || !targetCourse}
               >
-                <strong>{course.nombre_materia || course.codigo_materia}</strong>
-                <span>{course.nombre_carrera || course.cod_anio_basicas?.join(', ') || '-'}</span>
-                <small>
-                  {course.detalle_periodos || course.detalle_periodo || course.codigo_periodo} | Paralelo {course.paralelo || '-'} | {courseJourneyLabel(course)}
-                </small>
-                <small>
-                  {course.es_homologacion ? 'HOMO independiente' : `${course.period_count || 1} periodo(s) regular(es)`}
-                </small>
-                <b>{course.total_estudiantes || 0} estudiante(s)</b>
+                {previewingComplianceReport ? 'Generando vista...' : 'Visualización previa'}
               </button>
-            ))}
-            {!loadingCourses && courses.length === 0 ? (
-              <p className="form-success">No hay materias asignadas para este docente.</p>
-            ) : null}
-            {!loadingCourses && courses.length > 0 && filteredCourses.length === 0 ? (
-              <p className="form-success">No hay cursos para los filtros seleccionados.</p>
-            ) : null}
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => void downloadComplianceReport(targetCourse)}
+                disabled={downloadingComplianceReport || !targetCourse}
+              >
+                {downloadingComplianceReport ? 'Generando informe...' : 'Crear y descargar documento'}
+              </button>
+            </div>
+            {error ? <p className="form-error">{error}</p> : null}
+            {message ? <p className="form-success">{message}</p> : null}
           </div>
+          ) : null}
+
+          {initialMode !== 'compliance' ? (
+            <>
+              <div className="portal-course-filter-summary">
+                <span>{filteredCourses.length} curso(s) visible(s)</span>
+                <span>{filteredSummary.regular} regular(es)</span>
+                <span>{filteredSummary.homo} homologación</span>
+                <span>{filteredSummary.students} estudiante(s)</span>
+              </div>
+
+              <div className="portal-course-stack">
+                {filteredCourses.map((course) => (
+                  <button
+                    key={courseKey(course)}
+                    type="button"
+                    className={`portal-course-button ${courseKey(course) === selectedCourseKey ? 'portal-course-button--active' : ''}`}
+                    onClick={() => selectCourse(course)}
+                  >
+                    <strong>{course.nombre_materia || course.codigo_materia}</strong>
+                    <span>{course.nombre_carrera || course.cod_anio_basicas?.join(', ') || '-'}</span>
+                    <small>
+                      {course.detalle_periodos || course.detalle_periodo || course.codigo_periodo} | Paralelo {course.paralelo || '-'} | {courseJourneyLabel(course)}
+                    </small>
+                    <small>
+                      {course.es_homologacion ? 'HOMO independiente' : `${course.period_count || 1} periodo(s) regular(es)`}
+                    </small>
+                    <b>{course.total_estudiantes || 0} estudiante(s)</b>
+                  </button>
+                ))}
+                {!loadingCourses && courses.length === 0 ? (
+                  <p className="form-success">No hay materias asignadas para este docente.</p>
+                ) : null}
+                {!loadingCourses && courses.length > 0 && filteredCourses.length === 0 ? (
+                  <p className="form-success">No hay cursos para los filtros seleccionados.</p>
+                ) : null}
+              </div>
+            </>
+          ) : null}
         </aside>
         ) : null}
 
@@ -967,6 +1491,29 @@ export function PortalDocenteView({ displayName }: Readonly<PortalDocenteViewPro
               </div>
             </header>
             <iframe src={reportPreviewUrl} title="Vista previa del reporte de notas docente" />
+          </article>
+        </div>
+      ) : null}
+
+      {compliancePreviewUrl ? (
+        <div className="portal-report-preview-overlay" role="dialog" aria-modal="true" aria-label="Vista previa del informe de cumplimiento docente">
+          <article className="portal-report-preview-modal">
+            <header>
+              <div>
+                <span>Vista previa</span>
+                <h2>Informe de cumplimiento docente</h2>
+                <p>{selectedCourse?.nombre_materia || 'Materia seleccionada'}</p>
+              </div>
+              <div className="portal-report-preview-actions">
+                <button type="button" className="ghost-button" onClick={() => void downloadComplianceReport()} disabled={downloadingComplianceReport}>
+                  {downloadingComplianceReport ? 'Descargando...' : 'Descargar informe'}
+                </button>
+                <button type="button" className="primary-action" onClick={closeCompliancePreview}>
+                  Cerrar
+                </button>
+              </div>
+            </header>
+            <iframe src={compliancePreviewUrl} title="Vista previa del informe de cumplimiento docente" />
           </article>
         </div>
       ) : null}

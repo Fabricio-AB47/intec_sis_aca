@@ -14,6 +14,7 @@ type StudentLayoutProps = {
   onOpenDashboard: () => void
   onOpenPortalEstudiante: (section?: PortalStudentSection) => void
   onOpenPortalDocente: () => void
+  onOpenPortalDocenteInforme: () => void
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
   onOpenMatricula: () => void
@@ -43,6 +44,7 @@ type StudentLayoutProps = {
   onOpenTeacherEvaluation: () => void
   onOpenTeacherEvaluationProgress: () => void
   onOpenTeacherEvaluationReports: () => void
+  onOpenTeacherComplianceFormat: () => void
   onLogout: () => void
   children: ReactNode
 }
@@ -341,6 +343,7 @@ export function StudentLayout({
   onOpenDashboard,
   onOpenPortalEstudiante,
   onOpenPortalDocente,
+  onOpenPortalDocenteInforme,
   onOpenTeams,
   onOpenTeamsMatricula,
   onOpenMatriculaAcad,
@@ -364,6 +367,7 @@ export function StudentLayout({
   onOpenTeacherEvaluation,
   onOpenTeacherEvaluationProgress,
   onOpenTeacherEvaluationReports,
+  onOpenTeacherComplianceFormat,
   onLogout,
   children,
 }: Readonly<StudentLayoutProps>) {
@@ -727,6 +731,12 @@ export function StudentLayout({
           page: 'gestion-sisacademico',
           sectionKey: 'fechas_autoevaluacion',
           action: () => onOpenGestionSisAcademico('fechas_autoevaluacion'),
+        },
+        {
+          label: 'Formato informe docente',
+          description: 'Textos, recursos y anexos del reporte de cumplimiento.',
+          page: 'formato-informe-docente',
+          action: onOpenTeacherComplianceFormat,
         },
       ],
     },
@@ -1176,6 +1186,12 @@ export function StudentLayout({
           description: 'Estudiantes por materia asignada y registro de calificaciones.',
           page: 'portal-docente',
           action: onOpenPortalDocente,
+        },
+        {
+          label: 'Crear informe docente',
+          description: 'Generar el documento de cumplimiento con el formato institucional.',
+          page: 'portal-docente-informe',
+          action: onOpenPortalDocenteInforme,
         },
         {
           label: 'Carnet institucional',
