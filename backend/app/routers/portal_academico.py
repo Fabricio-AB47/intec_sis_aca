@@ -2621,6 +2621,93 @@ def _teacher_compliance_model_pdf(
                 y = draw_image(content, x, y, max_w, max_h_each)
         return y
 
+    def draw_selected_students_table(x: float, y: float, max_w: float) -> float:
+        row_h = 12
+        headers = ["No.", "Estudiante", "Cédula", "Carrera", "Final"]
+        col_widths = [24, 170, 72, 118, 42]
+        table_w = min(sum(col_widths), max_w)
+        max_rows = 7
+        visible_students = students[:max_rows]
+        total_rows = 1 + len(visible_students)
+        table_h = total_rows * row_h
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#c7c7c7"))
+        canvas.setLineWidth(0.45)
+        canvas.setFillColor(colors.HexColor("#f2f2f2"))
+        canvas.rect(x, y - row_h, table_w, row_h, stroke=1, fill=1)
+        cursor_x = x
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 6.8)
+        for header, col_w in zip(headers, col_widths):
+            canvas.drawString(cursor_x + 3, y - 8, header)
+            canvas.line(cursor_x, y, cursor_x, y - table_h)
+            cursor_x += col_w
+        canvas.line(x + table_w, y, x + table_w, y - table_h)
+        canvas.line(x, y, x + table_w, y)
+        canvas.line(x, y - row_h, x + table_w, y - row_h)
+        canvas.setFont("Times-Roman", 6.6)
+        current_y = y - row_h
+        for index, item in enumerate(visible_students, start=1):
+            next_y = current_y - row_h
+            canvas.line(x, next_y, x + table_w, next_y)
+            values = [
+                str(index),
+                _clean(item.get("nombre_estudiante")) or _clean(item.get("estudiante")) or "-",
+                _clean(item.get("cedula")) or _clean(item.get("numero_identificacion")) or "-",
+                _clean(item.get("nombre_carrera")) or "-",
+                _legacy_grade_text(item.get("promedio_final")),
+            ]
+            cursor_x = x
+            for value, col_w in zip(values, col_widths):
+                text = value
+                while canvas.stringWidth(text, "Times-Roman", 6.6) > col_w - 6 and len(text) > 4:
+                    text = text[:-4].rstrip() + "..."
+                canvas.drawString(cursor_x + 3, current_y - 8, text)
+                canvas.line(cursor_x, current_y, cursor_x, next_y)
+                cursor_x += col_w
+            canvas.line(x + table_w, current_y, x + table_w, next_y)
+            current_y = next_y
+        canvas.restoreState()
+        y_after = y - table_h - 8
+        if len(students) > max_rows:
+            canvas.setFont("Times-Italic", 7)
+            canvas.setFillColor(dark)
+            canvas.drawString(x, y_after, f"Se muestran {max_rows} de {len(students)} estudiante(s) seleccionados.")
+            y_after -= 10
+        return y_after
+
+    def draw_grade_summary_table(x: float, y: float) -> float:
+        headers = ["Nota máxima", "Nota mínima", "Estudiantes reprobados"]
+        values = [
+            _grade_text(max(grade_values) if grade_values else None),
+            _grade_text(min(grade_values) if grade_values else None),
+            str(failed),
+        ]
+        col_w = 118
+        row_h = 16
+        table_w = col_w * len(headers)
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#c7c7c7"))
+        canvas.setLineWidth(0.5)
+        canvas.setFillColor(colors.HexColor("#f2f2f2"))
+        canvas.rect(x, y - row_h, table_w, row_h, stroke=1, fill=1)
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 7.4)
+        for index, header in enumerate(headers):
+            cell_x = x + (index * col_w)
+            canvas.drawCentredString(cell_x + col_w / 2, y - 10.5, header)
+            canvas.line(cell_x, y, cell_x, y - row_h * 2)
+        canvas.line(x + table_w, y, x + table_w, y - row_h * 2)
+        canvas.line(x, y, x + table_w, y)
+        canvas.line(x, y - row_h, x + table_w, y - row_h)
+        canvas.line(x, y - row_h * 2, x + table_w, y - row_h * 2)
+        canvas.setFont("Times-Bold", 8)
+        for index, value in enumerate(values):
+            cell_x = x + (index * col_w)
+            canvas.drawCentredString(cell_x + col_w / 2, y - row_h - 10.5, value)
+        canvas.restoreState()
+        return y - (row_h * 2) - 10
+
     teacher_name = _clean(teacher.get("docente"))
     name_parts = teacher_name.split()
     first_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else teacher_name
@@ -2647,7 +2734,7 @@ def _teacher_compliance_model_pdf(
     y = line(f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}", body_x + 38, y, 11)
     y = line(f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}", body_x + 38, y, 11)
     y = line(f"Número de estudiantes matriculados: {len(students)}", body_x + 38, y, 11)
-    y = draw_group(("datos", "matriculados", "inicial"), body_x + 38, y + 4, 390, 76, 1)
+    y = draw_selected_students_table(body_x + 38, y + 4, 426)
     y -= 14
     y = line("3.   REPORTE ACADÉMICO", body_x, y, 12, True)
     y -= 14
@@ -2698,7 +2785,7 @@ def _teacher_compliance_model_pdf(
     y = wrapped("Indicar la nota máxima obtenida y la nota mínima obtenida y si existieron casos de estudiantes reprobados, junto con captura de pantalla del reporte de notas debidamente firmado electrónicamente y de las notas subidas en el sistema académico:", body_x, y, content_width, 11)
     y = line("Ejemplo:", body_x, y - 4, 11)
     y = draw_group(("notas", "reporte"), body_x + 24, y, 470, 205, 1)
-    y = line(f"Resumen generado: Nota máxima: {_grade_text(max(grade_values) if grade_values else None)}. Nota mínima: {_grade_text(min(grade_values) if grade_values else None)}. Estudiantes reprobados: {failed}.", body_x + 24, y, 8)
+    y = draw_grade_summary_table(body_x + 24, y)
 
     new_page(4)
     y = 662

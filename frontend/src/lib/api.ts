@@ -50,6 +50,7 @@ import type {
   ExcelSqlCrossResponse,
   ExcelValidationResponse,
   FechaGradoCatalogResponse,
+  FechaGradoImportResponse,
   FechaGradoSavePayload,
   FechaGradoSaveResponse,
   FechaGradoStudentsResponse,
@@ -740,6 +741,33 @@ export async function saveFechaGrado(payload: FechaGradoSavePayload): Promise<Fe
   return request<FechaGradoSaveResponse>('/api/students/fecha-grado/guardar', {
     method: 'POST',
     body: JSON.stringify(payload),
+  })
+}
+
+export async function downloadFechaGradoTemplate(filters: {
+  periodo: string
+  carrera?: string
+  busqueda?: string
+}): Promise<Blob> {
+  const params = new URLSearchParams({ periodo: filters.periodo })
+  if (filters.carrera) params.set('carrera', filters.carrera)
+  if (filters.busqueda) params.set('busqueda', filters.busqueda)
+  return request<Blob>(`/api/students/fecha-grado/plantilla?${params.toString()}`, {
+    responseType: 'blob',
+  })
+}
+
+export async function importFechaGradoExcel(
+  file: File,
+  filters: { periodo: string; carrera?: string },
+): Promise<FechaGradoImportResponse> {
+  const params = new URLSearchParams({ periodo: filters.periodo })
+  if (filters.carrera) params.set('carrera', filters.carrera)
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<FechaGradoImportResponse>(`/api/students/fecha-grado/importar?${params.toString()}`, {
+    method: 'POST',
+    body: formData,
   })
 }
 

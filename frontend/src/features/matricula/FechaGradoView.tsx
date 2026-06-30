@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchFechaGradoCatalog, fetchFechaGradoStudents, saveFechaGrado } from '../../lib/api'
+import {
+  downloadFechaGradoTemplate,
+  fetchFechaGradoCatalog,
+  fetchFechaGradoStudents,
+  importFechaGradoExcel,
+  saveFechaGrado,
+} from '../../lib/api'
 import type { FechaGradoCatalogResponse, FechaGradoStudent } from '../../types/app'
 
 type FechaGradoViewProps = {
@@ -25,6 +31,8 @@ export function FechaGradoView({ displayName }: Readonly<FechaGradoViewProps>) {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [excelFile, setExcelFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -112,6 +120,57 @@ export function FechaGradoView({ displayName }: Readonly<FechaGradoViewProps>) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudieron guardar las fechas')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function downloadTemplate() {
+    if (!periodo) {
+      setError('Selecciona un periodo para descargar la plantilla.')
+      return
+    }
+    setError('')
+    setMessage('')
+    try {
+      const blob = await downloadFechaGradoTemplate({ periodo, carrera, busqueda })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `plantilla-fecha-grado-${periodo}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la plantilla Excel')
+    }
+  }
+
+  async function uploadExcel() {
+    if (!periodo) {
+      setError('Selecciona un periodo antes de importar.')
+      return
+    }
+    if (!excelFile) {
+      setError('Selecciona un archivo Excel para importar.')
+      return
+    }
+    setImporting(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await importFechaGradoExcel(excelFile, { periodo, carrera })
+      if (!response.ok) {
+        const details = response.errores?.slice(0, 5).map((item) => `Fila ${item.fila}: ${item.error}`).join(' | ')
+        setError(details || 'El Excel contiene errores de validación.')
+        return
+      }
+      setMessage(`Excel importado. Fechas actualizadas: ${response.actualizados}`)
+      setExcelFile(null)
+      await loadStudents()
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo importar el Excel')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -227,12 +286,29 @@ export function FechaGradoView({ displayName }: Readonly<FechaGradoViewProps>) {
               <button type="button" onClick={() => void loadStudents()} disabled={loading || !periodo}>
                 {loading ? 'Consultando...' : 'Ver lista de estudiantes'}
               </button>
+              <button type="button" onClick={() => void downloadTemplate()} disabled={!periodo}>
+                Descargar plantilla Excel
+              </button>
               <button type="button" onClick={applyDateToEmpty} disabled={students.length === 0}>
                 Fecha de hoy en vacíos
               </button>
               <button type="button" onClick={() => void saveChanges()} disabled={saving || dirtyItems.length === 0}>
                 {saving ? 'Guardando...' : `Guardar cambios (${dirtyItems.length})`}
               </button>
+            </div>
+            <div className="fecha-grado-import-row">
+              <label>
+                <span>Importar por cédula</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xlsm"
+                  onChange={(event) => setExcelFile(event.target.files?.[0] || null)}
+                />
+              </label>
+              <button type="button" className="ghost-button" onClick={() => void uploadExcel()} disabled={importing || !excelFile || !periodo}>
+                {importing ? 'Validando...' : 'Cargar Excel'}
+              </button>
+              <small>Excel validado por cedula y fecha_grado. Formato de fecha: AAAA-MM-DD.</small>
             </div>
           </div>
 

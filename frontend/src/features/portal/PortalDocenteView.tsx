@@ -28,7 +28,6 @@ const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
 ]
 
 const COMPLIANCE_EVIDENCE_OPTIONS = [
-  { key: 'datos', label: 'Captura estudiantes matriculados' },
   { key: 'pea', label: 'Captura PEA y sílabo firmado' },
   { key: 'aula', label: 'Captura aula virtual y recursos' },
   { key: 'teams', label: 'Captura TEAMS y clases grabadas' },
@@ -267,7 +266,6 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [selectedComplianceStudentCodes, setSelectedComplianceStudentCodes] = useState<string[]>([])
   const [loadingComplianceStudents, setLoadingComplianceStudents] = useState(false)
   const [complianceEvidenceFiles, setComplianceEvidenceFiles] = useState<Record<ComplianceEvidenceKey, File[]>>({
-    datos: [],
     pea: [],
     aula: [],
     teams: [],

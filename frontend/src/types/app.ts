@@ -1111,6 +1111,18 @@ export type FechaGradoSaveResponse = {
   actualizados: number
 }
 
+export type FechaGradoImportResponse = {
+  ok: boolean
+  actualizados: number
+  procesados?: number
+  errores?: Array<{
+    fila?: number
+    cedula?: string
+    error?: string
+  }>
+  detail?: string
+}
+
 export type CertificadosReprobada = {
   codigo_materia?: string
   cod_materia?: string

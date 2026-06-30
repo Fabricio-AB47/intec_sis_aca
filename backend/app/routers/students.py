@@ -9,10 +9,12 @@ from typing import Annotated, Any
 import unicodedata
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
 import pandas as pd
 from pydantic import BaseModel, Field
 import pyodbc
@@ -3855,10 +3857,96 @@ def _parse_graduation_date(value: Any) -> date | None:
     text = _clean_cell(value)
     if not text:
         return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     try:
         return datetime.fromisoformat(text[:10]).date()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Fecha de grado invalida: {text}") from exc
+
+
+def _style_excel_header(worksheet: Any) -> None:
+    fill = PatternFill("solid", fgColor="DDEBF7")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = fill
+
+
+def _safe_excel_filename(value: Any) -> str:
+    text = re.sub(r'[<>:"/\\|?*]+', "", _clean_cell(value))
+    text = re.sub(r"\s+", "_", text).strip("._")
+    return text[:80] or "fecha_grado"
+
+
+def _graduation_date_student_rows(
+    period_code: str,
+    career_code: str = "",
+    search: str = "",
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    params: list[Any] = [period_code]
+    wheres = ["TRY_CONVERT(varchar(50), cx.codigo_periodo) = ?"]
+    if career_code:
+        wheres.append("TRY_CONVERT(varchar(50), cx.cod_anio_Basica) = ?")
+        params.append(career_code)
+    if search:
+        needle = f"%{search}%"
+        document_needle = re.sub(r"\D+", "", search) or search
+        wheres.append(
+            """
+            (
+                TRY_CONVERT(nvarchar(max), d.Apellidos_nombre) LIKE ?
+                OR TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
+                OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.Cedula_Est), '-', ''), ' ', '') LIKE ?
+                OR TRY_CONVERT(nvarchar(max), c.Nombre_Basica) LIKE ?
+            )
+            """
+        )
+        params.extend([needle, needle, f"%{document_needle}%", needle])
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT TOP ({limit})
+                TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))) AS cedula,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), d.Apellidos_nombre))) AS nombres,
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), cx.cod_anio_Basica))) AS codigo_carrera,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), c.Nombre_Basica))) AS carrera,
+                TRY_CONVERT(varchar(50), cx.codigo_periodo) AS codigo_periodo,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS periodo,
+                d.Fecha_Grado AS fecha_grado
+            FROM dbo.CARRERAXESTUD cx
+            INNER JOIN dbo.DATOS_ESTUD d
+                ON TRY_CONVERT(varchar(50), d.codigo_estud) = TRY_CONVERT(varchar(50), cx.codigo_estud)
+            LEFT JOIN dbo.CARRERAS c
+                ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cx.cod_anio_Basica)
+            LEFT JOIN dbo.PERIODO p
+                ON TRY_CONVERT(varchar(50), p.cod_periodo) = TRY_CONVERT(varchar(50), cx.codigo_periodo)
+            WHERE {" AND ".join(wheres)}
+            GROUP BY
+                d.codigo_estud, d.Cedula_Est, d.Apellidos_nombre,
+                cx.cod_anio_Basica, c.Nombre_Basica, cx.codigo_periodo, p.Detalle_Periodo,
+                d.Fecha_Grado
+            ORDER BY d.Apellidos_nombre, c.Nombre_Basica
+            """,
+            *params,
+        )
+        return [
+            {
+                "codigo_estud": _clean_cell(row.codigo_estud),
+                "cedula": _clean_cell(row.cedula),
+                "nombres": _clean_cell(row.nombres),
+                "codigo_carrera": _clean_cell(row.codigo_carrera),
+                "carrera": _clean_cell(row.carrera),
+                "codigo_periodo": _clean_cell(row.codigo_periodo),
+                "periodo": _clean_cell(row.periodo),
+                "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+            }
+            for row in cursor.fetchall()
+        ]
 
 
 @router.get("/fecha-grado/catalog")
@@ -3942,71 +4030,154 @@ def graduation_date_students(
     period_code = _clean_cell(periodo)
     career_code = _clean_cell(carrera)
     search = _clean_cell(busqueda)
-    params: list[Any] = [period_code]
-    wheres = ["TRY_CONVERT(varchar(50), cx.codigo_periodo) = ?"]
-    if career_code:
-        wheres.append("TRY_CONVERT(varchar(50), cx.cod_anio_Basica) = ?")
-        params.append(career_code)
-    if search:
-        needle = f"%{search}%"
-        document_needle = re.sub(r"\D+", "", search) or search
-        wheres.append(
-            """
-            (
-                TRY_CONVERT(nvarchar(max), d.Apellidos_nombre) LIKE ?
-                OR TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
-                OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.Cedula_Est), '-', ''), ' ', '') LIKE ?
-                OR TRY_CONVERT(nvarchar(max), c.Nombre_Basica) LIKE ?
-            )
-            """
-        )
-        params.extend([needle, needle, f"%{document_needle}%", needle])
+    try:
+        items = _graduation_date_student_rows(period_code, career_code, search, limit)
+        return {"items": items, "total": len(items), "periodo": period_code, "carrera": career_code}
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar estudiantes para fecha de grado: {exc}") from exc
+
+
+@router.get("/fecha-grado/plantilla")
+def graduation_date_template(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    periodo: Annotated[str, Query(min_length=1, max_length=50)],
+    carrera: Annotated[str, Query(max_length=50)] = "",
+    busqueda: Annotated[str, Query(max_length=120)] = "",
+) -> StreamingResponse:
+    del current_user
+    period_code = _clean_cell(periodo)
+    career_code = _clean_cell(carrera)
+    search = _clean_cell(busqueda)
+    try:
+        items = _graduation_date_student_rows(period_code, career_code, search, 5000)
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo generar plantilla de fecha de grado: {exc}") from exc
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Fecha de grado"
+    headers = ["cedula", "fecha_grado"]
+    sheet.append(headers)
+    sheet["A1"].comment = Comment("Numero de cedula del estudiante. Se valida contra el periodo/carrera seleccionados.", "INTEC")
+    sheet["B1"].comment = Comment("Fecha de grado en formato AAAA-MM-DD. Ejemplo: 2026-06-30.", "INTEC")
+    for student in items:
+        sheet.append([
+            student.get("cedula"),
+            student.get("fecha_grado"),
+        ])
+    _style_excel_header(sheet)
+    sheet.freeze_panes = "A2"
+    widths = [18, 18]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+    max_row = max(len(items) + 250, 500)
+    date_validation = DataValidation(
+        type="date",
+        operator="between",
+        formula1="DATE(1900,1,1)",
+        formula2="DATE(2100,12,31)",
+        allow_blank=True,
+        showErrorMessage=True,
+        errorTitle="Fecha no valida",
+        error="Ingresa una fecha valida en formato AAAA-MM-DD.",
+        promptTitle="Fecha de grado",
+        prompt="Formato requerido: AAAA-MM-DD. Ejemplo: 2026-06-30.",
+    )
+    sheet.add_data_validation(date_validation)
+    date_validation.add(f"B2:B{max_row}")
+    for row in range(2, max_row + 1):
+        sheet[f"A{row}"].number_format = "@"
+        sheet[f"B{row}"].number_format = "yyyy-mm-dd"
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"plantilla_fecha_grado_{_safe_excel_filename(period_code)}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/fecha-grado/importar")
+async def import_graduation_dates(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    periodo: Annotated[str, Query(min_length=1, max_length=50)],
+    carrera: Annotated[str, Query(max_length=50)] = "",
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    del current_user
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Carga un archivo Excel .xlsx")
+    content = await file.read()
+    try:
+        workbook = load_workbook(BytesIO(content), data_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo leer el archivo Excel") from exc
+    sheet = workbook.active
+    headers = [_clean_cell(cell.value).strip().lower() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+    try:
+        cedula_index = headers.index("cedula")
+        fecha_index = headers.index("fecha_grado")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="La plantilla debe incluir columnas cedula y fecha_grado") from exc
+
+    period_code = _clean_cell(periodo)
+    career_code = _clean_cell(carrera)
+    eligible = _graduation_date_student_rows(period_code, career_code, "", 10000)
+    by_cedula = {
+        re.sub(r"\D+", "", _clean_cell(item.get("cedula"))): item
+        for item in eligible
+        if re.sub(r"\D+", "", _clean_cell(item.get("cedula")))
+    }
+    updates: list[tuple[date | None, str, str]] = []
+    errors: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row_number, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        cedula = re.sub(r"\D+", "", _clean_cell(row[cedula_index] if cedula_index < len(row) else ""))
+        raw_date = row[fecha_index] if fecha_index < len(row) else None
+        if not cedula and not _clean_cell(raw_date):
+            continue
+        if not cedula:
+            errors.append({"fila": row_number, "cedula": "", "error": "Cédula vacía"})
+            continue
+        student = by_cedula.get(cedula)
+        if not student:
+            errors.append({"fila": row_number, "cedula": cedula, "error": "Cédula no encontrada en el periodo/carrera seleccionados"})
+            continue
+        if cedula in seen:
+            errors.append({"fila": row_number, "cedula": cedula, "error": "Cédula duplicada en el Excel"})
+            continue
+        seen.add(cedula)
+        try:
+            parsed_date = _parse_graduation_date(raw_date)
+        except HTTPException as exc:
+            errors.append({"fila": row_number, "cedula": cedula, "error": exc.detail})
+            continue
+        updates.append((parsed_date, _clean_cell(student.get("codigo_estud")), cedula))
+    if errors:
+        return {"ok": False, "actualizados": 0, "errores": errors, "procesados": len(updates)}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No se encontraron filas válidas para actualizar")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                f"""
-                SELECT TOP ({limit})
-                    TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
-                    LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))) AS cedula,
-                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), d.Apellidos_nombre))) AS nombres,
-                    LTRIM(RTRIM(TRY_CONVERT(varchar(50), cx.cod_anio_Basica))) AS codigo_carrera,
-                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), c.Nombre_Basica))) AS carrera,
-                    TRY_CONVERT(varchar(50), cx.codigo_periodo) AS codigo_periodo,
-                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS periodo,
-                    d.Fecha_Grado AS fecha_grado
-                FROM dbo.CARRERAXESTUD cx
-                INNER JOIN dbo.DATOS_ESTUD d
-                    ON TRY_CONVERT(varchar(50), d.codigo_estud) = TRY_CONVERT(varchar(50), cx.codigo_estud)
-                LEFT JOIN dbo.CARRERAS c
-                    ON TRY_CONVERT(varchar(50), c.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cx.cod_anio_Basica)
-                LEFT JOIN dbo.PERIODO p
-                    ON TRY_CONVERT(varchar(50), p.cod_periodo) = TRY_CONVERT(varchar(50), cx.codigo_periodo)
-                WHERE {" AND ".join(wheres)}
-                GROUP BY
-                    d.codigo_estud, d.Cedula_Est, d.Apellidos_nombre,
-                    cx.cod_anio_Basica, c.Nombre_Basica, cx.codigo_periodo, p.Detalle_Periodo,
-                    d.Fecha_Grado
-                ORDER BY d.Apellidos_nombre, c.Nombre_Basica
-                """,
-                *params,
-            )
-            items = [
-                {
-                    "codigo_estud": _clean_cell(row.codigo_estud),
-                    "cedula": _clean_cell(row.cedula),
-                    "nombres": _clean_cell(row.nombres),
-                    "codigo_carrera": _clean_cell(row.codigo_carrera),
-                    "carrera": _clean_cell(row.carrera),
-                    "codigo_periodo": _clean_cell(row.codigo_periodo),
-                    "periodo": _clean_cell(row.periodo),
-                    "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
-                }
-                for row in cursor.fetchall()
-            ]
-            return {"items": items, "total": len(items), "periodo": period_code, "carrera": career_code}
+            updated = 0
+            for graduation_date, code, _cedula in updates:
+                cursor.execute(
+                    """
+                    UPDATE dbo.DATOS_ESTUD
+                    SET Fecha_Grado = ?
+                    WHERE TRY_CONVERT(varchar(50), codigo_estud) = ?
+                    """,
+                    graduation_date,
+                    code,
+                )
+                updated += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            conn.commit()
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar estudiantes para fecha de grado: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo importar fecha de grado: {exc}") from exc
+    return {"ok": True, "actualizados": updated, "errores": [], "procesados": len(updates)}
 
 
 @router.post("/fecha-grado/guardar")
