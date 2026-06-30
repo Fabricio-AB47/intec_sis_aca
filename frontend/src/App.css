@@ -21488,12 +21488,12 @@ body .student-sidebar .logout-button {
 }
 
 .fecha-grado-stats {
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
 }
 
 .student-grid.fecha-grado-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
   align-items: stretch;
 }
 
@@ -21570,6 +21570,130 @@ body .student-sidebar .logout-button {
   min-height: 42px;
 }
 
+.fecha-grado-import-only {
+  display: grid;
+  grid-template-columns: minmax(220px, auto) minmax(260px, 1fr) minmax(160px, auto);
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid rgba(141, 187, 199, 0.45);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbfc 100%);
+}
+
+.fecha-grado-import-only label {
+  display: grid;
+  gap: 6px;
+}
+
+.fecha-grado-import-only span {
+  color: #4d5a78;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.fecha-grado-import-only button {
+  min-height: 46px;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.fecha-grado-import-only input[type='file'] {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(21, 34, 74, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0c1f42;
+  padding: 8px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.fecha-grado-import-only input[type='file']::file-selector-button {
+  min-height: 30px;
+  margin-right: 10px;
+  border: 1px solid rgba(141, 187, 199, 0.7);
+  border-radius: 7px;
+  background: #eef8fb;
+  color: #0c1f42;
+  padding: 5px 10px;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fecha-grado-import-only input[type='file']::file-selector-button:hover {
+  border-color: #931913;
+  color: #931913;
+}
+
+.fecha-grado-verification-bar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(141, 187, 199, 0.45);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbfc 100%);
+}
+
+.fecha-grado-verification-bar label {
+  display: grid;
+  gap: 6px;
+}
+
+.fecha-grado-verification-bar span {
+  color: #4d5a78;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.fecha-grado-verification-bar select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(21, 34, 74, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0c1f42;
+  padding: 9px 12px;
+  font: inherit;
+  font-weight: 700;
+  outline: none;
+}
+
+.fecha-grado-verification-bar select:focus {
+  border-color: rgba(141, 187, 199, 0.95);
+  box-shadow: 0 0 0 3px rgba(141, 187, 199, 0.18);
+}
+
+.fecha-grado-verification-bar button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.fecha-grado-page-summary,
+.fecha-grado-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin: 12px 0;
+}
+
+.fecha-grado-page-summary span,
+.fecha-grado-pagination span {
+  border: 1px solid rgba(141, 187, 199, 0.6);
+  border-radius: 999px;
+  background: #eef8fb;
+  color: #33415f;
+  padding: 8px 12px;
+  font-weight: 900;
+}
+
 .fecha-grado-table-wrap {
   max-height: 62vh;
   overflow: auto;
@@ -21577,9 +21701,29 @@ body .student-sidebar .logout-button {
 }
 
 .fecha-grado-table {
-  min-width: 100%;
+  min-width: 900px;
   width: 100%;
   table-layout: fixed;
+}
+
+.fecha-grado-verification-table {
+  min-width: 980px;
+}
+
+.fecha-grado-verification-col-name {
+  width: 38%;
+}
+
+.fecha-grado-verification-col-id {
+  width: 16%;
+}
+
+.fecha-grado-verification-col-state {
+  width: 20%;
+}
+
+.fecha-grado-verification-col-date {
+  width: 26%;
 }
 
 .fecha-grado-col-name {
@@ -21601,12 +21745,17 @@ body .student-sidebar .logout-button {
 .fecha-grado-table th,
 .fecha-grado-table td {
   vertical-align: middle;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
 .fecha-grado-table td {
-  padding: 12px 14px;
+  padding: 10px 12px;
+}
+
+.fecha-grado-verification-table th,
+.fecha-grado-verification-table td {
+  white-space: normal;
 }
 
 .fecha-grado-table tbody td[colspan] {
@@ -21632,7 +21781,7 @@ body .student-sidebar .logout-button {
 .fecha-grado-career-cell small {
   display: block;
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
@@ -21686,7 +21835,9 @@ body .student-sidebar .logout-button {
     width: 100%;
   }
 
-  .fecha-grado-import-row {
+  .fecha-grado-import-row,
+  .fecha-grado-import-only,
+  .fecha-grado-verification-bar {
     grid-template-columns: 1fr;
   }
 

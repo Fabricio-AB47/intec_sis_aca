@@ -54,6 +54,7 @@ import type {
   FechaGradoSavePayload,
   FechaGradoSaveResponse,
   FechaGradoStudentsResponse,
+  FechaGradoVerificationResponse,
   IngresoVentasResponse,
   LegacyReportFilters,
   LegacyReportsCatalogResponse,
@@ -744,31 +745,32 @@ export async function saveFechaGrado(payload: FechaGradoSavePayload): Promise<Fe
   })
 }
 
-export async function downloadFechaGradoTemplate(filters: {
-  periodo: string
-  carrera?: string
-  busqueda?: string
-}): Promise<Blob> {
-  const params = new URLSearchParams({ periodo: filters.periodo })
-  if (filters.carrera) params.set('carrera', filters.carrera)
-  if (filters.busqueda) params.set('busqueda', filters.busqueda)
-  return request<Blob>(`/api/students/fecha-grado/plantilla?${params.toString()}`, {
+export async function downloadFechaGradoTemplate(): Promise<Blob> {
+  return request<Blob>('/api/students/fecha-grado/plantilla', {
     responseType: 'blob',
   })
 }
 
-export async function importFechaGradoExcel(
-  file: File,
-  filters: { periodo: string; carrera?: string },
-): Promise<FechaGradoImportResponse> {
-  const params = new URLSearchParams({ periodo: filters.periodo })
-  if (filters.carrera) params.set('carrera', filters.carrera)
+export async function importFechaGradoExcel(file: File): Promise<FechaGradoImportResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  return request<FechaGradoImportResponse>(`/api/students/fecha-grado/importar?${params.toString()}`, {
+  return request<FechaGradoImportResponse>('/api/students/fecha-grado/importar', {
     method: 'POST',
     body: formData,
   })
+}
+
+export async function fetchFechaGradoVerification(filters: {
+  estado?: string
+  page?: number
+  pageSize?: number
+}): Promise<FechaGradoVerificationResponse> {
+  const params = new URLSearchParams()
+  if (filters.estado) params.set('estado', filters.estado)
+  if (filters.page) params.set('page', String(filters.page))
+  if (filters.pageSize) params.set('page_size', String(filters.pageSize))
+  const query = params.toString()
+  return request<FechaGradoVerificationResponse>(`/api/students/fecha-grado/verificacion${query ? `?${query}` : ''}`)
 }
 
 export async function fetchCertificadosStudents(filters: {

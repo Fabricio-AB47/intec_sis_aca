@@ -1120,7 +1120,40 @@ export type FechaGradoImportResponse = {
     cedula?: string
     error?: string
   }>
+  no_encontrados?: Array<{
+    fila?: number
+    cedula?: string
+    error?: string
+  }>
+  actualizados_detalle?: Array<{
+    fila?: number
+    cedula?: string
+    fecha_grado?: string
+    registros?: number
+  }>
+  resumen?: string
   detail?: string
+}
+
+export type FechaGradoVerificationRow = {
+  codigo_estud: string
+  cedula?: string
+  nombres: string
+  estado_codigo?: string
+  estado_nombre?: string
+  estado_raw?: string
+  fecha_grado?: string
+}
+
+export type FechaGradoVerificationResponse = {
+  items?: FechaGradoVerificationRow[]
+  total?: number
+  page?: number
+  page_size?: number
+  total_pages?: number
+  con_fecha?: number
+  sin_fecha?: number
+  estado?: string
 }
 
 export type CertificadosReprobada = {
