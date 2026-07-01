@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import uuid
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pyodbc
 from fastapi import APIRouter, HTTPException, Query
@@ -2278,6 +2279,7 @@ def _teacher_evaluation_academic_maps(
                 TRY_CONVERT(varchar(50), ce.codigo_materia) AS codigo_materia,
                 LTRIM(RTRIM(TRY_CONVERT(varchar(50), cxd.Cod_Jornada))) AS jornada,
                 LTRIM(RTRIM(TRY_CONVERT(varchar(20), ce.paralelo))) AS paralelo,
+                TRY_CONVERT(varchar(50), ce.cod_anio_Basica) AS codigo_carrera,
                 LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), car.Nombre_Basica))) AS carrera,
                 COUNT(DISTINCT ce.codigo_estud) AS estudiantes_esperados
             FROM dbo.CARRERAXESTUD ce
@@ -2296,7 +2298,7 @@ def _teacher_evaluation_academic_maps(
               AND TRY_CONVERT(float, ce.PromedioFinal) IS NOT NULL
               AND {_active_state_condition("de.Estado")}
               AND {_active_state_condition("du.Estado")}
-            GROUP BY cxd.codigo_doc, ce.codigo_materia, cxd.Cod_Jornada, ce.paralelo, car.Nombre_Basica
+            GROUP BY cxd.codigo_doc, ce.codigo_materia, cxd.Cod_Jornada, ce.paralelo, ce.cod_anio_Basica, car.Nombre_Basica
             """,
             periodo,
         )
@@ -2309,12 +2311,20 @@ def _teacher_evaluation_academic_maps(
                 {
                     "estudiantes_esperados": 0,
                     "carreras": {},
+                    "carreras_info": [],
                 },
             )
             expected = _safe_int(item.get("estudiantes_esperados"))
             coverage["estudiantes_esperados"] += expected
             carrera = _clean_text(item.get("carrera")) or "Sin carrera"
             coverage["carreras"][carrera] = _safe_int(coverage["carreras"].get(carrera)) + expected
+            coverage["carreras_info"].append(
+                {
+                    "codigo_carrera": _clean_text(item.get("codigo_carrera")),
+                    "carrera": carrera,
+                    "estudiantes_esperados": expected,
+                }
+            )
 
         for coverage in student_coverage.values():
             careers = coverage.get("carreras") or {}
@@ -2464,6 +2474,38 @@ def _fetch_teacher_grade_report(
 
         weight_rows = _evaluation_weights_for_period(cursor, periodo)
 
+        cursor.execute(
+            f"""
+            SELECT
+                a.Cod_Docente_Evaluado,
+                a.Cod_Materia,
+                a.Jornada,
+                a.Paralelo,
+                a.Cod_Carrera,
+                te.Codigo AS Codigo_Tipo_Evaluacion,
+                COUNT(DISTINCT a.Id_Aplicacion) AS Total_Evaluaciones
+            FROM eval360.Aplicacion a
+            INNER JOIN eval360.TipoEvaluacion te
+                ON te.Id_Tipo_Evaluacion = a.Id_Tipo_Evaluacion
+            WHERE a.Cod_Periodo = ?
+              AND a.Estado = 'FINALIZADA'
+              {teacher_where.replace('Cod_Docente_Evaluado', 'a.Cod_Docente_Evaluado')}
+            GROUP BY
+                a.Cod_Docente_Evaluado,
+                a.Cod_Materia,
+                a.Jornada,
+                a.Paralelo,
+                a.Cod_Carrera,
+                te.Codigo
+            """,
+            *params,
+        )
+        completed_columns = [column[0] for column in cursor.description]
+        completed_rows = [
+            {column: _clean(value) for column, value in zip(completed_columns, row)}
+            for row in cursor.fetchall()
+        ]
+
     def key_for(item: dict[str, Any]) -> str:
         return _report_row_key(
             item.get("Cod_Docente_Evaluado"),
@@ -2479,11 +2521,29 @@ def _fetch_teacher_grade_report(
         key = key_for(item)
         student_completed_by_key[key] = student_completed_by_key.get(key, 0) + _safe_int(item.get("Total_Evaluaciones"))
 
-    def apply_student_coverage(row: dict[str, Any]) -> None:
+    completed_by_key_career: dict[tuple[str, str, str], int] = {}
+    for item in completed_rows:
+        type_code = _clean_text(item.get("Codigo_Tipo_Evaluacion")).upper()
+        key = key_for(item)
+        career_code = _clean_text(item.get("Cod_Carrera"))
+        completed_by_key_career[(key, career_code, type_code)] = (
+            completed_by_key_career.get((key, career_code, type_code), 0)
+            + _safe_int(item.get("Total_Evaluaciones"))
+        )
+
+    def apply_student_coverage(row: dict[str, Any], career_info: dict[str, Any] | None = None) -> None:
         key = key_for(row)
         coverage = student_coverage.get(key) or {}
-        expected = _safe_int(coverage.get("estudiantes_esperados"))
-        completed = _safe_int(student_completed_by_key.get(key))
+        expected = _safe_int((career_info or {}).get("estudiantes_esperados")) or _safe_int(coverage.get("estudiantes_esperados"))
+        completed = _safe_int(
+            completed_by_key_career.get((key, _clean_text((career_info or {}).get("codigo_carrera")), "ESTUDIANTE_DOCENTE"))
+        )
+        if completed <= 0 and not career_info:
+            completed = _safe_int(student_completed_by_key.get(key))
+        elif completed <= 0 and career_info:
+            total_expected = _safe_int(coverage.get("estudiantes_esperados"))
+            total_completed = _safe_int(student_completed_by_key.get(key))
+            completed = min(expected, round(total_completed * (expected / total_expected))) if total_expected > 0 else 0
         raw_student_score = _score_to_100(row.get("Promedio_Estudiantes"))
         coverage_ratio = min(completed / expected, 1.0) if expected > 0 else (1.0 if raw_student_score > 0 else 0.0)
         row["Promedio_Estudiantes_Original"] = raw_student_score
@@ -2491,7 +2551,8 @@ def _fetch_teacher_grade_report(
         row["Estudiantes_Esperados"] = expected
         row["Estudiantes_Completaron"] = completed
         row["Cobertura_Estudiantes"] = round(coverage_ratio * 100.0, 2)
-        row["Carreras_Detalle"] = _clean_text(coverage.get("carreras_detalle"))
+        row["Codigo_Carrera"] = _clean_text((career_info or {}).get("codigo_carrera"))
+        row["Carreras_Detalle"] = _clean_text((career_info or {}).get("carrera")) or _clean_text(coverage.get("carreras_detalle"))
 
     if report_flow != "all":
         component = _result_component_for_flow(report_flow)
@@ -2515,9 +2576,6 @@ def _fetch_teacher_grade_report(
                     "Puntaje_Final_360": score,
                 }
                 row[component_field] = score
-                if report_flow == "student":
-                    apply_student_coverage(row)
-                    row["Puntaje_Final_360"] = row["Promedio_Estudiantes"]
                 results.append(row)
             type_rows = [
                 item
@@ -2530,10 +2588,21 @@ def _fetch_teacher_grade_report(
                 if _clean_text(item.get("Tipo_Evaluacion")).upper()
                 == _clean_text(type_rows[0].get("Tipo_Evaluacion")).upper()
             ] if type_rows else []
-    else:
-        for item in results:
-            apply_student_coverage(item)
-            item["Puntaje_Final_360"] = _weighted_teacher_result_score(item, weight_rows)
+
+    expanded_results: list[dict[str, Any]] = []
+    for item in results:
+        coverage = student_coverage.get(key_for(item)) or {}
+        careers_info = coverage.get("carreras_info") or []
+        target_careers = careers_info if careers_info else [None]
+        for career_info in target_careers:
+            row = dict(item)
+            apply_student_coverage(row, career_info)
+            if report_flow == "student":
+                row["Puntaje_Final_360"] = row["Promedio_Estudiantes"]
+            elif report_flow == "all":
+                row["Puntaje_Final_360"] = _weighted_teacher_result_score(row, weight_rows)
+            expanded_results.append(row)
+    results = expanded_results
 
     types_by_key: dict[str, list[dict[str, Any]]] = {}
     for item in type_rows:
@@ -2558,10 +2627,22 @@ def _fetch_teacher_grade_report(
             continue
         if selected_parallel and row_parallel.upper() != selected_parallel.upper():
             continue
+        group_key = "|".join(
+            [
+                doc_code,
+                _clean_text(item.get("Cod_Materia")),
+                row_career.upper(),
+                row_parallel.upper(),
+            ]
+        )
         grouped.setdefault(
-            doc_code,
+            group_key,
             {
                 "teacher": teacher,
+                "codigo_materia": _clean_text(item.get("Cod_Materia")),
+                "materia": subject["materia"],
+                "carrera": row_career,
+                "paralelo": row_parallel,
                 "rows": [],
             },
         )["rows"].append(
@@ -2671,8 +2752,11 @@ def _grade_level(value: Any) -> str:
     return "EN MEJORA"
 
 
-def _document_number(periodo: str, teacher: dict[str, Any]) -> str:
-    source = f"{periodo}|{teacher.get('codigo_doc')}|{teacher.get('cedula_doc')}"
+def _document_number(periodo: str, teacher: dict[str, Any], row: dict[str, Any] | None = None) -> str:
+    source = (
+        f"{periodo}|{teacher.get('codigo_doc')}|{teacher.get('cedula_doc')}|"
+        f"{(row or {}).get('Cod_Materia')}|{(row or {}).get('carrera')}|{(row or {}).get('Paralelo')}"
+    )
     return str(int(hashlib.sha1(source.encode("utf-8")).hexdigest()[:8], 16))[-6:].zfill(6)
 
 
@@ -2860,11 +2944,11 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         rows = teacher_group.get("rows") or []
         averages = _teacher_group_averages(rows, report)
         components = _teacher_component_breakdown(averages, report)
-        document_number = _document_number(_clean(report.get("periodo")), teacher)
         period_label = _clean(report.get("periodo_detalle")) or _clean(report.get("periodo"))
         final_score = _safe_float(components.get("final", {}).get("aporte")) or averages["final"]
         level = _grade_level(final_score)
         first_row = rows[0] if rows else {}
+        document_number = _document_number(_clean(report.get("periodo")), teacher, first_row)
         targets = _component_targets(report, averages)
 
         header_table = Table(
@@ -3127,6 +3211,37 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         canvas.restoreState()
 
     doc.build(story, onFirstPage=draw_template, onLaterPages=draw_template)
+    return output.getvalue()
+
+
+def _teacher_group_pdf_filename(report: dict[str, Any], teacher_group: dict[str, Any], index: int) -> str:
+    teacher = teacher_group.get("teacher") or {}
+    rows = teacher_group.get("rows") or []
+    first_row = rows[0] if rows else {}
+    parts = [
+        _safe_filename(report.get("document_type") or "certificado"),
+        _safe_filename(report.get("flow") or "all"),
+        _safe_filename(report.get("periodo") or "periodo"),
+        _safe_filename(teacher.get("docente") or teacher.get("codigo_doc") or f"docente_{index}"),
+        _safe_filename(first_row.get("materia") or first_row.get("Cod_Materia") or "materia"),
+        _safe_filename(first_row.get("carrera") or "carrera"),
+        _safe_filename(first_row.get("Paralelo") or "paralelo"),
+    ]
+    cleaned = [part for part in parts if part]
+    return f"{'_'.join(cleaned)[:180]}.pdf"
+
+
+def _build_teacher_grade_zip(report: dict[str, Any]) -> bytes:
+    output = BytesIO()
+    teachers = report.get("teachers") or []
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        if not teachers:
+            archive.writestr("sin_registros.pdf", _build_teacher_grade_pdf(report))
+        for index, teacher_group in enumerate(teachers, start=1):
+            single_report = {**report, "teachers": [teacher_group]}
+            filename = _teacher_group_pdf_filename(single_report, teacher_group, index)
+            archive.writestr(filename, _build_teacher_grade_pdf(single_report))
+    output.seek(0)
     return output.getvalue()
 
 
@@ -4057,7 +4172,8 @@ def download_teacher_evaluation_grades_pdf(
             carrera=carrera,
             paralelo=paralelo,
         )
-        pdf_bytes = _build_teacher_grade_pdf(report)
+        is_massive = not teacher_code and not _clean_text(codigo_materia) and not _clean_text(carrera) and not _clean_text(paralelo)
+        payload_bytes = _build_teacher_grade_zip(report) if is_massive else _build_teacher_grade_pdf(report)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
@@ -4066,13 +4182,19 @@ def download_teacher_evaluation_grades_pdf(
     teacher_suffix = f"_{_safe_filename(teacher_code)}" if teacher_code else "_todos"
     subject_suffix = f"_{_safe_filename(codigo_materia)}" if _clean_text(codigo_materia) else ""
     career_suffix = f"_{_safe_filename(carrera)}" if _clean_text(carrera) else ""
+    parallel_suffix = f"_{_safe_filename(paralelo)}" if _clean_text(paralelo) else ""
     filename = (
         f"{_safe_filename(document_type or 'certificado')}_evaluacion_docente_"
-        f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}{teacher_suffix}{subject_suffix}{career_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}{teacher_suffix}{subject_suffix}{career_suffix}{parallel_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     )
+    if is_massive:
+        filename = (
+            f"{_safe_filename(document_type or 'certificado')}_evaluacion_docente_"
+            f"{_safe_filename(flow or 'all')}_{_safe_int(periodo)}_independientes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        )
     return StreamingResponse(
-        BytesIO(pdf_bytes),
-        media_type="application/pdf",
+        BytesIO(payload_bytes),
+        media_type="application/zip" if is_massive else "application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

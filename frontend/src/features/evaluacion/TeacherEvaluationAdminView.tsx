@@ -222,8 +222,8 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       const link = document.createElement('a')
       link.href = url
       link.download = mode === 'teacher'
-        ? `${documentType}_evaluacion_${reportFlow}_${periodo}_${selectedTeacher}_${selectedSubject?.codigo_materia || 'materia'}.pdf`
-        : `${documentType}_evaluacion_${reportFlow}_${periodo}_todos.pdf`
+        ? `${documentType}_evaluacion_${reportFlow}_${periodo}_${selectedTeacher}_${selectedSubject?.codigo_materia || 'materia'}_${selectedSubject?.carrera || 'carrera'}_${selectedSubject?.paralelo || 'paralelo'}.pdf`
+        : `${documentType}_evaluacion_${reportFlow}_${periodo}_independientes.zip`
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -451,7 +451,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                 ))}
               </select>
               <select value={selectedSubjectKey} onChange={(event) => setSelectedSubjectKey(event.target.value)} disabled={pdfLoading || gradedSubjects.length === 0}>
-                <option value="">Materia y carrera</option>
+                <option value="">Materia, carrera y paralelo</option>
                 {gradedSubjects.map((subject) => (
                   <option key={reportSubjectKey(subject)} value={reportSubjectKey(subject)}>
                     {subject.materia || subject.codigo_materia} · {subject.carrera || 'Sin carrera'} · {subject.paralelo || '-'}
