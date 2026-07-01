@@ -1536,7 +1536,10 @@ def _group_teacher_courses(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         career_name = _clean(item.get("nombre_carrera"))
         if career_name and career_name not in bucket["_nombre_carreras"]:
             bucket["_nombre_carreras"].append(career_name)
-        bucket["total_estudiantes"] += _int(item.get("total_estudiantes")) or 0
+        bucket["total_estudiantes"] = max(
+            _int(bucket.get("total_estudiantes")) or 0,
+            _int(item.get("total_estudiantes")) or 0,
+        )
 
     normalized_items: list[dict[str, Any]] = []
     for bucket in period_groups.values():
@@ -1674,11 +1677,23 @@ def teacher_courses(
                 OUTER APPLY (
                     SELECT COUNT(DISTINCT TRY_CONVERT(int, cxe.codigo_estud)) AS total_estudiantes
                     FROM dbo.CARRERAXESTUD cxe
-                    WHERE TRY_CONVERT(int, cxe.cod_anio_Basica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
-                      AND TRY_CONVERT(int, cxe.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
-                      AND TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                    LEFT JOIN dbo.PENSUM pxe
+                      ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                     AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                    WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
                           UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
+                      AND UPPER(LTRIM(RTRIM(COALESCE(
+                            NULLIF(TRY_CONVERT(nvarchar(100), pxe.cod_materia), N''),
+                            TRY_CONVERT(nvarchar(100), pxe.codigo_materia),
+                            TRY_CONVERT(nvarchar(100), cxe.codigo_materia),
+                            N''
+                      )))) = UPPER(LTRIM(RTRIM(COALESCE(
+                            NULLIF(TRY_CONVERT(nvarchar(100), p.cod_materia), N''),
+                            TRY_CONVERT(nvarchar(100), p.codigo_materia),
+                            TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
+                            N''
+                      ))))
                 ) stats
                 WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
                 ORDER BY
@@ -1714,6 +1729,7 @@ def _teacher_course_students_for_report(
     subject_filter: str,
     parallel: str,
     cod_anio_basica: int | None = None,
+    cod_jornada: int | None = None,
 ) -> list[dict[str, Any]]:
     students_by_key: dict[str, dict[str, Any]] = {}
     chunks = [period_codes[index:index + 2] for index in range(0, len(period_codes), 2)]
@@ -1724,6 +1740,7 @@ def _teacher_course_students_for_report(
             codigo_materia=subject_filter,
             paralelo=parallel,
             cod_anio_basica=cod_anio_basica,
+            cod_jornada=cod_jornada,
         )
         for item in payload.get("items") or []:
             key = "|".join(
@@ -1748,6 +1765,7 @@ def teacher_course_students(
     codigo_materia: Annotated[str, Query()],
     paralelo: Annotated[str, Query(min_length=1)],
     cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
 ) -> dict[str, Any]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
@@ -1767,20 +1785,29 @@ def teacher_course_students(
                 f"""
                 WITH teacher_assignment AS (
                     SELECT DISTINCT
-                        cxd.cod_Anio_Basica,
-                        cxd.codigo_materia,
                         cxd.codigo_periodo,
                         cxd.Paralelo,
-                        cxd.Cod_Jornada
+                        cxd.Cod_Jornada,
+                        COALESCE(
+                            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), pta.cod_materia))), N''),
+                            TRY_CONVERT(nvarchar(100), pta.codigo_materia),
+                            TRY_CONVERT(nvarchar(100), cxd.codigo_materia)
+                        ) AS common_subject_code
                     FROM dbo.CARRERAXDOCENTE cxd
                     LEFT JOIN dbo.PENSUM pta
                       ON TRY_CONVERT(int, pta.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
                      AND TRY_CONVERT(int, pta.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
                     WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
                       AND (? IS NULL OR TRY_CONVERT(int, cxd.cod_Anio_Basica) = ?)
+                      AND (? IS NULL OR TRY_CONVERT(int, cxd.Cod_Jornada) = ?)
                       AND (
                             TRY_CONVERT(nvarchar(100), cxd.codigo_materia) = ?
-                            OR UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), pta.cod_materia), N'')))) = ?
+                            OR UPPER(LTRIM(RTRIM(COALESCE(
+                                NULLIF(TRY_CONVERT(nvarchar(100), pta.cod_materia), N''),
+                                TRY_CONVERT(nvarchar(100), pta.codigo_materia),
+                                TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
+                                N''
+                            )))) = ?
                       )
                       AND TRY_CONVERT(int, cxd.codigo_periodo) IN ({period_placeholders})
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
@@ -1879,12 +1906,6 @@ def teacher_course_students(
                     TRY_CONVERT(nvarchar(max), cxe.observaciones) AS observaciones,
                     TRY_CONVERT(nvarchar(255), cxe.seguimiento) AS seguimiento
                 FROM dbo.CARRERAXESTUD cxe
-                INNER JOIN teacher_assignment ta
-                  ON TRY_CONVERT(int, ta.cod_Anio_Basica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
-                 AND TRY_CONVERT(int, ta.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
-                 AND TRY_CONVERT(int, ta.codigo_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
-                 AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ta.Paralelo)))) =
-                     UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo))))
                 INNER JOIN dbo.DATOS_ESTUD de
                   ON TRY_CONVERT(int, de.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
                 LEFT JOIN dbo.CorreosEstudIntec ce
@@ -1896,6 +1917,21 @@ def teacher_course_students(
                 LEFT JOIN dbo.PENSUM p
                   ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                  AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                WHERE (? IS NULL OR TRY_CONVERT(int, cxe.cod_anio_Basica) = ?)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM teacher_assignment ta
+                      WHERE TRY_CONVERT(int, ta.codigo_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
+                        AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ta.Paralelo)))) =
+                            UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo))))
+                        AND UPPER(LTRIM(RTRIM(COALESCE(ta.common_subject_code, N'')))) =
+                            UPPER(LTRIM(RTRIM(COALESCE(
+                                NULLIF(TRY_CONVERT(nvarchar(100), p.cod_materia), N''),
+                                TRY_CONVERT(nvarchar(100), p.codigo_materia),
+                                TRY_CONVERT(nvarchar(100), cxe.codigo_materia),
+                                N''
+                            ))))
+                  )
                 ORDER BY
                     TRY_CONVERT(int, cxe.codigo_periodo) DESC,
                     TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre)
@@ -1903,10 +1939,14 @@ def teacher_course_students(
                 codigo_doc,
                 cod_anio_basica,
                 cod_anio_basica,
+                cod_jornada,
+                cod_jornada,
                 subject_filter,
                 subject_filter,
                 *period_codes,
                 parallel,
+                cod_anio_basica,
+                cod_anio_basica,
             )
             rows = cursor.fetchall()
         return {"total": len(rows), "items": [_teacher_student_item(row) for row in rows]}
@@ -3330,6 +3370,7 @@ def _teacher_compliance_response(
     paralelo: str,
     codigo_estud: list[int] | None = None,
     cod_anio_basica: int | None = None,
+    cod_jornada: int | None = None,
     fecha_inicio: str = "",
     fecha_fin: str = "",
     telefono: str = "",
@@ -3355,6 +3396,7 @@ def _teacher_compliance_response(
         subject_filter=subject_filter,
         parallel=parallel,
         cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
     )
     selected_student_codes = {str(code) for code in (codigo_estud or [])}
     if selected_student_codes:
@@ -3418,6 +3460,7 @@ def teacher_course_report_pdf(
     codigo_materia: Annotated[str, Query()],
     paralelo: Annotated[str, Query(min_length=1)],
     cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
 ) -> StreamingResponse:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
@@ -3435,6 +3478,7 @@ def teacher_course_report_pdf(
         subject_filter=subject_filter,
         parallel=parallel,
         cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
     )
     meta = _teacher_course_report_meta(codigo_doc, period_codes, subject_filter, parallel, cod_anio_basica)
     if students:
@@ -3482,6 +3526,7 @@ def teacher_compliance_report_pdf(
     paralelo: Annotated[str, Query(min_length=1)],
     codigo_estud: Annotated[list[int] | None, Query()] = None,
     cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
     fecha_inicio: Annotated[str, Query(max_length=40)] = "",
     fecha_fin: Annotated[str, Query(max_length=40)] = "",
     telefono: Annotated[str, Query(max_length=40)] = "",
@@ -3495,6 +3540,7 @@ def teacher_compliance_report_pdf(
         paralelo=paralelo,
         codigo_estud=codigo_estud,
         cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
         telefono=telefono,
@@ -3512,6 +3558,7 @@ async def teacher_compliance_report_pdf_with_evidence(
     paralelo: Annotated[str, Form(min_length=1)],
     codigo_estud: Annotated[list[int] | None, Form()] = None,
     cod_anio_basica: Annotated[int | None, Form()] = None,
+    cod_jornada: Annotated[int | None, Form()] = None,
     fecha_inicio: Annotated[str, Form(max_length=40)] = "",
     fecha_fin: Annotated[str, Form(max_length=40)] = "",
     telefono: Annotated[str, Form(max_length=40)] = "",
@@ -3544,6 +3591,7 @@ async def teacher_compliance_report_pdf_with_evidence(
         paralelo=paralelo,
         codigo_estud=codigo_estud,
         cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
         telefono=telefono,
@@ -3622,18 +3670,34 @@ def teacher_save_grades(
             cursor.execute(
                 """
                 SELECT COUNT(*)
-                FROM dbo.CARRERAXDOCENTE
-                WHERE TRY_CONVERT(int, codigo_doc) = ?
-                  AND TRY_CONVERT(int, cod_Anio_Basica) = ?
-                  AND TRY_CONVERT(int, codigo_materia) = ?
-                  AND TRY_CONVERT(int, codigo_periodo) = ?
-                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), Paralelo)))) = ?
+                FROM dbo.CARRERAXDOCENTE cxd
+                LEFT JOIN dbo.PENSUM assigned_pensum
+                  ON TRY_CONVERT(int, assigned_pensum.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                 AND TRY_CONVERT(int, assigned_pensum.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
+                LEFT JOIN dbo.PENSUM target_pensum
+                  ON TRY_CONVERT(int, target_pensum.Cod_AnioBasica) = ?
+                 AND TRY_CONVERT(int, target_pensum.codigo_materia) = ?
+                WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
+                  AND TRY_CONVERT(int, cxd.codigo_periodo) = ?
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
+                  AND UPPER(LTRIM(RTRIM(COALESCE(
+                        NULLIF(TRY_CONVERT(nvarchar(100), assigned_pensum.cod_materia), N''),
+                        TRY_CONVERT(nvarchar(100), assigned_pensum.codigo_materia),
+                        TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
+                        N''
+                  )))) = UPPER(LTRIM(RTRIM(COALESCE(
+                        NULLIF(TRY_CONVERT(nvarchar(100), target_pensum.cod_materia), N''),
+                        TRY_CONVERT(nvarchar(100), target_pensum.codigo_materia),
+                        TRY_CONVERT(nvarchar(100), ?),
+                        N''
+                  ))))
                 """,
-                codigo_doc,
                 payload.cod_anio_basica,
                 payload.codigo_materia,
+                codigo_doc,
                 payload.codigo_periodo,
                 parallel,
+                payload.codigo_materia,
             )
             if int(cursor.fetchone()[0] or 0) == 0:
                 raise HTTPException(status_code=403, detail="El curso no esta asignado al docente actual")

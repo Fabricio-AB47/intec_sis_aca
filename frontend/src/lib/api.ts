@@ -1561,6 +1561,7 @@ export async function fetchPortalTeacherStudents(params: {
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
+  codJornada?: number | null
   codigoMateria: string
   paralelo: string
 }): Promise<PortalTeacherStudentsResponse> {
@@ -1570,6 +1571,9 @@ export async function fetchPortalTeacherStudents(params: {
   })
   if (params.codAnioBasica) {
     query.set('cod_anio_basica', params.codAnioBasica)
+  }
+  if (params.codJornada !== null && params.codJornada !== undefined) {
+    query.set('cod_jornada', String(params.codJornada))
   }
   const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
   for (const codigoPeriodo of periodos) {
@@ -1591,6 +1595,7 @@ export async function downloadPortalTeacherCourseReport(params: {
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
+  codJornada?: number | null
   codigoMateria: string
   paralelo: string
 }): Promise<Blob> {
@@ -1600,6 +1605,9 @@ export async function downloadPortalTeacherCourseReport(params: {
   })
   if (params.codAnioBasica) {
     query.set('cod_anio_basica', params.codAnioBasica)
+  }
+  if (params.codJornada !== null && params.codJornada !== undefined) {
+    query.set('cod_jornada', String(params.codJornada))
   }
   const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
   for (const codigoPeriodo of periodos) {
@@ -1638,6 +1646,7 @@ export async function downloadPortalTeacherComplianceReport(params: {
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
+  codJornada?: number | null
   codigoMateria: string
   paralelo: string
   codigoEstudiantes?: Array<string | number>
@@ -1652,6 +1661,7 @@ export async function downloadPortalTeacherComplianceReport(params: {
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('paralelo', params.paralelo)
   if (params.codAnioBasica) formData.append('cod_anio_basica', params.codAnioBasica)
+  if (params.codJornada !== null && params.codJornada !== undefined) formData.append('cod_jornada', String(params.codJornada))
   if (params.fechaInicio) formData.append('fecha_inicio', params.fechaInicio)
   if (params.fechaFin) formData.append('fecha_fin', params.fechaFin)
   if (params.telefono) formData.append('telefono', params.telefono)
@@ -1886,7 +1896,7 @@ export async function downloadTeacherEvaluationGradesPdf(
   periodo: string,
   codigoDocente: string = '',
   flow: TeacherEvaluationFlow | 'all' = 'all',
-  documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+  documentType: 'certificado' | 'consolidado' | 'resumen' | 'detalle' = 'certificado',
   subject?: { codigo_materia?: string; carrera?: string; paralelo?: string | null },
 ): Promise<Blob> {
   const params = new URLSearchParams({ periodo, flow, document_type: documentType })

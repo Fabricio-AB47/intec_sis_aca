@@ -442,6 +442,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         codigoPeriodos: periodos,
         codigoMateria: subjectCode,
         paralelo: course.paralelo,
+        codJornada: course.cod_jornada ?? null,
       })
       const items = payload.items || []
       setStudents(items)
@@ -499,6 +500,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           codigoPeriodos: chunk,
           codigoMateria: subjectCode,
           paralelo: course.paralelo,
+          codJornada: course.cod_jornada ?? null,
         })
         allItems.push(...(payload.items || []))
       }
@@ -630,6 +632,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       periodos,
       subjectCode,
       paralelo: course.paralelo,
+      codJornada: course.cod_jornada ?? null,
     }
   }
 
@@ -640,6 +643,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       codigoPeriodos: params.periodos,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
+      codJornada: params.codJornada,
     })
   }
 
@@ -666,6 +670,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       codigoPeriodos: params.periodos,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
+      codJornada: params.codJornada,
       codigoEstudiantes: selectedComplianceStudentCodes,
       fechaInicio: complianceStartDate,
       fechaFin: complianceEndDate,

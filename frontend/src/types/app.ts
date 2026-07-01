@@ -288,6 +288,16 @@ export type TeacherEvaluationTeacherProgressItem = {
   progress_percent: number
   ponderacion?: number
   ponderacion_aplicada?: number
+  completed_evaluators?: Array<{
+    codigo?: string
+    nombre?: string
+    cedula?: string
+  }>
+  pending_evaluators?: Array<{
+    codigo?: string
+    nombre?: string
+    cedula?: string
+  }>
 }
 
 export type TeacherEvaluationProgressDetailItem = {
@@ -386,6 +396,10 @@ export type TeacherEvaluationGradedSubject = {
   estudiantes_esperados: number
   estudiantes_completaron: number
   cobertura_estudiantes: number
+  promedio_estudiantes?: number
+  promedio_par_docente?: number
+  promedio_autoridad?: number
+  promedio_autoevaluacion?: number
   puntaje_final: number
 }
 

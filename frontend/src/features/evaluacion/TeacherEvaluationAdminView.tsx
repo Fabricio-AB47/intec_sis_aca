@@ -176,7 +176,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
   async function handlePdf(
     mode: 'all' | 'teacher',
     action: 'download' | 'preview',
-    documentType: 'certificado' | 'resumen' | 'detalle' = 'certificado',
+    documentType: 'certificado' | 'consolidado' | 'resumen' | 'detalle' = 'certificado',
     subjectOverride?: TeacherEvaluationGradedSubject,
   ) {
     if (!periodo) {
@@ -355,6 +355,14 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       pending: studentProgressTotals.pendientes || 0,
     }
     : totals
+  const peerProgressItems = useMemo(
+    () => (flow === 'par_docente' ? (data?.teacher_progress || []) : []),
+    [data?.teacher_progress, flow],
+  )
+  const selectedGradedTeacher = useMemo(
+    () => gradedTeachers.find((teacher) => teacher.codigo_doc === selectedTeacher) || null,
+    [gradedTeachers, selectedTeacher],
+  )
 
   const chartItems = detail?.items || []
   const chartSize = 560
@@ -464,8 +472,14 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'download')} disabled={pdfLoading || !periodo || !selectedTeacher || !selectedSubjectKey}>
                 {pdfLoading ? 'Generando...' : 'Descargar individual'}
               </button>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('teacher', 'download', 'consolidado')} disabled={pdfLoading || !periodo || !selectedTeacher || !selectedSubjectKey}>
+                {pdfLoading ? 'Generando...' : 'Certificado consolidado'}
+              </button>
               <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('all', 'download')} disabled={pdfLoading || !periodo}>
                 {pdfLoading ? 'Generando...' : 'Descarga masiva'}
+              </button>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => void handlePdf('all', 'download', 'consolidado')} disabled={pdfLoading || !periodo}>
+                {pdfLoading ? 'Generando...' : 'Masiva consolidado'}
               </button>
             </>
           ) : null}
@@ -629,6 +643,56 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
             </>
           ) : (
             <>
+              {peerProgressItems.length > 0 ? (
+                <div className="teacher-evaluation__peer-grid">
+                  {peerProgressItems.map((item) => {
+                    const completedEvaluators = item.completed_evaluators || []
+                    const pendingEvaluators = item.pending_evaluators || []
+                    return (
+                      <article
+                        className="teacher-evaluation__peer-card"
+                        key={`peer-card-${item.codigo_doc}-${item.codigo_materia}-${item.paralelo || ''}`}
+                      >
+                        <div className="teacher-evaluation__peer-card-head">
+                          <div>
+                            <strong>{item.docente || `Docente ${item.codigo_doc}`}</strong>
+                            <span>{item.materia || item.codigo_materia} · Paralelo {item.paralelo || '-'}</span>
+                          </div>
+                          <b>{Number(item.progress_percent || 0).toFixed(2)}%</b>
+                        </div>
+                        <div className="teacher-evaluation__peer-lists">
+                          <div className="teacher-evaluation__peer-list teacher-evaluation__peer-list--done">
+                            <h4>Ya calificaron ({completedEvaluators.length})</h4>
+                            {completedEvaluators.length > 0 ? (
+                              completedEvaluators.map((peer) => (
+                                <span key={`done-${item.codigo_doc}-${item.codigo_materia}-${peer.codigo || peer.nombre}`}>
+                                  {peer.nombre || 'Docente par'}
+                                  {peer.cedula ? <small>{peer.cedula}</small> : null}
+                                </span>
+                              ))
+                            ) : (
+                              <em>Sin evaluaciones registradas.</em>
+                            )}
+                          </div>
+                          <div className="teacher-evaluation__peer-list teacher-evaluation__peer-list--pending">
+                            <h4>Faltan por calificar ({pendingEvaluators.length})</h4>
+                            {pendingEvaluators.length > 0 ? (
+                              pendingEvaluators.map((peer) => (
+                                <span key={`pending-${item.codigo_doc}-${item.codigo_materia}-${peer.codigo || peer.nombre}`}>
+                                  {peer.nombre || 'Docente par'}
+                                  {peer.cedula ? <small>{peer.cedula}</small> : null}
+                                </span>
+                              ))
+                            ) : (
+                              <em>Sin pendientes.</em>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : null}
               <div className="matricula-table-wrap teacher-evaluation__progress-table-wrap">
                 <table className="matricula-table teacher-evaluation__progress-table">
                   <thead>
@@ -710,8 +774,18 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
             </span>
           </div>
 
-          <div className="matricula-table-wrap">
-            <table className="matricula-table">
+          <div className="matricula-table-wrap teacher-evaluation__synced-report-table">
+            <table className="matricula-table teacher-evaluation__graded-table">
+              <colgroup>
+                <col className="teacher-evaluation__graded-col--teacher" />
+                <col className="teacher-evaluation__graded-col--id" />
+                <col className="teacher-evaluation__graded-col--flow" />
+                <col className="teacher-evaluation__graded-col--metric" />
+                <col className="teacher-evaluation__graded-col--metric" />
+                <col className="teacher-evaluation__graded-col--metric" />
+                <col className="teacher-evaluation__graded-col--score" />
+                <col className="teacher-evaluation__graded-col--action" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Docente</th>
@@ -726,95 +800,143 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               </thead>
               <tbody>
                 {gradedTeachers.map((teacher) => (
-                  <tr key={teacher.codigo_doc}>
-                    <td>{teacher.docente || `Docente ${teacher.codigo_doc}`}</td>
-                    <td>{teacher.cedula_doc || '-'}</td>
-                    <td>{teacher.flow_label || REPORT_FLOW_OPTIONS.find((option) => option.value === reportFlow)?.label || '-'}</td>
-                    <td>{teacher.total_registros}</td>
-                    <td>{teacher.total_evaluaciones ?? '-'}</td>
-                    <td>{teacher.total_respuestas ?? '-'}</td>
-                    <td>{Number(teacher.promedio_final || 0).toFixed(2)}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="teacher-evaluation__secondary"
-                        onClick={() => setSelectedTeacher(teacher.codigo_doc)}
-                      >
-                        Seleccionar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {gradedTeachers.length === 0 ? <div className="teacher-evaluation__empty">No hay docentes calificados para el periodo seleccionado.</div> : null}
-          {selectedTeacher ? (
-            <div className="teacher-evaluation__report-subjects">
-              <div className="teacher-evaluation__summary-actions">
-                <span className="teacher-evaluation__summary-pill">Materias del docente: {gradedSubjects.length}</span>
-                <span className="teacher-evaluation__summary-pill">
-                  Docente: {gradedTeachers.find((teacher) => teacher.codigo_doc === selectedTeacher)?.docente || selectedTeacher}
-                </span>
-              </div>
-              <div className="matricula-table-wrap">
-                <table className="matricula-table teacher-evaluation__report-subjects-table">
-                  <thead>
-                    <tr>
-                      <th>Materia</th>
-                      <th>Carrera</th>
-                      <th>Paralelo</th>
-                      <th>Base estudiantes</th>
-                      <th>Cobertura</th>
-                      <th>Puntaje</th>
-                      <th>Documento</th>
+                  <Fragment key={teacher.codigo_doc}>
+                    <tr className={teacher.codigo_doc === selectedTeacher ? 'teacher-evaluation__report-row--selected' : ''}>
+                      <td>{teacher.docente || `Docente ${teacher.codigo_doc}`}</td>
+                      <td>{teacher.cedula_doc || '-'}</td>
+                      <td>{teacher.flow_label || REPORT_FLOW_OPTIONS.find((option) => option.value === reportFlow)?.label || '-'}</td>
+                      <td>{teacher.total_registros}</td>
+                      <td>{teacher.total_evaluaciones ?? '-'}</td>
+                      <td>{teacher.total_respuestas ?? '-'}</td>
+                      <td>{Number(teacher.promedio_final || 0).toFixed(2)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="teacher-evaluation__secondary"
+                          onClick={() => setSelectedTeacher(teacher.codigo_doc)}
+                          disabled={pdfLoading}
+                        >
+                          {teacher.codigo_doc === selectedTeacher ? 'Seleccionado' : 'Seleccionar'}
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {gradedSubjects.map((subject) => (
-                      <tr key={reportSubjectKey(subject)}>
-                        <td>{subject.materia || subject.codigo_materia}</td>
-                        <td>{subject.carrera || '-'}</td>
-                        <td>{subject.paralelo || '-'}</td>
-                        <td>{subject.estudiantes_completaron}/{subject.estudiantes_esperados}</td>
-                        <td>{Number(subject.cobertura_estudiantes || 0).toFixed(2)}%</td>
-                        <td>{Number(subject.puntaje_final || 0).toFixed(2)}</td>
-                        <td>
-                          <div className="teacher-evaluation__inline-actions">
-                            <button
-                              type="button"
-                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
-                              onClick={() => setSelectedSubjectKey(reportSubjectKey(subject))}
-                              disabled={pdfLoading}
-                            >
-                              Seleccionar
-                            </button>
-                            <button
-                              type="button"
-                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
-                              onClick={() => void handlePdf('teacher', 'preview', 'certificado', subject)}
-                              disabled={pdfLoading}
-                            >
-                              Vista previa
-                            </button>
-                            <button
-                              type="button"
-                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
-                              onClick={() => void handlePdf('teacher', 'download', 'certificado', subject)}
-                              disabled={pdfLoading}
-                            >
-                              Descargar
-                            </button>
+                    {teacher.codigo_doc === selectedTeacher ? (
+                      <tr className="teacher-evaluation__report-detail-row">
+                        <td colSpan={8}>
+                          <div className="teacher-evaluation__report-subjects">
+                            <div className="teacher-evaluation__summary-actions teacher-evaluation__summary-actions--inline">
+                              <span className="teacher-evaluation__summary-pill">Materias del docente: {gradedSubjects.length}</span>
+                              <span className="teacher-evaluation__summary-pill">
+                                Docente: {selectedGradedTeacher?.docente || selectedTeacher}
+                              </span>
+                            </div>
+                            <div className="matricula-table-wrap">
+                              <table className="matricula-table teacher-evaluation__report-subjects-table">
+                                <thead>
+                                  <tr>
+                                    <th>Materia</th>
+                                    <th>Carrera</th>
+                                    <th>Paralelo</th>
+                                    <th>Base estudiantes</th>
+                                    <th>Cobertura</th>
+                                    {reportFlow === 'all' ? (
+                                      <>
+                                        <th>Estudiantes</th>
+                                        <th>Par</th>
+                                        <th>Autoridad</th>
+                                        <th>Autoevaluación</th>
+                                      </>
+                                    ) : null}
+                                    <th>Final</th>
+                                    <th>Documento</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {gradedSubjects.map((subject) => {
+                                    const subjectKey = reportSubjectKey(subject)
+                                    return (
+                                      <tr
+                                        key={subjectKey}
+                                        className={subjectKey === selectedSubjectKey ? 'teacher-evaluation__report-row--selected' : ''}
+                                      >
+                                        <td>{subject.materia || subject.codigo_materia}</td>
+                                        <td>{subject.carrera || '-'}</td>
+                                        <td>{subject.paralelo || '-'}</td>
+                                        <td>{subject.estudiantes_completaron}/{subject.estudiantes_esperados}</td>
+                                        <td>{Number(subject.cobertura_estudiantes || 0).toFixed(2)}%</td>
+                                        {reportFlow === 'all' ? (
+                                          <>
+                                            <td>{Number(subject.promedio_estudiantes || 0).toFixed(2)}</td>
+                                            <td>{Number(subject.promedio_par_docente || 0).toFixed(2)}</td>
+                                            <td>{Number(subject.promedio_autoridad || 0).toFixed(2)}</td>
+                                            <td className={Number(subject.promedio_autoevaluacion || 0) > 0 ? 'teacher-evaluation__auto-score' : ''}>
+                                              {Number(subject.promedio_autoevaluacion || 0).toFixed(2)}
+                                            </td>
+                                          </>
+                                        ) : null}
+                                        <td>{Number(subject.puntaje_final || 0).toFixed(2)}</td>
+                                        <td>
+                                          <div className="teacher-evaluation__inline-actions">
+                                            <button
+                                              type="button"
+                                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                                              onClick={() => setSelectedSubjectKey(subjectKey)}
+                                              disabled={pdfLoading}
+                                            >
+                                              {subjectKey === selectedSubjectKey ? 'Seleccionada' : 'Seleccionar'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                                              onClick={() => void handlePdf('teacher', 'preview', 'certificado', subject)}
+                                              disabled={pdfLoading}
+                                            >
+                                              Vista previa
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                                              onClick={() => void handlePdf('teacher', 'download', 'certificado', subject)}
+                                              disabled={pdfLoading}
+                                            >
+                                              Descargar
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="teacher-evaluation__secondary teacher-evaluation__table-action"
+                                              onClick={() => void handlePdf('teacher', 'download', 'consolidado', subject)}
+                                              disabled={pdfLoading}
+                                            >
+                                              Consolidado
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                            {gradedSubjects.length === 0 ? <div className="teacher-evaluation__empty">No hay materias calificadas para el docente seleccionado.</div> : null}
                           </div>
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {gradedSubjects.length === 0 ? <div className="teacher-evaluation__empty">No hay materias calificadas para el docente seleccionado.</div> : null}
-            </div>
-          ) : null}
+                    ) : null}
+                  </Fragment>
+                ))}
+                {gradedTeachers.length === 0 ? (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="teacher-evaluation__empty teacher-evaluation__empty--table">
+                        <strong>No hay docentes calificados para el periodo seleccionado.</strong>
+                        <span>Seleccione otro periodo o tipo de evaluación para consultar registros.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : null}
 
