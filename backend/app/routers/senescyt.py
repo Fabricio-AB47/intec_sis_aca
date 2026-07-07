@@ -16,7 +16,7 @@ from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/senescyt", tags=["senescyt"])
 
-_SENESCYT_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_SENESCYT_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR", "SECRETARIA")
 
 _REPORT_COLUMNS = [
     "tipoDocumentoId",

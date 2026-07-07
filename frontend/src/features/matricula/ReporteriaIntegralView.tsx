@@ -24,6 +24,14 @@ type ReporteriaIntegralViewProps = {
 
 const defaultReports: LegacyReportDefinition[] = [
   {
+    key: 'notas_carrera_materia',
+    title: 'Notas por carrera y periodo',
+    category: 'Academico',
+    description: 'Seleccione un periodo, luego el estudiante activo y revise sus materias y calificaciones.',
+    source_tables: ['CARRERAXESTUD', 'DATOS_ESTUD', 'CARRERAS', 'PENSUM', 'PERIODO'],
+    filters: ['periodo', 'carrera', 'limite'],
+  },
+  {
     key: 'provincia',
     title: 'Provincia',
     category: 'Reportería R/H',
@@ -146,6 +154,26 @@ function cellNumber(value: LegacyReportRow[string]): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function rowText(row: LegacyReportRow, key: string): string {
+  return String(row[key] ?? '').trim()
+}
+
+function gradeValue(value: LegacyReportRow[string]): string {
+  if (value === null || value === undefined || value === '') return '-'
+  const numericValue = typeof value === 'number' ? value : Number(String(value).replace(',', '.'))
+  if (Number.isFinite(numericValue)) {
+    return new Intl.NumberFormat('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numericValue)
+  }
+  return String(value)
+}
+
+function isHomologationRow(row?: LegacyReportRow | null): boolean {
+  if (!row) return false
+  return [row.esquema, row.tipo_matricula, row.periodo]
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .some((value) => value === 'H' || value.includes('HOMO'))
+}
+
 function isTotalColumn(column: string): boolean {
   const normalized = column.toLowerCase()
   if (normalized.includes('codigo') || normalized.includes('cedula') || normalized === 'anio') return false
@@ -205,6 +233,9 @@ export function ReporteriaIntegralView({
   const [error, setError] = useState('')
   const [data, setData] = useState<LegacyReportResponse | null>(null)
   const [tableFilter, setTableFilter] = useState('')
+  const [selectedGradeStudentKey, setSelectedGradeStudentKey] = useState('')
+  const [gradeSubjectModalOpen, setGradeSubjectModalOpen] = useState(false)
+  const [selectedGradeSubjectKey, setSelectedGradeSubjectKey] = useState('')
 
   const selectedReport = useMemo(
     () => reports.find((report) => report.key === reportKey) || reports[0],
@@ -217,6 +248,7 @@ export function ReporteriaIntegralView({
   )
   const columns = data?.columns || []
   const rows = data?.rows || []
+  const isGradesReport = reportKey === 'notas_carrera_materia'
   const ageRangeSummary = useMemo((): AgeRangeSummary[] => {
     if (reportKey !== 'becas_edades') return []
     const summary = new Map<string, AgeRangeSummary>()
@@ -255,6 +287,51 @@ export function ReporteriaIntegralView({
       columns.some((column) => formatCell(row[column]).toLowerCase().includes(needle)),
     )
   }, [columns, rows, tableFilter])
+  const gradeStudents = useMemo(() => {
+    const students = new Map<string, { key: string; label: string; cedula: string; carrera: string; total: number }>()
+    for (const row of rows) {
+      const key = rowText(row, 'estudiante_codigo') || rowText(row, 'cedula') || rowText(row, 'estudiante')
+      if (!key) continue
+      const current =
+        students.get(key) ||
+        {
+          key,
+          label: rowText(row, 'estudiante') || 'Estudiante sin nombre',
+          cedula: rowText(row, 'cedula'),
+          carrera: rowText(row, 'carrera'),
+          total: 0,
+        }
+      current.total += 1
+      students.set(key, current)
+    }
+    return Array.from(students.values()).sort((left, right) => left.label.localeCompare(right.label, 'es'))
+  }, [rows])
+  const selectedGradeStudent = useMemo(
+    () => gradeStudents.find((student) => student.key === selectedGradeStudentKey) || null,
+    [gradeStudents, selectedGradeStudentKey],
+  )
+  const selectedStudentSubjects = useMemo(() => {
+    if (!selectedGradeStudentKey) return []
+    return rows
+      .filter((row) => {
+        const key = rowText(row, 'estudiante_codigo') || rowText(row, 'cedula') || rowText(row, 'estudiante')
+        return key === selectedGradeStudentKey
+      })
+      .sort((left, right) =>
+        `${rowText(left, 'semestre').padStart(2, '0')} ${rowText(left, 'materia')}`.localeCompare(
+          `${rowText(right, 'semestre').padStart(2, '0')} ${rowText(right, 'materia')}`,
+          'es',
+        ),
+      )
+  }, [rows, selectedGradeStudentKey])
+  const selectedGradeSubject = useMemo(
+    () =>
+      selectedStudentSubjects.find((row) => {
+        const key = `${rowText(row, 'materia_codigo')}-${rowText(row, 'paralelo')}-${rowText(row, 'tipo_matricula')}`
+        return key === selectedGradeSubjectKey
+      }) || selectedStudentSubjects[0] || null,
+    [selectedGradeSubjectKey, selectedStudentSubjects],
+  )
   const totalsRow = useMemo(() => {
     if (!visibleRows.length || !columns.length) return null
     const totals: Record<string, number> = {}
@@ -321,6 +398,9 @@ export function ReporteriaIntegralView({
   }
 
   function validateFiltersForReport(nextReportKey: LegacyReportKey) {
+    if (nextReportKey === 'notas_carrera_materia' && periodos.length !== 1) {
+      return 'Selecciona un solo periodo para consultar estudiantes, materias y calificaciones.'
+    }
     if (nextReportKey === 'estud_per_c_m' && periodos.length === 0) {
       return 'Selecciona un periodo para consultar estudiantes, carreras y materias matriculadas.'
     }
@@ -328,6 +408,12 @@ export function ReporteriaIntegralView({
   }
 
   function togglePeriod(value: string) {
+    if (reportKey === 'notas_carrera_materia') {
+      setPeriodos((current) => (current.includes(value) ? [] : [value]))
+      setSelectedGradeStudentKey('')
+      setSelectedGradeSubjectKey('')
+      return
+    }
     setPeriodos((current) =>
       current.includes(value) ? current.filter((item) => item !== value) : [...current, value],
     )
@@ -349,6 +435,9 @@ export function ReporteriaIntegralView({
     try {
       const payload = await fetchLegacyReport(filters(nextReportKey, nextEstado))
       setData(payload)
+      setSelectedGradeStudentKey('')
+      setSelectedGradeSubjectKey('')
+      setGradeSubjectModalOpen(false)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Error generando el reporte integral')
       setData(null)
@@ -425,6 +514,29 @@ export function ReporteriaIntegralView({
     setData(null)
     void loadReport(nextReportKey, nextEstado)
   }, [appliedInitialReport, initialReportKey, reports])
+
+  useEffect(() => {
+    if (!selectedGradeStudentKey && gradeStudents.length === 1) {
+      setSelectedGradeStudentKey(gradeStudents[0].key)
+    }
+    if (selectedGradeStudentKey && !gradeStudents.some((student) => student.key === selectedGradeStudentKey)) {
+      setSelectedGradeStudentKey('')
+      setSelectedGradeSubjectKey('')
+    }
+  }, [gradeStudents, selectedGradeStudentKey])
+
+  useEffect(() => {
+    if (!selectedGradeSubjectKey && selectedStudentSubjects.length === 1) {
+      const row = selectedStudentSubjects[0]
+      setSelectedGradeSubjectKey(`${rowText(row, 'materia_codigo')}-${rowText(row, 'paralelo')}-${rowText(row, 'tipo_matricula')}`)
+    }
+    if (
+      selectedGradeSubjectKey &&
+      !selectedStudentSubjects.some((row) => `${rowText(row, 'materia_codigo')}-${rowText(row, 'paralelo')}-${rowText(row, 'tipo_matricula')}` === selectedGradeSubjectKey)
+    ) {
+      setSelectedGradeSubjectKey('')
+    }
+  }, [selectedGradeSubjectKey, selectedStudentSubjects])
 
   useEffect(() => {
     if (reportKey !== 'graduados_2025') return
@@ -525,10 +637,12 @@ export function ReporteriaIntegralView({
                 {periodOptions.length > 0 ? (
                   <div className="report-period-picker">
                     <div className="report-period-toolbar">
-                      <strong>{periodos.length ? `${periodos.length} seleccionado(s)` : 'Todos los períodos'}</strong>
-                      <button type="button" onClick={selectAllPeriods}>
-                        Seleccionar todos
-                      </button>
+                      <strong>{periodos.length ? `${periodos.length} seleccionado(s)` : isGradesReport ? 'Selecciona un período' : 'Todos los períodos'}</strong>
+                      {!isGradesReport ? (
+                        <button type="button" onClick={selectAllPeriods}>
+                          Seleccionar todos
+                        </button>
+                      ) : null}
                       <button type="button" onClick={() => setPeriodos([])}>
                         Limpiar
                       </button>
@@ -631,6 +745,67 @@ export function ReporteriaIntegralView({
           {!directReportMode && selectedReport?.description ? <p className="reporteria-integral-description">{selectedReport.description}</p> : null}
           {!directReportMode && activeFilters.length > 0 ? <p className="teams-message">{activeFilters.join(' / ')}</p> : null}
           {error ? <p className="teams-error">{error}</p> : null}
+
+          {isGradesReport ? (
+            <div className="reporteria-grade-flow">
+              <div className="reporteria-grade-flow__head">
+                <div>
+                  <strong>Consulta por estudiante y materia</strong>
+                  <span>
+                    {periodos.length === 1
+                      ? `${gradeStudents.length} estudiante(s) encontrados en el período seleccionado`
+                      : 'Selecciona un período y consulta para cargar estudiantes'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    setGradeSubjectModalOpen(true)
+                    if (!selectedGradeSubjectKey && selectedStudentSubjects.length) {
+                      const row = selectedStudentSubjects[0]
+                      setSelectedGradeSubjectKey(`${rowText(row, 'materia_codigo')}-${rowText(row, 'paralelo')}-${rowText(row, 'tipo_matricula')}`)
+                    }
+                  }}
+                  disabled={!selectedGradeStudentKey || selectedStudentSubjects.length === 0}
+                >
+                  Ver materias
+                </button>
+              </div>
+              <div className="matricula-acad-form reporteria-grade-flow__form">
+                <label>
+                  <span>Estudiante</span>
+                  <select
+                    value={selectedGradeStudentKey}
+                    onChange={(event) => {
+                      setSelectedGradeStudentKey(event.target.value)
+                      setSelectedGradeSubjectKey('')
+                    }}
+                    disabled={!gradeStudents.length}
+                  >
+                    <option value="">Selecciona estudiante</option>
+                    {gradeStudents.map((student) => (
+                      <option key={student.key} value={student.key}>
+                        {student.label} · {student.cedula || 'Sin cédula'} · {student.total} materia(s)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="reporteria-grade-flow__summary">
+                  <span>Cédula</span>
+                  <strong>{selectedGradeStudent?.cedula || '-'}</strong>
+                </div>
+                <div className="reporteria-grade-flow__summary">
+                  <span>Carrera</span>
+                  <strong>{selectedGradeStudent?.carrera || '-'}</strong>
+                </div>
+                <div className="reporteria-grade-flow__summary">
+                  <span>Materias</span>
+                  <strong>{selectedStudentSubjects.length}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {reportKey === 'becas_edades' && ageRangeSummary.length > 0 ? (
             <div className="reporteria-age-chart" aria-label="Comparativo por rangos de edad">
@@ -759,6 +934,99 @@ export function ReporteriaIntegralView({
         </article>
 
       </section>
+
+      {isGradesReport && gradeSubjectModalOpen ? (
+        <div className="matricula-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="grade-subject-modal-title">
+          <article className="matricula-modal reporteria-grade-modal">
+            <div className="matricula-modal-head">
+              <div className="matricula-modal-title">
+                <span>{selectedGradeStudent?.cedula || 'Sin cédula'}</span>
+                <h3 id="grade-subject-modal-title">{selectedGradeStudent?.label || 'Materias del estudiante'}</h3>
+              </div>
+              <button type="button" className="matricula-modal-close" onClick={() => setGradeSubjectModalOpen(false)}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="reporteria-grade-modal__grid">
+              <aside className="reporteria-grade-modal__subjects" aria-label="Materias del estudiante">
+                {selectedStudentSubjects.length > 0 ? (
+                  selectedStudentSubjects.map((row) => {
+                    const subjectKey = `${rowText(row, 'materia_codigo')}-${rowText(row, 'paralelo')}-${rowText(row, 'tipo_matricula')}`
+                    return (
+                      <button
+                        key={subjectKey}
+                        type="button"
+                        className={subjectKey === selectedGradeSubjectKey ? 'reporteria-grade-subject reporteria-grade-subject--active' : 'reporteria-grade-subject'}
+                        onClick={() => setSelectedGradeSubjectKey(subjectKey)}
+                      >
+                        <strong>{rowText(row, 'materia') || 'Materia sin nombre'}</strong>
+                        <span>{rowText(row, 'materia_codigo_texto') || rowText(row, 'materia_codigo')} · Paralelo {rowText(row, 'paralelo') || '-'}</span>
+                        <small>{isHomologationRow(row) ? 'Homologación' : 'Regular'} · Final {gradeValue(row.promedio_final)}</small>
+                      </button>
+                    )
+                  })
+                ) : (
+                  <p>No hay materias para el estudiante seleccionado.</p>
+                )}
+              </aside>
+
+              <section className="reporteria-grade-modal__detail">
+                {selectedGradeSubject ? (
+                  <>
+                    <div className="reporteria-grade-detail__head">
+                      <div>
+                        <span>{isHomologationRow(selectedGradeSubject) ? 'Esquema homologación' : 'Esquema regular'}</span>
+                        <h4>{rowText(selectedGradeSubject, 'materia') || 'Materia seleccionada'}</h4>
+                      </div>
+                      <strong>{rowText(selectedGradeSubject, 'carrera') || '-'}</strong>
+                    </div>
+
+                    {isHomologationRow(selectedGradeSubject) ? (
+                      <div className="reporteria-grade-cards reporteria-grade-cards--homo">
+                        <div><span>Teoría</span><strong>{gradeValue(selectedGradeSubject.teoria_homo)}</strong></div>
+                        <div><span>Práctica</span><strong>{gradeValue(selectedGradeSubject.practica_homo)}</strong></div>
+                        <div><span>Recuperación</span><strong>{gradeValue(selectedGradeSubject.recuperacion)}</strong></div>
+                        <div><span>Promedio final</span><strong>{gradeValue(selectedGradeSubject.promedio_final)}</strong></div>
+                        <div><span>Condición</span><strong>{formatCell(selectedGradeSubject.condicion)}</strong></div>
+                      </div>
+                    ) : (
+                      <div className="reporteria-grade-periods">
+                        {[
+                          ['Parcial 1', 'p1_tareas', 'p1_proyectos', 'p1_examen', 'promedio_p1'],
+                          ['Parcial 2', 'p2_tareas', 'p2_proyectos', 'p2_examen', 'promedio_p2'],
+                          ['Parcial 3', 'p3_tareas', 'p3_proyectos', 'p3_examen', 'promedio_p3'],
+                        ].map(([title, taskKey, projectKey, examKey, averageKey]) => (
+                          <div key={title} className="reporteria-grade-period">
+                            <strong>{title}</strong>
+                            <span>Tareas <b>{gradeValue(selectedGradeSubject[taskKey])}</b></span>
+                            <span>Proyectos <b>{gradeValue(selectedGradeSubject[projectKey])}</b></span>
+                            <span>Examen <b>{gradeValue(selectedGradeSubject[examKey])}</b></span>
+                            <span>Promedio <b>{gradeValue(selectedGradeSubject[averageKey])}</b></span>
+                          </div>
+                        ))}
+                        <div className="reporteria-grade-cards">
+                          <div><span>Asistencia</span><strong>{gradeValue(selectedGradeSubject.asistencia)}</strong></div>
+                          <div><span>Recuperación</span><strong>{gradeValue(selectedGradeSubject.recuperacion)}</strong></div>
+                          <div><span>Promedio final</span><strong>{gradeValue(selectedGradeSubject.promedio_final)}</strong></div>
+                          <div><span>Condición</span><strong>{formatCell(selectedGradeSubject.condicion)}</strong></div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="reporteria-grade-observation">
+                      <span>Observaciones</span>
+                      <p>{formatCell(selectedGradeSubject.observaciones)}</p>
+                    </div>
+                  </>
+                ) : (
+                  <p>Selecciona una materia para ver sus calificaciones.</p>
+                )}
+              </section>
+            </div>
+          </article>
+        </div>
+      ) : null}
     </>
   )
 }

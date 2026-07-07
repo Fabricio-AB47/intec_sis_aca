@@ -20,13 +20,13 @@ from pydantic import BaseModel, Field
 import pyodbc
 from reportlab.graphics import renderPDF
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape, letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Flowable, Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image as PdfImage, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
@@ -587,6 +587,83 @@ def _calificaciones_pdf_rows(items: list[dict[str, Any]], homologation_only: boo
     return rows
 
 
+def _practice_search_text(value: Any) -> str:
+    text = _clean(value).upper()
+    replacements = {
+        "Á": "A",
+        "É": "E",
+        "Í": "I",
+        "Ó": "O",
+        "Ú": "U",
+        "Ü": "U",
+        "Ñ": "N",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _practice_requirement_code(item: dict[str, Any]) -> str:
+    text = _practice_search_text(
+        " ".join(
+            [
+                _clean(item.get("nombre_materia")),
+                _clean(item.get("cod_materia")),
+                _clean(item.get("codigo_materia")),
+            ]
+        )
+    )
+    if "VINCULACION" in text or "SERVICIO COMUNITARIO" in text:
+        return "VIN"
+    if "PRACTICA" in text:
+        return "PPF"
+    return ""
+
+
+def _academic_grid_with_practice_requirements(items: list[dict[str, Any]], career: str = "") -> list[dict[str, Any]]:
+    result = [dict(item) for item in items]
+    existing_codes = {_practice_requirement_code(item) for item in result}
+    defaults = [
+        {
+            "code": "PPF",
+            "cod_materia": "PPF-240",
+            "codigo_materia": "PPF-240",
+            "nombre_materia": "PRÁCTICAS LABORALES - 240 HORAS",
+            "horas": 240,
+        },
+        {
+            "code": "VIN",
+            "cod_materia": "VIN-060",
+            "codigo_materia": "VIN-060",
+            "nombre_materia": "SERVICIO COMUNITARIO - 60 HORAS",
+            "horas": 60,
+        },
+    ]
+    for default in defaults:
+        if default["code"] in existing_codes:
+            continue
+        result.append(
+            {
+                "semestre": 3,
+                "orden": 99980 if default["code"] == "VIN" else 99970,
+                "cod_materia": default["cod_materia"],
+                "codigo_materia": default["codigo_materia"],
+                "nombre_materia": default["nombre_materia"],
+                "nombre_carrera": career,
+                "creditos": None,
+                "horas": default["horas"],
+                "esquema_calificacion": "REQUISITO",
+                "estado_academico": "Pendiente",
+                "promedio_final": None,
+                "nota_aprobar": 7,
+                "ultimo_periodo": "Requisito institucional",
+                "codigo_periodo": "PRACTICAS",
+                "detalle_periodo": "Requisito institucional",
+            }
+        )
+    return result
+
+
 def _student_profile_from_row(row: Any) -> dict[str, Any]:
     return {
         "codigo_estud": _clean(getattr(row, "codigo_estud", "")),
@@ -947,6 +1024,97 @@ def _fetch_student_current_career(
     return _int(row.cod_anio_basica) if row else None
 
 
+def _fetch_student_payments(cursor: pyodbc.Cursor, codigo_estud: int) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT TOP (12)
+            cm.codigo_periodo,
+            pe.Detalle_Periodo,
+            cm.cod_anio_Basica,
+            c.Nombre_Basica,
+            cm.Num_Matricula,
+            cm.numcodigo,
+            cm.fecha_pago,
+            cm.valor,
+            cm.InscripValor,
+            cm.MatriValor,
+            cm.Cuota1,
+            cm.Beca,
+            cm.Descuento,
+            COALESCE(cm.urlconvenio, pre.urlconvenio) AS urlconvenio,
+            rp.Num AS pago_num,
+            rp.Detalle AS pago_detalle,
+            rp.fechapago AS pago_fecha,
+            rp.ValorRegistrado AS pago_valor,
+            rp.NoDeposito AS pago_referencia,
+            rp.Banco AS pago_banco
+        FROM dbo.CABECERA_MATRICULA cm
+        LEFT JOIN dbo.PERIODO pe ON TRY_CONVERT(int, pe.cod_periodo) = TRY_CONVERT(int, cm.codigo_periodo)
+        LEFT JOIN dbo.CARRERAS c ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, cm.cod_anio_Basica)
+        OUTER APPLY (
+            SELECT TOP (1) pay.*
+            FROM dbo.REGISTROPAGOS pay
+            WHERE TRY_CONVERT(int, pay.Codestu) = TRY_CONVERT(int, cm.codigo_estud)
+              AND TRY_CONVERT(int, pay.codperiodo) = TRY_CONVERT(int, cm.codigo_periodo)
+              AND TRY_CONVERT(int, pay.cod_anio_Basica) = TRY_CONVERT(int, cm.cod_anio_Basica)
+            ORDER BY TRY_CONVERT(int, pay.Num) DESC, pay.fechapago DESC
+        ) rp
+        OUTER APPLY (
+            SELECT TOP (1) p.urlconvenio
+            FROM dbo.PREINSCRIPCION p
+            WHERE TRY_CONVERT(int, p.Codestu) = TRY_CONVERT(int, cm.codigo_estud)
+               OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), p.Cedula))) IN (
+                    SELECT TOP (1) LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), d.Cedula_Est)))
+                    FROM dbo.DATOS_ESTUD d
+                    WHERE TRY_CONVERT(int, d.codigo_estud) = TRY_CONVERT(int, cm.codigo_estud)
+                )
+            ORDER BY TRY_CONVERT(int, p.num) DESC
+        ) pre
+        WHERE TRY_CONVERT(int, cm.codigo_estud) = ?
+        ORDER BY
+            TRY_CONVERT(int, cm.codigo_periodo) DESC,
+            TRY_CONVERT(int, cm.Num_Matricula) DESC,
+            cm.fecha_pago DESC
+        """,
+        codigo_estud,
+    )
+    payments: list[dict[str, Any]] = []
+    for row in cursor.fetchall():
+        total = _number(getattr(row, "valor", None)) or 0
+        beca = _number(getattr(row, "Beca", None)) or 0
+        descuento = _number(getattr(row, "Descuento", None)) or 0
+        saldo = max(round(total - beca - descuento, 2), 0)
+        cuota = _number(getattr(row, "Cuota1", None)) or 0
+        cuotas = int(round(saldo / cuota)) if saldo > 0 and cuota > 0 else 1
+        payments.append(
+            {
+                "codigo_periodo": _clean(getattr(row, "codigo_periodo", "")),
+                "periodo": _clean(getattr(row, "Detalle_Periodo", "")),
+                "cod_anio_basica": _clean(getattr(row, "cod_anio_Basica", "")),
+                "carrera": _clean(getattr(row, "Nombre_Basica", "")),
+                "num_matricula": _clean(getattr(row, "Num_Matricula", "")),
+                "codigo_documentacion": _clean(getattr(row, "numcodigo", "")),
+                "fecha_pago": _date_text(getattr(row, "fecha_pago", "")),
+                "total": total,
+                "inscripcion": _number(getattr(row, "InscripValor", None)) or 0,
+                "matricula": _number(getattr(row, "MatriValor", None)) or 0,
+                "beca": beca,
+                "descuento": descuento,
+                "saldo": saldo,
+                "cuota": cuota,
+                "cuotas": cuotas,
+                "convenio_url": _clean(getattr(row, "urlconvenio", "")),
+                "pago_num": _int(getattr(row, "pago_num", None)),
+                "pago_detalle": _clean(getattr(row, "pago_detalle", "")),
+                "pago_fecha": _date_text(getattr(row, "pago_fecha", "")),
+                "pago_valor": _number(getattr(row, "pago_valor", None)) or 0,
+                "pago_referencia": _clean(getattr(row, "pago_referencia", "")),
+                "pago_banco": _clean(getattr(row, "pago_banco", "")),
+            }
+        )
+    return payments
+
+
 def _fetch_student_current_pensum(
     cursor: pyodbc.Cursor,
     codigo_estud: int,
@@ -1230,6 +1398,7 @@ def student_record(
                 current_user.codigo_estud,
                 items,
             )
+            payments = _fetch_student_payments(cursor, current_user.codigo_estud)
         summary = _record_summary(items)
         visible_items = [item for item in items if item["aprobada"]] if approved_only else items
         return {
@@ -1238,6 +1407,7 @@ def student_record(
             "curriculum_summary": curriculum_resume,
             "curriculum": curriculum,
             "academic_grid": academic_grid,
+            "payments": payments,
             "items": visible_items,
             "total": len(visible_items),
         }
@@ -1392,6 +1562,7 @@ def student_record_pdf_export(
     )
 
     if report_type == "academica":
+        academic_grid = _academic_grid_with_practice_requirements(academic_grid, career)
         academic_grid.sort(
             key=lambda item: (
                 _int(item.get("semestre")) or 999,
@@ -1457,6 +1628,81 @@ def student_record_pdf_export(
         )
         filename = f"calificaciones-{_safe_filename(profile.get('codigo_estud'))}-{_safe_filename(selected_period_label)}.pdf"
 
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/student/record/export-secretaria-pdf")
+def student_record_secretary_pdf_export(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    codigo_periodo: Annotated[str | None, Query(description="Periodo seleccionado para reporte de notas formato Secretaria")] = None,
+    tipo: Annotated[str, Query(description="calificaciones o malla")] = "calificaciones",
+) -> StreamingResponse:
+    if current_user.codigo_estud is None:
+        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+
+    selected_period = _clean(codigo_periodo)
+    report_type = _clean(tipo).lower()
+    if report_type not in {"calificaciones", "malla"}:
+        raise HTTPException(status_code=400, detail="Tipo de reporte no valido")
+    if report_type == "calificaciones" and not selected_period:
+        raise HTTPException(status_code=400, detail="Seleccione un periodo para exportar el reporte de notas")
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            profile, items = _fetch_student_record(cursor, current_user.codigo_estud)
+            curriculum, academic_grid, _curriculum_resume = _fetch_student_curriculum(
+                cursor,
+                current_user.codigo_estud,
+                items,
+            )
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error generando reporte de notas formato Secretaria: {exc}") from exc
+
+    if report_type == "malla":
+        career = (
+            next((_clean(item.get("nombre_carrera")) for item in academic_grid if _clean(item.get("nombre_carrera"))), "")
+            or next((_clean(item.get("nombre_carrera")) for item in curriculum if _clean(item.get("nombre_carrera"))), "")
+            or next((_clean(item.get("nombre_carrera")) for item in items if _clean(item.get("nombre_carrera"))), "")
+        )
+        report_items = list(academic_grid)
+        report_items = _academic_grid_with_practice_requirements(report_items, career)
+        selected_period_label = "Malla academica general"
+        for item in report_items:
+            item["detalle_periodo"] = item.get("ultimo_periodo") or selected_period_label
+            item["codigo_periodo"] = item.get("codigo_periodo") or "MALLA"
+            item["nombre_carrera"] = item.get("nombre_carrera") or career
+    else:
+        report_items = [
+            item
+            for item in items
+            if item["codigo_periodo"] == selected_period or item["detalle_periodo"] == selected_period
+        ]
+        selected_period_label = next(
+            (item["detalle_periodo"] for item in report_items if item["detalle_periodo"]),
+            selected_period,
+        )
+
+    report_items.sort(
+        key=lambda item: (
+            _int(item.get("semestre")) or 999,
+            _int(item.get("orden")) or 9999,
+            _int(item.get("codigo_materia")) or 999999,
+            _clean(item.get("nombre_materia")),
+        )
+    )
+    for item in report_items:
+        item["codigo_estud"] = item.get("codigo_estud") or profile.get("codigo_estud")
+        item["cedula"] = item.get("cedula") or profile.get("cedula")
+        item["nombre_estudiante"] = item.get("nombre_estudiante") or profile.get("nombre_estudiante")
+
+    pdf_bytes = _student_secretaria_notes_pdf(profile, report_items, report_type, selected_period_label)
+    filename_prefix = "malla-secretaria" if report_type == "malla" else "reporte-notas-secretaria"
+    filename = f"{filename_prefix}-{_safe_filename(profile.get('codigo_estud'))}-{_safe_filename(selected_period_label)}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -2486,6 +2732,627 @@ def _teacher_notes_report_pdf(
     return output.getvalue()
 
 
+def _student_grade_report_rows(students: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for item in students:
+        key = "|".join(
+            [
+                _clean(item.get("codigo_estud")),
+                _clean(item.get("codigo_periodo")),
+                _clean(item.get("cod_anio_basica")),
+            ]
+        )
+        if key.strip("|"):
+            groups[key] = item
+
+    result: list[dict[str, Any]] = []
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            for source in groups.values():
+                cursor.execute(
+                    """
+                    SELECT
+                        TRY_CONVERT(varchar(50), de.codigo_estud) AS codigo_estud,
+                        TRY_CONVERT(nvarchar(100), de.Cedula_Est) AS cedula,
+                        TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre) AS nombre_estudiante,
+                        TRY_CONVERT(varchar(50), cxe.cod_anio_Basica) AS cod_anio_basica,
+                        TRY_CONVERT(nvarchar(4000), c.Nombre_Basica) AS nombre_carrera,
+                        TRY_CONVERT(varchar(50), cxe.codigo_periodo) AS codigo_periodo,
+                        TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo) AS detalle_periodo,
+                        TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
+                        TRY_CONVERT(varchar(50), cxe.codigo_materia) AS codigo_materia,
+                        TRY_CONVERT(varchar(100), p.cod_materia) AS cod_materia,
+                        TRY_CONVERT(nvarchar(4000), p.Nomb_Materia) AS nombre_materia,
+                        TRY_CONVERT(float, COALESCE(NULLIF(cxe.Num_Creditos, 0), p.Creditos)) AS creditos,
+                        TRY_CONVERT(float, cxe.teoriaHomo) AS teoria_homo,
+                        TRY_CONVERT(float, cxe.practicahomo) AS practica_homo,
+                        TRY_CONVERT(float, cxe.P1Tareas) AS p1_tareas,
+                        TRY_CONVERT(float, cxe.P1Proyectos) AS p1_proyectos,
+                        TRY_CONVERT(float, cxe.P1Examen) AS p1_examen,
+                        TRY_CONVERT(float, cxe.promP1) AS prom_p1,
+                        TRY_CONVERT(float, cxe.P2Tareas) AS p2_tareas,
+                        TRY_CONVERT(float, cxe.P2Proyectos) AS p2_proyectos,
+                        TRY_CONVERT(float, cxe.P2Examen) AS p2_examen,
+                        TRY_CONVERT(float, cxe.promP2) AS prom_p2,
+                        TRY_CONVERT(float, cxe.P3Tareas) AS p3_tareas,
+                        TRY_CONVERT(float, cxe.P3Proyectos) AS p3_proyectos,
+                        TRY_CONVERT(float, cxe.P3Examen) AS p3_examen,
+                        TRY_CONVERT(float, cxe.promP3) AS prom_p3,
+                        TRY_CONVERT(float, cxe.Promedio) AS promedio,
+                        TRY_CONVERT(float, cxe.Recuperacion) AS recuperacion,
+                        COALESCE(
+                            TRY_CONVERT(float, cxe.PromedioFinal),
+                            CASE
+                                WHEN (
+                                        UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(50), cxe.TipoMatricula), N'')))) = N'H'
+                                     OR UPPER(COALESCE(TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo), N'')) LIKE N'%HOMO%'
+                                     )
+                                 AND TRY_CONVERT(float, cxe.teoriaHomo) IS NOT NULL
+                                 AND TRY_CONVERT(float, cxe.practicahomo) IS NOT NULL
+                                THEN (TRY_CONVERT(float, cxe.teoriaHomo) * 0.4) + (TRY_CONVERT(float, cxe.practicahomo) * 0.6)
+                            END,
+                            CASE
+                                WHEN TRY_CONVERT(float, cxe.promP1) IS NOT NULL
+                                 AND TRY_CONVERT(float, cxe.promP2) IS NOT NULL
+                                 AND TRY_CONVERT(float, cxe.promP3) IS NOT NULL
+                                THEN (TRY_CONVERT(float, cxe.promP1) + TRY_CONVERT(float, cxe.promP2) + TRY_CONVERT(float, cxe.promP3)) / 3
+                            END,
+                            TRY_CONVERT(float, cxe.Promedio)
+                        ) AS promedio_final,
+                        COALESCE(TRY_CONVERT(float, pe.NotaAprobar), 7) AS nota_aprobar,
+                        TRY_CONVERT(nvarchar(50), cxe.TipoMatricula) AS tipo_matricula,
+                        TRY_CONVERT(nvarchar(50), cxe.paralelo) AS paralelo,
+                        TRY_CONVERT(int, p.Orden) AS orden_materia
+                    FROM dbo.CARRERAXESTUD cxe
+                    INNER JOIN dbo.DATOS_ESTUD de
+                      ON TRY_CONVERT(int, de.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
+                    LEFT JOIN dbo.CARRERAS c
+                      ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                    LEFT JOIN dbo.PERIODO pe
+                      ON TRY_CONVERT(int, pe.cod_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
+                    LEFT JOIN dbo.PENSUM p
+                      ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                     AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                    WHERE TRY_CONVERT(int, cxe.codigo_estud) = ?
+                      AND TRY_CONVERT(int, cxe.codigo_periodo) = ?
+                      AND TRY_CONVERT(int, cxe.cod_anio_Basica) = ?
+                    ORDER BY TRY_CONVERT(int, p.Orden), TRY_CONVERT(nvarchar(4000), p.Nomb_Materia)
+                    """,
+                    _int(source.get("codigo_estud")),
+                    _int(source.get("codigo_periodo")),
+                    _int(source.get("cod_anio_basica")),
+                )
+                columns = [column[0] for column in cursor.description or []]
+                rows = [{column: getattr(row, column) for column in columns} for row in cursor.fetchall()]
+                if rows:
+                    result.extend(rows)
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error consultando reporte de notas del estudiante: {exc}") from exc
+    return result
+
+
+def _student_secretaria_notes_pdf(
+    profile: dict[str, Any],
+    items: list[dict[str, Any]],
+    report_type: str,
+    period_label: str,
+) -> bytes:
+    output = BytesIO()
+    canvas = Canvas(output, pagesize=landscape(A4))
+    width, height = landscape(A4)
+    generated_at = datetime.now()
+    hour = generated_at.hour % 12 or 12
+    display_date = f"{generated_at.day} de {generated_at.strftime('%B')} de {generated_at.year}"
+
+    def clean(value: Any, fallback: str = "") -> str:
+        text = _clean(value)
+        return text or fallback
+
+    def fit_text(text: Any, max_chars: int) -> str:
+        value = clean(text, "-")
+        if len(value) <= max_chars:
+            return value
+        return value[: max(max_chars - 1, 1)].rstrip() + "…"
+
+    def grade(value: Any, empty: str = "") -> str:
+        number = _number(value)
+        if number is None:
+            return empty
+        return f"{number:.2f}"
+
+    def credit(value: Any) -> str:
+        number = _number(value)
+        if number is None:
+            return ""
+        return f"{number:.2f}".replace(".", ",")
+
+    def final_status(item: dict[str, Any]) -> str:
+        final = _number(item.get("promedio_final"))
+        if final is None:
+            return "PENDIENTE"
+        minimum = _number(item.get("nota_aprobar")) or 7
+        return "APROBADO" if final >= minimum else "REPROBADO"
+
+    def row_values(item: dict[str, Any]) -> list[str]:
+        is_homo = _is_homologation_type(
+            item.get("tipo_matricula"),
+            item.get("detalle_periodo") or item.get("ultimo_periodo"),
+            item.get("esquema_calificacion"),
+        )
+        partial_values = [
+            grade(item.get("p1_tareas")),
+            grade(item.get("p1_proyectos")),
+            grade(item.get("p1_examen")),
+            grade(item.get("prom_p1")),
+            grade(item.get("p2_tareas")),
+            grade(item.get("p2_proyectos")),
+            grade(item.get("p2_examen")),
+            grade(item.get("prom_p2")),
+            grade(item.get("p3_tareas")),
+            grade(item.get("p3_proyectos")),
+            grade(item.get("p3_examen")),
+            grade(item.get("prom_p3")),
+        ]
+        if is_homo and all(value == "-" for value in partial_values):
+            partial_values = [
+                grade(item.get("teoria_homo")),
+                grade(item.get("practica_homo")),
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+            ]
+        subject_name = item.get("nombre_materia") or item.get("codigo_materia")
+        subject_max_chars = 50 if _practice_requirement_code(item) else 36
+        return [
+            fit_text(subject_name, subject_max_chars),
+            credit(item.get("creditos")),
+            *partial_values,
+            grade(item.get("recuperacion")),
+            grade(item.get("promedio_final")),
+            final_status(item),
+        ]
+
+    def period_key(item: dict[str, Any]) -> tuple[int, str]:
+        code = _int(item.get("codigo_periodo"))
+        label = clean(item.get("detalle_periodo") or item.get("ultimo_periodo") or period_label or "Malla academica general")
+        return (code or 999999, label)
+
+    groups: list[tuple[str, list[dict[str, Any]]]] = []
+    grouped: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(period_key(item), []).append(item)
+    for (_code, label), group_items in sorted(grouped.items(), key=lambda pair: pair[0]):
+        groups.append((label, group_items))
+    if not groups:
+        groups = [(period_label or "Malla academica general", [])]
+
+    def draw_logo() -> None:
+        if not _LOGO_PATH.exists():
+            canvas.setFont("Helvetica-Bold", 38)
+            canvas.setFillColor(colors.HexColor("#808285"))
+            canvas.drawString(36, height - 48, "intec")
+            return
+        drawing = svg2rlg(str(_LOGO_PATH))
+        if not drawing:
+            return
+        target_width = 130
+        scale = target_width / float(drawing.width or target_width)
+        canvas.saveState()
+        canvas.translate(36, height - 58)
+        canvas.scale(scale, scale)
+        renderPDF.draw(drawing, canvas, 0, 0)
+        canvas.restoreState()
+
+    def draw_header(page_number: int) -> None:
+        canvas.setFillColor(colors.black)
+        canvas.rect(0, height - 5, width, 5, stroke=0, fill=1)
+        if page_number == 1:
+            draw_logo()
+            canvas.setFont("Helvetica-Bold", 18)
+            canvas.drawCentredString(width / 2, height - 52, "RECORD ACADÉMICO")
+        canvas.setFont("Helvetica-Bold", 7.6)
+        career = next((clean(item.get("nombre_carrera")) for item in items if clean(item.get("nombre_carrera"))), "")
+        canvas.drawString(54, height - 72, "Estudiante:")
+        canvas.drawString(114, height - 72, fit_text(profile.get("nombre_estudiante"), 42))
+        canvas.drawString(378, height - 72, "Cédula:")
+        canvas.setFont("Helvetica", 7.6)
+        canvas.drawString(422, height - 72, fit_text(profile.get("cedula"), 18))
+        canvas.setFont("Helvetica-Bold", 7.6)
+        canvas.drawString(74, height - 90, "Carrera:")
+        canvas.setFont("Helvetica", 7.6)
+        canvas.drawString(114, height - 90, fit_text(career, 48))
+        canvas.setFont("Helvetica-Bold", 7.6)
+        canvas.drawString(62, height - 108, "Modalidad:")
+        canvas.setFont("Helvetica", 7.6)
+        canvas.drawString(114, height - 108, "En linea")
+
+    x_positions = [30, 228, 282, 306, 330, 354, 402, 426, 450, 474, 522, 546, 570, 594, 642, 684, 740]
+    col_widths = [194, 38, 23, 23, 23, 42, 23, 23, 23, 42, 23, 23, 23, 42, 34, 40, 62]
+    row_height = 16.2
+    header_y = height - 126
+    first_row_y = height - 155
+    bottom_y = 76
+
+    def center_text(text: str, x: float, y: float, w: float, font: str = "Helvetica", size: float = 7) -> None:
+        canvas.setFont(font, size)
+        canvas.drawCentredString(x + (w / 2), y, text)
+
+    def draw_table_header() -> None:
+        canvas.setFillColor(colors.black)
+        canvas.setFont("Helvetica-Bold", 7.2)
+        canvas.drawString(54, header_y + 1, "Asignatura")
+        center_text("Créditos", x_positions[1], header_y + 1, col_widths[1], "Helvetica-Bold", 7.2)
+        center_text("PARCIAL 1", x_positions[2], header_y + 10, sum(col_widths[2:6]), "Helvetica-Bold", 7.2)
+        center_text("PARCIAL 2", x_positions[6], header_y + 10, sum(col_widths[6:10]), "Helvetica-Bold", 7.2)
+        center_text("PARCIAL 3", x_positions[10], header_y + 10, sum(col_widths[10:14]), "Helvetica-Bold", 7.2)
+        center_text("Recup.", x_positions[14], header_y + 1, col_widths[14], "Helvetica-Bold", 6.6)
+        center_text("Promedio", x_positions[15], header_y + 9, col_widths[15], "Helvetica-Bold", 6.6)
+        center_text("final", x_positions[15], header_y - 1, col_widths[15], "Helvetica-Bold", 6.6)
+        center_text("Estado", x_positions[16], header_y + 1, col_widths[16], "Helvetica-Bold", 7.2)
+        labels = ["N 1", "N 2", "N3", "PROM 1", "N 1", "N 2", "N3", "PROM 2", "N 1", "N 2", "N3", "PROM 3"]
+        for index, label in enumerate(labels, start=2):
+            center_text(label, x_positions[index], header_y - 7, col_widths[index], "Helvetica-Bold", 6.3)
+
+    def draw_dotted_line(y: float) -> None:
+        canvas.saveState()
+        canvas.setDash(1, 3)
+        canvas.setStrokeColor(colors.black)
+        canvas.setLineWidth(0.45)
+        canvas.line(0, y - 5, width, y - 5)
+        canvas.restoreState()
+
+    def group_stats(group_items: list[dict[str, Any]]) -> tuple[str, str]:
+        finals = [_number(item.get("promedio_final")) for item in group_items if _number(item.get("promedio_final")) is not None]
+        credits = [_number(item.get("creditos")) for item in group_items if _number(item.get("creditos")) is not None]
+        average = sum(finals) / len(finals) if finals else None
+        total_credits = sum(credits) if credits else None
+        return credit(total_credits), grade(average)
+
+    def draw_row(item: dict[str, Any], y: float) -> None:
+        values = row_values(item)
+        canvas.setFont("Helvetica", 6.7)
+        canvas.drawString(x_positions[0], y, values[0])
+        canvas.setFont("Helvetica", 6.5)
+        for index, value in enumerate(values[1:], start=1):
+            if index == 16:
+                canvas.drawString(x_positions[index], y, fit_text(value, 10))
+            else:
+                canvas.drawRightString(x_positions[index] + col_widths[index] - 2, y, value)
+        draw_dotted_line(y)
+
+    def draw_group_footer(group_items: list[dict[str, Any]], y: float) -> float:
+        total_credits, average = group_stats(group_items)
+        canvas.setFont("Helvetica-Bold", 7.2)
+        canvas.drawString(162, y, "Total Créditos:")
+        canvas.drawRightString(258, y, total_credits)
+        canvas.setFont("Helvetica", 7.2)
+        canvas.drawString(648, y, "Promedio")
+        canvas.drawRightString(742, y, average)
+        return y - 18
+
+    def draw_final_footer(y: float) -> None:
+        footer_y = min(y, 204)
+        canvas.setFillColor(colors.black)
+        canvas.setFont("Helvetica", 7.2)
+        canvas.drawString(32, footer_y - 20, "NOTA:  *  Información basada en los soportes de los archivos y registros académicos que reposan en el Departamento de Secretaría General, cualquier alteración al texto del")
+        canvas.drawString(32, footer_y - 32, "presente documento, como enmendadura, tachado, borrón o repisado entre otros lo inválida.")
+        canvas.drawString(32, footer_y - 80, "* Este documento tiene una validez si tiene firma y sello del Instituto INTEC")
+        canvas.drawRightString(width - 74, footer_y - 102, display_date)
+        canvas.line(340, footer_y - 158, 535, footer_y - 158)
+        canvas.setFont("Helvetica", 7.2)
+        canvas.drawCentredString(437, footer_y - 180, "María Verónica Cevallos Calderón")
+        canvas.setFont("Helvetica-Bold", 7.2)
+        canvas.drawCentredString(437, footer_y - 198, "Vicerrectora General Académico")
+
+    def new_page(page_number: int) -> float:
+        if page_number > 1:
+            canvas.showPage()
+        draw_header(page_number)
+        draw_table_header()
+        return first_row_y
+
+    page_number = 1
+    y = new_page(page_number)
+    for label, group_items in groups:
+        if y < bottom_y + (row_height * 3):
+            page_number += 1
+            y = new_page(page_number)
+        canvas.setFont("Helvetica-Bold", 7.2)
+        canvas.drawString(36, y, fit_text(label, 78))
+        y -= row_height
+        if not group_items:
+            draw_row({"nombre_materia": "No hay informacion para mostrar.", "estado_academico": "PENDIENTE"}, y)
+            y -= row_height
+        for item in group_items:
+            if y < bottom_y:
+                page_number += 1
+                y = new_page(page_number)
+            draw_row(item, y)
+            y -= row_height
+        if y < bottom_y:
+            page_number += 1
+            y = new_page(page_number)
+        y = draw_group_footer(group_items, y)
+
+    if y < 224:
+        page_number += 1
+        y = new_page(page_number)
+    draw_final_footer(y)
+
+    canvas.save()
+    output.seek(0)
+    return output.getvalue()
+
+
+def _student_grade_report_pdf(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+    include_teacher: bool = True,
+) -> bytes:
+    rows = _student_grade_report_rows(students)
+    if not rows:
+        rows = students
+
+    red = colors.HexColor("#931913")
+    dark = colors.HexColor("#111111")
+    soft = colors.HexColor("#F4F8FA")
+    border = colors.HexColor("#9DA8B0")
+    gray = colors.HexColor("#555555")
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="SecretaryTitle", parent=styles["Title"], fontSize=14, leading=16, alignment=TA_CENTER, textColor=dark))
+    styles.add(ParagraphStyle(name="SecretaryMeta", parent=styles["BodyText"], fontSize=8.6, leading=10.2, textColor=dark))
+    styles.add(ParagraphStyle(name="SecretaryMetaRight", parent=styles["SecretaryMeta"], alignment=TA_RIGHT))
+    styles.add(ParagraphStyle(name="SecretaryCell", parent=styles["BodyText"], fontSize=6.0, leading=6.8, textColor=dark))
+    styles.add(ParagraphStyle(name="SecretaryCellBold", parent=styles["SecretaryCell"], fontName="Helvetica-Bold", alignment=TA_CENTER))
+    styles.add(ParagraphStyle(name="SecretaryTiny", parent=styles["BodyText"], fontSize=6.4, leading=7.8, textColor=gray))
+
+    def status(value: Any, minimum: Any = 7) -> str:
+        number = _number(value)
+        min_value = _number(minimum) or 7
+        if number is None:
+            return "PENDIENTE"
+        return "APROBADO" if number >= min_value else "REPROBADO"
+
+    def grade(value: Any) -> str:
+        number = _number(value)
+        if number is None:
+            return "-"
+        return f"{number:.2f}"
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = "|".join([_clean(row.get("codigo_estud")), _clean(row.get("codigo_periodo")), _clean(row.get("cod_anio_basica"))])
+        grouped.setdefault(key, []).append(row)
+
+    story: list[Any] = []
+    if not grouped:
+        logo = _template_logo(3.1 * cm)
+        header = Table(
+            [
+                [
+                    logo,
+                    [
+                        Paragraph("INSTITUTO SUPERIOR TECNOLÓGICO INTEC", styles["SecretaryTitle"]),
+                        Paragraph("Reporte de notas", styles["SecretaryMeta"]),
+                    ],
+                    Paragraph(datetime.now().strftime("%d/%m/%Y, %H:%M"), styles["SecretaryMetaRight"]),
+                ]
+            ],
+            colWidths=[3.5 * cm, 10.5 * cm, 4.5 * cm],
+        )
+        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -1), 1.1, red)]))
+        story.extend(
+            [
+                header,
+                Spacer(1, 0.35 * cm),
+                Paragraph("No existen estudiantes o calificaciones para generar el reporte con los filtros seleccionados.", styles["SecretaryMeta"]),
+            ]
+        )
+
+    for group_index, group_rows in enumerate(grouped.values()):
+        first = group_rows[0]
+        if group_index:
+            story.append(PageBreak())
+
+        logo = _template_logo(3.1 * cm)
+        header = Table(
+            [
+                [
+                    logo,
+                    [
+                        Paragraph("INSTITUTO SUPERIOR TECNOLÓGICO INTEC", styles["SecretaryTitle"]),
+                        Paragraph("Reporte de notas", styles["SecretaryMeta"]),
+                    ],
+                    Paragraph(datetime.now().strftime("%d/%m/%Y, %H:%M"), styles["SecretaryMetaRight"]),
+                ]
+            ],
+            colWidths=[3.5 * cm, 10.5 * cm, 4.5 * cm],
+        )
+        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -1), 1.1, red)]))
+        story.extend([header, Spacer(1, 0.18 * cm)])
+
+        meta_table = Table(
+            [
+                [
+                    Paragraph(f"<b>Carrera:</b> {_pdf_text(first.get('nombre_carrera'))}", styles["SecretaryMeta"]),
+                    Paragraph(f"<b>Estudiante:</b> {_pdf_text(first.get('nombre_estudiante'))}", styles["SecretaryMeta"]),
+                    Paragraph(f"<b>Cédula:</b> {_pdf_text(first.get('cedula'))}", styles["SecretaryMeta"]),
+                ],
+                [
+                    Paragraph(f"<b>Período:</b> {_pdf_text(first.get('detalle_periodo') or first.get('codigo_periodo'))}", styles["SecretaryMeta"]),
+                    Paragraph(f"<b>Modalidad:</b> En línea", styles["SecretaryMeta"]),
+                    Paragraph(
+                        f"<b>Docente:</b> {_pdf_text(teacher.get('docente'))}"
+                        if include_teacher
+                        else f"<b>Código:</b> {_pdf_text(first.get('codigo_estud'))}",
+                        styles["SecretaryMeta"],
+                    ),
+                ],
+            ],
+            colWidths=[6.1 * cm, 7.2 * cm, 5.2 * cm],
+        )
+        meta_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), soft),
+                    ("BOX", (0, 0), (-1, -1), 0.35, border),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.2, border),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.extend([meta_table, Spacer(1, 0.18 * cm)])
+
+        header_1 = [
+            "Asignatura",
+            "Parcial 1", "", "", "",
+            "Parcial 2", "", "", "",
+            "Parcial 3", "", "", "",
+            "Promedio final",
+            "Recup.",
+            "Estado",
+            "Créditos",
+        ]
+        header_2 = [
+            "",
+            "N1", "N2", "N3", "PROM",
+            "N1", "N2", "N3", "PROM",
+            "N1", "N2", "N3", "PROM",
+            "", "", "", "",
+        ]
+        table_rows = [
+            [Paragraph(f"<b>{escape(item)}</b>", styles["SecretaryCellBold"]) for item in header_1],
+            [Paragraph(f"<b>{escape(item)}</b>", styles["SecretaryCellBold"]) for item in header_2],
+        ]
+        for item in group_rows:
+            table_rows.append(
+                [
+                    Paragraph(_pdf_text(item.get("nombre_materia")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p1_tareas")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p1_proyectos")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p1_examen")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("prom_p1")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p2_tareas")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p2_proyectos")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p2_examen")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("prom_p2")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p3_tareas")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p3_proyectos")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("p3_examen")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("prom_p3")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("promedio_final")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("recuperacion")), styles["SecretaryCell"]),
+                    Paragraph(status(item.get("promedio_final"), item.get("nota_aprobar")), styles["SecretaryCell"]),
+                    Paragraph(grade(item.get("creditos")), styles["SecretaryCell"]),
+                ]
+            )
+
+        col_widths = [4.0 * cm] + [0.82 * cm] * 12 + [1.18 * cm, 0.95 * cm, 1.32 * cm, 0.95 * cm]
+        grades_table = Table(table_rows, colWidths=col_widths, repeatRows=2)
+        grades_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), red),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#E8EEF1")),
+                    ("SPAN", (0, 0), (0, 1)),
+                    ("SPAN", (1, 0), (4, 0)),
+                    ("SPAN", (5, 0), (8, 0)),
+                    ("SPAN", (9, 0), (12, 0)),
+                    ("SPAN", (13, 0), (13, 1)),
+                    ("SPAN", (14, 0), (14, 1)),
+                    ("SPAN", (15, 0), (15, 1)),
+                    ("SPAN", (16, 0), (16, 1)),
+                    ("GRID", (0, 0), (-1, -1), 0.25, border),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                    ("ALIGN", (0, 2), (0, -1), "LEFT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2.2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2.2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(grades_table)
+
+        finals = [_number(item.get("promedio_final")) for item in group_rows if _number(item.get("promedio_final")) is not None]
+        credits = [_number(item.get("creditos")) for item in group_rows if _number(item.get("creditos")) is not None]
+        average = sum(finals) / len(finals) if finals else None
+        failed = sum(1 for item in group_rows if status(item.get("promedio_final"), item.get("nota_aprobar")) == "REPROBADO")
+        story.extend(
+            [
+                Spacer(1, 0.16 * cm),
+                Table(
+                    [
+                        [
+                            Paragraph(f"<b>Promedio:</b> {grade(average)}", styles["SecretaryMeta"]),
+                            Paragraph(f"<b>Total créditos:</b> {grade(sum(credits) if credits else None)}", styles["SecretaryMeta"]),
+                            Paragraph(f"<b>Reprobadas:</b> {failed}", styles["SecretaryMeta"]),
+                        ]
+                    ],
+                    colWidths=[6.1 * cm, 6.1 * cm, 6.3 * cm],
+                    style=TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, -1), soft),
+                            ("BOX", (0, 0), (-1, -1), 0.35, border),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.2, border),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                            ("TOPPADDING", (0, 0), (-1, -1), 4),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ]
+                    ),
+                ),
+                Spacer(1, 0.55 * cm),
+                Paragraph("____________________________", styles["SecretaryMetaRight"]),
+                Paragraph("Vicerrectora General Académico", styles["SecretaryMetaRight"]),
+                Paragraph("María Verónica Cevallos Calderón", styles["SecretaryMetaRight"]),
+                Spacer(1, 0.22 * cm),
+                Paragraph(
+                    "NOTA: Información basada en los soportes de los archivos y registros académicos que reposan en el Departamento de Secretaría General; cualquier alteración al texto del presente documento, como enmendadura, tachado, borrón o repisado, lo invalida.",
+                    styles["SecretaryTiny"],
+                ),
+                Paragraph("* Este documento tiene validez si tiene firma y sello del Instituto INTEC.", styles["SecretaryTiny"]),
+            ]
+        )
+
+    def draw_page(canvas: Any, _doc: Any) -> None:
+        width, height = letter
+        canvas.saveState()
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(gray)
+        canvas.drawString(0.7 * cm, 0.45 * cm, "INTEC")
+        canvas.drawRightString(width - 0.7 * cm, 0.45 * cm, f"Página {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    output = BytesIO()
+    SimpleDocTemplate(
+        output,
+        pagesize=letter,
+        rightMargin=0.62 * cm,
+        leftMargin=0.62 * cm,
+        topMargin=0.62 * cm,
+        bottomMargin=0.7 * cm,
+        title="Reporte de Notas Secretaria",
+    ).build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+    output.seek(0)
+    return output.getvalue()
+
+
 def _teacher_compliance_report_pdf(
     teacher: dict[str, Any],
     meta: dict[str, Any],
@@ -3508,6 +4375,57 @@ def teacher_course_report_pdf(
     pdf_bytes = _teacher_notes_report_pdf(teacher, meta, students)
     filename = (
         f"notas-docente-{_safe_filename(meta.get('nombre_materia') or subject_filter)}-"
+        f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}.pdf"
+    )
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/teacher/student-grade-report-pdf")
+def teacher_student_grade_report_pdf(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Query()],
+    codigo_materia: Annotated[str, Query()],
+    paralelo: Annotated[str, Query(min_length=1)],
+    cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
+) -> StreamingResponse:
+    codigo_doc = _teacher_code(current_user)
+    parallel = paralelo.strip().upper()
+    subject_filter = _clean(codigo_materia).upper()
+    period_codes = list(dict.fromkeys(codigo_periodo))
+    if not period_codes:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+    if not subject_filter:
+        raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
+
+    teacher = teacher_profile(current_user)["teacher"]
+    students = _teacher_course_students_for_report(
+        current_user=current_user,
+        period_codes=period_codes,
+        subject_filter=subject_filter,
+        parallel=parallel,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
+    )
+    meta = _teacher_course_report_meta(codigo_doc, period_codes, subject_filter, parallel, cod_anio_basica)
+    if students:
+        first = students[0]
+        meta = {
+            **meta,
+            "nombre_carrera": meta.get("nombre_carrera") or _clean(first.get("nombre_carrera")),
+            "detalle_periodo": meta.get("detalle_periodo") or _clean(first.get("detalle_periodo")),
+            "codigo_materia": meta.get("codigo_materia") or _clean(first.get("codigo_materia")),
+            "cod_materia": meta.get("cod_materia") or _clean(first.get("cod_materia")),
+            "nombre_materia": meta.get("nombre_materia") or _clean(first.get("nombre_materia")),
+            "paralelo": meta.get("paralelo") or _clean(first.get("paralelo")),
+        }
+    pdf_bytes = _student_grade_report_pdf(teacher, meta, students)
+    filename = (
+        f"reporte-notas-secretaria-{_safe_filename(meta.get('nombre_materia') or subject_filter)}-"
         f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}.pdf"
     )
     return StreamingResponse(

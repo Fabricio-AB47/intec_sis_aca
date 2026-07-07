@@ -88,7 +88,7 @@ REPORTS: dict[str, dict[str, Any]] = {
         "estado_options": [],
     },
     "practicas": {
-        "title": "Practicas profesionales",
+        "title": "Prácticas laborales",
         "description": "Practicas por estudiante, carrera, periodo, empresa, docente tutor y horas registradas.",
         "category": "Vinculacion",
         "source_tables": ["PRACTICASPROFESIONALES", "DATOS_ESTUD", "CARRERAS", "PERIODO", "EMPRESA", "DATOSDOCENTE"],
@@ -117,7 +117,7 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "notas_carrera_materia": {
         "title": "Notas por carrera y periodo",
-        "description": "Listado de notas por periodo y carrera, con materia, paralelo y estudiante.",
+        "description": "Estudiantes activos por periodo, con materias y calificaciones regular u homologacion.",
         "category": "Academico",
         "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO"],
         "filters": ["periodo", "carrera", "limite"],
@@ -201,7 +201,7 @@ FUNCTIONAL_INVENTORY = [
         "legacy_sources": ["CABECERA_MATRICULA", "PRACTICASPROFESIONALES", "EMPRESA", "Microsoft365Audit"],
         "capabilities": [
             "control documental",
-            "practicas profesionales",
+            "prácticas laborales",
             "auditoria de correos institucionales",
         ],
     },
@@ -786,10 +786,19 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
             pe.Semestre AS semestre,
             LTRIM(RTRIM(ce.paralelo)) AS paralelo,
             ce.TipoMatricula AS tipo_matricula,
+            CASE
+                WHEN UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                THEN 'HOMOLOGACION'
+                ELSE 'REGULAR'
+            END AS esquema,
             CAST(ce.codigo_estud AS varchar(30)) AS estudiante_codigo,
             de.Cedula_Est AS cedula,
             de.Apellidos_nombre AS estudiante,
             de.Estado AS estado_codigo,
+            ce.teoriaHomo AS teoria_homo,
+            ce.practicahomo AS practica_homo,
             ce.P1Tareas AS p1_tareas,
             ce.P1Proyectos AS p1_proyectos,
             ce.P1Examen AS p1_examen,
@@ -816,7 +825,7 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
         INNER JOIN dbo.PERIODO p ON ce.codigo_periodo = p.cod_periodo
         WHERE (? IS NULL OR CAST(ce.codigo_periodo AS varchar(30)) = ?)
           AND (? IS NULL OR CAST(c.Cod_AnioBasica AS varchar(30)) = ?)
-          AND (? IS NULL OR de.Estado = ?)
+          AND UPPER(LTRIM(RTRIM(ISNULL(de.Estado, '')))) = 'A'
           AND (
             ? IS NULL
             OR de.Apellidos_nombre LIKE ?
@@ -831,7 +840,6 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
     return sql, [
         params["periodo"], params["periodo"],
         params["carrera"], params["carrera"],
-        params["estado"], params["estado"],
         buscar, buscar, buscar, buscar, buscar, buscar,
     ]
 

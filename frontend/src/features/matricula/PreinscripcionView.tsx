@@ -38,6 +38,7 @@ import type {
 
 type PreinscripcionViewProps = {
   displayName: string
+  role?: string
   activeStage: PreinscriptionStage
   onStageChange: (stage: PreinscriptionStage) => void
 }
@@ -53,13 +54,14 @@ const documentFilters: Array<{ value: DocumentFilter; label: string }> = [
 ]
 
 type IntegratedPreinscriptionService = {
-  key: 'datos' | 'carnet' | 'finanzas' | 'homologacion'
+  key: 'datos' | 'carnet' | 'finanzas' | 'homologacion' | 'paso-1' | 'paso-2'
   title: string
   description: string
   requirement: string
   stage: PreinscriptionStage
   actionLabel: string
   tables: string[]
+  ready?: boolean
 }
 
 const integratedPreinscriptionServices: IntegratedPreinscriptionService[] = [
@@ -87,19 +89,29 @@ const integratedPreinscriptionServices: IntegratedPreinscriptionService[] = [
     description: 'Rubros, obligaciones, pagos, comprobantes y saldos por estudiante.',
     requirement: 'Requiere pago/convenio',
     stage: 'cabecera',
-    actionLabel: 'Pago/convenio',
+    actionLabel: 'Cabecera matricula',
     tables: ['FIN_RUBRO', 'FIN_OBLIGACION', 'FIN_PAGO', 'FIN_PAGO_APLICACION'],
   },
   {
     key: 'homologacion',
-    title: 'Homologacion',
-    description: 'Expediente documental, materias evaluadas, malla academica y resolucion.',
+    title: 'Matricula inicial',
+    description: 'Matricula de materias del primer nivel para cerrar el proceso de admisiones.',
     requirement: 'Requiere estudiante creado',
     stage: 'materias',
-    actionLabel: 'Ver materias',
-    tables: ['HOM_SOLICITUD', 'HOM_SOLICITUD_DOCUMENTO', 'HOM_SOLICITUD_MATERIA', 'HOM_RESOLUCION'],
+    actionLabel: 'Matricular primer nivel',
+    tables: ['CARRERAXESTUD', 'MATERIASXESTUD', 'MATERIA', 'PENSUM'],
   },
 ]
+
+const academicEnrollmentRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE', 'ACADEMICO', 'BIENESTAR', 'ADMISIONES'])
+
+function normalizeRoleKey(role?: string) {
+  return String(role || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
 
 function valueOrDash(value?: string | number | null): string {
   const text = String(value ?? '').trim()
@@ -151,7 +163,7 @@ function documentStatus(item: PreinscriptionItem): string {
   return `${total}/${required}`
 }
 
-export function PreinscripcionView({ displayName, activeStage, onStageChange }: Readonly<PreinscripcionViewProps>) {
+export function PreinscripcionView({ displayName, role = '', activeStage, onStageChange }: Readonly<PreinscripcionViewProps>) {
   const [catalog, setCatalog] = useState<PreinscriptionCatalogResponse | null>(null)
   const [catalogError, setCatalogError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -169,8 +181,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
     valor: '0',
     inscrip_valor: '0',
     matri_valor: '0',
+    costo_semestre: '0',
+    semestres_convenio: '1',
     control_matricula: '1',
     num_cuotas: '1',
+    tipo_beca: '',
     porcentaje_beca: '0',
     descuento: '0',
     num_pago: '1',
@@ -259,6 +274,9 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
 
   const rows = data?.items || []
   const totals = data?.totals || {}
+  const normalizedRole = normalizeRoleKey(role)
+  const isAdmissionsRole = normalizedRole === 'ADMISIONES'
+  const canManageAcademicEnrollment = academicEnrollmentRoles.has(normalizedRole)
   const userRecordCount = totals.usuario_actual ?? totals.mis_registros ?? data?.total ?? 0
   const hasCabecera = Boolean(selectedItem?.en_cabecera_matricula)
   const codigoDocumentacion = selectedItem?.cabecera?.numcodigo || selectedItem?.cabecera?.num_matricula || ''
@@ -270,7 +288,9 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
   const selectedEnrollmentPeriod = selectedItem?.codperiodo || selectedItem?.cabecera?.codigo_periodo || ''
   const integratedServices = useMemo(
     () =>
-      integratedPreinscriptionServices.map((service) => {
+      integratedPreinscriptionServices
+        .filter((service) => service.stage !== 'materias' || canManageAcademicEnrollment)
+        .map((service) => {
         const ready =
           service.key === 'finanzas'
             ? hasCabecera
@@ -279,9 +299,50 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               : Boolean(selectedStudentCode)
         return { ...service, ready }
       }),
-    [hasCabecera, photoStatus?.estado, selectedStudentCode],
+    [canManageAcademicEnrollment, hasCabecera, photoStatus?.estado, selectedStudentCode],
   )
-  const integratedReadyCount = integratedServices.filter((service) => service.ready).length
+  const admissionProcessServices = useMemo<IntegratedPreinscriptionService[]>(
+    () => [
+      {
+        key: 'paso-1',
+        title: 'Paso 1: Inscribir',
+        description: selectedItem
+          ? 'Estudiante seleccionado para continuar con la matricula.'
+          : 'Registra al estudiante o seleccionalo desde inscritos.',
+        requirement: selectedItem ? 'Estudiante seleccionado' : 'Requiere registrar o seleccionar estudiante',
+        stage: selectedItem ? 'inscritos' : 'registro',
+        actionLabel: selectedItem ? 'Ver inscritos' : 'Registrar inscripcion',
+        tables: ['PREINSCRIPCION'],
+        ready: Boolean(selectedItem),
+      },
+      {
+        key: 'paso-2',
+        title: 'Paso 2: Matricular, generar convenio y subir documentacion',
+        description: 'Genera la cabecera de matricula, emite el convenio de pago y carga cedula, titulo, deposito, convenio y foto de carnet.',
+        requirement: hasCabecera ? 'Matricula/convenio registrados' : 'Requiere estudiante inscrito del paso 1',
+        stage: 'documentos',
+        actionLabel: 'Matricular y documentar',
+        tables: ['CABECERA_MATRICULA', 'DATOS_FACTURA', 'PREINSCRIPCION_DOCUMENTOS', 'ESTUDIANTE_IMAGEN'],
+        ready: selectedItem
+          ? (selectedItem.documentos?.total_cargados ?? 0) >= (selectedItem.documentos?.total_requeridos ?? 3)
+          : false,
+      },
+    ],
+    [hasCabecera, selectedItem],
+  )
+  const displayedIntegratedServices = isAdmissionsRole ? admissionProcessServices : integratedServices
+  const integratedReadyCount = displayedIntegratedServices.filter((service) => service.ready).length
+
+  useEffect(() => {
+    if (isAdmissionsRole && activeStage === 'seguimiento') {
+      onStageChange('inscritos')
+      return
+    }
+    if (activeStage === 'materias' && !canManageAcademicEnrollment) {
+      onStageChange('cabecera')
+    }
+  }, [activeStage, canManageAcademicEnrollment, isAdmissionsRole, onStageChange])
+
   const periodName =
     catalog?.periodos?.find((period) => period.codigo_periodo === selectedPeriod)?.detalle_periodo || ''
   const careerName =
@@ -301,6 +362,32 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
     createCedulaClean.length === 10 &&
     cedulaValidation?.cedula === createCedulaClean &&
     cedulaValidation.exists
+  const paymentCareerCode = activeStage === 'registro' ? createValues.codcarrera || '' : selectedEnrollmentCareer || createValues.codcarrera || ''
+  const paymentModalityCode = activeStage === 'registro'
+    ? createModalidadCode
+    : String(selectedItem?.codmodalida || createModalidadCode || '')
+  const paymentCareer = useMemo(
+    () => (catalog?.carreras || []).find((career) => career.cod_anio_basica === paymentCareerCode),
+    [catalog?.carreras, paymentCareerCode],
+  )
+  const paymentIsVirtual = useMemo(() => {
+    const label = (catalog?.modalidades || []).find((option) => option.value === paymentModalityCode)?.label || ''
+    const normalized = `${paymentModalityCode} ${label}`.toLowerCase()
+    return normalized.includes('linea') || normalized.includes('línea') || normalized.includes('virtual') || normalized.includes('online')
+  }, [catalog?.modalidades, paymentModalityCode])
+
+  function selectedSemesterCount(value: string) {
+    if (value === 'TODOS') return Math.min(Math.max(paymentCareer?.semestres_disponibles || 4, 1), 4)
+    return Math.min(Math.max(Math.round(toNumber(value, 1)), 1), 4)
+  }
+
+  function pensumCostForSemesters(count: number) {
+    const costs = paymentCareer?.costos_semestres || []
+    if (!costs.length) return 0
+    return costs
+      .filter((item) => (item.semestre || 0) >= 1 && (item.semestre || 0) <= count)
+      .reduce((total, item) => total + Number(paymentIsVirtual ? item.virtual || item.presencial || 0 : item.presencial || 0), 0)
+  }
 
   const selectedDocuments = useMemo(
     (): Array<{ key: keyof PreinscriptionDocumentsPayload; label: string; value: string }> => [
@@ -312,15 +399,22 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
     [documents],
   )
   const paymentPlanPreview = useMemo(() => {
-    const total = Math.max(toNumber(cabeceraValues.valor), 0)
+    const selectedSemesters = selectedSemesterCount(cabeceraValues.semestres_convenio)
+    const pensumTotal = pensumCostForSemesters(selectedSemesters)
+    const enteredSemesterCost = Math.max(toNumber(cabeceraValues.costo_semestre), 0)
+    const composedSemesterCost = Math.max(toNumber(cabeceraValues.inscrip_valor) + toNumber(cabeceraValues.matri_valor), 0)
+    const fallbackSemesterCost = enteredSemesterCost > 0 ? enteredSemesterCost : composedSemesterCost > 0 ? composedSemesterCost : Math.max(toNumber(cabeceraValues.valor), 0)
+    const total = Number((pensumTotal > 0 ? pensumTotal : fallbackSemesterCost * selectedSemesters).toFixed(2))
+    const baseSemesterCost = Number((selectedSemesters > 0 ? total / selectedSemesters : fallbackSemesterCost).toFixed(2))
     const porcentajeBeca = Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100)
     const beca = Number((total * porcentajeBeca / 100).toFixed(2))
     const descuento = Math.max(toNumber(cabeceraValues.descuento), 0)
     const saldo = Math.max(Number((total - beca - descuento).toFixed(2)), 0)
     const cuotas = Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1)
     const cuota = Number((saldo / cuotas).toFixed(2))
-    return { total, porcentajeBeca, beca, descuento, saldo, cuotas, cuota }
-  }, [cabeceraValues])
+    return { total, porcentajeBeca, beca, descuento, saldo, cuotas, cuota, selectedSemesters, baseSemesterCost }
+  }, [cabeceraValues, paymentCareer, paymentIsVirtual])
+  const scholarshipOptions = catalog?.becas || []
   const visibleRows = useMemo(() => {
     const needle = tableFilter.trim().toLowerCase()
     if (!needle) return rows
@@ -411,7 +505,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         return payload.items?.find((item) => item.num === current.num) || payload.items?.[0] || null
       })
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Error consultando preinscripciones')
+      setError(requestError instanceof Error ? requestError.message : 'Error consultando inscripciones')
       setData(null)
       setSelectedItem(null)
     } finally {
@@ -424,14 +518,14 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       setEnrollmentPensum([])
       setEnrollmentDetail(null)
       setEnrollmentSubjectCodes([])
-      setEnrollmentError('Selecciona un aspirante antes de matricular materias.')
+      setEnrollmentError('Selecciona un estudiante antes de matricular el primer nivel.')
       return
     }
     if (!selectedEnrollmentCareer || !selectedEnrollmentPeriod) {
       setEnrollmentPensum([])
       setEnrollmentDetail(null)
       setEnrollmentSubjectCodes([])
-      setEnrollmentError('La preinscripcion seleccionada no tiene carrera o periodo definido.')
+      setEnrollmentError('La inscripción seleccionada no tiene carrera o periodo definido.')
       return
     }
 
@@ -519,8 +613,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       valor: String(selectedItem?.cabecera?.valor ?? 0),
       inscrip_valor: String(selectedItem?.cabecera?.inscrip_valor ?? 0),
       matri_valor: String(selectedItem?.cabecera?.matri_valor ?? 0),
+      costo_semestre: String(selectedItem?.cabecera?.costo_semestre ?? selectedItem?.cabecera?.valor ?? 0),
+      semestres_convenio: String(selectedItem?.cabecera?.semestres_convenio ?? 1),
       control_matricula: String(selectedItem?.cabecera?.control_matricula ?? 1),
       num_cuotas: String(savedCuotas),
+      tipo_beca: selectedItem?.cabecera?.tipo_beca || '',
       porcentaje_beca: String(savedPorcentajeBeca),
       descuento: String(selectedItem?.cabecera?.descuento ?? 0),
       num_pago: String(selectedItem?.cabecera?.num_pago ?? 1),
@@ -619,7 +716,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
 
   async function revertSelectedProcess(item: PreinscriptionItem | null = selectedItem) {
     if (!item?.num) {
-      setRevertError('Selecciona una preinscripcion para revertir.')
+      setRevertError('Selecciona una inscripción para revertir.')
       return
     }
     const studentLabel = item.apellidos_nombre || item.cedula || item.num
@@ -653,7 +750,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
 
   async function registerCabecera() {
     if (!selectedItem?.num) {
-      setCabeceraError('Selecciona una preinscripcion.')
+      setCabeceraError('Selecciona una inscripción.')
       return
     }
     setCabeceraLoading(true)
@@ -662,11 +759,14 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
     try {
       const payload: PreinscriptionCabeceraPayload = {
         fecha_pago: cabeceraValues.fecha_pago || null,
-        valor: toNumber(cabeceraValues.valor),
+        valor: paymentPlanPreview.total,
         inscrip_valor: toNumber(cabeceraValues.inscrip_valor),
         matri_valor: toNumber(cabeceraValues.matri_valor),
+        costo_semestre: paymentPlanPreview.baseSemesterCost,
+        semestres_convenio: cabeceraValues.semestres_convenio,
         control_matricula: toNumber(cabeceraValues.control_matricula, 1),
         num_cuotas: Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1),
+        tipo_beca: cabeceraValues.tipo_beca || '',
         porcentaje_beca: Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100),
         descuento: toNumber(cabeceraValues.descuento),
         num_pago: Math.max(Math.round(toNumber(cabeceraValues.num_pago, 1)), 1),
@@ -679,18 +779,72 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         replaceSelectedItem(response.item)
       }
       setCabeceraMessage(
-        `${response.message || 'Pago y convenio registrados.'} Codigo documentacion ${response.codigo_documentacion || response.num_matricula || '-'}.`
+        `${response.message || 'Matricula y convenio registrados.'} Codigo documentacion ${response.codigo_documentacion || response.num_matricula || '-'}.`
       )
     } catch (requestError) {
-      setCabeceraError(requestError instanceof Error ? requestError.message : 'Error registrando pago y convenio')
+      setCabeceraError(requestError instanceof Error ? requestError.message : 'Error registrando matricula y convenio de pago')
     } finally {
       setCabeceraLoading(false)
     }
   }
 
+  function applyScholarshipSelection(value: string) {
+    const selected = scholarshipOptions.find((option) => option.value === value)
+    setCabeceraValues((current) => ({
+      ...current,
+      tipo_beca: value,
+      porcentaje_beca: selected?.amount !== null && selected?.amount !== undefined ? String(selected.amount) : value ? current.porcentaje_beca : '0',
+    }))
+  }
+
+  function renderScholarshipSelector() {
+    return (
+      <label>
+        <span>Tipo de beca</span>
+        <select value={cabeceraValues.tipo_beca} onChange={(event) => applyScholarshipSelection(event.target.value)}>
+          <option value="">Sin beca</option>
+          {scholarshipOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}{option.detail ? ` (${option.detail})` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
+  function renderPaymentScopeSelector() {
+    return (
+      <>
+        <label>
+          <span>Semestres del convenio</span>
+          <select
+            value={cabeceraValues.semestres_convenio}
+            onChange={(event) => setCabeceraValues((current) => ({ ...current, semestres_convenio: event.target.value }))}
+          >
+            <option value="1">1 semestre</option>
+            <option value="2">2 semestres</option>
+            <option value="3">3 semestres</option>
+            <option value="TODOS">Todos los semestres</option>
+          </select>
+        </label>
+        <label>
+          <span>Costo desde pensum</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={paymentPlanPreview.baseSemesterCost}
+            readOnly
+          />
+        </label>
+      </>
+    )
+  }
+
   async function saveFollowup() {
     if (!selectedItem?.num) {
-      setFollowupError('Selecciona una preinscripcion.')
+      setFollowupError('Selecciona una inscripción.')
       return
     }
     setFollowupLoading(true)
@@ -711,11 +865,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
 
   async function saveDocuments() {
     if (!selectedItem?.num) {
-      setSaveError('Selecciona una preinscripcion con identificador num.')
+      setSaveError('Selecciona una inscripción con identificador num.')
       return
     }
     if (!hasCabecera) {
-      setSaveError('Primero registra el pago y convenio para generar el codigo de documentacion.')
+      setSaveError('Primero registra la cabecera de matricula para generar el codigo de documentacion.')
       return
     }
     setSaveLoading(true)
@@ -727,7 +881,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       replaceSelectedItem(nextItem)
       setSaveMessage(
         `${response.message || 'Documentos actualizados.'} ${
-          response.en_cabecera_matricula ? 'Pago/convenio vinculado.' : 'Sin pago/convenio vinculado.'
+          response.en_cabecera_matricula ? 'Cabecera de matricula vinculada.' : 'Sin cabecera de matricula vinculada.'
         }`
       )
     } catch (requestError) {
@@ -740,7 +894,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
   async function uploadDocument(field: string, file?: File | null) {
     if (!file || !selectedItem?.num) return
     if (!hasCabecera) {
-      setSaveError('Primero registra el pago y convenio para generar el codigo de documentacion.')
+      setSaveError('Primero registra la matricula/cabecera y genera el convenio de pago para habilitar documentacion.')
       return
     }
     setUploadingField(field)
@@ -838,15 +992,15 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
     const allowedCodes = new Set(enrollmentPensum.map((subject) => subject.codigo_materia))
     const validSubjectCodes = enrollmentSubjectCodes.filter((code) => allowedCodes.has(code))
     if (!selectedItem?.num) {
-      setEnrollmentError('Selecciona un aspirante para continuar con la matricula de materias.')
+      setEnrollmentError('Selecciona un estudiante para continuar con la matrícula del primer nivel.')
       return null
     }
     if (!selectedStudentCode || !selectedEnrollmentCareer || !selectedEnrollmentPeriod) {
-      setEnrollmentError('Faltan codigo de estudiante, carrera o periodo para matricular materias.')
+      setEnrollmentError('Faltan código de estudiante, carrera o periodo para matricular el primer nivel.')
       return null
     }
     if (validSubjectCodes.length === 0) {
-      setEnrollmentError('Selecciona al menos una materia de primer semestre para matricular.')
+      setEnrollmentError('Selecciona al menos una materia de primer nivel para matricular.')
       return null
     }
 
@@ -897,7 +1051,6 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         try {
           const nextFollowup = {
             ...followupValues,
-            prematricula: true,
             proceso_finalizado: true,
             control_ingreso: true,
           }
@@ -906,7 +1059,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           if (followupResponse.item) {
             replaceSelectedItem(followupResponse.item)
           }
-          processMessage = ' Proceso marcado como prematriculado y finalizado.'
+          processMessage = ' Proceso finalizado con matrícula inicial registrada.'
         } catch (followupError) {
           processMessage = ` No se pudo actualizar el estado del proceso: ${
             followupError instanceof Error ? followupError.message : 'error desconocido'
@@ -968,11 +1121,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       return
     }
     if (!createValues.correo?.trim()) {
-      setCreateError('Ingresa el correo del aspirante.')
+      setCreateError('Ingresa el correo del estudiante.')
       return
     }
     if (!createValues.telefono?.trim()) {
-      setCreateError('Ingresa el telefono del aspirante.')
+      setCreateError('Ingresa el telefono del estudiante.')
       return
     }
     if (!createValues.codprov) {
@@ -980,7 +1133,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       return
     }
     if (!createValues.codperiodo || !createValues.codcarrera) {
-      setCreateError('Selecciona periodo y carrera para registrar la preinscripcion.')
+      setCreateError('Selecciona periodo y carrera para registrar la inscripción.')
       return
     }
     if (!createValues.codmodalida || !createValues.codjornada) {
@@ -1022,18 +1175,22 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         correo: '',
         telefono: '',
       }))
-      onStageChange('cabecera')
+      onStageChange('documentos')
       setCreateMessage(
-        `${response.message || 'Preinscripcion registrada.'} Continua con el primer pago y convenio.`
+        `${response.message || 'Inscripción registrada.'} Continua con matricula, convenio de pago y documentacion.`
       )
     } catch (requestError) {
-      setCreateError(requestError instanceof Error ? requestError.message : 'Error registrando preinscripcion')
+      setCreateError(requestError instanceof Error ? requestError.message : 'Error registrando inscripcion')
     } finally {
       setCreateLoading(false)
     }
   }
 
   async function openPreinscriptionStage(nextStage: PreinscriptionStage) {
+    if (nextStage === 'materias' && !canManageAcademicEnrollment) {
+      onStageChange('cabecera')
+      return
+    }
     onStageChange(nextStage)
     if (nextStage !== 'registro' && !data) {
       await loadRows()
@@ -1134,7 +1291,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       <header className="student-hero">
         <div>
           <p className="eyebrow">Admisiones</p>
-          <h1>Inscripcion y prematricula</h1>
+          <h1>Inscripcion y matricula</h1>
           <div className="student-user-pill preinscripcion-advisor-pill">
             <span>Asesor</span>
             <strong>{displayName || 'Usuario actual'}</strong>
@@ -1149,11 +1306,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       {selectedItem ? (
         <section className="preinscripcion-current">
           <div>
-            <span>Aspirante seleccionado</span>
+            <span>Estudiante seleccionado</span>
             <strong>{selectedItem.apellidos_nombre || selectedItem.cedula || 'Sin nombre'}</strong>
           </div>
           <div>
-            <span>Pago/convenio</span>
+            <span>Cabecera matricula</span>
             <strong>{hasCabecera ? 'Vinculada' : 'Pendiente'}</strong>
           </div>
           <div>
@@ -1163,14 +1320,16 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           <button type="button" className="ghost-button" onClick={() => setStudentScreenOpen(true)}>
             Ficha completa
           </button>
-          <button
-            type="button"
-            className="danger-action"
-            onClick={() => void revertSelectedProcess()}
-            disabled={revertLoading}
-          >
-            {revertLoading ? 'Revirtiendo...' : 'Revertir proceso'}
-          </button>
+          {!isAdmissionsRole ? (
+            <button
+              type="button"
+              className="danger-action"
+              onClick={() => void revertSelectedProcess()}
+              disabled={revertLoading}
+            >
+              {revertLoading ? 'Revirtiendo...' : 'Revertir proceso'}
+            </button>
+          ) : null}
         </section>
       ) : null}
       {revertError ? <p className="form-error">{revertError}</p> : null}
@@ -1178,17 +1337,17 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
       <section className="preinscripcion-integrated">
         <div className="preinscripcion-integrated__head">
           <div>
-            <span>Sistema academico integrado</span>
-            <h2>Continuidad despues de la preinscripcion</h2>
+            <span>Proceso regular</span>
+            <h2>{isAdmissionsRole ? 'Paso 1 inscribir, paso 2 matricular y documentar' : 'Inscripcion, cabecera, documentos y primer nivel'}</h2>
           </div>
           <strong>
-            {integratedReadyCount} de {integratedServices.length} modulo(s) disponibles
+            {integratedReadyCount} de {displayedIntegratedServices.length} {isAdmissionsRole ? 'paso(s) completado(s)' : 'modulo(s) disponibles'}
           </strong>
         </div>
         <div className="preinscripcion-integrated__summary">
           <div>
             <span>Estudiante</span>
-            <strong>{selectedStudentName || 'Seleccione un aspirante'}</strong>
+            <strong>{selectedStudentName || 'Seleccione un estudiante'}</strong>
           </div>
           <div>
             <span>Cedula</span>
@@ -1199,12 +1358,12 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             <strong>{selectedItem ? documentStatus(selectedItem) : '-'}</strong>
           </div>
           <div>
-            <span>Pago/convenio</span>
+            <span>Cabecera matricula</span>
             <strong>{hasCabecera ? 'Vinculado' : 'Pendiente'}</strong>
           </div>
         </div>
         <div className="preinscripcion-integrated__grid">
-          {integratedServices.map((service) => (
+          {displayedIntegratedServices.map((service) => (
             <article
               key={service.key}
               className={`preinscripcion-integrated__card ${
@@ -1240,7 +1399,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           <div className="section-title">
             <div>
               <span>Registro</span>
-              <h2>Paso 1: registrar estudiante</h2>
+              <h2>Paso 1: inscribir estudiante</h2>
             </div>
             <button type="button" className="ghost-button" onClick={() => void toggleInscritosList()} disabled={loading}>
               Ver inscritos
@@ -1249,7 +1408,28 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
 
           <div className="preinscripcion-form-intro">
             <strong>Formulario de inscripcion</strong>
-            <span>Registre la inscripcion ingresando todos los datos del formulario.</span>
+            <span>Registre la inscripcion; al guardar continua con matricula, convenio de pago y documentacion.</span>
+          </div>
+
+          <div className="preinscripcion-beca-panel">
+            <div>
+              <span>Convenio y beca</span>
+              <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
+              <small>Selecciona el alcance del convenio y la beca cargada desde la tabla Becas.</small>
+            </div>
+            {renderPaymentScopeSelector()}
+            {renderScholarshipSelector()}
+            <label>
+              <span>% beca</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={cabeceraValues.porcentaje_beca}
+                onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
+              />
+            </label>
           </div>
 
           <div className="matricula-acad-form preinscripcion-register-form">
@@ -1403,7 +1583,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           <div className="section-title">
             <div>
               <span>Filtros</span>
-              <h2>Paso 1: estudiantes preinscritos</h2>
+              <h2>Estudiantes inscritos</h2>
             </div>
             <button type="button" className="ghost-button" onClick={() => void loadRows()} disabled={loading}>
               {loading ? 'Consultando...' : 'Consultar'}
@@ -1474,7 +1654,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               <strong>{totals.total ?? 0}</strong>
             </div>
             <div>
-              <span>Con pago</span>
+              <span>Con cabecera</span>
               <strong>{totals.con_cabecera ?? 0}</strong>
             </div>
             <div>
@@ -1494,7 +1674,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           <div className="section-title">
             <div>
               <span>Seguimiento</span>
-              <h2>Contacto y avance del aspirante</h2>
+              <h2>Contacto y avance del estudiante</h2>
             </div>
           </div>
           <div className="preinscripcion-followup-search preinscripcion-followup-search--selector">
@@ -1519,11 +1699,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un aspirante en la pestaña Preinscritos antes de registrar seguimiento.</p>
+            <p className="form-error">Selecciona un estudiante en Inscritos antes de registrar seguimiento.</p>
           ) : null}
           <div className="preinscripcion-detail preinscripcion-detail--wide">
             <div>
-              <span>Aspirante</span>
+              <span>Estudiante</span>
               <strong>{valueOrDash(selectedItem?.apellidos_nombre)}</strong>
             </div>
             <div>
@@ -1669,7 +1849,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               <span>Observacion de contacto</span>
               <textarea
                 value={followupValues.observacion_contacto}
-                placeholder="Resultado del contacto con el aspirante"
+                placeholder="Resultado del contacto con el estudiante"
                 onChange={(event) => setFollowupValues((current) => ({ ...current, observacion_contacto: event.target.value }))}
               />
             </label>
@@ -1684,7 +1864,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           </div>
           <div className="preinscripcion-followup-checks">
             {[
-              ['prematricula', 'Prematricula'],
+              ['prematricula', 'Matricula inicial'],
               ['asignado', 'Asignado'],
               ['correo_enviado', 'Correo enviado'],
               ['control_ingreso', 'Control ingreso'],
@@ -1722,12 +1902,12 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         <article className="student-card matricula-panel preinscripcion-action-card">
           <div className="section-title">
             <div>
-              <span>Pago y convenio</span>
-              <h2>{hasCabecera ? 'Pago vinculado' : 'Primer paso de inscripcion'}</h2>
+              <span>Cabecera matricula</span>
+              <h2>{hasCabecera ? 'Cabecera vinculada' : 'Primer paso de matricula'}</h2>
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona o registra un aspirante antes de guardar el pago y convenio.</p>
+            <p className="form-error">Selecciona o registra un estudiante antes de guardar la cabecera de matricula.</p>
           ) : null}
           <div className="matricula-acad-preview">
             <div>
@@ -1752,7 +1932,15 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             </div>
             <div>
               <span>Total a pagar</span>
-              <strong>{valueOrDash(selectedItem?.cabecera?.valor)}</strong>
+              <strong>{formatMoney(paymentPlanPreview.total)}</strong>
+            </div>
+            <div>
+              <span>Alcance</span>
+              <strong>{paymentPlanPreview.selectedSemesters} semestre(s)</strong>
+            </div>
+            <div>
+              <span>Costo semestre</span>
+              <strong>{formatMoney(paymentPlanPreview.baseSemesterCost)}</strong>
             </div>
             <div>
               <span>Beca</span>
@@ -1827,13 +2015,13 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               />
             </label>
             <label>
-              <span>Valor total</span>
+              <span>Valor total calculado</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={cabeceraValues.valor}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, valor: event.target.value }))}
+                value={paymentPlanPreview.total}
+                readOnly
               />
             </label>
             <label>
@@ -1850,6 +2038,8 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                 onChange={(event) => setCabeceraValues((current) => ({ ...current, banco: event.target.value }))}
               />
             </label>
+            {renderPaymentScopeSelector()}
+            {renderScholarshipSelector()}
             <label>
               <span>% beca</span>
               <input
@@ -1899,24 +2089,24 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             onClick={registerCabecera}
             disabled={cabeceraLoading || !selectedItem?.num}
           >
-            {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar pago y convenio' : 'Guardar pago y generar convenio'}
+            {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar matricula/convenio' : 'Matricular y generar convenio'}
           </button>
         </article>
         ) : null}
 
-        {activeStage === 'materias' ? (
+        {activeStage === 'materias' && canManageAcademicEnrollment ? (
         <article className="student-card matricula-panel preinscripcion-action-card">
           <div className="section-title">
             <div>
               <span>Matriculacion</span>
-              <h2>Matricula inicial de primer semestre</h2>
+              <h2>Matricula inicial de primer nivel</h2>
             </div>
             <button type="button" className="ghost-button" onClick={() => void loadEnrollmentData()} disabled={enrollmentLoading || !selectedItem?.num}>
-              {enrollmentLoading ? 'Cargando...' : 'Actualizar materias'}
+              {enrollmentLoading ? 'Cargando...' : 'Actualizar primer nivel'}
             </button>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un aspirante en la pestaña Preinscritos antes de matricular materias.</p>
+            <p className="form-error">Selecciona un estudiante en Inscritos antes de matricular el primer nivel.</p>
           ) : null}
           <div className="preinscripcion-detail preinscripcion-detail--wide">
             <div>
@@ -1937,11 +2127,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             </div>
           </div>
           {hasCabecera ? null : (
-            <p className="form-error">Primero registra el pago y convenio si deseas conservar los valores y codigo de documentacion.</p>
+            <p className="form-error">Primero registra la matricula/cabecera y genera el convenio para conservar valores y codigo de documentacion.</p>
           )}
           {enrollmentError ? <p className="form-error">{enrollmentError}</p> : null}
           {enrollmentMessage ? <p className="form-success">{enrollmentMessage}</p> : null}
-          <p className="form-success">Admisiones solo permite matricular materias del primer semestre para este proceso inicial.</p>
+          <p className="form-success">Admisiones solo permite matricular materias del primer nivel para este proceso inicial.</p>
 
           <div className="matricula-acad-form preinscripcion-enrollment-form">
             <label>
@@ -1981,7 +2171,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               }}
               disabled={enrollmentPensum.length === 0}
             >
-              Seleccionar primer semestre
+              Seleccionar primer nivel
             </button>
             <button type="button" className="ghost-button" onClick={() => setEnrollmentSubjectCodes([])} disabled={enrollmentSubjectCodes.length === 0}>
               Limpiar
@@ -2050,7 +2240,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               checked={enrollmentFinalizeProcess}
               onChange={(event) => setEnrollmentFinalizeProcess(event.target.checked)}
             />
-            <span>Marcar como prematriculado y proceso finalizado al guardar</span>
+            <span>Finalizar proceso al guardar la matricula inicial</span>
           </label>
 
           <div className="matricula-acad-actions">
@@ -2068,7 +2258,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               onClick={() => void saveEnrollmentSubjects()}
               disabled={enrollmentSaveLoading || !selectedItem?.num || enrollmentSubjectCodes.length === 0}
             >
-              {enrollmentSaveLoading ? 'Guardando...' : 'Guardar materias'}
+              {enrollmentSaveLoading ? 'Guardando...' : 'Guardar matricula inicial'}
             </button>
           </div>
 
@@ -2102,7 +2292,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
           <div className="section-title">
             <div>
               <span>Listado</span>
-              <h2>Preinscripciones</h2>
+              <h2>Inscripciones</h2>
             </div>
           <div className="preinscripcion-title-actions">
               {selectedItem ? (
@@ -2124,9 +2314,9 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             </label>
             <div>
               <strong>{visibleRows.length}</strong>
-              <span>aspirante(s) visibles</span>
+              <span>estudiante(s) visibles</span>
             </div>
-            <small>Selecciona una fila y continua con Pago/convenio, Documentos, Materias o Seguimiento</small>
+            <small>Selecciona una fila y continua con Cabecera matricula, Documentos o Matricular primer nivel</small>
           </div>
           <div className="matricula-table-wrap excel-table-wrap">
             <table className="matricula-table">
@@ -2137,7 +2327,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                   <th>Estudiante</th>
                   <th>Carrera</th>
                   <th>Periodo</th>
-                  <th>Pago</th>
+                  <th>Cabecera</th>
                   <th>Codigo doc.</th>
                   <th>Docs</th>
                   <th>Ingreso</th>
@@ -2178,17 +2368,19 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                       <td>{valueOrDash(item.fecha_ingreso)}</td>
                       <td>
                         <div className="preinscripcion-row-actions">
-                          <button
-                            type="button"
-                            className="ghost-button preinscripcion-row-button"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              selectStudent(item)
-                              onStageChange('seguimiento')
-                            }}
-                          >
-                            Seguimiento
-                          </button>
+                          {!isAdmissionsRole ? (
+                            <button
+                              type="button"
+                              className="ghost-button preinscripcion-row-button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                selectStudent(item)
+                                onStageChange('seguimiento')
+                              }}
+                            >
+                              Seguimiento
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="ghost-button preinscripcion-row-button"
@@ -2198,7 +2390,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                               onStageChange('cabecera')
                             }}
                           >
-                            Pago
+                            Cabecera
                           </button>
                           <button
                             type="button"
@@ -2209,7 +2401,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                               onStageChange('materias')
                             }}
                           >
-                            Materias
+                            Primer nivel
                           </button>
                           <button
                             type="button"
@@ -2220,26 +2412,28 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                               onStageChange('documentos')
                             }}
                           >
-                            Docs
+                            Documentos
                           </button>
-                          <button
-                            type="button"
-                            className="danger-action preinscripcion-row-button"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              void revertSelectedProcess(item)
-                            }}
-                            disabled={revertLoading}
-                          >
-                            Revertir
-                          </button>
+                          {!isAdmissionsRole ? (
+                            <button
+                              type="button"
+                              className="danger-action preinscripcion-row-button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void revertSelectedProcess(item)
+                              }}
+                              disabled={revertLoading}
+                            >
+                              Revertir
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
                   )
                 }) : (
                   <tr>
-                    <td colSpan={10}>{loading ? 'Consultando...' : 'Sin preinscripciones para mostrar.'}</td>
+                    <td colSpan={10}>{loading ? 'Consultando...' : 'Sin inscripciones para mostrar.'}</td>
                   </tr>
                 )}
               </tbody>
@@ -2252,12 +2446,12 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
         <article className="student-card matricula-panel preinscripcion-action-card">
           <div className="section-title">
             <div>
-              <span>Documentos</span>
-              <h2>{hasCabecera ? `Codigo ${codigoDocumentacion}` : 'Registra pago/convenio'}</h2>
+              <span>Paso 2</span>
+              <h2>{hasCabecera ? `Matricula y convenio ${codigoDocumentacion}` : 'Matricular y generar convenio de pago'}</h2>
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un aspirante en la pestaña Preinscritos antes de cargar documentos.</p>
+            <p className="form-error">Selecciona un estudiante en Inscritos antes de cargar documentos.</p>
           ) : null}
           <div className="preinscripcion-detail">
             <div>
@@ -2269,24 +2463,176 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               <strong>{valueOrDash(selectedItem?.correo)}</strong>
             </div>
             <div>
-              <span>Prematricula</span>
-              <strong>{boolLabel(selectedItem?.prematricula)}</strong>
-            </div>
-            <div>
               <span>Proceso finalizado</span>
               <strong>{boolLabel(selectedItem?.proceso_finalizado)}</strong>
             </div>
           </div>
           {!hasCabecera ? (
-            <p className="form-error">Primero registra el pago y convenio para obtener el codigo de documentacion.</p>
+            <p className="form-error">Primero registra la matricula/cabecera para generar el convenio de pago y habilitar la documentacion.</p>
           ) : null}
+
+          <div className="preinscripcion-step-stack">
+            <section className="preinscripcion-step-part">
+              <div className="preinscripcion-step-part__head">
+                <div>
+                  <span>Parte 2.1</span>
+                  <strong>Elaborar convenio de pago</strong>
+                </div>
+                <em>{hasCabecera ? 'Convenio generado' : 'Pendiente de generar'}</em>
+              </div>
+              <div className="matricula-acad-preview">
+                <div>
+                  <span>Total convenio</span>
+                  <strong>{formatMoney(paymentPlanPreview.total)}</strong>
+                </div>
+                <div>
+                  <span>Alcance</span>
+                  <strong>{paymentPlanPreview.selectedSemesters} semestre(s)</strong>
+                </div>
+                <div>
+                  <span>Saldo convenio</span>
+                  <strong>{formatMoney(paymentPlanPreview.saldo)}</strong>
+                </div>
+                <div>
+                  <span>Cuotas</span>
+                  <strong>{paymentPlanPreview.cuotas} x {formatMoney(paymentPlanPreview.cuota)}</strong>
+                </div>
+                <div>
+                  <span>Beca</span>
+                  <strong>{formatMoney(paymentPlanPreview.beca)} ({formatMoney(paymentPlanPreview.porcentajeBeca)}%)</strong>
+                </div>
+              </div>
+              <div className="preinscripcion-cabecera-form">
+                <label>
+                  <span>No. pago</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={cabeceraValues.num_pago}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, num_pago: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Fecha de pago</span>
+                  <input
+                    type="date"
+                    value={cabeceraValues.fecha_pago}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, fecha_pago: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Cuotas convenio</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={cabeceraValues.num_cuotas}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, num_cuotas: event.target.value }))}
+                  />
+                </label>
+                {renderPaymentScopeSelector()}
+                {renderScholarshipSelector()}
+                <label>
+                  <span>% beca</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={cabeceraValues.porcentaje_beca}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Inscripcion</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={cabeceraValues.inscrip_valor}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, inscrip_valor: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Matricula</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={cabeceraValues.matri_valor}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, matri_valor: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>Valor total calculado</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={paymentPlanPreview.total}
+                    readOnly
+                  />
+                </label>
+                <label>
+                  <span>Descuento</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={cabeceraValues.descuento}
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, descuento: event.target.value }))}
+                  />
+                </label>
+                <label className="preinscripcion-followup-form__wide">
+                  <span>Detalle para el convenio</span>
+                  <textarea
+                    value={cabeceraValues.detalle_pago}
+                    placeholder="Ej. Convenio de pago por aranceles"
+                    onChange={(event) => setCabeceraValues((current) => ({ ...current, detalle_pago: event.target.value }))}
+                  />
+                </label>
+              </div>
+              {cabeceraError ? <p className="form-error">{cabeceraError}</p> : null}
+              {cabeceraMessage ? <p className="form-success">{cabeceraMessage}</p> : null}
+              <button
+                type="button"
+                className="primary-action"
+                onClick={registerCabecera}
+                disabled={cabeceraLoading || !selectedItem?.num}
+              >
+                {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio PDF' : 'Crear matricula y generar convenio PDF'}
+              </button>
+            </section>
+
+            <section className="preinscripcion-step-part">
+              <div className="preinscripcion-step-part__head">
+                <div>
+                  <span>Parte 2.2</span>
+                  <strong>Enviar convenio al estudiante para firma</strong>
+                </div>
+                <em>{convenioUrl ? 'Listo para enviar' : 'Esperando PDF'}</em>
+              </div>
+              <p>
+                Descarga el convenio generado y envialo al estudiante para que lo firme y confirme el compromiso de pago
+                de las cuotas registradas.
+              </p>
+              {convenioUrl ? (
+                <a className="ghost-button" href={convenioUrl} target="_blank" rel="noreferrer" download>
+                  Descargar convenio PDF
+                </a>
+              ) : (
+                <small>Genera primero la matricula/convenio para habilitar la descarga.</small>
+              )}
+            </section>
+          </div>
 
           <div className="preinscripcion-convenio-card">
             <div>
-              <span>Convenio y beca</span>
+              <span>Parte 2.3 · Documentacion y convenio firmado</span>
               <strong>{paymentPlanPreview.cuotas} cuota(s) de {formatMoney(paymentPlanPreview.cuota)}</strong>
               <small>
-                Beca {formatMoney(paymentPlanPreview.beca)} ({formatMoney(paymentPlanPreview.porcentajeBeca)}%) - saldo {formatMoney(paymentPlanPreview.saldo)}
+                Sube los respaldos del estudiante y el convenio firmado cuando lo devuelva.
               </small>
             </div>
             <button
@@ -2295,7 +2641,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               onClick={registerCabecera}
               disabled={cabeceraLoading || !selectedItem?.num}
             >
-              {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio' : 'Guardar pago y generar convenio'}
+              {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio' : 'Matricular y generar convenio'}
             </button>
             {convenioUrl ? (
               <a className="ghost-button" href={convenioUrl} target="_blank" rel="noreferrer" download>
@@ -2444,7 +2790,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
             {followupSearchError ? <p className="form-error">{followupSearchError}</p> : null}
 
             <div className="matricula-docente-selector-summary">
-              <strong>Listado de estudiantes y aspirantes disponibles</strong>
+              <strong>Listado de estudiantes disponibles</strong>
               <span>{followupSearchLoading ? 'Cargando estudiantes...' : `${followupSearchResults.length} estudiante(s) cargado(s)`}</span>
             </div>
 
@@ -2514,10 +2860,10 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                 <div className="section-title">
                   <div>
                     <span>Datos</span>
-                    <h2>Preinscripcion</h2>
+                    <h2>Inscripcion</h2>
                   </div>
                   <span className={hasCabecera ? 'preinscripcion-status preinscripcion-status--ok' : 'preinscripcion-status'}>
-                    {hasCabecera ? 'Con pago' : 'Sin pago'}
+                    {hasCabecera ? 'Con cabecera' : 'Sin cabecera'}
                   </span>
                 </div>
                 <div className="preinscripcion-detail preinscripcion-detail--wide">
@@ -2546,10 +2892,6 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                     <strong>{valueOrDash(selectedItem.periodo || selectedItem.codperiodo)}</strong>
                   </div>
                   <div>
-                    <span>Prematricula</span>
-                    <strong>{boolLabel(selectedItem.prematricula)}</strong>
-                  </div>
-                  <div>
                     <span>Proceso finalizado</span>
                     <strong>{boolLabel(selectedItem.proceso_finalizado)}</strong>
                   </div>
@@ -2559,12 +2901,20 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
               <section className="preinscripcion-student-panel">
                 <div className="section-title">
                   <div>
-                    <span>Paso 1</span>
-                    <h2>Pago y convenio</h2>
+                    <span>Paso 2</span>
+                    <h2>Matricula y convenio de pago</h2>
                   </div>
                   <strong>{valueOrDash(codigoDocumentacion)}</strong>
                 </div>
                 <div className="matricula-acad-preview">
+                  <div>
+                    <span>Total convenio</span>
+                    <strong>{formatMoney(paymentPlanPreview.total)}</strong>
+                  </div>
+                  <div>
+                    <span>Alcance</span>
+                    <strong>{paymentPlanPreview.selectedSemesters} semestre(s)</strong>
+                  </div>
                   <div>
                     <span>Beca</span>
                     <strong>{formatMoney(paymentPlanPreview.beca)} ({formatMoney(paymentPlanPreview.porcentajeBeca)}%)</strong>
@@ -2625,13 +2975,13 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                     />
                   </label>
                   <label>
-                    <span>Valor total</span>
+                    <span>Valor total calculado</span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      value={cabeceraValues.valor}
-                      onChange={(event) => setCabeceraValues((current) => ({ ...current, valor: event.target.value }))}
+                      value={paymentPlanPreview.total}
+                      readOnly
                     />
                   </label>
                   <label>
@@ -2648,6 +2998,8 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                       onChange={(event) => setCabeceraValues((current) => ({ ...current, banco: event.target.value }))}
                     />
                   </label>
+                  {renderPaymentScopeSelector()}
+                  {renderScholarshipSelector()}
                   <label>
                     <span>% beca</span>
                     <input
@@ -2697,7 +3049,7 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                   onClick={registerCabecera}
                   disabled={cabeceraLoading || !selectedItem.num}
                 >
-                  {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar pago y convenio' : 'Guardar pago y generar convenio'}
+                  {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar cabecera' : 'Guardar cabecera y generar convenio'}
                 </button>
               </section>
 
@@ -2705,11 +3057,11 @@ export function PreinscripcionView({ displayName, activeStage, onStageChange }: 
                 <div className="section-title">
                   <div>
                     <span>Documentacion</span>
-                    <h2>{hasCabecera ? `Codigo ${codigoDocumentacion}` : 'Pendiente de pago/convenio'}</h2>
+                    <h2>{hasCabecera ? `Codigo ${codigoDocumentacion}` : 'Pendiente de matricula/convenio'}</h2>
                   </div>
                 </div>
                 {!hasCabecera ? (
-                  <p className="form-error">Registra el pago y convenio antes de subir documentos.</p>
+                  <p className="form-error">Registra la cabecera de matricula antes de subir documentos.</p>
                 ) : null}
                 <div className="preinscripcion-convenio-card">
                   <div>

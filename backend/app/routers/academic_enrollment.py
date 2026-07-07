@@ -2938,6 +2938,7 @@ def matricula_acad_docentes(
                     OR TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) LIKE ?
                     OR TRY_CONVERT(nvarchar(255), d.correo) LIKE ?
                     OR TRY_CONVERT(nvarchar(255), d.correop) LIKE ?
+                    OR TRY_CONVERT(nvarchar(4000), u.Descripcion) LIKE ?
                     OR TRY_CONVERT(nvarchar(100), d.cedula_doc) LIKE ?
                     OR TRY_CONVERT(varchar(50), d.codigo_doc) = ?
                 )
@@ -2947,6 +2948,7 @@ def matricula_acad_docentes(
                     TRY_CONVERT(nvarchar(255), d.correo)
                 """,
                 query.strip(),
+                search,
                 search,
                 search,
                 search,

@@ -64,7 +64,7 @@ const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
     ],
   },
   {
-    title: 'Practicas, becas y vinculacion',
+    title: 'Prácticas laborales, becas y Servicio Comunitario',
     fields: [
       'estudianteocupacionId',
       'ingresosestudianteId',

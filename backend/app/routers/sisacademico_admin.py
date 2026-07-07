@@ -511,6 +511,30 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("tipomateria", "Tipo materia"),
             ("estado_mat", "Estado"),
         ),
+        "create_fields": fields(
+            field("Cod_AnioBasica", "Carrera", "number", required=True),
+            ("Unidad_Organiza", "Unidad"),
+            field("Nomb_Materia", "Materia", required=True),
+            field("Semestre", "Semestre", "number", required=True),
+            field("Creditos", "Creditos", "decimal", required=True),
+            ("Orden", "Orden", "number"),
+            field("NumMalla", "Malla", "number", required=True),
+            ("cod_materia", "Codigo textual"),
+            field("Horas", "Horas", "number", required=True),
+            ("ValorHora", "Valor hora", "decimal"),
+            ("ValorHoraVirtual", "Valor hora virtual", "decimal"),
+            ("verreporte", "Ver reporte", "number"),
+            ("SecuenciaMateria", "Secuencia"),
+            ("tipomateria", "Tipo materia"),
+            ("estado_mat", "Estado"),
+        ),
+        "defaults": {
+            "ValorHora": 0,
+            "ValorHoraVirtual": 0,
+            "verreporte": 1,
+            "SecuenciaMateria": "0",
+            "estado_mat": "ACTIVO",
+        },
         "search_fields": ["codigo_materia", "Cod_AnioBasica", "Nomb_Materia", "cod_materia", "estado_mat"],
         "order_by": "Nomb_Materia",
     },
@@ -561,6 +585,36 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("anio", "Anio", "number"),
             ("estado_ed", "Estado ED"),
         ),
+        "create_fields": fields(
+            field("Detalle_Periodo", "Periodo", required=True),
+            field("Estado", "Estado", required=True),
+            ("Detalle_Reg", "Detalle registro"),
+            ("Periodo", "Etiqueta"),
+            ("Orden", "Orden", "number"),
+            ("NotaAprobar", "Nota aprobar", "decimal"),
+            ("ControlPlataforma", "Control plataforma"),
+            ("VersionCalificacion", "Version calificacion", "number"),
+            ("NotaPromedioMax", "Nota promedio max", "number"),
+            ("VerInscripcion", "Ver inscripcion", "number"),
+            ("VerNotas", "Ver notas", "number"),
+            ("TipoMatricula", "Tipo matricula"),
+            ("VerReporte", "Ver reporte", "number"),
+            ("fechain", "Fecha inicio", "date"),
+            ("fechafin", "Fecha fin", "date"),
+            ("anio", "Anio", "number"),
+            ("estado_ed", "Estado ED"),
+        ),
+        "defaults": {
+            "NotaAprobar": 10,
+            "ControlPlataforma": "P",
+            "VersionCalificacion": 1,
+            "NotaPromedioMax": 0,
+            "VerInscripcion": 0,
+            "VerNotas": 0,
+            "TipoMatricula": "R",
+            "VerReporte": 0,
+            "estado_ed": "Inactivo",
+        },
         "search_fields": ["cod_periodo", "Detalle_Periodo", "Periodo", "anio", "TipoMatricula"],
         "order_by": "cod_periodo DESC",
     },
@@ -810,9 +864,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         },
     },
     "usuarios": {
-        "title": "Administrativos y usuarios",
+        "title": "Registrar usuarios",
         "category": "Seguridad",
-        "description": "Ingreso y mantenimiento de usuarios administrativos sin exponer contrasenas.",
+        "description": "Registro y mantenimiento de usuarios administrativos en USUARIO_SIS sin exponer contrasenas.",
         "table": "[dbo].[USUARIO_SIS]",
         "key_fields": ["login"],
         "list_fields": fields(
@@ -820,6 +874,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("nombres", "Nombres"),
             ("estado", "Estado"),
             ("email", "Email"),
+            ("cedula", "Cedula"),
             ("tipousuario", "Tipo", "number"),
             ("tp_us", "Perfil"),
         ),
@@ -830,34 +885,36 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("estado", "Estado"),
             ("email", "Email"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
+            ("codprovincia", "Provincia"),
             ("tipousuario", "Tipo usuario", "number"),
             ("tp_us", "Perfil"),
+            ("cedula", "Cedula"),
         ),
         "editable_fields": fields(
             ("nombres", "Nombres"),
             ("estado", "Estado"),
             ("email", "Email"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
+            ("codprovincia", "Provincia"),
             ("tipousuario", "Tipo usuario", "number"),
             ("tp_us", "Perfil"),
+            ("cedula", "Cedula"),
         ),
         "create_fields": fields(
             field("login", "Login", required=True),
-            field("password", "Clave temporal", required=True),
+            field("password", "Contraseña", required=True),
             field("nombres", "Nombres", required=True),
-            ("fecha_ingreso", "Fecha ingreso", "datetime"),
+            ("fecha_ingreso", "Fecha ingreso", "date"),
             ("estado", "Estado"),
             ("email", "Email"),
+            ("cedula", "Cedula"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
-            ("tipousuario", "Tipo usuario", "number"),
+            ("codprovincia", "Provincia"),
             ("tp_us", "Perfil"),
         ),
-        "search_fields": ["login", "nombres", "email", "estado", "tp_us"],
+        "search_fields": ["login", "nombres", "email", "cedula", "estado", "tp_us"],
         "order_by": "nombres",
-        "defaults": {"fecha_ingreso": "now", "estado": "A"},
+        "defaults": {"fecha_ingreso": "now", "estado": "A", "tipousuario": 0, "tp_us": "1"},
     },
     "correos": {
         "title": "Correos institucionales",
@@ -908,8 +965,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "empresas": {
         "title": "Empresas",
-        "category": "Vinculacion",
-        "description": "Empresas para practicas profesionales.",
+        "category": "Servicio Comunitario",
+        "description": "Empresas para prácticas laborales.",
         "table": "[dbo].[EMPRESA]",
         "key_fields": ["Num_emp"],
         "list_fields": fields(
@@ -942,9 +999,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "order_by": "Empresa",
     },
     "practicas": {
-        "title": "Practicas profesionales",
-        "category": "Vinculacion",
-        "description": "Practicas por estudiante, empresa, tutor, fechas y horas.",
+        "title": "Prácticas laborales",
+        "category": "Prácticas laborales",
+        "description": "Prácticas laborales por estudiante, empresa, tutor, fechas y horas.",
         "table": "[dbo].[PRACTICASPROFESIONALES]",
         "key_fields": ["codigo_estud", "cod_anio_Basica", "codigo_periodo", "FechaInicio"],
         "list_fields": fields(
@@ -1919,9 +1976,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "defaults": {"fecha": "now"},
     },
     "practicas_vinculacion": {
-        "title": "Practicas de vinculacion",
-        "category": "Vinculacion",
-        "description": "Registro de proyectos de vinculacion, empresa, docente, horas y evidencias.",
+        "title": "Servicio Comunitario",
+        "category": "Servicio Comunitario",
+        "description": "Registro de Servicio Comunitario, empresa, docente, horas y evidencias.",
         "table": "[dbo].[PRACTICASVINCULACION]",
         "key_fields": ["num"],
         "list_fields": fields(
@@ -1983,6 +2040,149 @@ SECTIONS: dict[str, dict[str, Any]] = {
 
 
 LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
+    "usuarios": {
+        "tipousuario": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), Codigo_tipo_us) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Codigo_tipo_us), N' - ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), detalle_tipo_us)))) AS option_label
+            FROM dbo.TIPO_USUARIO
+            WHERE Codigo_tipo_us IS NOT NULL
+            ORDER BY TRY_CONVERT(int, Codigo_tipo_us), detalle_tipo_us
+            """,
+        ],
+        "tp_us": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), Codigo_tipo_us) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Codigo_tipo_us), N' - ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), detalle_tipo_us)))) AS option_label
+            FROM dbo.TIPO_USUARIO
+            WHERE Codigo_tipo_us IS NOT NULL
+            ORDER BY TRY_CONVERT(int, Codigo_tipo_us), detalle_tipo_us
+            """,
+        ],
+        "codprovincia": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), TRY_CONVERT(int, Cod_Provincia)) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), TRY_CONVERT(int, Cod_Provincia)),
+                    N' - ',
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Descripcion_Prov)))
+                ) AS option_label
+            FROM dbo.Provincias
+            WHERE Cod_Provincia IS NOT NULL
+            ORDER BY Descripcion_Prov
+            """,
+        ],
+    },
+    "preinscripciones": {
+        "codasesor": [
+            """
+            SELECT TOP (1000)
+                TRY_CONVERT(nvarchar(100), id_usuarios) AS option_value,
+                COALESCE(
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), nombres))), N''),
+                    CONCAT(N'Asesor ', TRY_CONVERT(nvarchar(100), id_usuarios))
+                ) AS option_label
+            FROM dbo.USUARIO_SIS
+            WHERE id_usuarios IS NOT NULL
+            ORDER BY nombres, id_usuarios
+            """,
+        ],
+    },
+    "materias": {
+        "Cod_AnioBasica": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Cod_AnioBasica), N' - ', LTRIM(RTRIM(Nombre_Basica))) AS option_label
+            FROM dbo.CARRERAS
+            WHERE Cod_AnioBasica IS NOT NULL
+            ORDER BY Nombre_Basica
+            """,
+        ],
+        "Semestre": [
+            """
+            SELECT N'1' AS option_value, N'1' AS option_label
+            UNION ALL
+            SELECT N'2', N'2'
+            UNION ALL
+            SELECT N'3', N'3'
+            UNION ALL
+            SELECT N'4', N'4'
+            """,
+        ],
+        "NumMalla": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Malla) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), Malla),
+                    N' - ',
+                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre))), N'Malla')
+                ) AS option_label
+            FROM dbo.MALLA
+            WHERE Malla IS NOT NULL
+            ORDER BY Malla
+            """,
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Malla) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Malla), N' - Malla') AS option_label
+            FROM dbo.MALLA_PENSUM
+            WHERE Malla IS NOT NULL
+            GROUP BY Malla
+            ORDER BY Malla
+            """,
+        ],
+        "estado_mat": [
+            """
+            SELECT DISTINCT TOP (100)
+                LTRIM(RTRIM(estado_mat)) AS option_value,
+                LTRIM(RTRIM(estado_mat)) AS option_label
+            FROM dbo.PENSUM
+            WHERE NULLIF(LTRIM(RTRIM(estado_mat)), N'') IS NOT NULL
+            ORDER BY option_label
+            """,
+        ],
+    },
+    "periodos": {
+        "Estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activo' AS option_label
+            UNION ALL
+            SELECT N'P', N'P - Pendiente'
+            UNION ALL
+            SELECT N'I', N'I - Inactivo'
+            """,
+        ],
+        "ControlPlataforma": [
+            """
+            SELECT N'A' AS option_value, N'A - Abierto'
+            UNION ALL
+            SELECT N'P', N'P - Pendiente'
+            UNION ALL
+            SELECT N'C', N'C - Cerrado'
+            """,
+        ],
+        "TipoMatricula": [
+            """
+            SELECT N'R' AS option_value, N'R - Regular'
+            UNION ALL
+            SELECT N'H', N'H - Homologacion'
+            UNION ALL
+            SELECT N'E', N'E - Educacion continua'
+            """,
+        ],
+        "estado_ed": [
+            """
+            SELECT N'Activo' AS option_value, N'Activo' AS option_label
+            UNION ALL
+            SELECT N'Inactivo', N'Inactivo'
+            """,
+        ],
+    },
     "actualizacion_estudiantes": {
         "Estado": [
             """
@@ -3482,12 +3682,115 @@ def _create_or_update_materia_homo_text(payload: SavePayload) -> dict[str, Any]:
     return {"ok": True, "message": message, "affected_rows": 1, "action": action}
 
 
+def _create_usuario_sis(payload: SavePayload) -> dict[str, Any]:
+    section = _section("usuarios")
+    creatable = _field_map(section, "create_fields")
+    values: dict[str, Any] = {}
+    for name, meta in creatable.items():
+        value = payload.values.get(name)
+        if meta.required and (value is None or value == ""):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido: {meta.label}")
+        if value is not None and value != "":
+            values[name] = _normalize_value(value, meta)
+    for name, default in section.get("defaults", {}).items():
+        if name not in values:
+            values[name] = _default_value(default, None)
+
+    login = str(values.get("login") or "").strip()
+    password = str(values.get("password") or "").strip()
+    nombres = str(values.get("nombres") or "").strip()
+    if not login:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Login")
+    if not password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Contraseña")
+    if not nombres:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Nombres")
+    if len(password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña debe tener al menos 8 caracteres")
+    if len(login) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Login no puede superar 100 caracteres")
+    if len(password) > 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Contraseña no puede superar 50 caracteres")
+    if len(nombres) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombres no puede superar 100 caracteres")
+
+    values["login"] = login
+    values["password"] = password
+    values["nombres"] = nombres
+    estado = str(values.get("estado") or "").strip()
+    if estado:
+        values["estado"] = estado[0].upper()
+    else:
+        values["estado"] = "A"
+    if not values.get("fecha_ingreso"):
+        values["fecha_ingreso"] = datetime.now()
+    values["tipousuario"] = 0
+    if "email" in values:
+        values["email"] = str(values.get("email") or "").strip()
+        if len(str(values["email"])) > 50:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email no puede superar 50 caracteres")
+    if "cedula" in values:
+        values["cedula"] = str(values.get("cedula") or "").strip()
+        if len(str(values["cedula"])) > 10:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cedula no puede superar 10 caracteres")
+    if "tp_us" in values:
+        values["tp_us"] = str(values.get("tp_us") or "").strip() or "1"
+        if len(str(values["tp_us"])) > 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Perfil no puede superar 2 caracteres")
+
+    allowed_columns = {
+        "login",
+        "password",
+        "nombres",
+        "fecha_ingreso",
+        "estado",
+        "email",
+        "coordcarrera",
+        "codprovincia",
+        "tipousuario",
+        "tp_us",
+        "cedula",
+    }
+    insert_values = {key: value for key, value in values.items() if key in allowed_columns}
+    columns = list(insert_values)
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM dbo.USUARIO_SIS
+                WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), login)))) = LOWER(?)
+                """,
+                login,
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe un usuario con ese login")
+            cursor.execute(
+                f"""
+                INSERT INTO dbo.USUARIO_SIS ({", ".join(_quote_column(column) for column in columns)})
+                VALUES ({", ".join("?" for _ in columns)})
+                """,
+                list(insert_values.values()),
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"No se pudo registrar el usuario: {exc}") from exc
+
+    return {"ok": True, "message": "Usuario registrado en USUARIO_SIS", "affected_rows": 1}
+
+
 @router.post("/{section_key}")
 def create_record(
     section_key: str,
     payload: SavePayload,
     current_user: SessionUser = AllowedEditor,
 ) -> dict[str, Any]:
+    if section_key == "usuarios":
+        return _create_usuario_sis(payload)
     if section_key == "docentes":
         return _create_docente_with_user(payload)
     if section_key == "materia_homo_textof":
@@ -3521,5 +3824,8 @@ def create_record(
             cursor.execute(sql, list(values.values()))
             conn.commit()
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo crear el registro") from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo crear el registro: {exc}",
+        ) from exc
     return {"ok": True, "message": "Registro creado"}
