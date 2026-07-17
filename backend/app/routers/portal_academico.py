@@ -47,6 +47,13 @@ _PORTAL_CONFIG_ROOT = _BACKEND_ROOT / "data"
 _TEACHER_COMPLIANCE_FORMAT_PATH = _PORTAL_CONFIG_ROOT / "teacher_compliance_format.json"
 
 
+def _active_student_condition(expression: str) -> str:
+    return (
+        f"UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), {expression})))) "
+        "IN (N'A', N'ACTIVO', N'ACTIVA')"
+    )
+
+
 class TeacherGradePayload(BaseModel):
     codigo_estud: int
     cod_anio_basica: int
@@ -1643,7 +1650,7 @@ def teacher_courses(
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
+                f"""
                 SELECT TOP (1000)
                     TRY_CONVERT(varchar(50), cxd.codigo_doc) AS codigo_doc,
                     TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica) AS cod_anio_basica,
@@ -1677,10 +1684,13 @@ def teacher_courses(
                 OUTER APPLY (
                     SELECT COUNT(DISTINCT TRY_CONVERT(int, cxe.codigo_estud)) AS total_estudiantes
                     FROM dbo.CARRERAXESTUD cxe
+                    INNER JOIN dbo.DATOS_ESTUD de
+                      ON TRY_CONVERT(int, de.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
                     LEFT JOIN dbo.PENSUM pxe
                       ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                      AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                     WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                      AND {_active_student_condition("de.Estado")}
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
                           UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
                       AND UPPER(LTRIM(RTRIM(COALESCE(
@@ -1721,6 +1731,42 @@ def _teacher_student_item(row: Any) -> dict[str, Any]:
         }
     )
     return item
+
+
+def _deduplicate_teacher_students(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    students: dict[str, dict[str, Any]] = {}
+    for item in items:
+        key = _clean(item.get("codigo_estud")) or _clean(item.get("cedula"))
+        if not key:
+            key = "|".join(
+                [
+                    _clean(item.get("nombre_estudiante")),
+                    _clean(item.get("codigo_periodo")),
+                    _clean(item.get("codigo_materia")),
+                    _clean(item.get("paralelo")),
+                ]
+            )
+        current = students.get(key)
+        if current is None:
+            students[key] = item
+            continue
+        current_period = _int(current.get("codigo_periodo")) or 0
+        next_period = _int(item.get("codigo_periodo")) or 0
+        if next_period > current_period:
+            students[key] = item
+            continue
+        current_final = _number(current.get("promedio_final"))
+        next_final = _number(item.get("promedio_final"))
+        if next_period == current_period and current_final is None and next_final is not None:
+            students[key] = item
+    return sorted(
+        students.values(),
+        key=lambda item: (
+            _clean(item.get("nombre_estudiante")).upper(),
+            _clean(item.get("cedula")),
+            _clean(item.get("codigo_estud")),
+        ),
+    )
 
 
 def _teacher_course_students_for_report(
@@ -1918,6 +1964,7 @@ def teacher_course_students(
                   ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                  AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                 WHERE (? IS NULL OR TRY_CONVERT(int, cxe.cod_anio_Basica) = ?)
+                  AND {_active_student_condition("de.Estado")}
                   AND EXISTS (
                       SELECT 1
                       FROM teacher_assignment ta
@@ -1949,7 +1996,8 @@ def teacher_course_students(
                 cod_anio_basica,
             )
             rows = cursor.fetchall()
-        return {"total": len(rows), "items": [_teacher_student_item(row) for row in rows]}
+        items = _deduplicate_teacher_students([_teacher_student_item(row) for row in rows])
+        return {"total": len(items), "items": items}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando estudiantes del curso: {exc}") from exc
 
@@ -3649,6 +3697,13 @@ def teacher_save_grades(
         "TRY_CONVERT(int, codigo_materia) = ?",
         "TRY_CONVERT(int, codigo_periodo) = ?",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), paralelo)))) = ?",
+        (
+            "EXISTS ("
+            "SELECT 1 FROM dbo.DATOS_ESTUD de "
+            "WHERE TRY_CONVERT(int, de.codigo_estud) = ? "
+            f"AND {_active_student_condition('de.Estado')}"
+            ")"
+        ),
     ]
     where_params: list[Any] = [
         payload.codigo_estud,
@@ -3656,6 +3711,7 @@ def teacher_save_grades(
         payload.codigo_materia,
         payload.codigo_periodo,
         parallel,
+        payload.codigo_estud,
     ]
     if payload.num_matricula is not None:
         where_parts.append("TRY_CONVERT(int, Num_Matricula) = ?")

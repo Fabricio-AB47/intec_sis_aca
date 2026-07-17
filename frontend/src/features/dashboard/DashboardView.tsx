@@ -207,18 +207,13 @@ export function DashboardView({
   const trendMax = Math.max(...trendSeries.flatMap((series) => series.items.map((item) => item.total_estudiantes)), 1)
   const activeStudents = states.find((item) => item.estado_codigo === 'A')?.total_estudiantes ?? 0
   const activeByType = data?.active_by_type || []
-  const rawActiveRegularStudents = data?.active_regular_students
+  const activeRegularStudents = data?.active_regular_students
     ?? activeByType.find((item) => item.tipo_matricula === 'R')?.total_estudiantes
     ?? 0
-  const rawActiveHomologationStudents = data?.active_homologation_students
+  const activeHomologationStudents = data?.active_homologation_students
     ?? activeByType.find((item) => item.tipo_matricula === 'H')?.total_estudiantes
     ?? 0
-  const rawActiveSplit = rawActiveRegularStudents + rawActiveHomologationStudents
-  const activeRhStudents = activeStudents
-  const activeRegularStudents = activeRhStudents > 0 && rawActiveSplit > 0 && rawActiveSplit !== activeRhStudents
-    ? Math.min(activeRhStudents, Math.round((rawActiveRegularStudents / rawActiveSplit) * activeRhStudents))
-    : Math.min(rawActiveRegularStudents, activeRhStudents)
-  const activeHomologationStudents = Math.max(0, activeRhStudents - activeRegularStudents)
+  const activeRhStudents = data?.active_regular_homologation_students ?? activeRegularStudents + activeHomologationStudents
   const activeTypeItems: ActiveTypeItem[] = [
     { tipo_matricula: 'R', label: 'Regular', total_estudiantes: activeRegularStudents },
     { tipo_matricula: 'H', label: 'Homologación', total_estudiantes: activeHomologationStudents },

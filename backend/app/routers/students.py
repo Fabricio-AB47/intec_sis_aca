@@ -10,11 +10,12 @@ from typing import Annotated, Any
 import unicodedata
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.datetime import from_excel
 from openpyxl.worksheet.datavalidation import DataValidation
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -2089,44 +2090,13 @@ reporte_counts AS (
 reporte_rows AS (
     SELECT
         reporte_ranked.*,
-        CASE
-            WHEN reporte_ranked.rn_tipo = 1
-             AND reporte_ranked.estado_codigo <> 'A'
-             AND reporte_ranked.promocion_activo_orden <= CASE
-                    WHEN 587 - COALESCE(reporte_ranked.activos_reporte, 0) > 0
-                    THEN 587 - COALESCE(reporte_ranked.activos_reporte, 0)
-                    ELSE 0
-                 END
-            THEN 'A'
-            ELSE reporte_ranked.estado_codigo
-        END AS estado_codigo_reporte,
-        CASE
-            WHEN reporte_ranked.rn_tipo = 1
-             AND reporte_ranked.es_faltante_datos_estud = 1
-             AND reporte_ranked.estado_codigo <> 'A'
-             AND reporte_ranked.promocion_activo_orden <= 2
-             AND reporte_ranked.promocion_activo_orden <= CASE
-                    WHEN 587 - COALESCE(reporte_ranked.activos_reporte, 0) > 0
-                    THEN 587 - COALESCE(reporte_ranked.activos_reporte, 0)
-                    ELSE 0
-                 END
-            THEN 'H'
-            ELSE reporte_ranked.tipo_matricula
-        END AS tipo_matricula_reporte
+        reporte_ranked.estado_codigo AS estado_codigo_reporte,
+        reporte_ranked.tipo_matricula AS tipo_matricula_reporte
     FROM (
         SELECT
             ru.*,
             rc.total_reporte,
-            rc.activos_reporte,
-            ROW_NUMBER() OVER (
-                PARTITION BY CASE WHEN ru.rn_tipo = 1 AND ru.estado_codigo <> 'A' THEN 1 ELSE 0 END
-                ORDER BY
-                    ru.es_faltante_datos_estud DESC,
-                    COALESCE(ru.fecha_inicio_periodo, CAST('1900-01-01' AS datetime2)) DESC,
-                    COALESCE(TRY_CONVERT(int, ru.codigo_periodo), -1) DESC,
-                    COALESCE(TRY_CONVERT(int, ru.Num_Matricula), -1) DESC,
-                    COALESCE(TRY_CONVERT(int, ru.codigo_estud), -1) DESC
-            ) AS promocion_activo_orden
+            rc.activos_reporte
         FROM reporte_union_rows ru
         CROSS JOIN reporte_counts rc
     ) reporte_ranked
@@ -2573,8 +2543,12 @@ def matricula_career_state_students(
 )
 def dashboard_matricula(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
 ) -> dict[str, Any]:
     del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     trend_query = (
         _MATRICULA_ACTUAL_CTE
         + """
@@ -3187,6 +3161,7 @@ def matricula_cruce_completo(
 )
 def matricula_list(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
     tipo_matricula: Annotated[str | None, Query(description="R, H o vacio para cruce unico global")] = None,
     estado_codigo: Annotated[str | None, Query(description="Codigo de estado, por ejemplo A, P, R, G")] = None,
     anio_periodo: Annotated[int | None, Query(description="Anio academico de la primera matricula")] = None,
@@ -3194,6 +3169,9 @@ def matricula_list(
     limit: Annotated[int, Query(ge=1, le=10000)] = 300,
 ) -> dict[str, Any]:
     del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     tipo = None
     if tipo_matricula and tipo_matricula.strip().upper() != "ALL":
         tipo = "RH" if tipo_matricula.strip().upper() == "RH" else _validate_tipo(tipo_matricula)
@@ -3855,17 +3833,52 @@ def ingreso_ventas(
 
 
 def _parse_graduation_date(value: Any) -> date | None:
-    text = _clean_cell(value)
-    if not text:
-        return None
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            parsed_excel_date = from_excel(value)
+            if isinstance(parsed_excel_date, datetime):
+                return parsed_excel_date.date()
+            if isinstance(parsed_excel_date, date):
+                return parsed_excel_date
+        except (TypeError, ValueError):
+            pass
+
+    text = _clean_cell(value)
+    if not text:
+        return None
+    text = text.replace(".", "/").replace("-", "/")
+    formats = (
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
     try:
-        return datetime.fromisoformat(text[:10]).date()
+        return datetime.fromisoformat(_clean_cell(value)[:10]).date()
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Fecha de grado invalida: {text}") from exc
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fecha de grado invalida: {text}. Usa DD-MM-AAAA, por ejemplo 24-03-2026.",
+        ) from exc
+
+
+def _format_graduation_date(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%d-%m-%Y")
+    if isinstance(value, date):
+        return value.strftime("%d-%m-%Y")
+    parsed = _parse_graduation_date(value)
+    return parsed.strftime("%d-%m-%Y") if parsed else ""
 
 
 def _style_excel_header(worksheet: Any) -> None:
@@ -3973,7 +3986,7 @@ def _graduation_date_student_rows(
                 "carrera": _clean_cell(row.carrera),
                 "codigo_periodo": _clean_cell(row.codigo_periodo),
                 "periodo": _clean_cell(row.periodo),
-                "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+                "fecha_grado": _format_graduation_date(row.fecha_grado),
             }
             for row in cursor.fetchall()
         ]
@@ -4139,7 +4152,7 @@ def graduation_date_verification(
                     "estado_codigo": _clean_cell(row.estado_codigo),
                     "estado_nombre": _graduation_status_name(row.estado_codigo),
                     "estado_raw": _clean_cell(row.estado_raw),
-                    "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+                    "fecha_grado": _format_graduation_date(row.fecha_grado),
                 }
                 for row in cursor.fetchall()
             ]
@@ -4168,7 +4181,7 @@ def graduation_date_template(
     headers = ["cedula", "fecha_grado"]
     sheet.append(headers)
     sheet["A1"].comment = Comment("Numero de cedula del estudiante. Se valida directamente contra DATOS_ESTUD.", "INTEC")
-    sheet["B1"].comment = Comment("Fecha de grado en formato AAAA-MM-DD. Ejemplo: 2026-06-30.", "INTEC")
+    sheet["B1"].comment = Comment("Fecha de grado. Formato requerido visual: DD-MM-AAAA. Ejemplo: 24-03-2026.", "INTEC")
     _style_excel_header(sheet)
     sheet.freeze_panes = "A2"
     widths = [18, 18]
@@ -4183,15 +4196,32 @@ def graduation_date_template(
         allow_blank=True,
         showErrorMessage=True,
         errorTitle="Fecha no valida",
-        error="Ingresa una fecha valida en formato AAAA-MM-DD.",
+        error="Ingresa una fecha valida en formato DD-MM-AAAA, por ejemplo 24-03-2026.",
         promptTitle="Fecha de grado",
-        prompt="Formato requerido: AAAA-MM-DD. Ejemplo: 2026-06-30.",
+        prompt="Formato requerido: DD-MM-AAAA. Ejemplo: 24-03-2026.",
     )
     sheet.add_data_validation(date_validation)
     date_validation.add(f"B2:B{max_row}")
     for row in range(2, max_row + 1):
         sheet[f"A{row}"].number_format = "@"
-        sheet[f"B{row}"].number_format = "yyyy-mm-dd"
+        sheet[f"B{row}"].number_format = "dd-mm-yyyy"
+    examples_sheet = workbook.create_sheet("Ejemplos")
+    examples_sheet.append(headers)
+    _style_excel_header(examples_sheet)
+    examples = [
+        ("1717977456", date(2026, 3, 24)),
+        ("1723456789", date(2026, 4, 27)),
+        ("0912345678", date(2026, 6, 1)),
+    ]
+    for cedula, example_date in examples:
+        examples_sheet.append([cedula, example_date])
+    examples_sheet["A1"].comment = Comment("Ejemplo de cedula. Reemplaza por la cedula real del estudiante.", "INTEC")
+    examples_sheet["B1"].comment = Comment("Ejemplo de fecha de grado en formato DD-MM-AAAA.", "INTEC")
+    examples_sheet.column_dimensions["A"].width = 18
+    examples_sheet.column_dimensions["B"].width = 18
+    for row in range(2, len(examples) + 2):
+        examples_sheet[f"A{row}"].number_format = "@"
+        examples_sheet[f"B{row}"].number_format = "dd-mm-yyyy"
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -4279,7 +4309,7 @@ async def import_graduation_dates(
                     updated_rows.append({
                         "fila": row_number,
                         "cedula": cedula,
-                        "fecha_grado": graduation_date.isoformat() if graduation_date else "",
+                        "fecha_grado": _format_graduation_date(graduation_date),
                         "registros": rowcount,
                     })
                 else:

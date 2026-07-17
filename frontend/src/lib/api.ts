@@ -516,7 +516,7 @@ export async function fetchMatriculaSummary(): Promise<MatriculaSummaryResponse>
 }
 
 export async function fetchDashboardMatricula(): Promise<DashboardMatriculaResponse> {
-  return request<DashboardMatriculaResponse>('/api/students/dashboard-matricula')
+  return request<DashboardMatriculaResponse>(`/api/students/dashboard-matricula?v=${Date.now()}`)
 }
 
 export async function fetchDashboardMatriculaTrendStudents(
@@ -569,7 +569,7 @@ export async function fetchMatriculaList(
   anioPeriodo?: number | null,
   puntoMatricula?: 'PRIMERA' | 'ULTIMA' | 'BOTH'
 ): Promise<MatriculaListResponse> {
-  const params = new URLSearchParams({ limit: String(limit) })
+  const params = new URLSearchParams({ limit: String(limit), v: String(Date.now()) })
 
   if (tipo !== 'ALL') {
     params.set('tipo_matricula', tipo)
