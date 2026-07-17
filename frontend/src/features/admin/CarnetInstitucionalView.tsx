@@ -330,6 +330,8 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
             <span className={statusTone(myStatus?.estado)}>{statusText(myStatus?.estado)}</span>
           </div>
 
+          <CarnetCardPreview status={myStatus} displayName={displayName} role={normalizedRole} />
+
           <CarnetPhotoBlock status={myStatus} loading={myLoading} />
 
           <div className="carnet-meta-grid">
@@ -461,6 +463,8 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
                   <span className={statusTone(selectedStatus?.estado)}>{statusText(selectedStatus?.estado)}</span>
                 </div>
 
+                <CarnetCardPreview status={selectedStatus} displayName={activePerson?.nombre || ''} role={activePerson?.tipo || ''} />
+
                 <CarnetPhotoBlock status={selectedStatus} loading={false} />
 
                 <div className="carnet-meta-grid carnet-meta-grid--compact">
@@ -557,6 +561,49 @@ function CarnetPhotoBlock({ status, loading }: Readonly<{ status?: CarnetPhotoSt
         <small>
           Solicitud: {status?.fecha_solicitud || '-'} · Revision: {status?.fecha_revision || '-'}
         </small>
+      </div>
+    </div>
+  )
+}
+
+function CarnetCardPreview({
+  status,
+  displayName,
+  role,
+}: Readonly<{ status?: CarnetPhotoStatus | null; displayName: string; role: string }>) {
+  const person = status?.persona
+  const imageUrl = photoUrl(status)
+  const name = (person?.nombre || displayName || 'Usuario institucional').toUpperCase()
+  const type = (person?.tipo_persona || role || '').toUpperCase()
+  const subtitle =
+    type === 'ESTUDIANTE'
+      ? 'ESTUDIANTE'
+      : type === 'DOCENTE'
+        ? 'DOCENTE'
+        : type === 'ADMINISTRATIVO'
+          ? 'ADMINISTRATIVO'
+          : 'INSTITUTO SUPERIOR TECNOLOGICO INTEC'
+
+  return (
+    <div className="carnet-card-preview" aria-label="Vista previa del carnet institucional">
+      <div className="carnet-card-preview__brand">
+        <img src="/Intec-Logowithslogangray.svg" alt="INTEC" />
+      </div>
+      <div className="carnet-card-preview__qr" aria-hidden="true">
+        {Array.from({ length: 81 }).map((_, index) => (
+          <span key={`qr-dot-${index}`} className={(index * 7 + 3) % 5 > 1 ? 'is-dark' : ''} />
+        ))}
+      </div>
+      <div className="carnet-card-preview__info">
+        <strong>{name}</strong>
+        <span>{subtitle}</span>
+        <span>{person?.correo || '-'}</span>
+        <span>{person?.cedula || '-'}</span>
+        <span>QUITO</span>
+        <span>CUARTA COHORTE</span>
+      </div>
+      <div className="carnet-card-preview__photo">
+        {imageUrl ? <img src={imageUrl} alt="Foto aprobada para carnet" /> : <span>Foto</span>}
       </div>
     </div>
   )

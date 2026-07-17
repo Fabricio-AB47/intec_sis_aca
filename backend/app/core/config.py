@@ -27,6 +27,24 @@ class Settings(BaseSettings):
     eval_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT1"))
     eval_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT1"))
 
+    practices_db_name: str | None = Field(default=None, validation_alias=AliasChoices("DB_NAME2", "B_NAME2"))
+    practices_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER2"))
+    practices_db_password: str | None = Field(default=None, validation_alias=AliasChoices("DB_PASSWORD2"))
+    practices_db_host: str | None = Field(default=None, validation_alias=AliasChoices("DB_HOST2"))
+    practices_db_port: int = Field(default=1433, validation_alias=AliasChoices("DB_PORT2"))
+    practices_db_driver: str | None = Field(default=None, validation_alias=AliasChoices("DB_DRIVER2"))
+    practices_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT2"))
+    practices_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT2"))
+
+    titulation_db_name: str | None = Field(default=None, validation_alias=AliasChoices("DB_NAME3", "B_NAME3"))
+    titulation_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER3"))
+    titulation_db_password: str | None = Field(default=None, validation_alias=AliasChoices("DB_PASSWORD3"))
+    titulation_db_host: str | None = Field(default=None, validation_alias=AliasChoices("DB_HOST3"))
+    titulation_db_port: int = Field(default=1433, validation_alias=AliasChoices("DB_PORT3"))
+    titulation_db_driver: str | None = Field(default=None, validation_alias=AliasChoices("DB_DRIVER3"))
+    titulation_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT3"))
+    titulation_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT3"))
+
     tenant_id: str | None = Field(default=None, validation_alias=AliasChoices("TENANT_ID", "MS_TENANT_ID"))
     client_id: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_ID", "MS_CLIENT_ID"))
     client_secret: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_SECRET", "MS_CLIENT_SECRET"))
@@ -44,7 +62,7 @@ class Settings(BaseSettings):
             "SENDER_USER_ID",
         ),
     )
-    frontend_base_url: str = "http://localhost:5173"
+    frontend_base_url: str = "http://localhost:5174"
 
     smtp_host: str | None = None
     smtp_port: int = 587
@@ -60,7 +78,7 @@ class Settings(BaseSettings):
     session_cookie_samesite: str = "lax"
     auth_legacy_plaintext_enabled: bool = True
 
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
 
     @property
     def cors_origins_list(self) -> list[str]:

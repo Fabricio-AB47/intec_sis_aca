@@ -32,8 +32,11 @@ import { ReporteriaCarrerasView } from './features/matricula/ReporteriaCarrerasV
 import { ReporteriaIntegralView } from './features/matricula/ReporteriaIntegralView'
 import { ReportesIndividualesView } from './features/matricula/ReportesIndividualesView'
 import { SenescytEstudiantesView } from './features/matricula/SenescytEstudiantesView'
+import { TitulosRegistradosView } from './features/matricula/TitulosRegistradosView'
+import { TitulacionView } from './features/matricula/TitulacionView'
 import { PortalDocenteView } from './features/portal/PortalDocenteView'
 import { PortalEstudianteView } from './features/portal/PortalEstudianteView'
+import { PracticasInstitucionalesView } from './features/practicas/PracticasInstitucionalesView'
 import { TeamsEnrollmentView } from './features/teams/TeamsEnrollmentView'
 import { TeamsView } from './features/teams/TeamsView'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
@@ -69,6 +72,7 @@ function App() {
           displayName={app.displayName}
           error={app.dashboardMatriculaError}
           data={app.dashboardMatricula}
+          role={app.session.rol}
         />
       )
     } else if (app.activePage === 'matricula') {
@@ -105,6 +109,7 @@ function App() {
       pageContent = (
         <PreinscripcionView
           displayName={app.displayName}
+          role={app.session.rol}
           activeStage={app.preinscriptionActiveStage}
           onStageChange={app.setPreinscriptionActiveStage}
         />
@@ -182,7 +187,29 @@ function App() {
     } else if (app.activePage === 'rango-edades') {
       pageContent = <RangoEdadesView displayName={app.displayName} />
     } else if (app.activePage === 'fecha-grado') {
-      pageContent = <FechaGradoView displayName={app.displayName} />
+      pageContent = <FechaGradoView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'titulacion') {
+      pageContent = (
+        <TitulacionView
+          displayName={app.displayName}
+          role={app.session.rol}
+          section="verificacion"
+          onOpenProcesoTitulacion={app.openTitulacionProcesoPage}
+        />
+      )
+    } else if (app.activePage === 'titulacion-proceso') {
+      pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="proceso" />
+    } else if (app.activePage === 'titulacion-responsables') {
+      pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="responsables" />
+    } else if (app.activePage === 'titulos-registrados') {
+      pageContent = (
+        <TitulosRegistradosView
+          key={app.titulosRegistradosTipo || 'todos'}
+          displayName={app.displayName}
+          role={app.session.rol}
+          initialTipo={app.titulosRegistradosTipo}
+        />
+      )
     } else if (app.activePage === 'certificados') {
       pageContent = <CertificadosView displayName={app.displayName} />
     } else if (app.activePage === 'matricula-excel-certificados') {
@@ -220,6 +247,14 @@ function App() {
       pageContent = <PortalDocenteView displayName={app.displayName} initialMode="compliance" />
     } else if (app.activePage === 'formato-informe-docente') {
       pageContent = <TeacherComplianceFormatView displayName={app.displayName} />
+    } else if (app.activePage === 'practicas-institucionales') {
+      pageContent = (
+        <PracticasInstitucionalesView
+          displayName={app.displayName}
+          role={app.session.rol}
+          codigoEstud={app.session.codigo_estud}
+        />
+      )
     } else if (app.activePage === 'teams-matricula') {
       pageContent = (
         <TeamsEnrollmentView
@@ -299,6 +334,10 @@ function App() {
           onOpenValidarExcel={app.openValidarExcelPage}
           onOpenRangoEdades={app.openRangoEdadesPage}
           onOpenFechaGrado={app.openFechaGradoPage}
+          onOpenTitulacion={app.openTitulacionPage}
+          onOpenTitulacionProceso={app.openTitulacionProcesoPage}
+          onOpenTitulacionResponsables={app.openTitulacionResponsablesPage}
+          onOpenTitulosRegistrados={app.openTitulosRegistradosPage}
           onOpenCertificados={app.openCertificadosPage}
           onOpenMatriculaExcelCertificados={app.openMatriculaExcelCertificadosPage}
           onOpenCertificateRenamer={app.openCertificateRenamerPage}
@@ -309,6 +348,7 @@ function App() {
           onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
           onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
           onOpenTeacherComplianceFormat={app.openTeacherComplianceFormatPage}
+          onOpenPracticasInstitucionales={app.openPracticasInstitucionalesPage}
           onLogout={() => {
             void app.logout()
           }}

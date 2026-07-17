@@ -85,8 +85,8 @@ const processShortcuts: ProcessShortcut[] = [
   },
   {
     key: 'administrativos',
-    title: 'Administrativos',
-    description: 'Usuarios administrativos, perfiles y accesos del menu.',
+    title: 'Usuarios',
+    description: 'Registro de usuarios administrativos, perfiles y accesos del menu.',
     sections: ['usuarios', 'menu_usuarios', 'menu_general'],
   },
   {
@@ -119,7 +119,7 @@ const processShortcuts: ProcessShortcut[] = [
   {
     key: 'vinculacion',
     title: 'Seguimiento y practicas',
-    description: 'Observaciones, practicas profesionales, vinculacion y empresas.',
+    description: 'Observaciones, prácticas laborales, Servicio Comunitario y empresas.',
     sections: ['seguimiento', 'practicas', 'practicas_vinculacion', 'empresas'],
   },
 ]
@@ -230,6 +230,23 @@ function emptyValues(fields: SisAcademicoField[]): Record<string, FormValue> {
     acc[field.name] = field.type === 'bool' ? false : ''
     return acc
   }, {})
+}
+
+function todayIsoDate(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function shouldRenderSelect(sectionKey: string, field: SisAcademicoField, options: OptionItem[]): boolean {
+  if (options.length === 0) return false
+  if (['login', 'password', 'nombres', 'email', 'cedula'].includes(field.name)) {
+    return false
+  }
+  if (sectionKey === 'usuarios' && field.name === 'fecha_ingreso') return false
+  return true
 }
 
 export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }: Readonly<GestionSisAcademicoViewProps>) {
@@ -482,10 +499,17 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setMessage('')
     setSaving(true)
     try {
+      const valuesToSave =
+        mode === 'create' && selectedSection.key === 'usuarios'
+          ? {
+              ...formValues,
+              fecha_ingreso: inputValue(formValues.fecha_ingreso) || todayIsoDate(),
+            }
+          : formValues
       const payload =
         mode === 'create'
-          ? await createSisAcademicoRecord(selectedSection.key, formValues)
-          : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, formValues)
+          ? await createSisAcademicoRecord(selectedSection.key, valuesToSave)
+          : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, valuesToSave)
       setMessage(payload.message || 'Cambios guardados')
       await loadRows(selectedSection.key)
     } catch (apiError) {
@@ -544,7 +568,20 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     if (!selectedSection) return
     setMode('create')
     setSelectedRecordKey('')
-    setFormValues(emptyValues(createFields))
+    setFormValues({
+      ...emptyValues(createFields),
+      ...(selectedSection.key === 'usuarios'
+        ? {
+            login: '',
+            password: '',
+            nombres: '',
+            fecha_ingreso: todayIsoDate(),
+            estado: 'A',
+            email: '',
+            cedula: '',
+          }
+        : {}),
+    })
     setMessage('')
     setError('')
   }
@@ -1580,14 +1617,21 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
 
                 <div className="matricula-acad-form gestion-sis-edit-form">
                   {currentFields.map((field) => {
-                    const options = fieldOptions(field, formValues[field.name])
+                    if (mode === 'create' && selectedSection.key === 'usuarios' && field.name === 'fecha_ingreso') {
+                      return null
+                    }
+                    const forceTextInput =
+                      ['login', 'password', 'nombres', 'email', 'cedula'].includes(field.name) ||
+                      (selectedSection.key === 'usuarios' && field.name === 'fecha_ingreso')
+                    const options = forceTextInput ? [] : fieldOptions(field, formValues[field.name])
+                    const renderSelect = shouldRenderSelect(selectedSection.key, field, options)
                     return (
                       <label key={field.name} className={field.type === 'textarea' ? 'gestion-sis-field--wide' : ''}>
                         <span>
                           {field.label}
                           {field.required ? ' *' : ''}
                         </span>
-                        {options.length > 0 ? (
+                        {renderSelect ? (
                           <select
                             value={inputValue(formValues[field.name])}
                             onChange={(event) =>
@@ -1636,7 +1680,15 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                           </select>
                         ) : (
                           <input
-                            type={field.type === 'date' ? 'date' : field.type === 'number' || field.type === 'decimal' ? 'number' : 'text'}
+                            type={
+                              field.name === 'password'
+                                ? 'password'
+                                : field.name === 'fecha_ingreso' || field.type === 'date'
+                                  ? 'date'
+                                  : field.type === 'number' || field.type === 'decimal'
+                                    ? 'number'
+                                    : 'text'
+                            }
                             step={field.type === 'decimal' ? '0.01' : undefined}
                             value={inputValue(formValues[field.name])}
                             onChange={(event) =>

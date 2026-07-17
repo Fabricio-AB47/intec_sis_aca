@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   downloadPortalTeacherComplianceReport,
   downloadPortalTeacherCourseReport,
+  downloadPortalTeacherStudentGradeReport,
   fetchPortalTeacherCourses,
   fetchPortalTeacherStudents,
   savePortalTeacherGrades,
@@ -277,6 +278,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [downloadingReport, setDownloadingReport] = useState(false)
   const [previewingReport, setPreviewingReport] = useState(false)
   const [reportPreviewUrl, setReportPreviewUrl] = useState('')
+  const [downloadingSecretaryReport, setDownloadingSecretaryReport] = useState(false)
+  const [previewingSecretaryReport, setPreviewingSecretaryReport] = useState(false)
+  const [secretaryReportPreviewUrl, setSecretaryReportPreviewUrl] = useState('')
   const [downloadingComplianceReport, setDownloadingComplianceReport] = useState(false)
   const [previewingComplianceReport, setPreviewingComplianceReport] = useState(false)
   const [compliancePreviewUrl, setCompliancePreviewUrl] = useState('')
@@ -672,6 +676,17 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     })
   }
 
+  async function buildSecretaryReportBlob() {
+    const params = reportRequestParams()
+    if (!params) return null
+    return downloadPortalTeacherStudentGradeReport({
+      codigoPeriodos: params.periodos,
+      codigoMateria: params.subjectCode,
+      paralelo: params.paralelo,
+      codJornada: params.codJornada,
+    })
+  }
+
   async function buildComplianceReportBlob(course: PortalTeacherCourse | null = selectedCourse) {
     const params = reportRequestParams(course, compliancePeriodCodes)
     if (!params) return null
@@ -755,6 +770,51 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
+  async function previewSecretaryReport() {
+    setPreviewingSecretaryReport(true)
+    setError('')
+    try {
+      const blob = await buildSecretaryReportBlob()
+      if (!blob) return
+      const url = window.URL.createObjectURL(blob)
+      setSecretaryReportPreviewUrl(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo generar la vista previa del formato Secretaría')
+    } finally {
+      setPreviewingSecretaryReport(false)
+    }
+  }
+
+  async function downloadSecretaryReport() {
+    if (!selectedCourse) return
+    setDownloadingSecretaryReport(true)
+    setError('')
+    try {
+      const blob = await buildSecretaryReportBlob()
+      if (!blob) return
+      const periodos = selectedCourse.codigo_periodos?.length
+        ? selectedCourse.codigo_periodos
+        : selectedCourse.codigo_periodo
+          ? [selectedCourse.codigo_periodo]
+          : []
+      const subjectCode = selectedCourse.cod_materia || selectedCourse.codigo_materia || ''
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const subject = safeFilenamePart(selectedCourse.nombre_materia || subjectCode)
+      const period = safeFilenamePart(selectedCourse.detalle_periodos || selectedCourse.detalle_periodo || periodos.join('-'))
+      link.href = url
+      link.download = `reporte-notas-secretaria-${subject}-${period}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar el formato Secretaría')
+    } finally {
+      setDownloadingSecretaryReport(false)
+    }
+  }
+
   async function previewComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
     if (course) {
       setSelectedCourseKey(courseKey(course))
@@ -810,6 +870,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setReportPreviewUrl('')
   }
 
+  function closeSecretaryReportPreview() {
+    setSecretaryReportPreviewUrl('')
+  }
+
   function closeCompliancePreview() {
     setCompliancePreviewUrl('')
   }
@@ -824,6 +888,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       window.URL.revokeObjectURL(reportPreviewUrl)
     }
   }, [reportPreviewUrl])
+
+  useEffect(() => {
+    if (!secretaryReportPreviewUrl) return
+    return () => {
+      window.URL.revokeObjectURL(secretaryReportPreviewUrl)
+    }
+  }, [secretaryReportPreviewUrl])
 
   useEffect(() => {
     if (!compliancePreviewUrl) return
@@ -1296,6 +1367,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               </button>
               <button
                 type="button"
+                className="ghost-button"
+                onClick={() => void previewSecretaryReport()}
+                disabled={previewingSecretaryReport || !selectedCourse}
+              >
+                {previewingSecretaryReport ? 'Generando vista...' : 'Vista formato Secretaría'}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void downloadSecretaryReport()}
+                disabled={downloadingSecretaryReport || !selectedCourse}
+              >
+                {downloadingSecretaryReport ? 'Generando...' : 'Descargar formato Secretaría'}
+              </button>
+              <button
+                type="button"
                 className="primary-action"
                 onClick={() => void saveAllGrades()}
                 disabled={savingKey === 'all' || loadingStudents || students.length === 0}
@@ -1519,6 +1606,29 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               </div>
             </header>
             <iframe src={reportPreviewUrl} title="Vista previa del reporte de notas docente" />
+          </article>
+        </div>
+      ) : null}
+
+      {secretaryReportPreviewUrl ? (
+        <div className="portal-report-preview-overlay" role="dialog" aria-modal="true" aria-label="Vista previa del reporte de notas formato Secretaría">
+          <article className="portal-report-preview-modal">
+            <header>
+              <div>
+                <span>Vista previa</span>
+                <h2>Reporte de notas formato Secretaría</h2>
+                <p>{selectedCourse?.nombre_materia || 'Materia seleccionada'}</p>
+              </div>
+              <div className="portal-report-preview-actions">
+                <button type="button" className="ghost-button" onClick={() => void downloadSecretaryReport()} disabled={downloadingSecretaryReport}>
+                  {downloadingSecretaryReport ? 'Descargando...' : 'Descargar formato'}
+                </button>
+                <button type="button" className="primary-action" onClick={closeSecretaryReportPreview}>
+                  Cerrar
+                </button>
+              </div>
+            </header>
+            <iframe src={secretaryReportPreviewUrl} title="Vista previa del reporte de notas formato Secretaría" />
           </article>
         </div>
       ) : null}

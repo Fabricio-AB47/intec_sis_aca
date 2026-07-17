@@ -15,12 +15,15 @@ from app.routers.health import router as health_router
 from app.routers.legacy_reports import router as legacy_reports_router
 from app.routers.mass_email import router as mass_email_router
 from app.routers.portal_academico import router as portal_academico_router
+from app.routers.practicas_institucionales import router as practicas_institucionales_router
 from app.routers.preinscription import UPLOAD_ROOT, router as preinscription_router
 from app.routers.senescyt import router as senescyt_router
 from app.routers.sisacademico_admin import router as sisacademico_admin_router
 from app.routers.students import router as students_router
 from app.routers.teams import router as teams_router
 from app.routers.teacher_evaluation import router as teacher_evaluation_router
+from app.routers.titulos_registrados import router as titulos_registrados_router
+from app.routers.titulacion import router as titulacion_router
 
 settings = get_settings()
 
@@ -58,6 +61,9 @@ app.include_router(legacy_reports_router)
 app.include_router(sisacademico_admin_router)
 app.include_router(portal_academico_router)
 app.include_router(teacher_evaluation_router)
+app.include_router(practicas_institucionales_router)
+app.include_router(titulos_registrados_router)
+app.include_router(titulacion_router)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT), check_dir=False), name="uploads")
 
 

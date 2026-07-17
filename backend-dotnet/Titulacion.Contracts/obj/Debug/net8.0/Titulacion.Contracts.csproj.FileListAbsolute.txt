@@ -1,0 +1,13 @@
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.AssemblyInfoInputs.cache
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.AssemblyInfo.cs
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.csproj.CoreCompileInputs.cache
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.sourcelink.json
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\bin\Debug\net8.0\Titulacion.Contracts.deps.json
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\bin\Debug\net8.0\Titulacion.Contracts.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\bin\Debug\net8.0\Titulacion.Contracts.pdb
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\refint\Titulacion.Contracts.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.pdb
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\ref\Titulacion.Contracts.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Contracts\obj\Debug\net8.0\Titulacion.Contracts.csproj.AssemblyReference.cache

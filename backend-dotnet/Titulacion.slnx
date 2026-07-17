@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Titulacion.Api/Titulacion.Api.csproj" />
+  <Project Path="Titulacion.Application/Titulacion.Application.csproj" />
+  <Project Path="Titulacion.Contracts/Titulacion.Contracts.csproj" />
+  <Project Path="Titulacion.Domain/Titulacion.Domain.csproj" />
+  <Project Path="Titulacion.Infrastructure/Titulacion.Infrastructure.csproj" />
+  <Project Path="Titulacion.Tests/Titulacion.Tests.csproj" />
+</Solution>

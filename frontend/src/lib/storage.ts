@@ -25,6 +25,10 @@ function isPage(value: string): value is Page {
     value === 'validar-excel' ||
     value === 'rango-edades' ||
     value === 'fecha-grado' ||
+    value === 'titulacion' ||
+    value === 'titulacion-proceso' ||
+    value === 'titulacion-responsables' ||
+    value === 'titulos-registrados' ||
     value === 'certificados' ||
     value === 'renombrar-certificados' ||
     value === 'credenciales' ||
@@ -35,7 +39,11 @@ function isPage(value: string): value is Page {
     value === 'evaluacion-docente-avance' ||
     value === 'evaluacion-docente-reportes' ||
     value === 'portal-estudiante' ||
-    value === 'portal-docente'
+    value === 'portal-docente' ||
+    value === 'portal-docente-informe' ||
+    value === 'formato-informe-docente' ||
+    value === 'matricula-excel-certificados' ||
+    value === 'practicas-institucionales'
   )
 }
 
