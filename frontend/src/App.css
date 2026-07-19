@@ -4048,6 +4048,7 @@
 .teams-data-list strong {
   font-size: 13px;
   color: #1f2742;
+  text-transform: uppercase;
 }
 
 .teams-data-list span {

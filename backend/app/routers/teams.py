@@ -34,6 +34,7 @@ _TEAM_CREATION_SLOT_TIMEOUT_SECONDS = 240
 _GRAPH_TEAM_RETRY_STATUS_CODES = {404, 409, 429, 500, 502, 503, 504}
 _TEAM_CREATION_LOCK = Lock()
 _TEAM_CREATION_IN_PROGRESS: set[str] = set()
+_TEAM_ADDITIONAL_ADMIN_TABLE = "dbo.TEAMS_ADMINISTRADOR_ADICIONAL"
 _ECUADOR_TIMEZONE_NAME = "America/Guayaquil"
 _ECUADOR_TIMEZONE = timezone(timedelta(hours=-5), name="ECT")
 _GRAPH_TIMEZONE_OFFSETS = {
@@ -3775,6 +3776,119 @@ def _ensure_teachers_are_team_owners(team_id: str, resolved_teachers: list[dict[
     return owner_results
 
 
+def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        """
+        IF OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL(
+                id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TEAMS_ADMINISTRADOR_ADICIONAL PRIMARY KEY,
+                team_id nvarchar(120) NOT NULL,
+                team_display_name nvarchar(255) NULL,
+                graph_user_id nvarchar(120) NOT NULL,
+                display_name nvarchar(255) NULL,
+                mail nvarchar(255) NULL,
+                user_principal_name nvarchar(255) NULL,
+                rol nvarchar(50) NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ROL DEFAULT('owner'),
+                activo bit NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTIVO DEFAULT(1),
+                creado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_CREADO DEFAULT(SYSDATETIME()),
+                actualizado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTUALIZADO DEFAULT(SYSDATETIME())
+            )
+
+            CREATE UNIQUE INDEX UX_TEAMS_ADMINISTRADOR_ADICIONAL_TEAM_USER
+                ON dbo.TEAMS_ADMINISTRADOR_ADICIONAL(team_id, graph_user_id)
+        END
+        """
+    )
+
+
+def _save_team_additional_admins(
+    *,
+    team_id: str,
+    team_display_name: str,
+    resolved_teachers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not team_id or not resolved_teachers:
+        return {"saved": 0, "warning": ""}
+
+    saved = 0
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_team_additional_admin_table(cursor)
+            for teacher in resolved_teachers:
+                graph_user_id = str(teacher.get("id") or "").strip()
+                if not graph_user_id:
+                    continue
+                display_name = str(teacher.get("displayName") or "").strip().upper()
+                mail = str(teacher.get("mail") or "").strip().lower()
+                user_principal_name = str(teacher.get("userPrincipalName") or "").strip().lower()
+                cursor.execute(
+                    """
+                    MERGE dbo.TEAMS_ADMINISTRADOR_ADICIONAL AS target
+                    USING (
+                        SELECT
+                            ? AS team_id,
+                            ? AS team_display_name,
+                            ? AS graph_user_id,
+                            ? AS display_name,
+                            ? AS mail,
+                            ? AS user_principal_name
+                    ) AS source
+                    ON target.team_id = source.team_id
+                       AND target.graph_user_id = source.graph_user_id
+                    WHEN MATCHED THEN
+                        UPDATE SET
+                            team_display_name = source.team_display_name,
+                            display_name = source.display_name,
+                            mail = source.mail,
+                            user_principal_name = source.user_principal_name,
+                            rol = 'owner',
+                            activo = 1,
+                            actualizado_en = SYSDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (
+                            team_id,
+                            team_display_name,
+                            graph_user_id,
+                            display_name,
+                            mail,
+                            user_principal_name,
+                            rol,
+                            activo
+                        )
+                        VALUES (
+                            source.team_id,
+                            source.team_display_name,
+                            source.graph_user_id,
+                            source.display_name,
+                            source.mail,
+                            source.user_principal_name,
+                            'owner',
+                            1
+                        );
+                    """,
+                    team_id,
+                    team_display_name,
+                    graph_user_id,
+                    display_name,
+                    mail,
+                    user_principal_name,
+                )
+                saved += 1
+            conn.commit()
+        return {"saved": saved, "warning": ""}
+    except pyodbc.Error as exc:
+        return {
+            "saved": saved,
+            "warning": (
+                "No se pudo guardar administradores adicionales de Teams en la base complementaria. "
+                f"Verifica permisos CREATE TABLE/INSERT/UPDATE sobre {_TEAM_ADDITIONAL_ADMIN_TABLE}. "
+                f"Detalle SQL: {exc}"
+            ),
+        }
+
+
 def _execute_preview_result(preview: dict[str, Any]) -> dict[str, Any]:
     items = cast(list[dict[str, Any]], preview.get("items") or [])
     team_id = str(preview.get("team_id") or "").strip()
@@ -4054,6 +4168,12 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
             _wait_for_team_ready(team_id)
 
         owner_results = _ensure_teachers_are_team_owners(team_id, resolved_teachers)
+        admin_save_result = _save_team_additional_admins(
+            team_id=team_id,
+            team_display_name=payload.display_name.strip(),
+            resolved_teachers=resolved_teachers,
+        )
+        admin_warning = str(admin_save_result.get("warning") or "").strip()
 
         return {
             "ok": True,
@@ -4061,17 +4181,19 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
                 "Aula existente encontrada, validada y lista para matricular estudiantes."
                 if team_already_existed
                 else "Aula tipo clase creada con docentes propietarios y lista para matricular estudiantes como miembros"
-            ),
+            ) + (f" {admin_warning}" if admin_warning else ""),
             "team_id": team_id,
             "team_already_existed": team_already_existed,
             "teacher_count": len(resolved_teachers),
             "course_count": len(courses),
             "teacher_inputs": teacher_inputs,
             "teacher_display_names": [
-                str(teacher.get("displayName") or teacher.get("userPrincipalName") or teacher.get("mail") or "").strip()
+                str(teacher.get("displayName") or teacher.get("userPrincipalName") or teacher.get("mail") or "").strip().upper()
                 for teacher in resolved_teachers
             ],
             "owner_results": owner_results,
+            "additional_admins_saved": int(admin_save_result.get("saved") or 0),
+            "additional_admins_warning": admin_warning,
         }
     except httpx.HTTPStatusError as exc:
         _raise_graph_http_exception(exc)
