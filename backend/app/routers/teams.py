@@ -3777,27 +3777,34 @@ def _ensure_teachers_are_team_owners(team_id: str, resolved_teachers: list[dict[
 
 
 def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> None:
+    table_exists = cursor.execute("SELECT OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U')").fetchval()
+    if table_exists:
+        return
+
+    can_create = cursor.execute("SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE')").fetchval()
+    if int(can_create or 0) != 1:
+        raise RuntimeError(
+            "La tabla complementaria de administradores Teams no existe y la cuenta SQL actual no tiene CREATE TABLE."
+        )
+
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL(
-                id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TEAMS_ADMINISTRADOR_ADICIONAL PRIMARY KEY,
-                team_id nvarchar(120) NOT NULL,
-                team_display_name nvarchar(255) NULL,
-                graph_user_id nvarchar(120) NOT NULL,
-                display_name nvarchar(255) NULL,
-                mail nvarchar(255) NULL,
-                user_principal_name nvarchar(255) NULL,
-                rol nvarchar(50) NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ROL DEFAULT('owner'),
-                activo bit NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTIVO DEFAULT(1),
-                creado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_CREADO DEFAULT(SYSDATETIME()),
-                actualizado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTUALIZADO DEFAULT(SYSDATETIME())
-            )
+        CREATE TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL(
+            id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TEAMS_ADMINISTRADOR_ADICIONAL PRIMARY KEY,
+            team_id nvarchar(120) NOT NULL,
+            team_display_name nvarchar(255) NULL,
+            graph_user_id nvarchar(120) NOT NULL,
+            display_name nvarchar(255) NULL,
+            mail nvarchar(255) NULL,
+            user_principal_name nvarchar(255) NULL,
+            rol nvarchar(50) NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ROL DEFAULT('owner'),
+            activo bit NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTIVO DEFAULT(1),
+            creado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_CREADO DEFAULT(SYSDATETIME()),
+            actualizado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTUALIZADO DEFAULT(SYSDATETIME())
+        )
 
-            CREATE UNIQUE INDEX UX_TEAMS_ADMINISTRADOR_ADICIONAL_TEAM_USER
-                ON dbo.TEAMS_ADMINISTRADOR_ADICIONAL(team_id, graph_user_id)
-        END
+        CREATE UNIQUE INDEX UX_TEAMS_ADMINISTRADOR_ADICIONAL_TEAM_USER
+            ON dbo.TEAMS_ADMINISTRADOR_ADICIONAL(team_id, graph_user_id)
         """
     )
 
@@ -3878,7 +3885,7 @@ def _save_team_additional_admins(
                 saved += 1
             conn.commit()
         return {"saved": saved, "warning": ""}
-    except pyodbc.Error as exc:
+    except (pyodbc.Error, RuntimeError) as exc:
         return {
             "saved": saved,
             "warning": (
@@ -4181,7 +4188,7 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
                 "Aula existente encontrada, validada y lista para matricular estudiantes."
                 if team_already_existed
                 else "Aula tipo clase creada con docentes propietarios y lista para matricular estudiantes como miembros"
-            ) + (f" {admin_warning}" if admin_warning else ""),
+            ),
             "team_id": team_id,
             "team_already_existed": team_already_existed,
             "teacher_count": len(resolved_teachers),
