@@ -1,5 +1,6 @@
 import time
 import re
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from urllib.parse import quote
@@ -18,6 +19,7 @@ from app.services.db import get_connection, get_teams_connection
 from app.services.graph import graph_get, graph_get_all, graph_patch, graph_post, graph_post_with_meta
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
+logger = logging.getLogger(__name__)
 
 _TEAMS_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
 _EXAMPLE_START_HOUR = "6:00 PM"
@@ -3886,14 +3888,44 @@ def _save_team_additional_admins(
             conn.commit()
         return {"saved": saved, "warning": ""}
     except (pyodbc.Error, RuntimeError) as exc:
+        logger.exception("No se pudo persistir administradores adicionales de Teams en %s.", _TEAM_ADDITIONAL_ADMIN_TABLE)
         return {
             "saved": saved,
-            "warning": (
-                "No se pudo guardar administradores adicionales de Teams en la base complementaria. "
-                f"Verifica permisos CREATE TABLE/INSERT/UPDATE sobre {_TEAM_ADDITIONAL_ADMIN_TABLE}. "
-                f"Detalle SQL: {exc}"
-            ),
+            "warning": "",
+            "internal_warning": str(exc),
         }
+
+
+@router.get("/diagnostics/storage")
+def get_teams_storage_diagnostics(_: Annotated[SessionUser, Depends(_TEAMS_ACCESS)]):
+    try:
+        with get_teams_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_team_additional_admin_table(cursor)
+            conn.commit()
+            row = cursor.execute(
+                """
+                SELECT
+                    DB_NAME() AS database_name,
+                    SUSER_SNAME() AS login_name,
+                    USER_NAME() AS user_name,
+                    OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U') AS table_id,
+                    HAS_PERMS_BY_NAME('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'OBJECT', 'INSERT') AS can_insert,
+                    HAS_PERMS_BY_NAME('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'OBJECT', 'UPDATE') AS can_update
+                """
+            ).fetchone()
+            return {
+                "ok": True,
+                "database": str(row.database_name or ""),
+                "login": str(row.login_name or ""),
+                "user": str(row.user_name or ""),
+                "table_exists": bool(row.table_id),
+                "can_insert": int(row.can_insert or 0) == 1,
+                "can_update": int(row.can_update or 0) == 1,
+            }
+    except (pyodbc.Error, RuntimeError) as exc:
+        logger.exception("Error validando almacenamiento complementario de Teams.")
+        raise HTTPException(status_code=500, detail=f"Error validando almacenamiento Teams: {exc}") from exc
 
 
 def _execute_preview_result(preview: dict[str, Any]) -> dict[str, Any]:
