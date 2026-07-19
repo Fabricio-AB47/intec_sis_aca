@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     titulation_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT3"))
     titulation_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT3"))
 
+    teams_db_name: str = Field(default="INTECEDUCONTINUA", validation_alias=AliasChoices("DB_NAME4", "B_NAME4", "TEAMS_DB_NAME"))
+    teams_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER4", "TEAMS_DB_USER"))
+    teams_db_password: str | None = Field(default=None, validation_alias=AliasChoices("DB_PASSWORD4", "TEAMS_DB_PASSWORD"))
+    teams_db_host: str | None = Field(default=None, validation_alias=AliasChoices("DB_HOST4", "TEAMS_DB_HOST"))
+    teams_db_port: int | None = Field(default=None, validation_alias=AliasChoices("DB_PORT4", "TEAMS_DB_PORT"))
+    teams_db_driver: str | None = Field(default=None, validation_alias=AliasChoices("DB_DRIVER4", "TEAMS_DB_DRIVER"))
+    teams_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("DB_ENCRYPT4", "TEAMS_DB_ENCRYPT"))
+    teams_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("DB_TRUST_CERT4", "TEAMS_DB_TRUST_CERT"))
+
     tenant_id: str | None = Field(default=None, validation_alias=AliasChoices("TENANT_ID", "MS_TENANT_ID"))
     client_id: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_ID", "MS_CLIENT_ID"))
     client_secret: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_SECRET", "MS_CLIENT_SECRET"))

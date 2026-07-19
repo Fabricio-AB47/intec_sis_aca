@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
 from app.routers.students import _MATRICULA_BASE_CTE, _validate_tipo
-from app.services.db import get_connection
+from app.services.db import get_connection, get_teams_connection
 from app.services.graph import graph_get, graph_get_all, graph_patch, graph_post, graph_post_with_meta
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
@@ -3820,7 +3820,7 @@ def _save_team_additional_admins(
 
     saved = 0
     try:
-        with get_connection() as conn:
+        with get_teams_connection() as conn:
             cursor = conn.cursor()
             _ensure_team_additional_admin_table(cursor)
             for teacher in resolved_teachers:
