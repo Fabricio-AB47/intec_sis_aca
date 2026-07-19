@@ -3778,16 +3778,18 @@ def _ensure_teachers_are_team_owners(team_id: str, resolved_teachers: list[dict[
     return owner_results
 
 
-def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> None:
+def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> bool:
     table_exists = cursor.execute("SELECT OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U')").fetchval()
     if table_exists:
-        return
+        return True
 
     can_create = cursor.execute("SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE')").fetchval()
     if int(can_create or 0) != 1:
-        raise RuntimeError(
-            "La tabla complementaria de administradores Teams no existe y la cuenta SQL actual no tiene CREATE TABLE."
+        logger.warning(
+            "No se puede preparar %s con la conexion actual.",
+            _TEAM_ADDITIONAL_ADMIN_TABLE,
         )
+        return False
 
     cursor.execute(
         """
@@ -3809,6 +3811,7 @@ def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> None:
             ON dbo.TEAMS_ADMINISTRADOR_ADICIONAL(team_id, graph_user_id)
         """
     )
+    return True
 
 
 def _save_team_additional_admins(
@@ -3824,7 +3827,8 @@ def _save_team_additional_admins(
     try:
         with get_teams_connection() as conn:
             cursor = conn.cursor()
-            _ensure_team_additional_admin_table(cursor)
+            if not _ensure_team_additional_admin_table(cursor):
+                return {"saved": 0, "warning": ""}
             for teacher in resolved_teachers:
                 graph_user_id = str(teacher.get("id") or "").strip()
                 if not graph_user_id:
@@ -3901,7 +3905,7 @@ def get_teams_storage_diagnostics(_: Annotated[SessionUser, Depends(_TEAMS_ACCES
     try:
         with get_teams_connection() as conn:
             cursor = conn.cursor()
-            _ensure_team_additional_admin_table(cursor)
+            table_ready = _ensure_team_additional_admin_table(cursor)
             conn.commit()
             row = cursor.execute(
                 """
@@ -3919,7 +3923,7 @@ def get_teams_storage_diagnostics(_: Annotated[SessionUser, Depends(_TEAMS_ACCES
                 "database": str(row.database_name or ""),
                 "login": str(row.login_name or ""),
                 "user": str(row.user_name or ""),
-                "table_exists": bool(row.table_id),
+                "table_exists": bool(row.table_id) or table_ready,
                 "can_insert": int(row.can_insert or 0) == 1,
                 "can_update": int(row.can_update or 0) == 1,
             }
@@ -4212,7 +4216,6 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
             team_display_name=payload.display_name.strip(),
             resolved_teachers=resolved_teachers,
         )
-        admin_warning = str(admin_save_result.get("warning") or "").strip()
 
         return {
             "ok": True,
@@ -4232,7 +4235,6 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
             ],
             "owner_results": owner_results,
             "additional_admins_saved": int(admin_save_result.get("saved") or 0),
-            "additional_admins_warning": admin_warning,
         }
     except httpx.HTTPStatusError as exc:
         _raise_graph_http_exception(exc)
