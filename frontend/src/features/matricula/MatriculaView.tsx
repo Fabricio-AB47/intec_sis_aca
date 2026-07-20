@@ -13,6 +13,7 @@ type MatriculaViewProps = {
   summaryError: string
   listError: string
   summaryItems: MatriculaSummaryItem[]
+  updatedAt: string
   totalsByEstado: Record<string, number>
   selectedTipo: MatriculaTipo
   selectedEstado: string
@@ -38,6 +39,7 @@ export function MatriculaView({
   summaryError,
   listError,
   summaryItems,
+  updatedAt,
   totalsByEstado,
   selectedTipo,
   selectedEstado,
@@ -90,6 +92,9 @@ export function MatriculaView({
           tipo_label: `Tipo ${row.tipo_matricula}`,
         }))
   const getEstadoTotal = (codigo: string) => totalsByEstado[codigo] ?? fallbackEstadoTotals[codigo] ?? 0
+  const updatedAtLabel = updatedAt
+    ? new Date(updatedAt).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : 'Pendiente'
 
   return (
     <>
@@ -142,7 +147,11 @@ export function MatriculaView({
         <article className="student-card student-card--wide">
           <div className="card-head">
             <h3>Resumen por estado</h3>
-            <span>{loadingSummary ? 'Cargando...' : summaryScope === 'unificado' ? 'Reporte unificado' : `Tipo ${selectedTipo}`}</span>
+            <span>
+              {loadingSummary
+                ? 'Cargando...'
+                : `${summaryScope === 'unificado' ? 'Reporte unificado' : `Tipo ${selectedTipo}`} · Actualizado ${updatedAtLabel}`}
+            </span>
           </div>
 
           <div className="teams-actions">
@@ -219,8 +228,8 @@ export function MatriculaView({
 
         <article className="student-card student-card--wide matricula-help-card">
           <p className="empty-block">
-            El resumen cuenta estudiantes de DATOS_ESTUD con al menos una materia en CARRERAXESTUD,
-            validada contra PENSUM y CARRERAS.
+            Fuente en vivo: TOTALESTUDMATRICCNE. Se actualiza cada 30 segundos y al regresar a esta ventana,
+            con la misma agrupación del reporte Crystal por tipo R/H y estado.
           </p>
         </article>
       </section>

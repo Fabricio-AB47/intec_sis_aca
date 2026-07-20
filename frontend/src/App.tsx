@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 
 import './App.css'
 import { StudentLayout } from './components/StudentLayout'
+import { AsignacionPantallasView } from './features/admin/AsignacionPantallasView'
 import { CarnetInstitucionalView } from './features/admin/CarnetInstitucionalView'
 import { CredentialGeneratorView } from './features/admin/CredentialGeneratorView'
 import { MassEmailView } from './features/admin/MassEmailView'
@@ -32,8 +33,12 @@ import { ReporteriaCarrerasView } from './features/matricula/ReporteriaCarrerasV
 import { ReporteriaIntegralView } from './features/matricula/ReporteriaIntegralView'
 import { ReportesIndividualesView } from './features/matricula/ReportesIndividualesView'
 import { SenescytEstudiantesView } from './features/matricula/SenescytEstudiantesView'
+import { SisAcademicoV1CloneView } from './features/matricula/SisAcademicoV1CloneView'
+import { TitulosRegistradosView } from './features/matricula/TitulosRegistradosView'
+import { TitulacionView } from './features/matricula/TitulacionView'
 import { PortalDocenteView } from './features/portal/PortalDocenteView'
 import { PortalEstudianteView } from './features/portal/PortalEstudianteView'
+import { PracticasInstitucionalesView } from './features/practicas/PracticasInstitucionalesView'
 import { TeamsEnrollmentView } from './features/teams/TeamsEnrollmentView'
 import { TeamsView } from './features/teams/TeamsView'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
@@ -69,6 +74,7 @@ function App() {
           displayName={app.displayName}
           error={app.dashboardMatriculaError}
           data={app.dashboardMatricula}
+          role={app.session.rol}
         />
       )
     } else if (app.activePage === 'matricula') {
@@ -80,6 +86,7 @@ function App() {
           summaryError={app.matriculaSummaryError}
           listError={app.matriculaListError}
           summaryItems={app.matriculaSummary}
+          updatedAt={app.matriculaSummaryUpdatedAt}
           totalsByEstado={app.matriculaTotalsByEstado}
           selectedTipo={app.matriculaTipo}
           selectedEstado={app.matriculaEstado}
@@ -105,6 +112,7 @@ function App() {
       pageContent = (
         <PreinscripcionView
           displayName={app.displayName}
+          role={app.session.rol}
           activeStage={app.preinscriptionActiveStage}
           onStageChange={app.setPreinscriptionActiveStage}
         />
@@ -123,6 +131,15 @@ function App() {
       pageContent = <ReporteriaIntegralView displayName={app.displayName} initialReportKey={app.legacyReportKey} />
     } else if (app.activePage === 'reportes-individuales') {
       pageContent = <ReportesIndividualesView displayName={app.displayName} initialReportKey={app.legacyReportKey} />
+    } else if (app.activePage === 'sisacademico-v1') {
+      pageContent = (
+        <SisAcademicoV1CloneView
+          displayName={app.displayName}
+          onOpenSection={app.openGestionSisAcademicoPage}
+        />
+      )
+    } else if (app.activePage === 'asignacion-pantallas') {
+      pageContent = <AsignacionPantallasView displayName={app.displayName} />
     } else if (app.activePage === 'gestion-sisacademico') {
       pageContent = <GestionSisAcademicoView displayName={app.displayName} initialSectionKey={app.sisAcademicoSectionKey} />
     } else if (app.activePage === 'periodo-academico') {
@@ -182,7 +199,29 @@ function App() {
     } else if (app.activePage === 'rango-edades') {
       pageContent = <RangoEdadesView displayName={app.displayName} />
     } else if (app.activePage === 'fecha-grado') {
-      pageContent = <FechaGradoView displayName={app.displayName} />
+      pageContent = <FechaGradoView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'titulacion') {
+      pageContent = (
+        <TitulacionView
+          displayName={app.displayName}
+          role={app.session.rol}
+          section="verificacion"
+          onOpenProcesoTitulacion={app.openTitulacionProcesoPage}
+        />
+      )
+    } else if (app.activePage === 'titulacion-proceso') {
+      pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="proceso" />
+    } else if (app.activePage === 'titulacion-responsables') {
+      pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="responsables" />
+    } else if (app.activePage === 'titulos-registrados') {
+      pageContent = (
+        <TitulosRegistradosView
+          key={app.titulosRegistradosTipo || 'todos'}
+          displayName={app.displayName}
+          role={app.session.rol}
+          initialTipo={app.titulosRegistradosTipo}
+        />
+      )
     } else if (app.activePage === 'certificados') {
       pageContent = <CertificadosView displayName={app.displayName} />
     } else if (app.activePage === 'matricula-excel-certificados') {
@@ -220,6 +259,14 @@ function App() {
       pageContent = <PortalDocenteView displayName={app.displayName} initialMode="compliance" />
     } else if (app.activePage === 'formato-informe-docente') {
       pageContent = <TeacherComplianceFormatView displayName={app.displayName} />
+    } else if (app.activePage === 'practicas-institucionales') {
+      pageContent = (
+        <PracticasInstitucionalesView
+          displayName={app.displayName}
+          role={app.session.rol}
+          codigoEstud={app.session.codigo_estud}
+        />
+      )
     } else if (app.activePage === 'teams-matricula') {
       pageContent = (
         <TeamsEnrollmentView
@@ -292,6 +339,8 @@ function App() {
           onOpenReporteriaIntegral={app.openReporteriaIntegralPage}
           onOpenReportesIndividuales={app.openReportesIndividualesPage}
           onOpenGestionSisAcademico={app.openGestionSisAcademicoPage}
+          onOpenSisAcademicoV1={app.openSisAcademicoV1Page}
+          onOpenAsignacionPantallas={app.openAsignacionPantallasPage}
           onOpenPeriodoAcademico={app.openPeriodoAcademicoPage}
           onOpenPeriodoMatriculados={app.openPeriodoMatriculadosPage}
           onOpenIngresoVentas={app.openIngresoVentasPage}
@@ -299,6 +348,10 @@ function App() {
           onOpenValidarExcel={app.openValidarExcelPage}
           onOpenRangoEdades={app.openRangoEdadesPage}
           onOpenFechaGrado={app.openFechaGradoPage}
+          onOpenTitulacion={app.openTitulacionPage}
+          onOpenTitulacionProceso={app.openTitulacionProcesoPage}
+          onOpenTitulacionResponsables={app.openTitulacionResponsablesPage}
+          onOpenTitulosRegistrados={app.openTitulosRegistradosPage}
           onOpenCertificados={app.openCertificadosPage}
           onOpenMatriculaExcelCertificados={app.openMatriculaExcelCertificadosPage}
           onOpenCertificateRenamer={app.openCertificateRenamerPage}
@@ -309,6 +362,7 @@ function App() {
           onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
           onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
           onOpenTeacherComplianceFormat={app.openTeacherComplianceFormatPage}
+          onOpenPracticasInstitucionales={app.openPracticasInstitucionalesPage}
           onLogout={() => {
             void app.logout()
           }}

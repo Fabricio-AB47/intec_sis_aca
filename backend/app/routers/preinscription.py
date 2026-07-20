@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import pyodbc
 from reportlab.graphics import renderPDF
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -55,8 +55,11 @@ class PreinscriptionCabeceraPayload(BaseModel):
     valor: float = 0
     inscrip_valor: float = 0
     matri_valor: float = 0
+    costo_semestre: float = 0
+    semestres_convenio: str | int | None = "1"
     control_matricula: int = 1
     num_cuotas: int = 1
+    tipo_beca: str | None = ""
     porcentaje_beca: float = 0
     descuento: float = 0
     num_pago: int = 1
@@ -156,8 +159,22 @@ def _safe_filename(value: str) -> str:
     return name or "documento"
 
 
-def _payment_plan(payload: PreinscriptionCabeceraPayload) -> dict[str, float | int]:
-    total = max(float(payload.valor or 0), 0)
+def _convenio_semester_count(value: str | int | None) -> int:
+    text = _clean(value).upper()
+    if text in {"TODOS", "TODO", "ALL"}:
+        return 4
+    try:
+        return min(max(int(float(text or "1")), 1), 4)
+    except ValueError:
+        return 1
+
+
+def _payment_plan(payload: PreinscriptionCabeceraPayload) -> dict[str, float | int | str]:
+    semester_count = _convenio_semester_count(payload.semestres_convenio)
+    base_semester_cost = max(float(payload.costo_semestre or 0), 0)
+    if base_semester_cost <= 0:
+        base_semester_cost = max(float(payload.valor or 0), 0)
+    total = round(base_semester_cost * semester_count, 2) if base_semester_cost > 0 else max(float(payload.valor or 0), 0)
     porcentaje_beca = min(max(float(payload.porcentaje_beca or 0), 0), 100)
     beca_valor = round(total * porcentaje_beca / 100, 2)
     descuento = max(float(payload.descuento or 0), 0)
@@ -166,6 +183,9 @@ def _payment_plan(payload: PreinscriptionCabeceraPayload) -> dict[str, float | i
     cuota_valor = round(saldo / num_cuotas, 2) if num_cuotas else saldo
     return {
         "total": round(total, 2),
+        "costo_semestre": round(base_semester_cost, 2),
+        "semestres": semester_count,
+        "alcance": "Todos los semestres" if _clean(payload.semestres_convenio).upper() in {"TODOS", "TODO", "ALL"} else f"{semester_count} semestre(s)",
         "porcentaje_beca": round(porcentaje_beca, 2),
         "beca_valor": beca_valor,
         "descuento": round(descuento, 2),
@@ -269,67 +289,76 @@ def _write_convenio_document(
     filename = f"carta-compromiso-{_safe_filename(code)}.pdf"
     target_path = target_dir / filename
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CenterTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=13, leading=16))
-    styles.add(ParagraphStyle(name="BodyJustified", parent=styles["BodyText"], fontSize=10, leading=14, spaceAfter=8))
-    styles.add(ParagraphStyle(name="BodySmall", parent=styles["BodyText"], fontSize=9, leading=12, spaceAfter=6))
+    styles.add(ParagraphStyle(name="CrystalTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=11, leading=14, spaceAfter=0))
+    styles.add(ParagraphStyle(name="CrystalBody", parent=styles["BodyText"], fontSize=10, leading=13, spaceAfter=7))
+    styles.add(ParagraphStyle(name="CrystalJustified", parent=styles["BodyText"], alignment=TA_JUSTIFY, fontSize=9.4, leading=12.6, spaceAfter=9))
+    styles.add(ParagraphStyle(name="CrystalSmall", parent=styles["BodyText"], fontSize=6.8, leading=8.2, spaceAfter=0))
+    styles.add(ParagraphStyle(name="CrystalFooter", parent=styles["BodyText"], fontSize=7.5, leading=9, spaceAfter=0))
 
     student = _clean(getattr(row, "Apellidos_nombre", ""))
     cedula = _clean(getattr(row, "Cedula", ""))
     periodo = _clean(getattr(row, "Detalle_Periodo", "")) or _clean(getattr(row, "codperiodo", ""))
     carrera = _clean(getattr(row, "Nombre_Basica", "")) or _clean(getattr(row, "codcarrera", ""))
+    alcance = _clean(plan.get("alcance")) or f"{int(plan.get('semestres') or 1)} semestre(s)"
+    tipo_beca = _clean(payload.tipo_beca) or "Sin beca"
 
     story: list[Any] = [
-        _SvgLogo(_LOGO_PATH, 5.0 * cm),
-        Spacer(1, 0.2 * cm),
-        Paragraph("CARTA DE COMPROMISO DE PAGO - ARANCELES", styles["CenterTitle"]),
-        Spacer(1, 0.45 * cm),
-        Paragraph(f"Quito, {date.today().strftime('%d/%m/%Y')}", styles["BodyText"]),
+        _SvgLogo(_LOGO_PATH, 4.4 * cm),
+        Spacer(1, 0.15 * cm),
+        Paragraph("<b>CARTA DE COMPROMISO DE PAGO - ARANCELES</b>", styles["CrystalTitle"]),
+        Spacer(1, 0.8 * cm),
+        Paragraph("Quito,", styles["CrystalBody"]),
         Spacer(1, 0.25 * cm),
-        Paragraph("Señores", styles["BodyText"]),
+        Paragraph("Señores", styles["CrystalBody"]),
+        Spacer(1, 0.18 * cm),
         Paragraph(
             "INSTITUTO SUPERIOR TECNOLOGICO DE TÉCNICAS<br/>"
             "EMPRESARIALES Y DEL CONOCIMIENTO &quot;INTEC&quot;<br/>"
             "Ciudad",
-            styles["BodyText"],
+            styles["CrystalBody"],
         ),
         Spacer(1, 0.25 * cm),
-        Paragraph("De mis consideraciones:", styles["BodyText"]),
-        Paragraph(
-            f"Yo, <b>{escape(student)}</b>, con cédula <b>{escape(cedula)}</b>, "
-            f"aspirante/estudiante de <b>{escape(carrera)}</b> para el periodo "
-            f"<b>{escape(periodo)}</b>, acepto el siguiente compromiso de pago:",
-            styles["BodyJustified"],
-        ),
+        Paragraph("De mis consideraciones:", styles["CrystalBody"]),
+        Spacer(1, 3.25 * cm),
     ]
 
-    table = Table(_payment_plan_rows(plan, payload, fecha_pago), colWidths=[2.3 * cm, 7.6 * cm, 4.0 * cm, 3.0 * cm])
+    table = Table(_payment_plan_rows(plan, payload, fecha_pago), colWidths=[2.0 * cm, 7.4 * cm, 4.2 * cm, 2.4 * cm])
     table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9f3f6")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0c1f42")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#b7c8cf")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.85, colors.black),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#bdbdbd")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, 0), "CENTER"),
                 ("ALIGN", (0, 1), (0, -1), "CENTER"),
                 ("ALIGN", (3, 1), (3, -1), "RIGHT"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fafb")]),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
     story.extend(
         [
-            table,
-            Spacer(1, 0.35 * cm),
             Paragraph(
-                'En el caso de que la fecha de pago coincida en fin de semana o feriado, el pago se lo deberá '
+                f"<b>Estudiante:</b> {student or '-'} &nbsp;&nbsp; <b>Cédula:</b> {cedula or '-'}<br/>"
+                f"<b>Carrera:</b> {carrera or '-'}<br/>"
+                f"<b>Periodo:</b> {periodo or '-'}<br/>"
+                f"<b>Alcance del convenio:</b> {alcance} &nbsp;&nbsp; "
+                f"<b>Costo por semestre:</b> {_format_money(plan.get('costo_semestre'))} &nbsp;&nbsp; "
+                f"<b>Beca:</b> {tipo_beca} ({float(plan.get('porcentaje_beca') or 0):.2f}%)",
+                styles["CrystalBody"],
+            ),
+            Spacer(1, 0.18 * cm),
+            table,
+            Spacer(1, 0.2 * cm),
+            Paragraph(
+                '<b>En el caso de que la fecha de pago coincida en fin de semana o feriado, el pago se lo deberá '
                 'realizar el siguiente día hábil, mediante transferencia a la Cuenta de Corriente No. 2100297203 '
                 'en el Banco Pichincha a nombre del "INTEC" con RUC 1793206794001 y enviar el comprobante por '
-                'correo electrónico a vice.financiero@intec.edu.ec.',
-                styles["BodyJustified"],
+                'correo electrónico a <font color="#0066cc">vice.financiero@intec.edu.ec</font></b>',
+                styles["CrystalJustified"],
             ),
             Paragraph(
                 "Además, estoy plenamente consciente que al suscribir la carta compromiso, asumo las consecuencias "
@@ -337,24 +366,22 @@ def _write_convenio_document(
                 "de las medidas académicas por parte de la Institución. También dejo constancia que, al recibir el "
                 "beneficio del pago de los valores en cuotas, me será aplicado el recargo del 5% anual si el pago "
                 "se realiza con cualquier tarjeta de crédito o débito.",
-                styles["BodyJustified"],
+                styles["CrystalJustified"],
             ),
             Paragraph(
                 "Con la firma y rúbrica que ponga en el documento, me doy por notificado que, en caso de "
                 "incumplimiento de la obligación contraída, no podré hacer uso de la misma en segunda ocasión.",
-                styles["BodyJustified"],
+                styles["CrystalJustified"],
             ),
-            Spacer(1, 0.3 * cm),
-            Paragraph("Atentamente,", styles["BodyText"]),
-            Spacer(1, 1.0 * cm),
-            Paragraph("____________________________________", styles["BodyText"]),
-            Paragraph(f"{escape(student)}<br/>C.C. {escape(cedula)}", styles["BodySmall"]),
-            Spacer(1, 0.25 * cm),
+            Spacer(1, 0.15 * cm),
+            Paragraph("Atentamente,", styles["CrystalBody"]),
+            Spacer(1, 4.6 * cm),
+            Paragraph("<b>Notas:</b>", styles["CrystalFooter"]),
             Paragraph(
-                "Notas:<br/>"
-                "• El estudiante podrá enviar la carta de compromiso al correo: bienestar@intec.edu.ec y "
-                "vice.financiero@intec.edu.ec",
-                styles["BodySmall"],
+                '• El estudiante podrá enviar la carta de compromiso al correo: '
+                '<font color="#0066cc">bienestar@intec.edu.ec</font> y '
+                '<font color="#0066cc">vice.financiero@intec.edu.ec</font>',
+                styles["CrystalSmall"],
             ),
         ]
     )
@@ -627,9 +654,11 @@ def _photo_status_payload(cursor: pyodbc.Cursor, codigo_estud: int | str) -> dic
 def _sync_student_scholarship(
     cursor: pyodbc.Cursor,
     codigo_estud: int,
+    tipo_beca: str | None,
     porcentaje_beca: float,
     beca_valor: float,
 ) -> None:
+    scholarship_type = _clean(tipo_beca) or ("Sin beca" if float(porcentaje_beca or 0) <= 0 else "PREMATRICULA")
     cursor.execute(
         """
         IF OBJECT_ID(N'dbo.Becas', N'U') IS NOT NULL
@@ -643,22 +672,24 @@ def _sync_student_scholarship(
                 UPDATE dbo.Becas
                 SET porcentaje_beca = ?,
                     valor_monto_beca = ?,
-                    tipo_beca = COALESCE(NULLIF(tipo_beca, ''), 'PREMATRICULA')
+                    tipo_beca = ?
                 WHERE TRY_CONVERT(varchar(50), codestud) = TRY_CONVERT(varchar(50), ?)
             END
             ELSE
             BEGIN
                 INSERT INTO dbo.Becas (codestud, porcentaje_beca, tipo_beca, valor_monto_beca)
-                VALUES (?, ?, 'PREMATRICULA', ?)
+                VALUES (?, ?, ?, ?)
             END
         END
         """,
         str(codigo_estud),
         porcentaje_beca,
         beca_valor,
+        scholarship_type,
         str(codigo_estud),
         str(codigo_estud),
         porcentaje_beca,
+        scholarship_type,
         beca_valor,
     )
 
@@ -991,6 +1022,7 @@ def _preinscription_item(row: Any) -> dict[str, Any]:
             "cuota1": _number_value(getattr(row, "cabecera_cuota1", None)),
             "beca": _number_value(getattr(row, "cabecera_beca", None)),
             "descuento": _number_value(getattr(row, "cabecera_descuento", None)),
+            "tipo_beca": _clean(getattr(row, "cabecera_tipo_beca", "")),
             "porcentaje_beca": _number_value(getattr(row, "cabecera_porcentaje_beca", None)),
             "num_pago": _int_value(getattr(row, "pago_num", None)),
             "detalle_pago": _clean(getattr(row, "pago_detalle", "")),
@@ -1059,6 +1091,7 @@ def _base_preinscription_select(where_sql: str = "") -> str:
             cm.Cuota1 AS cabecera_cuota1,
             cm.Beca AS cabecera_beca,
             cm.Descuento AS cabecera_descuento,
+            bec.tipo_beca AS cabecera_tipo_beca,
             bec.porcentaje_beca AS cabecera_porcentaje_beca,
             rp.Num AS pago_num,
             rp.Detalle AS pago_detalle,
@@ -1095,7 +1128,7 @@ def _base_preinscription_select(where_sql: str = "") -> str:
                 cab.fecha_pago DESC
         ) cm
         OUTER APPLY (
-            SELECT TOP (1) b.porcentaje_beca
+            SELECT TOP (1) b.tipo_beca, b.porcentaje_beca
             FROM dbo.Becas b
             WHERE TRY_CONVERT(varchar(50), b.codestud) = COALESCE(
                     TRY_CONVERT(varchar(50), cm.codigo_estud),
@@ -1248,10 +1281,29 @@ def preinscription_catalog(
                     c.Estado,
                     c.Abrevia,
                     c.tp_escuela,
+                    costs.semestres_disponibles,
+                    costs.costo_presencial_total,
+                    costs.costo_virtual_total,
+                    costs.costo_presencial_semestre,
+                    costs.costo_virtual_semestre,
                     COUNT(p.num) AS total_preinscripciones
                 FROM dbo.CARRERAS c
                 LEFT JOIN dbo.PREINSCRIPCION p ON c.Cod_AnioBasica = p.codcarrera
-                GROUP BY c.Cod_AnioBasica, c.Nombre_Basica, c.Estado, c.Abrevia, c.tp_escuela
+                OUTER APPLY (
+                    SELECT
+                        COUNT(DISTINCT TRY_CONVERT(int, pen.Semestre)) AS semestres_disponibles,
+                        SUM(COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0)) AS costo_presencial_total,
+                        SUM(COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHoraVirtual), TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0)) AS costo_virtual_total,
+                        SUM(CASE WHEN TRY_CONVERT(int, pen.Semestre) = 1 THEN COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0) ELSE 0 END) AS costo_presencial_semestre,
+                        SUM(CASE WHEN TRY_CONVERT(int, pen.Semestre) = 1 THEN COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHoraVirtual), TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0) ELSE 0 END) AS costo_virtual_semestre
+                    FROM dbo.PENSUM pen
+                    WHERE TRY_CONVERT(varchar(50), pen.Cod_AnioBasica) = TRY_CONVERT(varchar(50), c.Cod_AnioBasica)
+                      AND TRY_CONVERT(int, pen.Semestre) BETWEEN 1 AND 4
+                ) costs
+                GROUP BY
+                    c.Cod_AnioBasica, c.Nombre_Basica, c.Estado, c.Abrevia, c.tp_escuela,
+                    costs.semestres_disponibles, costs.costo_presencial_total, costs.costo_virtual_total,
+                    costs.costo_presencial_semestre, costs.costo_virtual_semestre
                 ORDER BY c.Nombre_Basica
                 """
             )
@@ -1262,6 +1314,11 @@ def preinscription_catalog(
                     "estado": _clean(row.Estado),
                     "abrevia": _clean(row.Abrevia),
                     "tipo_escuela": _clean(row.tp_escuela),
+                    "semestres_disponibles": _int_value(row.semestres_disponibles) or 0,
+                    "costo_presencial_total": _number_value(row.costo_presencial_total) or 0,
+                    "costo_virtual_total": _number_value(row.costo_virtual_total) or 0,
+                    "costo_presencial_semestre": _number_value(row.costo_presencial_semestre) or 0,
+                    "costo_virtual_semestre": _number_value(row.costo_virtual_semestre) or 0,
                     "total_preinscripciones": int(row.total_preinscripciones or 0),
                 }
                 for row in cursor.fetchall()
@@ -1370,6 +1427,64 @@ def preinscription_catalog(
             cursor.execute(
                 """
                 SELECT
+                    TRY_CONVERT(varchar(50), pen.Cod_AnioBasica) AS cod_anio_basica,
+                    TRY_CONVERT(int, pen.Semestre) AS semestre,
+                    SUM(COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0)) AS costo_presencial,
+                    SUM(COALESCE(TRY_CONVERT(decimal(18, 2), pen.ValorHoraVirtual), TRY_CONVERT(decimal(18, 2), pen.ValorHora), 0)) AS costo_virtual
+                FROM dbo.PENSUM pen
+                WHERE TRY_CONVERT(int, pen.Semestre) BETWEEN 1 AND 4
+                  AND TRY_CONVERT(varchar(50), pen.Cod_AnioBasica) IS NOT NULL
+                GROUP BY TRY_CONVERT(varchar(50), pen.Cod_AnioBasica), TRY_CONVERT(int, pen.Semestre)
+                ORDER BY TRY_CONVERT(varchar(50), pen.Cod_AnioBasica), TRY_CONVERT(int, pen.Semestre)
+                """
+            )
+            costs_by_career: dict[str, list[dict[str, Any]]] = {}
+            for row in cursor.fetchall():
+                career_key = _clean(row.cod_anio_basica)
+                if not career_key:
+                    continue
+                costs_by_career.setdefault(career_key, []).append(
+                    {
+                        "semestre": _int_value(row.semestre) or 0,
+                        "presencial": _number_value(row.costo_presencial) or 0,
+                        "virtual": _number_value(row.costo_virtual) or 0,
+                    }
+                )
+            for career in carreras:
+                career["costos_semestres"] = costs_by_career.get(career["cod_anio_basica"], [])
+            cursor.execute(
+                """
+                IF OBJECT_ID(N'dbo.Becas', N'U') IS NOT NULL
+                BEGIN
+                    SELECT TOP (120)
+                        TRY_CONVERT(nvarchar(255), NULLIF(LTRIM(RTRIM(tipo_beca)), '')) AS option_value,
+                        TRY_CONVERT(decimal(18, 2), MAX(ISNULL(porcentaje_beca, 0))) AS amount
+                    FROM dbo.Becas
+                    WHERE NULLIF(LTRIM(RTRIM(tipo_beca)), '') IS NOT NULL
+                    GROUP BY TRY_CONVERT(nvarchar(255), NULLIF(LTRIM(RTRIM(tipo_beca)), ''))
+                    ORDER BY TRY_CONVERT(nvarchar(255), NULLIF(LTRIM(RTRIM(tipo_beca)), ''))
+                END
+                ELSE
+                BEGIN
+                    SELECT TOP (0)
+                        TRY_CONVERT(nvarchar(255), '') AS option_value,
+                        TRY_CONVERT(decimal(18, 2), 0) AS amount
+                END
+                """
+            )
+            becas = [
+                {
+                    "value": _clean(row.option_value),
+                    "label": _clean(row.option_value),
+                    "detail": f"{_number_value(row.amount) or 0:g}%",
+                    "amount": _number_value(row.amount),
+                }
+                for row in cursor.fetchall()
+                if _clean(row.option_value)
+            ]
+            cursor.execute(
+                """
+                SELECT
                     TRY_CONVERT(nvarchar(20), NumM) AS option_value,
                     TRY_CONVERT(nvarchar(255), DetalleM) AS option_label
                 FROM dbo.ModalidadMatricula
@@ -1407,6 +1522,7 @@ def preinscription_catalog(
             "descuentos_convenio": descuentos_convenio,
             "descuentos_valores": descuentos_valores,
             "descuentos_deposito": descuentos_deposito,
+            "becas": becas,
         }
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando catalogo de preinscripcion: {exc}") from exc
@@ -1667,6 +1783,7 @@ def register_preinscription_cabecera(
             cod_modalidad = _int_value(getattr(row, "codmodalida", None)) or 0
             fecha_pago = payload.fecha_pago or date.today().isoformat()
             plan = _payment_plan(payload)
+            payload.valor = float(plan["total"])
             _sync_preinscription_student_records(cursor, row, codigo_estud, codigo_periodo)
 
             cursor.execute(
@@ -1773,6 +1890,7 @@ def register_preinscription_cabecera(
             _sync_student_scholarship(
                 cursor,
                 codigo_estud,
+                payload.tipo_beca,
                 float(plan["porcentaje_beca"]),
                 float(plan["beca_valor"]),
             )

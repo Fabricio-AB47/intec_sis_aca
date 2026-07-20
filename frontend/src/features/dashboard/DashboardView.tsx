@@ -1,12 +1,18 @@
 import { useState, type CSSProperties } from 'react'
 
-import { fetchDashboardMatriculaTrendStudents, fetchMatriculaList } from '../../lib/api'
-import type { DashboardMatriculaResponse, DashboardMatriculaStateItem, MatriculaStudentItem } from '../../types/app'
+import { fetchDashboardAdmissionsStudents, fetchDashboardMatriculaTrendStudents, fetchMatriculaList } from '../../lib/api'
+import type {
+  AdmissionsDashboardStudentItem,
+  DashboardMatriculaResponse,
+  DashboardMatriculaStateItem,
+  MatriculaStudentItem,
+} from '../../types/app'
 
 type DashboardViewProps = {
   displayName: string
   error: string
   data: DashboardMatriculaResponse | null
+  role?: string
 }
 
 const activeTypeColors: Record<string, string> = {
@@ -53,6 +59,14 @@ type ActiveTypeItem = {
   tipo_matricula: 'R' | 'H'
   label: string
   total_estudiantes: number
+}
+
+type AdmissionsDetailSelection = {
+  estado: string
+  label: string
+  total: number
+  codigo_periodo?: string
+  detalle_periodo?: string
 }
 
 type PieSegment = {
@@ -164,7 +178,9 @@ export function DashboardView({
   displayName,
   error,
   data,
+  role = '',
 }: Readonly<DashboardViewProps>) {
+  const normalizedRole = role.trim().toUpperCase()
   const [selectedTrendPoint, setSelectedTrendPoint] = useState<TrendPoint | null>(null)
   const [selectedTrendYear, setSelectedTrendYear] = useState<'ALL' | number>('ALL')
   const [selectedDistributionYear, setSelectedDistributionYear] = useState<number | null>(null)
@@ -179,7 +195,14 @@ export function DashboardView({
   const [trendStudents, setTrendStudents] = useState<MatriculaStudentItem[]>([])
   const [trendStudentsLoading, setTrendStudentsLoading] = useState(false)
   const [trendStudentsError, setTrendStudentsError] = useState('')
-  const trend = data?.trend || []
+  const [selectedAdmissionsDetail, setSelectedAdmissionsDetail] = useState<AdmissionsDetailSelection | null>(null)
+  const [admissionsStudents, setAdmissionsStudents] = useState<AdmissionsDashboardStudentItem[]>([])
+  const [admissionsStudentsLoading, setAdmissionsStudentsLoading] = useState(false)
+  const [admissionsStudentsError, setAdmissionsStudentsError] = useState('')
+  const isAdmissionsPayload = data?.dashboard_type === 'admisiones'
+  const isAdmissionsDashboard = isAdmissionsPayload || normalizedRole === 'ADMISIONES'
+  const dashboardData = isAdmissionsDashboard && !isAdmissionsPayload ? null : data
+  const trend = dashboardData?.trend || []
   const trendYears = [...new Set(trend.map((item) => item.anio))].sort((left, right) => left - right)
   const trendYearColors = new Map(trendYears.map((year, index) => [year, trendLineColors[index % trendLineColors.length]]))
   const getTrendYearColor = (year: number) => trendYearColors.get(year) || trendLineColors[0]
@@ -191,8 +214,31 @@ export function DashboardView({
     : defaultDistributionYear
   const visibleTrend = buildMonthlyTrend(trend, selectedTrendYear)
   const distributionTrend = buildMonthlyTrend(trend, distributionYear)
-  const states = (data?.states || []).filter((item) => dashboardStateCodes.has(item.estado_codigo))
-  const totalStudents = states.reduce((sum, item) => sum + item.total_estudiantes, 0)
+  const states = isAdmissionsDashboard
+    ? (dashboardData?.states || [])
+    : (dashboardData?.states || []).filter((item) => dashboardStateCodes.has(item.estado_codigo))
+  const admissionTotals = dashboardData?.admissions || {}
+  const admissionsByUserPeriod = admissionTotals.por_usuario_periodo || []
+  const admissionsEnrolled = admissionTotals.ingresaron_cabecera_matricula
+    ?? admissionsByUserPeriod.reduce(
+      (sum, row) => sum + (row.ingresaron_cabecera_matricula ?? row.ingresaron_carreraxestud ?? 0),
+      0
+    )
+  const admissionsActive = admissionTotals.activos_desde_admision
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.activos ?? 0), 0)
+  const admissionsInactive = admissionTotals.inactivos_desde_admision
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.inactivos ?? 0), 0)
+  const admissionsGraduated = admissionTotals.graduados_desde_admision
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.graduados ?? 0), 0)
+  const admissionsRetired = admissionTotals.retirados_desde_admision
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.retirados ?? 0), 0)
+  const admissionsPendingEnrollment = admissionTotals.pendientes_matricula
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.pendientes_matricula ?? 0), 0)
+  const admissionsWithoutState = admissionTotals.sin_estado_desde_admision
+    ?? admissionsByUserPeriod.reduce((sum, row) => sum + (row.sin_estado ?? 0), 0)
+  const totalStudents = isAdmissionsDashboard
+    ? admissionTotals.total_ingresados ?? dashboardData?.total_estudiantes ?? 0
+    : states.reduce((sum, item) => sum + item.total_estudiantes, 0)
   const trendSeries = selectedTrendYear === 'ALL'
     ? trendYears.map((year) => ({
         year,
@@ -205,12 +251,14 @@ export function DashboardView({
         items: visibleTrend,
       }]
   const trendMax = Math.max(...trendSeries.flatMap((series) => series.items.map((item) => item.total_estudiantes)), 1)
-  const activeStudents = states.find((item) => item.estado_codigo === 'A')?.total_estudiantes ?? 0
-  const activeByType = data?.active_by_type || []
-  const rawActiveRegularStudents = data?.active_regular_students
+  const activeStudents = isAdmissionsDashboard
+    ? admissionTotals.activos_desde_admision ?? 0
+    : states.find((item) => item.estado_codigo === 'A')?.total_estudiantes ?? 0
+  const activeByType = dashboardData?.active_by_type || []
+  const rawActiveRegularStudents = dashboardData?.active_regular_students
     ?? activeByType.find((item) => item.tipo_matricula === 'R')?.total_estudiantes
     ?? 0
-  const rawActiveHomologationStudents = data?.active_homologation_students
+  const rawActiveHomologationStudents = dashboardData?.active_homologation_students
     ?? activeByType.find((item) => item.tipo_matricula === 'H')?.total_estudiantes
     ?? 0
   const rawActiveSplit = rawActiveRegularStudents + rawActiveHomologationStudents
@@ -224,10 +272,21 @@ export function DashboardView({
     { tipo_matricula: 'H', label: 'Homologación', total_estudiantes: activeHomologationStudents },
   ]
   const stateSegments = pieSegments(
-    states.map((item) => ({
+    (isAdmissionsDashboard
+      ? [
+          {
+            estado_codigo: 'A',
+            total_estudiantes: admissionTotals.activos_desde_admision ?? 0,
+          },
+          {
+            estado_codigo: 'PEN',
+            total_estudiantes: admissionTotals.pendientes_o_no_activos ?? 0,
+          },
+        ]
+      : states).map((item) => ({
       key: item.estado_codigo,
       total_estudiantes: item.total_estudiantes,
-      color: stateColors[item.estado_codigo] || '#8dbbc7',
+      color: item.estado_codigo === 'PEN' ? '#d19a2a' : stateColors[item.estado_codigo] || '#8dbbc7',
     }))
   )
   const currentYearTrend = buildMonthlyTrend(trend, currentYear)
@@ -237,17 +296,34 @@ export function DashboardView({
   )
   const peakMonthDetail = peakMonth.total_estudiantes > 0 ? `${peakMonth.mes_nombre} ${currentYear}` : `Sin datos ${currentYear}`
   const monthBarMax = Math.max(...distributionTrend.map((item) => item.total_estudiantes), 1)
-  const metricCards = [
-    { label: 'Total estudiantes', value: totalStudents, detail: 'Estados reales A/G/P/R', tone: 'red' },
-    {
-      label: 'Activos R + H',
-      value: activeRhStudents,
-      detail: `R ${activeRegularStudents} + H ${activeHomologationStudents}`,
-      tone: 'cyan',
-    },
-    { label: 'Activos', value: activeStudents, detail: statePercent(activeStudents, totalStudents), tone: 'cyan' },
-    { label: 'Mes mayor', value: peakMonth.total_estudiantes, detail: peakMonthDetail, tone: 'gold' },
-  ]
+  const metricCards = isAdmissionsDashboard
+    ? [
+        { label: 'Preinscritos', value: totalStudents, detail: 'Registros en preinscripción', tone: 'red' },
+        {
+          label: 'Con cabecera matrícula',
+          value: admissionsEnrolled,
+          detail: statePercent(admissionsEnrolled, totalStudents),
+          tone: 'cyan',
+        },
+        {
+          label: 'Se mantienen activos',
+          value: activeStudents,
+          detail: statePercent(activeStudents, totalStudents),
+          tone: 'cyan',
+        },
+        { label: 'Mes mayor', value: peakMonth.total_estudiantes, detail: peakMonthDetail, tone: 'gold' },
+      ]
+    : [
+        { label: 'Total estudiantes', value: totalStudents, detail: 'Estados reales A/G/P/R', tone: 'red' },
+        {
+          label: 'Activos R + H',
+          value: activeRhStudents,
+          detail: `R ${activeRegularStudents} + H ${activeHomologationStudents}`,
+          tone: 'cyan',
+        },
+        { label: 'Activos', value: activeStudents, detail: statePercent(activeStudents, totalStudents), tone: 'cyan' },
+        { label: 'Mes mayor', value: peakMonth.total_estudiantes, detail: peakMonthDetail, tone: 'gold' },
+      ]
 
   async function openActiveTypeStudents(item: ActiveTypeItem) {
     setSelectedActiveType(item)
@@ -255,8 +331,8 @@ export function DashboardView({
     setActiveTypeStudentsError('')
     setActiveTypeStudentsLoading(true)
     try {
-      const response = await fetchMatriculaList(item.tipo_matricula, 'A', 10000)
-      setActiveTypeStudents((response.items || []).filter(isDashboardVisibleStudent))
+      const response = await fetchMatriculaList(item.tipo_matricula, 'A', 10000, null, undefined, 'CNE')
+      setActiveTypeStudents(response.items || [])
     } catch (apiError) {
       setActiveTypeStudentsError(apiError instanceof Error ? apiError.message : 'Error consultando estudiantes activos')
     } finally {
@@ -270,8 +346,8 @@ export function DashboardView({
     setStateStudentsError('')
     setStateStudentsLoading(true)
     try {
-      const response = await fetchMatriculaList('ALL', item.estado_codigo, 10000)
-      setStateStudents((response.items || []).filter(isDashboardVisibleStudent))
+      const response = await fetchMatriculaList('ALL', item.estado_codigo, 10000, null, undefined, 'CNE')
+      setStateStudents(response.items || [])
     } catch (apiError) {
       setStateStudentsError(apiError instanceof Error ? apiError.message : 'Error consultando estudiantes por estado')
     } finally {
@@ -295,12 +371,388 @@ export function DashboardView({
     }
   }
 
+  async function openAdmissionsStudents(selection: AdmissionsDetailSelection) {
+    setSelectedAdmissionsDetail(selection)
+    setAdmissionsStudents([])
+    setAdmissionsStudentsError('')
+    setAdmissionsStudentsLoading(true)
+    try {
+      const response = await fetchDashboardAdmissionsStudents({
+        estado: selection.estado,
+        codigo_periodo: selection.codigo_periodo,
+        limit: 10000,
+      })
+      setAdmissionsStudents(response.items || [])
+    } catch (apiError) {
+      setAdmissionsStudentsError(
+        apiError instanceof Error ? apiError.message : 'Error consultando estudiantes de admisiones'
+      )
+    } finally {
+      setAdmissionsStudentsLoading(false)
+    }
+  }
+
+  if (isAdmissionsDashboard) {
+    const personalTotal = admissionTotals.total_ingresados ?? totalStudents
+    const personalEnrolled = admissionsEnrolled
+    const personalActive = admissionsActive
+    const conversion = statePercent(personalEnrolled, personalTotal)
+    const retention = statePercent(personalActive, personalTotal)
+    const monthMax = Math.max(...visibleTrend.map((item) => item.total_estudiantes), 1)
+    const hasNoAdvisorRecords = personalTotal === 0
+
+    return (
+      <>
+        <header className="student-topbar">
+          <div>
+            <p className="eyebrow">Panel ventas</p>
+            <h1>Dashboard de admisiones</h1>
+          </div>
+
+          <div className="student-topbar__right">
+            <div className="student-user-pill">
+              <div>
+                <strong>{displayName}</strong>
+                <span>
+                  Ventas personales{admissionTotals.codigo_asesor ? ` · Asesor ${admissionTotals.codigo_asesor}` : ''}
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {error ? <p className="teams-error">{error}</p> : null}
+        {hasNoAdvisorRecords ? (
+          <p className="teams-error teams-error--info">
+            {admissionTotals.mensaje_vista ||
+              `No hay preinscripciones vinculadas por codigo de asesor a ${admissionTotals.usuario_consultado || displayName}.`}
+          </p>
+        ) : null}
+
+        <section className="student-grid student-grid--content dashboard-executive-grid dashboard-admissions-grid">
+          <article className="student-card dashboard-summary-panel">
+            <div className="card-head">
+              <h3>Resumen personal</h3>
+              <span>{conversion} conversion a matricula</span>
+            </div>
+
+            <div className="dashboard-metric-tiles">
+              <button
+                type="button"
+                className="dashboard-metric-tile dashboard-metric-tile--red dashboard-metric-tile--clickable"
+                onClick={() => void openAdmissionsStudents({ estado: 'ALL', label: 'Preinscritos', total: personalTotal })}
+              >
+                <span>Preinscritos</span>
+                <strong>{personalTotal}</strong>
+                <small>Registros creados en PREINSCRIPCION</small>
+              </button>
+              <button
+                type="button"
+                className="dashboard-metric-tile dashboard-metric-tile--cyan dashboard-metric-tile--clickable"
+                onClick={() => void openAdmissionsStudents({ estado: 'CABECERA_MATRICULA', label: 'Con cabecera de matrícula', total: personalEnrolled })}
+              >
+                <span>Con cabecera de matrícula</span>
+                <strong>{personalEnrolled}</strong>
+                <small>{conversion} registrados en CABECERA_MATRICULA</small>
+              </button>
+              <button
+                type="button"
+                className="dashboard-metric-tile dashboard-metric-tile--cyan dashboard-metric-tile--clickable"
+                onClick={() => void openAdmissionsStudents({ estado: 'A', label: 'Se mantienen activos', total: personalActive })}
+              >
+                <span>Se mantienen activos</span>
+                <strong>{personalActive}</strong>
+                <small>{retention} de los preinscritos</small>
+              </button>
+              <button
+                type="button"
+                className="dashboard-metric-tile dashboard-metric-tile--gold dashboard-metric-tile--clickable"
+                onClick={() => void openAdmissionsStudents({ estado: 'PENDIENTE_MATRICULA', label: 'Pendientes de matrícula', total: admissionsPendingEnrollment })}
+              >
+                <span>Pendientes de matrícula</span>
+                <strong>{admissionsPendingEnrollment}</strong>
+                <small>Sin cabecera de matrícula</small>
+              </button>
+            </div>
+          </article>
+
+          <article className="student-card dashboard-pie-card">
+            <div className="card-head">
+              <h3>Estado de tus ventas</h3>
+              <span>Activos {personalActive} de {personalTotal}</span>
+            </div>
+
+            <div className="dashboard-state-list dashboard-state-list--static">
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'A', label: 'Activos', total: personalActive })}>
+                <span style={{ backgroundColor: stateColors.A }} />
+                <strong>Activos</strong>
+                <small>{statePercent(personalActive, personalTotal)} · {personalActive}</small>
+              </button>
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'P', label: 'Inactivos', total: admissionsInactive })}>
+                <span style={{ backgroundColor: stateColors.P }} />
+                <strong>Inactivos</strong>
+                <small>{statePercent(admissionsInactive, personalTotal)} · {admissionsInactive}</small>
+              </button>
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'G', label: 'Graduados', total: admissionsGraduated })}>
+                <span style={{ backgroundColor: stateColors.G }} />
+                <strong>Graduados</strong>
+                <small>{statePercent(admissionsGraduated, personalTotal)} · {admissionsGraduated}</small>
+              </button>
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'R', label: 'Retirados', total: admissionsRetired })}>
+                <span style={{ backgroundColor: stateColors.R }} />
+                <strong>Retirados</strong>
+                <small>{statePercent(admissionsRetired, personalTotal)} · {admissionsRetired}</small>
+              </button>
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'PENDIENTE_MATRICULA', label: 'Pendientes matrícula', total: admissionsPendingEnrollment })}>
+                <span style={{ backgroundColor: '#8dbbc7' }} />
+                <strong>Pendientes matrícula</strong>
+                <small>{statePercent(admissionsPendingEnrollment, personalTotal)} · {admissionsPendingEnrollment}</small>
+              </button>
+              <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'SIN_ESTADO', label: 'Sin estado', total: admissionsWithoutState })}>
+                <span style={{ backgroundColor: '#6b7280' }} />
+                <strong>Sin estado</strong>
+                <small>{statePercent(admissionsWithoutState, personalTotal)} · {admissionsWithoutState}</small>
+              </button>
+            </div>
+          </article>
+
+          <article className="student-card dashboard-admissions-kpi-card">
+            <div className="card-head">
+              <h3>Lectura rápida</h3>
+              <span>Asesor {admissionTotals.codigo_asesor || '-'}</span>
+            </div>
+            <div className="dashboard-admissions-kpis">
+              <div>
+                <span>Conversión</span>
+                <strong>{conversion}</strong>
+                <small>{personalEnrolled} de {personalTotal} con cabecera</small>
+              </div>
+              <div>
+                <span>Retención activa</span>
+                <strong>{retention}</strong>
+                <small>{personalActive} activos desde admisión</small>
+              </div>
+              <div>
+                <span>No activos</span>
+                <strong>{admissionsInactive + admissionsRetired + admissionsWithoutState}</strong>
+                <small>Inactivos, retirados o sin estado</small>
+              </div>
+            </div>
+          </article>
+
+          <article className="student-card dashboard-bars-card">
+            <div className="card-head">
+              <h3>Movimiento mensual</h3>
+              <span>Preinscripciones por fecha de ingreso</span>
+            </div>
+
+            <div className="dashboard-bars">
+              {visibleTrend.map((item) => (
+                <div key={item.periodo_mes}>
+                  <span style={{ height: `${Math.max((item.total_estudiantes / monthMax) * 100, 3)}%` }} />
+                  <small>{item.mes_nombre}</small>
+                  <strong>{item.total_estudiantes}</strong>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="student-card student-card--wide dashboard-bars-card">
+            <div className="card-head">
+              <h3>Detalle por periodo académico</h3>
+              <span>{admissionsByUserPeriod.length} periodo(s)</span>
+            </div>
+            <div className="matricula-table-wrap">
+              <table className="matricula-table">
+                <thead>
+                  <tr>
+                    <th>Periodo académico</th>
+                    <th>Preinscritos</th>
+                    <th>Cabecera matrícula</th>
+                    <th>Activos</th>
+                    <th>Inactivos</th>
+                    <th>Graduados</th>
+                    <th>Retirados</th>
+                    <th>Pendientes matrícula</th>
+                    <th>Sin estado</th>
+                    <th>Conversión</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissionsByUserPeriod.length > 0 ? (
+                    admissionsByUserPeriod.map((row, index) => {
+                      const total = row.total_ingresados ?? 0
+                      const enrolled = row.ingresaron_cabecera_matricula ?? row.ingresaron_carreraxestud ?? 0
+                      const periodSelection = (estado: string, label: string, value: number): AdmissionsDetailSelection => ({
+                        estado,
+                        label,
+                        total: value,
+                        codigo_periodo: row.codigo_periodo,
+                        detalle_periodo: row.detalle_periodo,
+                      })
+                      return (
+                        <tr key={`${row.codigo_periodo || 'sp'}-${index}`}>
+                          <td>
+                            <strong>{row.detalle_periodo || 'Sin periodo'}</strong>
+                            <br />
+                            <small>{row.codigo_periodo || '-'}</small>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('ALL', 'Preinscritos', total))}>
+                              {total}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('CABECERA_MATRICULA', 'Con cabecera de matrícula', enrolled))}>
+                              {enrolled}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('A', 'Activos', row.activos ?? 0))}>
+                              {row.activos ?? 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('P', 'Inactivos', row.inactivos ?? 0))}>
+                              {row.inactivos ?? 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('G', 'Graduados', row.graduados ?? 0))}>
+                              {row.graduados ?? 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('R', 'Retirados', row.retirados ?? 0))}>
+                              {row.retirados ?? 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('PENDIENTE_MATRICULA', 'Pendientes matrícula', row.pendientes_matricula ?? 0))}>
+                              {row.pendientes_matricula ?? 0}
+                            </button>
+                          </td>
+                          <td>
+                            <button type="button" className="dashboard-table-link" onClick={() => void openAdmissionsStudents(periodSelection('SIN_ESTADO', 'Sin estado', row.sin_estado ?? 0))}>
+                              {row.sin_estado ?? 0}
+                            </button>
+                          </td>
+                          <td>{statePercent(enrolled, total)}</td>
+                        </tr>
+                      )
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={10}>No hay ventas registradas para tu usuario de admisiones.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        {selectedAdmissionsDetail ? (
+          <div className="matricula-modal-overlay">
+            <article className="matricula-modal dashboard-active-students-modal dashboard-admissions-students-modal">
+              <div className="matricula-modal-head">
+                <div className="matricula-modal-title">
+                  <h3>{selectedAdmissionsDetail.label}</h3>
+                  <span>
+                    {selectedAdmissionsDetail.detalle_periodo || 'Todos los periodos'} ·{' '}
+                    {admissionsStudents.length} estudiante(s)
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="matricula-modal-close"
+                  onClick={() => {
+                    setSelectedAdmissionsDetail(null)
+                    setAdmissionsStudents([])
+                    setAdmissionsStudentsError('')
+                  }}
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <div className="dashboard-active-modal-summary">
+                <div>
+                  <span>Filtro</span>
+                  <strong>{selectedAdmissionsDetail.label}</strong>
+                </div>
+                <div>
+                  <span>Periodo</span>
+                  <strong>{selectedAdmissionsDetail.detalle_periodo || 'Todos'}</strong>
+                </div>
+                <div>
+                  <span>Total esperado</span>
+                  <strong>{selectedAdmissionsDetail.total}</strong>
+                </div>
+              </div>
+
+              {admissionsStudentsLoading ? <p className="teams-message">Consultando estudiantes...</p> : null}
+              {admissionsStudentsError ? <p className="teams-error">{admissionsStudentsError}</p> : null}
+
+              {!admissionsStudentsLoading && !admissionsStudentsError ? (
+                <div className="matricula-table-wrap">
+                  <table className="matricula-table">
+                    <thead>
+                      <tr>
+                        <th>Estudiante</th>
+                        <th>Cédula</th>
+                        <th>Periodo</th>
+                        <th>Carrera</th>
+                        <th>Estado</th>
+                        <th>Ingreso</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {admissionsStudents.length > 0 ? (
+                        admissionsStudents.map((student, index) => (
+                          <tr key={`${student.codigo_periodo || 'sp'}-${student.cedula || student.codestu || index}`}>
+                            <td>
+                              <strong>{student.nombre_estudiante || 'Sin nombre'}</strong>
+                              <br />
+                              <small>{student.codigo_estud || student.codestu || '-'}</small>
+                            </td>
+                            <td>{student.cedula || '-'}</td>
+                            <td>
+                              <strong>{student.detalle_periodo || '-'}</strong>
+                              <br />
+                              <small>{student.codigo_periodo || '-'}</small>
+                            </td>
+                            <td>{student.carrera || '-'}</td>
+                            <td>
+                              <strong>{student.estado_nombre || student.estado_codigo || '-'}</strong>
+                              <br />
+                              <small>{student.tipo_matricula || '-'}</small>
+                            </td>
+                            <td>{student.fecha_ingreso || '-'}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6}>No hay estudiantes para el filtro seleccionado.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </article>
+          </div>
+        ) : null}
+      </>
+    )
+  }
+
   return (
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Panel academico</p>
-          <h1>Dashboard Estudiantil</h1>
+          <p className="eyebrow">{isAdmissionsDashboard ? 'Panel admisiones' : 'Panel academico'}</p>
+          <h1>{isAdmissionsDashboard ? 'Dashboard de admisiones' : 'Dashboard Estudiantil'}</h1>
         </div>
 
         <div className="student-topbar__right">
@@ -318,7 +770,7 @@ export function DashboardView({
       <section className="dashboard-executive-grid">
         <article className="student-card dashboard-trend-panel">
           <div className="card-head">
-            <h3>Tendencia por fecha de inicio</h3>
+            <h3>{isAdmissionsDashboard ? 'Tendencia por fecha de ingreso' : 'Tendencia por fecha de inicio'}</h3>
           </div>
 
           <div className="dashboard-year-filters">
@@ -407,10 +859,13 @@ export function DashboardView({
                           <g
                             key={item.periodo_mes}
                             className="dashboard-trend-point"
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => void openTrendStudents(item)}
+                            role={isAdmissionsDashboard ? undefined : 'button'}
+                            tabIndex={isAdmissionsDashboard ? -1 : 0}
+                            onClick={() => {
+                              if (!isAdmissionsDashboard) void openTrendStudents(item)
+                            }}
                             onKeyDown={(event) => {
+                              if (isAdmissionsDashboard) return
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault()
                                 void openTrendStudents(item)
@@ -450,8 +905,12 @@ export function DashboardView({
 
         <article className="student-card dashboard-summary-panel">
           <div className="card-head">
-            <h3>Resumen de matricula</h3>
-            <span>Activos R {activeRegularStudents} + H {activeHomologationStudents}</span>
+            <h3>{isAdmissionsDashboard ? 'Resumen de admisiones' : 'Resumen de matricula'}</h3>
+            <span>
+              {isAdmissionsDashboard
+                ? `Activos ${activeStudents} de ${totalStudents}`
+                : `Activos R ${activeRegularStudents} + H ${activeHomologationStudents}`}
+            </span>
           </div>
 
           <div className="dashboard-metric-tiles">
@@ -468,22 +927,28 @@ export function DashboardView({
         <div className="dashboard-active-row">
           <article className="student-card dashboard-pie-card">
             <div className="card-head">
-              <h3>Estados de estudiantes</h3>
-              <span>Total: {totalStudents} · Activos R/H: {activeRhStudents}</span>
+              <h3>{isAdmissionsDashboard ? 'Ingreso y permanencia' : 'Estados de estudiantes'}</h3>
+              <span>
+                {isAdmissionsDashboard
+                  ? `Ingresados: ${totalStudents} · Activos: ${activeStudents}`
+                  : `Total: ${totalStudents} · Activos R/H: ${activeRhStudents}`}
+              </span>
             </div>
 
-            <div className="dashboard-active-breakdown dashboard-active-breakdown--top">
-              <div>
-                <span style={{ backgroundColor: activeTypeColors.R }} />
-                <strong>Activos Regular</strong>
-                <small>{statePercent(activeRegularStudents, activeRhStudents)} · {activeRegularStudents}</small>
+            {!isAdmissionsDashboard ? (
+              <div className="dashboard-active-breakdown dashboard-active-breakdown--top">
+                <div>
+                  <span style={{ backgroundColor: activeTypeColors.R }} />
+                  <strong>Activos Regular</strong>
+                  <small>{statePercent(activeRegularStudents, activeRhStudents)} · {activeRegularStudents}</small>
+                </div>
+                <div>
+                  <span style={{ backgroundColor: activeTypeColors.H }} />
+                  <strong>Activos Homologación</strong>
+                  <small>{statePercent(activeHomologationStudents, activeRhStudents)} · {activeHomologationStudents}</small>
+                </div>
               </div>
-              <div>
-                <span style={{ backgroundColor: activeTypeColors.H }} />
-                <strong>Activos Homologación</strong>
-                <small>{statePercent(activeHomologationStudents, activeRhStudents)} · {activeHomologationStudents}</small>
-              </div>
-            </div>
+            ) : null}
 
             <div className="dashboard-pie-content">
               <div className="dashboard-pie-wrap">
@@ -511,7 +976,24 @@ export function DashboardView({
               </div>
 
               <div className="dashboard-state-list">
-                {states.length > 0 ? (
+                {isAdmissionsDashboard ? (
+                  <>
+                    <div>
+                      <span style={{ backgroundColor: stateColors.A }} />
+                      <strong>Se mantienen activos</strong>
+                      <small>
+                        {statePercent(activeStudents, totalStudents)} · {activeStudents}
+                      </small>
+                    </div>
+                    <div>
+                      <span style={{ backgroundColor: '#d19a2a' }} />
+                      <strong>Pendientes o no activos</strong>
+                      <small>
+                        {statePercent(admissionTotals.pendientes_o_no_activos ?? 0, totalStudents)} · {admissionTotals.pendientes_o_no_activos ?? 0}
+                      </small>
+                    </div>
+                  </>
+                ) : states.length > 0 ? (
                   states.map((item) => (
                     <button key={item.estado_codigo} type="button" onClick={() => void openStateStudents(item)}>
                       <span style={{ backgroundColor: stateColors[item.estado_codigo] || '#8dbbc7' }} />
@@ -528,6 +1010,7 @@ export function DashboardView({
             </div>
           </article>
 
+          {!isAdmissionsDashboard ? (
           <article className="student-card dashboard-active-type-card">
             <div className="card-head dashboard-active-type-head">
               <div>
@@ -568,11 +1051,12 @@ export function DashboardView({
               </div>
             </div>
           </article>
+          ) : null}
         </div>
 
         <article className="student-card dashboard-bars-card">
           <div className="card-head">
-            <h3>Distribucion mensual</h3>
+            <h3>{isAdmissionsDashboard ? 'Distribucion mensual de ingresos' : 'Distribucion mensual'}</h3>
             <span>{distributionYear}</span>
           </div>
 
@@ -599,6 +1083,65 @@ export function DashboardView({
             ))}
           </div>
         </article>
+
+        {admissionsByUserPeriod.length > 0 || !isAdmissionsDashboard ? (
+          <article className="student-card student-card--wide dashboard-bars-card">
+            <div className="card-head">
+              <h3>Preinscripciones por usuario de admisiones</h3>
+              <span>{admissionsByUserPeriod.length} registro(s)</span>
+            </div>
+            <div className="matricula-table-wrap">
+              <table className="matricula-table">
+                <thead>
+                  <tr>
+                    <th>Periodo académico</th>
+                    <th>Usuario admisiones</th>
+                    <th>Tipo usuario</th>
+                    <th>Preinscritos</th>
+                    <th>Cabecera matrícula</th>
+                    <th>Activos</th>
+                    <th>Inactivos</th>
+                    <th>Graduados</th>
+                    <th>Retirados</th>
+                    <th>Pendientes matrícula</th>
+                    <th>Sin estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissionsByUserPeriod.length > 0 ? (
+                    admissionsByUserPeriod.map((row, index) => (
+                      <tr key={`${row.codigo_periodo || 'sp'}-${row.usuario_id || row.usuario_login || 'su'}-${index}`}>
+                        <td>
+                          <strong>{row.detalle_periodo || 'Sin periodo'}</strong>
+                          <br />
+                          <small>{row.codigo_periodo || '-'}</small>
+                        </td>
+                        <td>
+                          <strong>{row.usuario_nombre || 'Sin asesor'}</strong>
+                          <br />
+                          <small>{row.usuario_login || row.usuario_id || '-'}</small>
+                        </td>
+                        <td>{row.tipo_usuario || 'ADMISIONES'}</td>
+                        <td>{row.total_ingresados ?? 0}</td>
+                        <td>{row.ingresaron_cabecera_matricula ?? row.ingresaron_carreraxestud ?? 0}</td>
+                        <td>{row.activos ?? 0}</td>
+                        <td>{row.inactivos ?? 0}</td>
+                        <td>{row.graduados ?? 0}</td>
+                        <td>{row.retirados ?? 0}</td>
+                        <td>{row.pendientes_matricula ?? 0}</td>
+                        <td>{row.sin_estado ?? 0}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={10}>No hay preinscripciones agrupadas por usuario de admisiones.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        ) : null}
 
       </section>
 

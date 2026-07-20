@@ -8,6 +8,7 @@ export type Role =
   | 'VICERRECTOR'
   | 'SOPORTE'
   | 'INVITADO_SOP'
+  | 'SECRETARIA'
   | 'DOCENTE'
   | 'ESTUDIANTE'
 
@@ -36,6 +37,8 @@ export type Page =
   | 'reporteria-carreras'
   | 'reporteria-integral'
   | 'reportes-individuales'
+  | 'sisacademico-v1'
+  | 'asignacion-pantallas'
   | 'gestion-sisacademico'
   | 'periodo-academico'
   | 'periodo-matriculados'
@@ -44,6 +47,10 @@ export type Page =
   | 'validar-excel'
   | 'rango-edades'
   | 'fecha-grado'
+  | 'titulacion'
+  | 'titulacion-proceso'
+  | 'titulacion-responsables'
+  | 'titulos-registrados'
   | 'certificados'
   | 'matricula-excel-certificados'
   | 'renombrar-certificados'
@@ -58,12 +65,615 @@ export type Page =
   | 'portal-docente'
   | 'portal-docente-informe'
   | 'formato-informe-docente'
+  | 'practicas-institucionales'
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
 export type TeacherEvaluationFlow = 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente' | 'academico_docente'
+
+export type PracticasProcessCode = 'PPF' | 'VIN'
+
+export type TituloRegistradoTipo = 'senescyt' | 'intec'
+
+export type TituloRegistradoItem = {
+  id: string
+  tipo: TituloRegistradoTipo | string
+  tipo_nombre: string
+  modelo: string
+  estudiante: string
+  cedula: string
+  carrera: string
+  observacion: string
+  filename: string
+  content_type: string
+  size: number
+  url: string
+  storage?: string
+  titulacion_status?: string
+  titulacion_expediente_id?: number | null
+  titulacion_message?: string
+  created_at: string
+  created_by: string
+}
+
+export type TitulosRegistradosResponse = {
+  items: TituloRegistradoItem[]
+  totals: {
+    total: number
+    senescyt: number
+    intec: number
+  }
+  modelos: Array<{ value: TituloRegistradoTipo | string; label: string }>
+}
+
+export type TituloRegistradoSaveResponse = {
+  ok: boolean
+  message: string
+  item?: TituloRegistradoItem
+  items?: TituloRegistradoItem[]
+  affected_rows?: number
+  batch_id?: string
+  results?: Array<Record<string, unknown>>
+}
+
+export type SisAcademicoV1Module = {
+  key: string
+  title: string
+  description: string
+  source_paths: string[]
+  tables: string[]
+  modern_sections: string[]
+  available_sections: string[]
+  missing_sections: string[]
+  modern_routes: string[]
+  coverage: 'base' | 'partial' | 'pending' | 'excluded' | string
+  notes: string
+}
+
+export type SisAcademicoV1Artifact = {
+  path: string
+  file_name: string
+  extension: string
+  size_bytes: number
+  module_key: string
+  module_title: string
+  coverage: 'base' | 'partial' | 'pending' | 'excluded' | string
+  artifact_type: string
+}
+
+export type SisAcademicoV1ModulesResponse = {
+  project: string
+  strategy: string
+  database: string
+  compat_schema: string
+  totals: {
+    modules: number
+    base: number
+    partial: number
+    pending: number
+    excluded?: number
+  }
+  modules: SisAcademicoV1Module[]
+}
+
+export type SisAcademicoV1ArtifactsResponse = {
+  project: string
+  root: string
+  strategy: string
+  totals: {
+    artifacts: number
+    by_extension: Record<string, number>
+    by_coverage: Record<string, number>
+    by_module: Record<string, number>
+  }
+  artifacts: SisAcademicoV1Artifact[]
+}
+
+export type TitulacionAcademicStatus = {
+  found: boolean
+  message?: string
+  codigo_estud?: number | null
+  numero_identificacion?: string
+  apellidos_nombres?: string
+  cod_anio_basica?: string
+  nombre_carrera?: string
+  codigo_periodo?: string
+  nombre_periodo?: string
+  titulo_bachiller?: string
+  total_materias?: number
+  materias_pensum?: number
+  materias_cursadas?: number
+  materias_aprobadas?: number
+  materias_pendientes?: number
+  promedio_asignaturas?: number | null
+  porcentaje_malla?: number
+  malla_finalizada?: boolean
+}
+
+export type TitulacionExpediente = {
+  ExpedienteId: number
+  CodigoEstud?: number | null
+  NumeroIdentificacion: string
+  ApellidosNombres?: string | null
+  CarreraRefId?: number | null
+  CodAnioBasica?: string | null
+  NombreCarrera?: string | null
+  CodigoPeriodo?: string | null
+  TituloOtorgado?: string | null
+  MecanismoCodigoRaw?: string | null
+  MecanismoTitulacionId?: number | null
+  MecanismoCodigo?: string | null
+  MecanismoNombre?: string | null
+  NumeroActaGrado?: string | null
+  NumeroRefrendacion?: string | null
+  FechaActaGrado?: string | null
+  FechaRefrendacion?: string | null
+  CedulaValidada?: boolean | number
+  TituloBachillerCumple?: boolean | number
+  InglesA2Cumple?: boolean | number
+  MallaCurricularCumple?: boolean | number
+  NoAdeudaFinanciero?: boolean | number
+  AptoSustentacion?: boolean | number
+  PracticasPreprofesionalesCumple?: boolean | number
+  VinculacionCumple?: boolean | number
+  RubricaTitulacionCumple?: boolean | number
+  PromedioAsignaturas?: number | null
+  NotaPromedioAsignaturas80?: number | null
+  NotaProcesoTitulacion20?: number | null
+  NotaFinalGrado?: number | null
+  EstadoExpediente?: string | null
+  TotalHorasPracticasPreprofesionales?: number | null
+  TotalHorasVinculacion?: number | null
+  CumplePracticasPreprofesionales?: boolean | number | null
+  CumpleVinculacion?: boolean | number | null
+  FechaSincronizacionPracticas?: string | null
+}
+
+export type TitulacionDocument = {
+  DocumentoId: number
+  ExpedienteId: number
+  TipoDocumentoCodigo: string
+  FormatoCargaCodigo?: string | null
+  NombreArchivo?: string | null
+  RutaNube?: string | null
+  EsFirmadoElectronico?: boolean | number
+  FechaDocumento?: string | null
+  EstadoDocumento?: string | null
+  VersionDocumento?: number | null
+  UsuarioCarga?: string | null
+  FechaCarga?: string | null
+  Observacion?: string | null
+  Activo?: boolean | number
+}
+
+export type TitulacionPrevalidation = Record<string, string | number | boolean | null | undefined>
+
+export type TitulacionMecanismoCodigo = 'EXAMEN_COMPLEXIVO' | 'DEFENSA_GRADO'
+
+export type TitulacionMechanism = {
+  selected?: Record<string, string | number | boolean | null | undefined> | null
+  prevalidation?: Record<string, string | number | boolean | null | undefined> | null
+  programacion?: Record<string, string | number | boolean | null | undefined> | null
+  examen?: Record<string, string | number | boolean | null | undefined> | null
+  defensa?: Record<string, string | number | boolean | null | undefined> | null
+  tribunal?: Array<Record<string, string | number | boolean | null | undefined>>
+}
+
+export type TitulacionGeneration = {
+  acta?: Record<string, string | number | boolean | null | undefined> | null
+  senescyt?: Record<string, string | number | boolean | null | undefined> | null
+  intec?: Record<string, string | number | boolean | null | undefined> | null
+}
+
+export type TitulacionResponse = {
+  ok?: boolean
+  message?: string
+  academic: TitulacionAcademicStatus
+  expediente?: TitulacionExpediente | null
+  documents: TitulacionDocument[]
+  mechanism?: TitulacionMechanism | null
+  generation?: TitulacionGeneration | null
+  prevalidation?: TitulacionPrevalidation | null
+}
+
+export type TitulacionAptoItem = {
+  ExpedienteId?: number | null
+  CodigoEstud?: number | null
+  NumeroIdentificacion: string
+  ApellidosNombres?: string | null
+  CodAnioBasica?: string | null
+  NombreCarrera?: string | null
+  CodigoPeriodo?: string | null
+  EstadoExpediente?: string | null
+  TotalMaterias?: number
+  MateriasAprobadas?: number
+  CumpleMalla24?: boolean
+  CumpleInglesA2Avanzado?: boolean
+  CumplePracticasPreprofesionales?: boolean
+  CumpleVinculacion?: boolean
+  AptoTitulacion?: boolean
+  Pendientes?: string[]
+  PromedioAsignaturas?: number | null
+  TotalHorasPracticasPreprofesionales?: number | null
+  TotalHorasVinculacion?: number | null
+}
+
+export type TitulacionAptosResponse = {
+  items: TitulacionAptoItem[]
+  total: number
+  aptos: number
+  pendientes: number
+  criteria?: {
+    materias_requeridas?: number
+    ingles?: string
+    practicas?: string
+  }
+}
+
+export type TitulacionProgramacionItem = {
+  ExpedienteId: number
+  NumeroIdentificacion?: string | null
+  ApellidosNombres?: string | null
+  NombreCarrera?: string | null
+  CodAnioBasica?: string | null
+  CodigoPeriodo?: string | null
+  EstadoExpediente?: string | null
+  MecanismoCodigo?: TitulacionMecanismoCodigo | string | null
+  MecanismoNombre?: string | null
+  ProgramacionTitulacionId?: number | null
+  FechaProgramada?: string | null
+  HoraProgramada?: string | null
+  Lugar?: string | null
+  Modalidad?: string | null
+  EnlaceVirtual?: string | null
+  EstadoProgramacion?: string | null
+  TemaTrabajo?: string | null
+  LineaInvestigacion?: string | null
+  Tutor?: string | null
+  LectorOponente?: string | null
+  CodigoExamen?: string | null
+  TipoExamen?: string | null
+  TotalMiembrosTribunal?: number | null
+  Responsables?: string | null
+}
+
+export type TitulacionProgramacionResponse = {
+  items: TitulacionProgramacionItem[]
+  total: number
+  complexivo: number
+  defensa: number
+}
+
+export type TitulacionMallaCalificacion = {
+  row_id?: number | null
+  codigo_materia?: string | null
+  nombre_materia?: string | null
+  semestre?: number | null
+  creditos?: number | null
+  orden?: number | null
+  codigo_periodo?: string | null
+  nombre_periodo?: string | null
+  num_matricula?: string | null
+  paralelo?: string | null
+  num_grupo?: number | null
+  tipo_matricula?: string | null
+  tipo_periodo?: string | null
+  tipo_calculo?: 'R' | 'H' | string | null
+  p1_tareas?: number | null
+  p1_proyectos?: number | null
+  p1_examen?: number | null
+  prom_p1?: number | null
+  p2_tareas?: number | null
+  p2_proyectos?: number | null
+  p2_examen?: number | null
+  prom_p2?: number | null
+  p3_tareas?: number | null
+  p3_proyectos?: number | null
+  p3_examen?: number | null
+  prom_p3?: number | null
+  teoria_homo?: number | null
+  practica_homo?: number | null
+  promedio?: number | null
+  asistencia?: number | null
+  recuperacion?: number | null
+  promedio_final_registrado?: number | null
+  promedio_aux?: number | null
+  nota_final?: number | null
+  formula_nota?: string | null
+  nota_aprobar?: number | null
+  aprobada?: boolean | number
+  estado?: string | null
+}
+
+export type TitulacionMallaCalificacionesResponse = {
+  found: boolean
+  message?: string
+  academic?: TitulacionAcademicStatus
+  items: TitulacionMallaCalificacion[]
+  summary?: {
+    materias_requeridas?: number
+    materias_pensum?: number
+    total_materias?: number
+    materias_aprobadas?: number
+    materias_pendientes?: number
+    porcentaje_malla?: number
+  }
+}
+
+export type TitulacionExpedientePayload = {
+  numero_identificacion: string
+  cod_anio_basica?: string | null
+  codigo_periodo?: string | null
+  titulo_otorgado?: string | null
+}
+
+export type TitulacionNotasPayload = {
+  expediente_id: number
+  promedio_asignaturas?: number | null
+  nota_proceso_titulacion?: number | null
+  cedula_validada: boolean
+  titulo_bachiller_cumple: boolean
+  ingles_a2_cumple: boolean
+  no_adeuda_financiero: boolean
+  apto_sustentacion: boolean
+  rubrica_titulacion_cumple: boolean
+}
+
+export type TitulacionMecanismoPayload = {
+  expediente_id: number
+  mecanismo_codigo: TitulacionMecanismoCodigo
+}
+
+export type TitulacionProgramacionPayload = {
+  expediente_id: number
+  fecha_programada: string
+  hora_programada?: string | null
+  lugar?: string | null
+  modalidad?: string | null
+  enlace_virtual?: string | null
+}
+
+export type TitulacionTribunalPayload = {
+  expediente_id: number
+  mecanismo_codigo: TitulacionMecanismoCodigo
+  rol_tribunal: string
+  nombre_miembro: string
+  cedula_miembro?: string | null
+  correo_miembro?: string | null
+  orden_firma?: number | null
+}
+
+export type ExamenComplexivoCalificacionPayload = {
+  expediente_id: number
+  nota_examen: number
+  codigo_examen?: string | null
+  tipo_examen?: string | null
+  observacion?: string | null
+}
+
+export type DefensaTemaPayload = {
+  expediente_id: number
+  tema_trabajo: string
+  linea_investigacion?: string | null
+  tutor?: string | null
+  lector_oponente?: string | null
+}
+
+export type DefensaCalificacionPayload = {
+  expediente_id: number
+  nota_trabajo_escrito: number
+  nota_defensa_oral: number
+  observacion?: string | null
+}
+
+export type ActaGradoPayload = {
+  expediente_id: number
+  fecha_acta: string
+  hora_acta?: string | null
+  numero_acta_grado?: string | null
+  ciudad?: string | null
+  escuela?: string | null
+  autoridad_academica?: string | null
+  docente_evaluador?: string | null
+  coordinador_academico?: string | null
+  ruta_acta_pdf?: string | null
+}
+
+export type TituloSenescytPayload = {
+  numero_acta_grado: string
+  codigo_registro_senescyt: string
+  fecha_registro: string
+  ruta_documento_nube?: string | null
+}
+
+export type TituloIntecPayload = {
+  numero_acta_grado: string
+  numero_titulo: string
+  fecha_emision: string
+  codigo_verificacion?: string | null
+  ruta_documento_nube?: string | null
+}
+
+export type PracticasCatalogItem = {
+  TipoProcesoId?: number
+  Codigo: PracticasProcessCode | string
+  Nombre: string
+  Descripcion?: string | null
+  Activo?: boolean
+}
+
+export type PracticasDocumentItem = {
+  TipoDocumentoId: number
+  TipoProcesoCodigo: PracticasProcessCode | string
+  Codigo: string
+  Nombre: string
+  EsObligatorio: boolean
+  Orden: number
+}
+
+export type PracticasResponsableItem = {
+  ResponsableProcesoId: number
+  TipoProcesoCodigo: PracticasProcessCode | string
+  NombreResponsable: string
+  CedulaResponsable?: string | null
+  CorreoResponsable?: string | null
+  RolResponsable?: string | null
+  CodigoDocente?: string | null
+  FechaInicio?: string | null
+  FechaFin?: string | null
+  Activo?: boolean
+}
+
+export type PracticasExpedienteItem = {
+  ExpedienteId: number
+  CodigoExpediente?: string | null
+  TipoProcesoCodigo: PracticasProcessCode | string
+  TipoProceso?: string | null
+  CodigoEstud: number
+  Cedula_Est?: string | null
+  Apellidos_nombre?: string | null
+  CodigoCarrera?: string | null
+  Carrera?: string | null
+  CodigoPeriodo?: string | null
+  CodigoDocenteTutor?: string | null
+  DocenteTutor?: string | null
+  SemestreDetectado?: number | null
+  EstadoCodigo?: string | null
+  EstadoExpediente?: string | null
+  ResponsableProcesoId?: number | null
+  NombreResponsable?: string | null
+  CorreoResponsable?: string | null
+  CartaCompromisoDocumentoId?: number | null
+  CartaCompromisoEstadoCodigo?: string | null
+  CartaCompromisoEstado?: string | null
+  CartaCompromisoArchivo?: string | null
+  CartaCompromisoUrl?: string | null
+  CartaCompromisoFecha?: string | null
+  CartaCompromisoFirmado?: boolean | null
+  CartaCompromisoValidado?: boolean | null
+  CertificadoDocumentoId?: number | null
+  CertificadoEstadoCodigo?: string | null
+  CertificadoEstado?: string | null
+  CertificadoArchivo?: string | null
+  CertificadoUrl?: string | null
+  CertificadoFecha?: string | null
+  CertificadoFirmado?: boolean | null
+  CertificadoValidado?: boolean | null
+  Finalizado?: boolean
+  Activo?: boolean
+  FechaCreacion?: string | null
+}
+
+export type PracticasEligibilityItem = {
+  codigo_estud: number
+  Cedula_Est?: string | null
+  Apellidos_nombre?: string | null
+  CodigoCarrera?: string | null
+  Carrera?: string | null
+  CodigoPeriodo?: string | null
+  NombrePeriodo?: string | null
+  TipoProcesoCodigo?: PracticasProcessCode | string
+  TipoProceso?: string | null
+  SemestreMaximo?: number | null
+  EsElegible?: boolean
+  MotivoElegibilidad?: string | null
+  TieneAutorizacion?: boolean | number | null
+  AutorizacionId?: number | null
+  AutorizacionArchivo?: string | null
+  AutorizacionUrl?: string | null
+  AutorizacionFecha?: string | null
+  PuedeMatricular?: boolean | number | null
+}
+
+export type PracticasCatalogResponse = {
+  processes: PracticasCatalogItem[]
+  documents: PracticasDocumentItem[]
+  responsibles: PracticasResponsableItem[]
+  defaults: Array<{ codigo: PracticasProcessCode; nombre: string }>
+}
+
+export type PracticasStudentResponse = {
+  codigo_estud: number
+  eligibility: PracticasEligibilityItem[]
+  expedientes: PracticasExpedienteItem[]
+}
+
+export type PracticasElegiblesResponse = {
+  items: PracticasEligibilityItem[]
+  total: number
+}
+
+export type PracticasPeriodoItem = {
+  CodigoPeriodo: string
+  NombrePeriodo?: string | null
+  DetalleRegistro?: string | null
+  PeriodoCorto?: string | null
+  TotalEstudiantes?: number
+  EstadoPeriodo?: string | null
+  OrdenPeriodo?: number | string | null
+  NotaAprobar?: number | string | null
+  TipoMatricula?: string | null
+  FechaInicio?: string | null
+  FechaFin?: string | null
+  Anio?: number | string | null
+  EstadoEducativo?: string | null
+}
+
+export type PracticasPeriodosResponse = {
+  items: PracticasPeriodoItem[]
+  total: number
+}
+
+export type PracticasPeriodoDesignacionItem = {
+  DesignacionId: number
+  TipoProcesoCodigo: PracticasProcessCode | string
+  CodigoPeriodo: string
+  CodigoPeriodoOrigen?: string | null
+  CodigoDocente: string
+  CedulaResponsable?: string | null
+  NombreResponsable: string
+  CorreoResponsable?: string | null
+  RolResponsable?: string | null
+  CumpleRequisitos?: boolean
+  Activo?: boolean
+  Observacion?: string | null
+  PeriodoOrigen?: string | null
+  FechaRegistro?: string | null
+}
+
+export type PracticasPeriodoDesignacionesResponse = {
+  items: PracticasPeriodoDesignacionItem[]
+  total: number
+}
+
+export type PracticasExpedientesResponse = {
+  items: PracticasExpedienteItem[]
+  total: number
+}
+
+export type PracticasResponsableProgressItem = PracticasExpedienteItem & {
+  TotalDocumentos?: number
+  DocumentosFirmados?: number
+  DocumentosValidados?: number
+  DocumentosPendientes?: number
+  DocumentosRequeridos?: number
+  Avance?: number
+}
+
+export type PracticasResponsableProgressResponse = {
+  summary: {
+    tipo_proceso?: string
+    expedientes?: number
+    avance?: number
+    documentos_requeridos?: number
+    documentos_cargados?: number
+    documentos_validados?: number
+    documentos_pendientes?: number
+  }
+  items: PracticasResponsableProgressItem[]
+}
 
 export type TeacherEvaluationQuestion = {
   id_pregunta: number
@@ -549,6 +1159,7 @@ export type DashboardMatriculaActiveTypeItem = {
 }
 
 export type DashboardMatriculaResponse = {
+  dashboard_type?: 'matricula' | 'admisiones' | string
   trend?: DashboardMatriculaTrendItem[]
   states?: DashboardMatriculaStateItem[]
   active_by_type?: DashboardMatriculaActiveTypeItem[]
@@ -556,6 +1167,43 @@ export type DashboardMatriculaResponse = {
   active_homologation_students?: number
   active_regular_homologation_students?: number
   total_estudiantes?: number
+  consultado_en?: string
+  admissions?: {
+    total_ingresados?: number
+    activos_desde_admision?: number
+    inactivos_desde_admision?: number
+    graduados_desde_admision?: number
+    retirados_desde_admision?: number
+    ingresaron_cabecera_matricula?: number
+    pendientes_matricula?: number
+    sin_estado_desde_admision?: number
+    pendientes_o_no_activos?: number
+    activos_sistema?: number
+    total_con_codigo?: number
+    total_con_cedula?: number
+    vista_global_por_sin_registros?: boolean
+    codigo_asesor?: string
+    usuario_consultado?: string
+    mensaje_vista?: string
+    por_usuario_periodo?: Array<{
+      codigo_periodo?: string
+      detalle_periodo?: string
+      anio_periodo?: number | null
+      usuario_id?: string
+      usuario_nombre?: string
+      usuario_login?: string
+      tipo_usuario?: string
+      total_ingresados?: number
+      ingresaron_carreraxestud?: number
+      ingresaron_cabecera_matricula?: number
+      pendientes_matricula?: number
+      activos?: number
+      inactivos?: number
+      graduados?: number
+      retirados?: number
+      sin_estado?: number
+    }>
+  }
   criteria?: {
     fecha?: string
     excluidos?: string[]
@@ -569,6 +1217,39 @@ export type DashboardMatriculaTrendStudentsResponse = {
   total?: number
   anio?: number
   mes?: number
+  detail?: string
+}
+
+export type AdmissionsDashboardStudentItem = {
+  codestu?: string
+  codigo_estud?: string
+  cedula?: string
+  nombre_estudiante?: string
+  correo?: string
+  telefono?: string
+  codigo_periodo?: string
+  detalle_periodo?: string
+  tipo_matricula?: string
+  anio_periodo?: number | null
+  codcarrera?: string
+  carrera?: string
+  fecha_ingreso?: string
+  codasesor?: string
+  usuario_id?: string
+  usuario_nombre?: string
+  usuario_login?: string
+  estado_codigo?: string
+  estado_nombre?: string
+  tiene_cabecera_matricula?: boolean
+  num_matricula?: string
+}
+
+export type AdmissionsDashboardStudentsResponse = {
+  items?: AdmissionsDashboardStudentItem[]
+  total?: number
+  estado?: string
+  codigo_periodo?: string
+  codigo_asesor?: string
   detail?: string
 }
 
@@ -746,6 +1427,7 @@ export type MatriculaSummaryResponse = {
   items?: MatriculaSummaryItem[]
   totals_by_tipo?: Record<string, number>
   totals_by_estado?: Record<string, number>
+  consultado_en?: string
   detail?: string
 }
 
@@ -766,6 +1448,8 @@ export type MatriculaCareerStateSummaryResponse = {
   total_general?: number
   total_escuelas?: number
   total_carreras?: number
+  fuente?: string
+  consultado_en?: string
   detail?: string
 }
 
@@ -975,6 +1659,43 @@ export type LegacyReportsCatalogResponse = {
   detail?: string
 }
 
+export type ModernizedLegacyReport = {
+  key: string
+  title: string
+  category: string
+  legacy_rpt: string[]
+  legacy_pages: string[]
+  source_tables: string[]
+  legacy_filters: string[]
+  modern_equivalent: string
+  modern_format: string[]
+  migration_status: 'modernizado' | 'base' | 'pendiente' | string
+  notes: string
+  engine?: string
+  source_engine?: string
+  target_engine?: string
+  replacement_rule?: string
+  deprecated?: boolean
+  replacement_endpoint?: string
+}
+
+export type ModernizedLegacyReportsCatalogResponse = {
+  project: string
+  source_engine: string
+  target_engine: string
+  strategy: string
+  totals: {
+    total: number
+    modernizado: number
+    base: number
+    pendiente: number
+  }
+  reports: ModernizedLegacyReport[]
+}
+
+export type LegacyCrystalReport = ModernizedLegacyReport
+export type LegacyCrystalCatalogResponse = ModernizedLegacyReportsCatalogResponse
+
 export type LegacyReportFilters = {
   reportKey?: LegacyReportKey
   periodo?: string
@@ -991,6 +1712,7 @@ export type LegacyReportRow = Record<string, string | number | boolean | null | 
 
 export type LegacyReportResponse = {
   generated_at?: string
+  source?: string
   report?: LegacyReportDefinition
   columns?: string[]
   rows?: LegacyReportRow[]
@@ -1104,6 +1826,8 @@ export type FechaGradoStudent = {
   codigo_periodo?: string
   periodo?: string
   fecha_grado?: string
+  fecha_emision_senescyt?: string
+  cod_refrendacion?: string
 }
 
 export type FechaGradoStudentsResponse = {
@@ -1117,6 +1841,8 @@ export type FechaGradoSavePayload = {
   items: Array<{
     codigo_estud: string
     fecha_grado?: string | null
+    fecha_emision_senescyt?: string | null
+    cod_refrendacion?: string | null
   }>
 }
 
@@ -1143,6 +1869,8 @@ export type FechaGradoImportResponse = {
     fila?: number
     cedula?: string
     fecha_grado?: string
+    fecha_emision_senescyt?: string
+    cod_refrendacion?: string
     registros?: number
   }>
   resumen?: string
@@ -1157,6 +1885,8 @@ export type FechaGradoVerificationRow = {
   estado_nombre?: string
   estado_raw?: string
   fecha_grado?: string
+  fecha_emision_senescyt?: string
+  cod_refrendacion?: string
 }
 
 export type FechaGradoVerificationResponse = {
@@ -1434,6 +2164,16 @@ export type PreinscriptionCareerOption = {
   estado?: string
   abrevia?: string
   tipo_escuela?: string
+  semestres_disponibles?: number
+  costo_presencial_total?: number
+  costo_virtual_total?: number
+  costo_presencial_semestre?: number
+  costo_virtual_semestre?: number
+  costos_semestres?: Array<{
+    semestre?: number
+    presencial?: number
+    virtual?: number
+  }>
   total_preinscripciones?: number
 }
 
@@ -1492,9 +2232,12 @@ export type PreinscriptionCabecera = {
   valor?: number | null
   inscrip_valor?: number | null
   matri_valor?: number | null
+  costo_semestre?: number | null
+  semestres_convenio?: string | number | null
   cuota1?: number | null
   beca?: number | null
   descuento?: number | null
+  tipo_beca?: string
   porcentaje_beca?: number | null
   num_pago?: number | null
   detalle_pago?: string
@@ -1560,6 +2303,7 @@ export type PreinscriptionCatalogResponse = {
   descuentos_convenio?: PreinscriptionProcessOption[]
   descuentos_valores?: PreinscriptionProcessOption[]
   descuentos_deposito?: PreinscriptionProcessOption[]
+  becas?: PreinscriptionProcessOption[]
   detail?: string
 }
 
@@ -1659,8 +2403,11 @@ export type PreinscriptionCabeceraPayload = {
   valor: number
   inscrip_valor: number
   matri_valor: number
+  costo_semestre?: number
+  semestres_convenio?: string | number
   control_matricula: number
   num_cuotas: number
+  tipo_beca?: string
   porcentaje_beca: number
   descuento: number
   num_pago: number
@@ -2157,12 +2904,48 @@ export type PortalAcademicGridItem = PortalCurriculumItem & {
   nota_aprobar?: number | null
 }
 
+export type PortalPracticeRequirement = {
+  code?: string
+  label?: string
+  required_hours?: number
+  completed_hours?: number
+  percent?: number
+  status?: string
+}
+
+export type PortalStudentPayment = {
+  codigo_periodo?: string
+  periodo?: string
+  cod_anio_basica?: string
+  carrera?: string
+  num_matricula?: string
+  codigo_documentacion?: string
+  fecha_pago?: string
+  total?: number
+  inscripcion?: number
+  matricula?: number
+  beca?: number
+  descuento?: number
+  saldo?: number
+  cuota?: number
+  cuotas?: number
+  convenio_url?: string
+  pago_num?: number | null
+  pago_detalle?: string
+  pago_fecha?: string
+  pago_valor?: number
+  pago_referencia?: string
+  pago_banco?: string
+}
+
 export type PortalStudentRecordResponse = {
   student?: PortalStudentProfile
   summary?: PortalAcademicSummary
   curriculum_summary?: PortalCurriculumSummary
   curriculum?: PortalCurriculumItem[]
   academic_grid?: PortalAcademicGridItem[]
+  practice_requirements?: PortalPracticeRequirement[]
+  payments?: PortalStudentPayment[]
   total?: number
   items?: PortalAcademicRecordItem[]
   detail?: string
@@ -3066,6 +3849,45 @@ export type SenescytStudentDataDetailResponse = {
   report_columns?: string[]
   datos_estud_fields?: Record<string, string | number | null>
   datos_estud_columns?: string[]
+  updated_fields?: string[]
+  affected_rows?: number
+  detail?: string
+}
+
+export type LegacyDataUpdateTarget = 'estudiantes' | 'docentes'
+
+export type LegacyDataUpdatePerson = {
+  id: string
+  codigo: string
+  nombre: string
+  cedula: string
+  tipo: 'estudiante' | 'docente'
+  carrera?: string | null
+  correo?: string | null
+  campos_llenos: number
+  campos_pendientes: number
+  campos_totales: number
+  porcentaje_lleno: number
+  campos_faltantes: string[]
+}
+
+export type LegacyDataUpdateSearchResponse = {
+  rows?: LegacyDataUpdatePerson[]
+  total?: number
+  limit?: number
+  query?: string
+  target?: LegacyDataUpdateTarget
+  detail?: string
+}
+
+export type LegacyDataUpdateDetailResponse = {
+  ok?: boolean
+  message?: string
+  person?: LegacyDataUpdatePerson
+  fields?: Record<string, string | number | null>
+  columns?: string[]
+  catalogs?: Record<string, Array<{ value: string; label: string }>>
+  target?: LegacyDataUpdateTarget
   updated_fields?: string[]
   affected_rows?: number
   detail?: string

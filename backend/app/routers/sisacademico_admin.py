@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
@@ -15,6 +17,11 @@ from app.services.db import get_connection
 router = APIRouter(prefix="/api/students/sisacademico", tags=["sisacademico"])
 
 AllowedEditor = Depends(require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR"))
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+_STUDENT_STATE_DOCUMENT_ROOT = _BACKEND_ROOT / "uploads" / "estados_estudiantes"
+_STUDENT_STATE_ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
+_STUDENT_STATE_MAX_FILE_SIZE = 15 * 1024 * 1024
 
 
 class FieldMeta(BaseModel):
@@ -155,6 +162,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("Estado", "Estado"),
             ("estado_nombre", "Detalle estado"),
             ("Informacion", "Descripción"),
+            ("DocumentoEstado", "Documento de respaldo"),
             ("correo", "Correo personal"),
             ("correointec", "Correo INTEC"),
             ("telefono", "Telefono"),
@@ -511,6 +519,30 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("tipomateria", "Tipo materia"),
             ("estado_mat", "Estado"),
         ),
+        "create_fields": fields(
+            field("Cod_AnioBasica", "Carrera", "number", required=True),
+            ("Unidad_Organiza", "Unidad"),
+            field("Nomb_Materia", "Materia", required=True),
+            field("Semestre", "Semestre", "number", required=True),
+            field("Creditos", "Creditos", "decimal", required=True),
+            ("Orden", "Orden", "number"),
+            field("NumMalla", "Malla", "number", required=True),
+            ("cod_materia", "Codigo textual"),
+            field("Horas", "Horas", "number", required=True),
+            ("ValorHora", "Valor hora", "decimal"),
+            ("ValorHoraVirtual", "Valor hora virtual", "decimal"),
+            ("verreporte", "Ver reporte", "number"),
+            ("SecuenciaMateria", "Secuencia"),
+            ("tipomateria", "Tipo materia"),
+            ("estado_mat", "Estado"),
+        ),
+        "defaults": {
+            "ValorHora": 0,
+            "ValorHoraVirtual": 0,
+            "verreporte": 1,
+            "SecuenciaMateria": "0",
+            "estado_mat": "ACTIVO",
+        },
         "search_fields": ["codigo_materia", "Cod_AnioBasica", "Nomb_Materia", "cod_materia", "estado_mat"],
         "order_by": "Nomb_Materia",
     },
@@ -561,6 +593,36 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("anio", "Anio", "number"),
             ("estado_ed", "Estado ED"),
         ),
+        "create_fields": fields(
+            field("Detalle_Periodo", "Periodo", required=True),
+            field("Estado", "Estado", required=True),
+            ("Detalle_Reg", "Detalle registro"),
+            ("Periodo", "Etiqueta"),
+            ("Orden", "Orden", "number"),
+            ("NotaAprobar", "Nota aprobar", "decimal"),
+            ("ControlPlataforma", "Control plataforma"),
+            ("VersionCalificacion", "Version calificacion", "number"),
+            ("NotaPromedioMax", "Nota promedio max", "number"),
+            ("VerInscripcion", "Ver inscripcion", "number"),
+            ("VerNotas", "Ver notas", "number"),
+            ("TipoMatricula", "Tipo matricula"),
+            ("VerReporte", "Ver reporte", "number"),
+            ("fechain", "Fecha inicio", "date"),
+            ("fechafin", "Fecha fin", "date"),
+            ("anio", "Anio", "number"),
+            ("estado_ed", "Estado ED"),
+        ),
+        "defaults": {
+            "NotaAprobar": 10,
+            "ControlPlataforma": "P",
+            "VersionCalificacion": 1,
+            "NotaPromedioMax": 0,
+            "VerInscripcion": 0,
+            "VerNotas": 0,
+            "TipoMatricula": "R",
+            "VerReporte": 0,
+            "estado_ed": "Inactivo",
+        },
         "search_fields": ["cod_periodo", "Detalle_Periodo", "Periodo", "anio", "TipoMatricula"],
         "order_by": "cod_periodo DESC",
     },
@@ -810,9 +872,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         },
     },
     "usuarios": {
-        "title": "Administrativos y usuarios",
+        "title": "Registrar usuarios",
         "category": "Seguridad",
-        "description": "Ingreso y mantenimiento de usuarios administrativos sin exponer contrasenas.",
+        "description": "Registro y mantenimiento de usuarios administrativos en USUARIO_SIS sin exponer contrasenas.",
         "table": "[dbo].[USUARIO_SIS]",
         "key_fields": ["login"],
         "list_fields": fields(
@@ -820,6 +882,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("nombres", "Nombres"),
             ("estado", "Estado"),
             ("email", "Email"),
+            ("cedula", "Cedula"),
             ("tipousuario", "Tipo", "number"),
             ("tp_us", "Perfil"),
         ),
@@ -830,34 +893,36 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("estado", "Estado"),
             ("email", "Email"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
+            ("codprovincia", "Provincia"),
             ("tipousuario", "Tipo usuario", "number"),
             ("tp_us", "Perfil"),
+            ("cedula", "Cedula"),
         ),
         "editable_fields": fields(
             ("nombres", "Nombres"),
             ("estado", "Estado"),
             ("email", "Email"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
+            ("codprovincia", "Provincia"),
             ("tipousuario", "Tipo usuario", "number"),
             ("tp_us", "Perfil"),
+            ("cedula", "Cedula"),
         ),
         "create_fields": fields(
             field("login", "Login", required=True),
-            field("password", "Clave temporal", required=True),
+            field("password", "Contraseña", required=True),
             field("nombres", "Nombres", required=True),
-            ("fecha_ingreso", "Fecha ingreso", "datetime"),
+            ("fecha_ingreso", "Fecha ingreso", "date"),
             ("estado", "Estado"),
             ("email", "Email"),
+            ("cedula", "Cedula"),
             ("coordcarrera", "Coord carrera", "number"),
-            ("codprovincia", "Provincia", "number"),
-            ("tipousuario", "Tipo usuario", "number"),
+            ("codprovincia", "Provincia"),
             ("tp_us", "Perfil"),
         ),
-        "search_fields": ["login", "nombres", "email", "estado", "tp_us"],
+        "search_fields": ["login", "nombres", "email", "cedula", "estado", "tp_us"],
         "order_by": "nombres",
-        "defaults": {"fecha_ingreso": "now", "estado": "A"},
+        "defaults": {"fecha_ingreso": "now", "estado": "A", "tipousuario": 0, "tp_us": "1"},
     },
     "correos": {
         "title": "Correos institucionales",
@@ -1174,9 +1239,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "order_by": "DetalleM",
     },
     "menu_general": {
-        "title": "Menu general legacy",
+        "title": "Mapa operativo SisAcademicoV1",
         "category": "Seguridad",
-        "description": "Catalogo base de opciones heredadas para permisos y reportes.",
+        "description": "Mapa funcional de procesos clonados desde SisAcademicoV1. La tabla legacy queda como respaldo tecnico.",
         "table": "[dbo].[MENU_GENERAL]",
         "key_fields": ["ID", "idGrupo", "idOpcion"],
         "list_fields": fields(
@@ -1202,9 +1267,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "order_by": "idGrupo, idOpcion",
     },
     "menu_usuarios": {
-        "title": "Accesos por usuario",
+        "title": "Accesos operativos por usuario",
         "category": "Seguridad",
-        "description": "Permisos heredados asignados a cada usuario administrativo.",
+        "description": "Mapa funcional de accesos por perfil. La tabla MENU_USUARIOS queda como respaldo tecnico.",
         "table": "[dbo].[MENU_USUARIOS]",
         "key_fields": ["id_usuarios", "idGrupo", "idOpcion"],
         "list_fields": fields(
@@ -1919,9 +1984,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "defaults": {"fecha": "now"},
     },
     "practicas_vinculacion": {
-        "title": "Practicas de vinculacion",
-        "category": "Vinculacion",
-        "description": "Registro de proyectos de vinculacion, empresa, docente, horas y evidencias.",
+        "title": "Vinculación con la sociedad",
+        "category": "Vinculación con la sociedad",
+        "description": "Registro de proyectos de vinculación con la sociedad, empresa, docente, horas y evidencias.",
         "table": "[dbo].[PRACTICASVINCULACION]",
         "key_fields": ["num"],
         "list_fields": fields(
@@ -1979,10 +2044,701 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "search_fields": ["num", "codigo_estud", "cod_anio_Basica", "codigo_periodo", "Cod_empresa", "CodDocente", "NombreProyecto", "DetalleProyecto"],
         "order_by": "num DESC",
     },
+    "certificados_generados": {
+        "title": "Certificados generados",
+        "category": "Certificados",
+        "description": "Historial de certificados institucionales generados desde SisAcademicoV1.",
+        "table": "[dbo].[CERTIFICADOS_GENERADOS]",
+        "key_fields": ["CertificadoId"],
+        "list_fields": fields(
+            ("CertificadoId", "Codigo", "number"),
+            ("TipoCertificado", "Tipo"),
+            ("NumeroCertificado", "Numero"),
+            ("CedulaEst", "Cedula"),
+            ("ApellidosNombre", "Estudiante"),
+            ("FechaGeneracion", "Fecha", "datetime"),
+            ("Estado", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("CertificadoId", "Codigo", "number"),
+            ("TipoCertificado", "Tipo"),
+            ("TipoOrigen", "Origen"),
+            ("NumeroCertificado", "Numero"),
+            ("CodigoEstud", "Codigo estudiante", "number"),
+            ("CedulaEst", "Cedula"),
+            ("ApellidosNombre", "Estudiante"),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("Num_Matricula", "Matricula", "number"),
+            ("CodCurso", "Curso", "number"),
+            ("FechaGeneracion", "Fecha generacion", "datetime"),
+            ("UsuarioGenero", "Usuario"),
+            ("RutaArchivo", "Archivo"),
+            ("CodigoVerificacion", "Codigo verificacion"),
+            ("Estado", "Estado"),
+            ("FechaAnulacion", "Fecha anulacion", "datetime"),
+            ("UsuarioAnulacion", "Usuario anulacion"),
+            ("MotivoAnulacion", "Motivo anulacion", "textarea"),
+            ("Observacion", "Observacion", "textarea"),
+        ),
+        "editable_fields": fields(
+            ("RutaArchivo", "Archivo"),
+            ("CodigoVerificacion", "Codigo verificacion"),
+            ("Estado", "Estado"),
+            ("FechaAnulacion", "Fecha anulacion", "datetime"),
+            ("UsuarioAnulacion", "Usuario anulacion"),
+            ("MotivoAnulacion", "Motivo anulacion", "textarea"),
+            ("Observacion", "Observacion", "textarea"),
+        ),
+        "search_fields": ["CertificadoId", "TipoCertificado", "TipoOrigen", "NumeroCertificado", "CodigoEstud", "CedulaEst", "ApellidosNombre", "CodigoVerificacion", "Estado"],
+        "order_by": "FechaGeneracion DESC, CertificadoId DESC",
+    },
+    "cursos_edu_continua": {
+        "title": "Cursos de educación continua",
+        "category": "Educación continua",
+        "description": "Cursos cortos y ofertas de educación continua del sistema anterior.",
+        "table": "[dbo].[CursosEduContinua]",
+        "key_fields": ["CodCurso"],
+        "list_fields": fields(
+            ("CodCurso", "Codigo", "number"),
+            ("Curso", "Curso"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFinal", "Fin", "date"),
+            ("Horas", "Horas", "number"),
+            ("Estado", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("CodCurso", "Codigo", "number"),
+            ("Curso", "Curso"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFinal", "Fin", "date"),
+            ("Estado", "Estado"),
+            ("Horas", "Horas", "number"),
+        ),
+        "editable_fields": fields(
+            ("Curso", "Curso"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFinal", "Fin", "date"),
+            ("Estado", "Estado"),
+            ("Horas", "Horas", "number"),
+        ),
+        "create_fields": fields(
+            field("Curso", "Curso", required=True),
+            field("FechaInicio", "Inicio", "date", required=True),
+            field("FechaFinal", "Fin", "date", required=True),
+            field("Estado", "Estado", required=True),
+            ("Horas", "Horas", "number"),
+        ),
+        "search_fields": ["CodCurso", "Curso", "Estado"],
+        "order_by": "FechaInicio DESC, CodCurso DESC",
+    },
+    "corte_curso": {
+        "title": "Cortes de curso",
+        "category": "Educación continua",
+        "description": "Cortes, cupos, fechas y estado de cursos regulares, materias o educación continua.",
+        "table": "[dbo].[CORTE_CURSO]",
+        "key_fields": ["CorteId"],
+        "list_fields": fields(
+            ("CorteId", "Codigo", "number"),
+            ("TipoOferta", "Oferta"),
+            ("NombreCorte", "Corte"),
+            ("NumeroCorte", "Numero", "number"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFin", "Fin", "date"),
+            ("EstadoCorte", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("CorteId", "Codigo", "number"),
+            ("TipoOferta", "Oferta"),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("CodCurso", "Curso", "number"),
+            ("NumeroCorte", "Numero", "number"),
+            ("NombreCorte", "Corte"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFin", "Fin", "date"),
+            ("CupoEsperado", "Cupo", "number"),
+            ("Horas", "Horas", "number"),
+            ("EstadoCorte", "Estado"),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioRegistro", "Usuario registro"),
+            ("FechaRegistro", "Fecha registro", "datetime"),
+            ("UsuarioModifica", "Usuario modifica"),
+            ("FechaModifica", "Fecha modifica", "datetime"),
+        ),
+        "editable_fields": fields(
+            ("TipoOferta", "Oferta"),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("CodCurso", "Curso", "number"),
+            ("NumeroCorte", "Numero", "number"),
+            ("NombreCorte", "Corte"),
+            ("FechaInicio", "Inicio", "date"),
+            ("FechaFin", "Fin", "date"),
+            ("CupoEsperado", "Cupo", "number"),
+            ("Horas", "Horas", "number"),
+            ("EstadoCorte", "Estado"),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioModifica", "Usuario modifica"),
+            ("FechaModifica", "Fecha modifica", "datetime"),
+        ),
+        "create_fields": fields(
+            field("TipoOferta", "Oferta", required=True),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("CodCurso", "Curso", "number"),
+            field("NumeroCorte", "Numero", "number", required=True),
+            field("NombreCorte", "Corte", required=True),
+            field("FechaInicio", "Inicio", "date", required=True),
+            ("FechaFin", "Fin", "date"),
+            ("CupoEsperado", "Cupo", "number"),
+            ("Horas", "Horas", "number"),
+            field("EstadoCorte", "Estado", required=True),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioRegistro", "Usuario registro"),
+            ("FechaRegistro", "Fecha registro", "datetime"),
+        ),
+        "search_fields": ["CorteId", "TipoOferta", "Cod_AnioBasica", "CodigoPeriodo", "CodigoMateria", "CodCurso", "NombreCorte", "EstadoCorte"],
+        "order_by": "FechaInicio DESC, CorteId DESC",
+        "defaults": {"FechaRegistro": "now"},
+    },
+    "corte_curso_estudiante": {
+        "title": "Estudiantes por corte",
+        "category": "Educación continua",
+        "description": "Participantes vinculados a cortes de curso y su estado de registro.",
+        "table": "[dbo].[CORTE_CURSO_ESTUDIANTE]",
+        "key_fields": ["CorteEstudianteId"],
+        "list_fields": fields(
+            ("CorteEstudianteId", "Codigo", "number"),
+            ("CorteId", "Corte", "number"),
+            ("CodigoEstud", "Codigo estudiante", "number"),
+            ("CedulaEst", "Cedula"),
+            ("ApellidosNombre", "Estudiante"),
+            ("EstadoParticipacion", "Participacion"),
+            ("EstadoRegistro", "Registro"),
+        ),
+        "detail_fields": fields(
+            ("CorteEstudianteId", "Codigo", "number"),
+            ("CorteId", "Corte", "number"),
+            ("CodigoEstud", "Codigo estudiante", "number"),
+            ("CedulaEst", "Cedula"),
+            ("ApellidosNombre", "Estudiante"),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("Num_Matricula", "Matricula", "number"),
+            ("CodCurso", "Curso", "number"),
+            ("FechaInicioEstudiante", "Fecha inicio", "date"),
+            ("EstadoParticipacion", "Participacion"),
+            ("EstadoRegistro", "Registro"),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioRegistro", "Usuario registro"),
+            ("FechaRegistro", "Fecha registro", "datetime"),
+            ("UsuarioModifica", "Usuario modifica"),
+            ("FechaModifica", "Fecha modifica", "datetime"),
+        ),
+        "editable_fields": fields(
+            ("FechaInicioEstudiante", "Fecha inicio", "date"),
+            ("EstadoParticipacion", "Participacion"),
+            ("EstadoRegistro", "Registro"),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioModifica", "Usuario modifica"),
+            ("FechaModifica", "Fecha modifica", "datetime"),
+        ),
+        "create_fields": fields(
+            field("CorteId", "Corte", "number", required=True),
+            field("CodigoEstud", "Codigo estudiante", "number", required=True),
+            ("CedulaEst", "Cedula"),
+            ("ApellidosNombre", "Estudiante"),
+            ("Cod_AnioBasica", "Carrera", "number"),
+            ("CodigoPeriodo", "Periodo", "number"),
+            ("CodigoMateria", "Materia", "number"),
+            ("Num_Matricula", "Matricula", "number"),
+            ("CodCurso", "Curso", "number"),
+            ("FechaInicioEstudiante", "Fecha inicio", "date"),
+            field("EstadoParticipacion", "Participacion", required=True),
+            field("EstadoRegistro", "Registro", required=True),
+            ("Observacion", "Observacion", "textarea"),
+            ("UsuarioRegistro", "Usuario registro"),
+            ("FechaRegistro", "Fecha registro", "datetime"),
+        ),
+        "search_fields": ["CorteEstudianteId", "CorteId", "CodigoEstud", "CedulaEst", "ApellidosNombre", "EstadoParticipacion", "EstadoRegistro"],
+        "order_by": "CorteEstudianteId DESC",
+        "defaults": {"FechaRegistro": "now"},
+    },
+    "credenciales_curso": {
+        "title": "Credenciales de curso",
+        "category": "Certificados",
+        "description": "Usuarios, credenciales temporales y estado de creación/envío de cursos.",
+        "table": "[dbo].[CREDENCIALES_CURSO]",
+        "key_fields": ["id"],
+        "list_fields": fields(
+            ("id", "Codigo", "number"),
+            ("curso", "Curso"),
+            ("cedula", "Cedula"),
+            ("primer_apellido", "Primer apellido"),
+            ("primer_nombre", "Primer nombre"),
+            ("correo_electronico", "Correo"),
+            ("estado_graph", "Graph"),
+            ("estado_envio", "Envio"),
+        ),
+        "detail_fields": fields(
+            ("id", "Codigo", "number"),
+            ("cod_curso", "Codigo curso"),
+            ("curso", "Curso"),
+            ("primer_nombre", "Primer nombre"),
+            ("segundo_nombre", "Segundo nombre"),
+            ("primer_apellido", "Primer apellido"),
+            ("segundo_apellido", "Segundo apellido"),
+            ("cedula", "Cedula"),
+            ("correo_electronico", "Correo"),
+            ("usuario_generado", "Usuario generado"),
+            ("clave_temporal", "Clave temporal"),
+            ("graph_user_id", "Graph user id"),
+            ("graph_user_principal_name", "Graph UPN"),
+            ("graph_mail_sender", "Remitente"),
+            ("estado_graph", "Estado Graph"),
+            ("error_graph", "Error Graph", "textarea"),
+            ("link_induccion", "Link induccion"),
+            ("correo_enviado", "Correo enviado", "bool"),
+            ("estado_envio", "Estado envio"),
+            ("error_envio", "Error envio", "textarea"),
+            ("fecha_creacion", "Fecha creacion", "datetime"),
+            ("usuario_creacion", "Usuario creacion"),
+            ("fecha_graph", "Fecha Graph", "datetime"),
+            ("fecha_envio", "Fecha envio", "datetime"),
+            ("fecha_actualizacion", "Fecha actualizacion", "datetime"),
+        ),
+        "editable_fields": fields(
+            ("estado_graph", "Estado Graph"),
+            ("error_graph", "Error Graph", "textarea"),
+            ("correo_enviado", "Correo enviado", "bool"),
+            ("estado_envio", "Estado envio"),
+            ("error_envio", "Error envio", "textarea"),
+            ("fecha_graph", "Fecha Graph", "datetime"),
+            ("fecha_envio", "Fecha envio", "datetime"),
+            ("fecha_actualizacion", "Fecha actualizacion", "datetime"),
+        ),
+        "search_fields": ["id", "cod_curso", "curso", "cedula", "primer_nombre", "primer_apellido", "correo_electronico", "usuario_generado", "estado_graph", "estado_envio"],
+        "order_by": "fecha_creacion DESC, id DESC",
+    },
+    "talento_humano_empleados": {
+        "title": "Empleados",
+        "category": "Talento humano",
+        "description": "Ficha base de empleados usada por el modulo RRHH de SisAcademicoV1.",
+        "table": "[dbo].[TH_EMPLEADO]",
+        "key_fields": ["empleado_id"],
+        "list_fields": fields(
+            ("empleado_id", "Codigo", "number"),
+            ("usuario_id", "Usuario", "number"),
+            ("nombres", "Nombres"),
+            ("cargo", "Cargo"),
+            ("tipo_personal", "Tipo"),
+            ("estado", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("empleado_id", "Codigo", "number"),
+            ("usuario_id", "Usuario", "number"),
+            ("nombres", "Nombres"),
+            ("cargo", "Cargo"),
+            ("tipo_personal", "Tipo personal"),
+            ("estado", "Estado"),
+            ("fecha_ingreso", "Fecha ingreso", "date"),
+        ),
+        "editable_fields": fields(
+            ("usuario_id", "Usuario", "number"),
+            ("nombres", "Nombres"),
+            ("cargo", "Cargo"),
+            ("tipo_personal", "Tipo personal"),
+            ("estado", "Estado"),
+            ("fecha_ingreso", "Fecha ingreso", "date"),
+        ),
+        "create_fields": fields(
+            field("usuario_id", "Usuario", "number", required=True),
+            field("nombres", "Nombres", required=True),
+            ("cargo", "Cargo"),
+            field("tipo_personal", "Tipo personal", required=True),
+            field("estado", "Estado", required=True),
+            field("fecha_ingreso", "Fecha ingreso", "date", required=True),
+        ),
+        "search_fields": ["empleado_id", "usuario_id", "nombres", "cargo", "tipo_personal", "estado"],
+        "order_by": "nombres",
+    },
+    "talento_humano_solicitudes": {
+        "title": "Solicitudes RRHH",
+        "category": "Talento humano",
+        "description": "Solicitudes de permisos, vacaciones y validaciones del flujo de talento humano.",
+        "table": "[dbo].[TH_SOLICITUD]",
+        "key_fields": ["solicitud_id"],
+        "list_fields": fields(
+            ("solicitud_id", "Codigo", "number"),
+            ("cedula", "Cedula"),
+            ("correo_institucional", "Correo"),
+            ("unidad", "Unidad"),
+            ("fecha_inicio", "Inicio", "date"),
+            ("fecha_fin", "Fin", "date"),
+            ("estado_actual", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("solicitud_id", "Codigo", "number"),
+            ("empleado_id", "Empleado", "number"),
+            ("tipo_id", "Tipo", "number"),
+            ("fecha_inicio", "Inicio", "date"),
+            ("fecha_fin", "Fin", "date"),
+            ("motivo", "Motivo", "textarea"),
+            ("estado_actual", "Estado"),
+            ("created_by", "Creado por", "number"),
+            ("created_at", "Creado", "datetime"),
+            ("cedula", "Cedula"),
+            ("unidad", "Unidad"),
+            ("jefe_inmediato_nombre", "Jefe inmediato"),
+            ("correo_institucional", "Correo"),
+            ("lugar_permanencia", "Lugar permanencia"),
+            ("telefono_contacto", "Telefono"),
+            ("numero_dias_horas", "Dias/horas", "number"),
+            ("documentos_respaldo", "Documentos", "textarea"),
+            ("jefe_observaciones", "Observaciones jefe", "textarea"),
+            ("th_validacion_nombre", "Validacion TH"),
+            ("th_validacion_fecha", "Fecha validacion", "datetime"),
+            ("th_validacion_observaciones", "Observaciones TH", "textarea"),
+            ("tipo_flags", "Flags"),
+            ("jefe_firma_nombre", "Firma jefe"),
+            ("jefe_firma_fecha", "Fecha firma jefe", "datetime"),
+            ("th_firma_nombre", "Firma TH"),
+            ("th_firma_fecha", "Fecha firma TH", "datetime"),
+        ),
+        "editable_fields": fields(
+            ("estado_actual", "Estado"),
+            ("jefe_observaciones", "Observaciones jefe", "textarea"),
+            ("th_validacion_nombre", "Validacion TH"),
+            ("th_validacion_fecha", "Fecha validacion", "datetime"),
+            ("th_validacion_observaciones", "Observaciones TH", "textarea"),
+            ("jefe_firma_nombre", "Firma jefe"),
+            ("jefe_firma_fecha", "Fecha firma jefe", "datetime"),
+            ("th_firma_nombre", "Firma TH"),
+            ("th_firma_fecha", "Fecha firma TH", "datetime"),
+        ),
+        "search_fields": ["solicitud_id", "empleado_id", "cedula", "unidad", "jefe_inmediato_nombre", "correo_institucional", "estado_actual", "motivo"],
+        "order_by": "created_at DESC, solicitud_id DESC",
+    },
+    "talento_humano_tareas": {
+        "title": "Tareas RRHH",
+        "category": "Talento humano",
+        "description": "Tareas, delegaciones, prioridades y seguimiento interno de RRHH.",
+        "table": "[dbo].[TH_TAREA]",
+        "key_fields": ["tarea_id"],
+        "list_fields": fields(
+            ("tarea_id", "Codigo", "number"),
+            ("titulo", "Titulo"),
+            ("estado", "Estado"),
+            ("prioridad", "Prioridad"),
+            ("asignado_usuario_id", "Usuario asignado", "number"),
+            ("fecha_limite", "Limite", "date"),
+            ("created_at", "Creado", "datetime"),
+        ),
+        "detail_fields": fields(
+            ("tarea_id", "Codigo", "number"),
+            ("titulo", "Titulo"),
+            ("descripcion", "Descripcion", "textarea"),
+            ("created_by", "Creado por", "number"),
+            ("asignado_usuario_id", "Usuario asignado", "number"),
+            ("asignado_empleado_id", "Empleado asignado", "number"),
+            ("area_tipo_personal", "Area/tipo personal"),
+            ("estado", "Estado"),
+            ("prioridad", "Prioridad"),
+            ("requiere_ayuda", "Requiere ayuda", "bool"),
+            ("delegada_a_empleado_id", "Delegada a empleado", "number"),
+            ("delegada_por_usuario_id", "Delegada por usuario", "number"),
+            ("delegada_at", "Fecha delegacion", "datetime"),
+            ("fecha_limite", "Fecha limite", "date"),
+            ("created_at", "Creado", "datetime"),
+            ("updated_at", "Actualizado", "datetime"),
+            ("closed_at", "Cerrado", "datetime"),
+        ),
+        "editable_fields": fields(
+            ("titulo", "Titulo"),
+            ("descripcion", "Descripcion", "textarea"),
+            ("asignado_usuario_id", "Usuario asignado", "number"),
+            ("asignado_empleado_id", "Empleado asignado", "number"),
+            ("area_tipo_personal", "Area/tipo personal"),
+            ("estado", "Estado"),
+            ("prioridad", "Prioridad"),
+            ("requiere_ayuda", "Requiere ayuda", "bool"),
+            ("delegada_a_empleado_id", "Delegada a empleado", "number"),
+            ("delegada_por_usuario_id", "Delegada por usuario", "number"),
+            ("delegada_at", "Fecha delegacion", "datetime"),
+            ("fecha_limite", "Fecha limite", "date"),
+            ("updated_at", "Actualizado", "datetime"),
+            ("closed_at", "Cerrado", "datetime"),
+        ),
+        "search_fields": ["tarea_id", "titulo", "descripcion", "estado", "prioridad", "area_tipo_personal"],
+        "order_by": "created_at DESC, tarea_id DESC",
+    },
+    "moodle_notas": {
+        "title": "Notas Moodle",
+        "category": "Integraciones",
+        "description": "Notas sincronizadas desde Moodle por estudiante, materia y componente.",
+        "table": "[dbo].[intec_estudiantenota]",
+        "key_fields": ["id"],
+        "list_fields": fields(
+            ("id", "Codigo", "number"),
+            ("codigo_estudiante", "Estudiante"),
+            ("periodo", "Periodo"),
+            ("codigo_materia", "Materia"),
+            ("componente_nota", "Componente"),
+            ("nota_obtenida", "Nota", "decimal"),
+            ("estado", "Estado"),
+        ),
+        "detail_fields": fields(
+            ("id", "Codigo", "number"),
+            ("codigo_estudiante", "Estudiante"),
+            ("periodo", "Periodo"),
+            ("codigo_materia", "Materia"),
+            ("paralelo", "Paralelo"),
+            ("tipo_matricula", "Tipo matricula"),
+            ("componente_nota", "Componente"),
+            ("nota_obtenida", "Nota", "decimal"),
+            ("nota_maxima", "Nota maxima", "decimal"),
+            ("porcentaje", "Porcentaje", "decimal"),
+            ("estado", "Estado"),
+            ("moodle_course_id", "Moodle course", "number"),
+            ("moodle_grade_item_id", "Moodle item", "number"),
+            ("fecha_calificacion", "Fecha calificacion", "datetime"),
+            ("fecha_sincronizacion", "Fecha sincronizacion", "datetime"),
+            ("fecha_creacion", "Fecha creacion", "datetime"),
+            ("comentario_profesor", "Comentario", "textarea"),
+            ("calificado_por", "Calificado por"),
+        ),
+        "editable_fields": fields(
+            ("nota_obtenida", "Nota", "decimal"),
+            ("estado", "Estado"),
+            ("comentario_profesor", "Comentario", "textarea"),
+            ("calificado_por", "Calificado por"),
+        ),
+        "search_fields": ["codigo_estudiante", "periodo", "codigo_materia", "paralelo", "tipo_matricula", "componente_nota", "estado", "calificado_por"],
+        "order_by": "fecha_sincronizacion DESC, id DESC",
+    },
+    "moodle_sincronizacion": {
+        "title": "Sincronización Moodle",
+        "category": "Integraciones",
+        "description": "Historial de sincronización de notas desde Moodle.",
+        "table": "[dbo].[intec_moodlegradesynclog]",
+        "key_fields": ["id"],
+        "list_fields": fields(
+            ("id", "Codigo", "number"),
+            ("fecha_inicio", "Inicio", "datetime"),
+            ("periodo", "Periodo"),
+            ("modo_ejecucion", "Modo"),
+            ("estado", "Estado"),
+            ("notas_procesadas", "Procesadas", "number"),
+            ("notas_error", "Errores", "number"),
+        ),
+        "detail_fields": fields(
+            ("id", "Codigo", "number"),
+            ("fecha_inicio", "Inicio", "datetime"),
+            ("fecha_fin", "Fin", "datetime"),
+            ("duracion_segundos", "Duracion", "decimal"),
+            ("periodo", "Periodo"),
+            ("modo_ejecucion", "Modo"),
+            ("estado", "Estado"),
+            ("notas_procesadas", "Procesadas", "number"),
+            ("notas_actualizadas", "Actualizadas", "number"),
+            ("notas_insertadas", "Insertadas", "number"),
+            ("notas_error", "Errores", "number"),
+            ("mensaje", "Mensaje", "textarea"),
+            ("errores_detalle", "Errores detalle", "textarea"),
+            ("estadisticas", "Estadisticas", "textarea"),
+            ("usuario_id", "Usuario", "number"),
+        ),
+        "editable_fields": fields(
+            ("mensaje", "Mensaje", "textarea"),
+            ("errores_detalle", "Errores detalle", "textarea"),
+            ("estadisticas", "Estadisticas", "textarea"),
+        ),
+        "search_fields": ["id", "periodo", "modo_ejecucion", "estado", "mensaje", "errores_detalle"],
+        "order_by": "fecha_inicio DESC, id DESC",
+    },
+    "microsoft365_audit": {
+        "title": "Auditoría Microsoft 365",
+        "category": "Integraciones",
+        "description": "Acciones, estados y errores de operaciones Microsoft 365.",
+        "table": "[dbo].[Microsoft365Audit]",
+        "key_fields": ["Id"],
+        "list_fields": fields(
+            ("Id", "Codigo", "number"),
+            ("correo", "Correo"),
+            ("fecha", "Fecha", "datetime"),
+            ("accion", "Accion"),
+            ("estado", "Estado"),
+            ("skuIdAsignado", "SKU"),
+        ),
+        "detail_fields": fields(
+            ("Id", "Codigo", "number"),
+            ("correo", "Correo"),
+            ("fecha", "Fecha", "datetime"),
+            ("accion", "Accion"),
+            ("estado", "Estado"),
+            ("skuIdAsignado", "SKU"),
+            ("mensaje_error", "Error", "textarea"),
+        ),
+        "editable_fields": fields(
+            ("estado", "Estado"),
+            ("mensaje_error", "Error", "textarea"),
+        ),
+        "search_fields": ["correo", "accion", "estado", "skuIdAsignado", "mensaje_error"],
+        "order_by": "fecha DESC, Id DESC",
+    },
 }
 
 
 LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
+    "usuarios": {
+        "tipousuario": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), Codigo_tipo_us) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Codigo_tipo_us), N' - ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), detalle_tipo_us)))) AS option_label
+            FROM dbo.TIPO_USUARIO
+            WHERE Codigo_tipo_us IS NOT NULL
+            ORDER BY TRY_CONVERT(int, Codigo_tipo_us), detalle_tipo_us
+            """,
+        ],
+        "tp_us": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), Codigo_tipo_us) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Codigo_tipo_us), N' - ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), detalle_tipo_us)))) AS option_label
+            FROM dbo.TIPO_USUARIO
+            WHERE Codigo_tipo_us IS NOT NULL
+            ORDER BY TRY_CONVERT(int, Codigo_tipo_us), detalle_tipo_us
+            """,
+        ],
+        "codprovincia": [
+            """
+            SELECT
+                TRY_CONVERT(nvarchar(100), TRY_CONVERT(int, Cod_Provincia)) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), TRY_CONVERT(int, Cod_Provincia)),
+                    N' - ',
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Descripcion_Prov)))
+                ) AS option_label
+            FROM dbo.Provincias
+            WHERE Cod_Provincia IS NOT NULL
+            ORDER BY Descripcion_Prov
+            """,
+        ],
+    },
+    "preinscripciones": {
+        "codasesor": [
+            """
+            SELECT TOP (1000)
+                TRY_CONVERT(nvarchar(100), id_usuarios) AS option_value,
+                COALESCE(
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), nombres))), N''),
+                    CONCAT(N'Asesor ', TRY_CONVERT(nvarchar(100), id_usuarios))
+                ) AS option_label
+            FROM dbo.USUARIO_SIS
+            WHERE id_usuarios IS NOT NULL
+            ORDER BY nombres, id_usuarios
+            """,
+        ],
+    },
+    "materias": {
+        "Cod_AnioBasica": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Cod_AnioBasica), N' - ', LTRIM(RTRIM(Nombre_Basica))) AS option_label
+            FROM dbo.CARRERAS
+            WHERE Cod_AnioBasica IS NOT NULL
+            ORDER BY Nombre_Basica
+            """,
+        ],
+        "Semestre": [
+            """
+            SELECT N'1' AS option_value, N'1' AS option_label
+            UNION ALL
+            SELECT N'2', N'2'
+            UNION ALL
+            SELECT N'3', N'3'
+            UNION ALL
+            SELECT N'4', N'4'
+            """,
+        ],
+        "NumMalla": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Malla) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), Malla),
+                    N' - ',
+                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre))), N'Malla')
+                ) AS option_label
+            FROM dbo.MALLA
+            WHERE Malla IS NOT NULL
+            ORDER BY Malla
+            """,
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Malla) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Malla), N' - Malla') AS option_label
+            FROM dbo.MALLA_PENSUM
+            WHERE Malla IS NOT NULL
+            GROUP BY Malla
+            ORDER BY Malla
+            """,
+        ],
+        "estado_mat": [
+            """
+            SELECT DISTINCT TOP (100)
+                LTRIM(RTRIM(estado_mat)) AS option_value,
+                LTRIM(RTRIM(estado_mat)) AS option_label
+            FROM dbo.PENSUM
+            WHERE NULLIF(LTRIM(RTRIM(estado_mat)), N'') IS NOT NULL
+            ORDER BY option_label
+            """,
+        ],
+    },
+    "periodos": {
+        "Estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activo' AS option_label
+            UNION ALL
+            SELECT N'P', N'P - Pendiente'
+            UNION ALL
+            SELECT N'I', N'I - Inactivo'
+            """,
+        ],
+        "ControlPlataforma": [
+            """
+            SELECT N'A' AS option_value, N'A - Abierto'
+            UNION ALL
+            SELECT N'P', N'P - Pendiente'
+            UNION ALL
+            SELECT N'C', N'C - Cerrado'
+            """,
+        ],
+        "TipoMatricula": [
+            """
+            SELECT N'R' AS option_value, N'R - Regular'
+            UNION ALL
+            SELECT N'H', N'H - Homologacion'
+            UNION ALL
+            SELECT N'E', N'E - Educacion continua'
+            """,
+        ],
+        "estado_ed": [
+            """
+            SELECT N'Activo' AS option_value, N'Activo' AS option_label
+            UNION ALL
+            SELECT N'Inactivo', N'Inactivo'
+            """,
+        ],
+    },
     "actualizacion_estudiantes": {
         "Estado": [
             """
@@ -2612,6 +3368,7 @@ def _actualizacion_estudiante_row(row: Any) -> dict[str, Any]:
         "Estado": _serialize_value(getattr(row, "Estado", "")),
         "estado_nombre": _serialize_value(getattr(row, "estado_nombre", "")) or _serialize_value(getattr(row, "Estado", "")),
         "Informacion": _serialize_value(getattr(row, "Informacion", "")),
+        "DocumentoEstado": _serialize_value(getattr(row, "DocumentoEstado", "")),
         "correo": _serialize_value(getattr(row, "correo", "")),
         "correointec": _serialize_value(getattr(row, "correointec", "")),
         "telefono": _serialize_value(getattr(row, "telefono", "")),
@@ -2638,7 +3395,8 @@ def _actualizacion_estudiante_select(limit: int | None, where_sql: str = "", per
             TRY_CONVERT(varchar(50), {periodo_value}) AS codigo_periodo,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Estado))) AS Estado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), est.ESTADO))) AS estado_nombre,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), d.referencia))) AS Informacion,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.DETALLE))) AS Informacion,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.LINKURL))) AS DocumentoEstado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))) AS correo,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correointec))) AS correointec,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.telefono))) AS telefono,
@@ -2660,6 +3418,15 @@ def _actualizacion_estudiante_select(limit: int | None, where_sql: str = "", per
             FROM dbo.CARRERAXESTUD cm
             WHERE TRY_CONVERT(decimal(18, 0), cm.codigo_estud) = TRY_CONVERT(decimal(18, 0), d.codigo_estud)
         ) stats
+        OUTER APPLY (
+            SELECT TOP (1)
+                rd.DETALLE,
+                rd.LINKURL
+            FROM dbo.REGISTRODOCESTUD rd
+            WHERE TRY_CONVERT(decimal(18, 0), rd.IDESTUD) = TRY_CONVERT(decimal(18, 0), d.codigo_estud)
+              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
+            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
+        ) state_document
         {where_sql}
         ORDER BY
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))),
@@ -2732,70 +3499,11 @@ def _get_actualizacion_estudiantes_record(section: dict[str, Any], record_key: s
 
 
 def _update_actualizacion_estudiantes_record(section: dict[str, Any], record_key: str, payload: SavePayload) -> dict[str, Any]:
-    del section
-    key_values = _decode_key(record_key, 1)
-    cedula = str(key_values[0] or "").strip()
-    estado_codigo = str(payload.values.get("Estado") or "").strip().upper()
-    informacion = str(payload.values.get("Informacion") or "").strip()
-    update_information = "Informacion" in payload.values
-    if not estado_codigo:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona el estado del estudiante")
-    if not cedula:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Clave de estudiante incompleta")
-
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT TOP (1)
-                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO))) AS codigo,
-                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ESTADO))) AS nombre
-                FROM dbo.ESTADO
-                WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO)))) = ?
-                """,
-                estado_codigo,
-            )
-            state = cursor.fetchone()
-            if not state:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El estado seleccionado no existe en dbo.ESTADO")
-
-            cursor.execute(
-                """
-                SELECT TOP (1) TRY_CONVERT(varchar(50), codigo_estud) AS codigo_estud
-                FROM dbo.DATOS_ESTUD
-                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), Cedula_Est))) = ?
-                """,
-                cedula,
-            )
-            if not cursor.fetchone():
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Estudiante no existe en DATOS_ESTUD")
-
-            cursor.execute(
-                """
-                UPDATE dbo.DATOS_ESTUD
-                SET
-                    Estado = ?,
-                    referencia = CASE WHEN ? = 1 THEN NULLIF(?, N'') ELSE referencia END
-                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), Cedula_Est))) = ?
-                """,
-                estado_codigo,
-                1 if update_information else 0,
-                informacion,
-                cedula,
-            )
-            affected = cursor.rowcount
-            conn.commit()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo actualizar el estado del estudiante") from exc
-
-    return {
-        "ok": True,
-        "message": f"Estado estudiante actualizado a {_serialize_value(state.nombre) or estado_codigo}",
-        "affected_rows": affected,
-    }
+    del section, record_key, payload
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="El cambio de estado requiere motivo y documento de respaldo",
+    )
 
 
 def _actualizacion_est_row(row: Any) -> dict[str, Any]:
@@ -3189,6 +3897,267 @@ def _section_meta(section_key: str, section: dict[str, Any], options: dict[str, 
     )
 
 
+LEGACY_CLONE_MODULES: list[dict[str, Any]] = [
+    {
+        "key": "seguridad",
+        "title": "Seguridad, usuarios y menu",
+        "description": "Login, perfiles, accesos y menus heredados.",
+        "source_paths": ["Default.aspx", "Index.aspx", "Cabecera.aspx", "cabeceras.aspx", "izquierda.aspx", "menus.aspx", "blanco.aspx", "MensajeError.aspx", "accesousuarios/"],
+        "tables": ["USUARIOS", "USUARIO_SIS", "TIPO_USUARIO", "MENU_GENERAL", "MENU_TIPO_USU", "MENU_USUARIOS"],
+        "modern_sections": ["usuarios", "menu_usuarios", "menu_general"],
+        "modern_routes": ["auth.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "El login WebForms no se copia; se conserva autenticacion moderna y datos legacy administrables.",
+    },
+    {
+        "key": "estudiantes",
+        "title": "Estudiantes y ficha academica",
+        "description": "Datos personales, estado, correo institucional, documentos y seguimiento.",
+        "source_paths": ["IngNuevoEstudianteWeb.aspx", "IngNuevoEstudianteWeb.aspx - copia.vb", "Actualiza_Estud.aspx", "Actualiza_EstudPeriodo.aspx", "Actualiza_Informacion.aspx", "Informacion.aspx", "ImprimirEstudianteWeb.aspx", "SubirDocumentos.aspx"],
+        "tables": ["DATOS_ESTUD", "CorreosEstudIntec", "REGISTRODOCESTUD", "ESTADO"],
+        "modern_sections": ["estudiantes", "actualizacion_estudiantes", "registro_documentos_estudiante", "correos", "seguimiento"],
+        "modern_routes": ["students.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Se mantiene INTECBDD como fuente; cargas nuevas deben pasar por backend validado.",
+    },
+    {
+        "key": "admision",
+        "title": "Admision y preinscripcion",
+        "description": "Aspirantes, asesores, datos de factura, documentos y paso a matricula.",
+        "source_paths": ["Inscripcion.aspx", "InscripcionPre.aspx", "Datosprematricula.aspx", "Datosprematricula.aspx - copia.vb", "AsignaAsesor.aspx", "AsesorEstudiante.aspx", "InscripcionSAEC/"],
+        "tables": ["PREINSCRIPCION", "DATOSFACTURA", "IN_LECONTACTO", "IN_ENTERO", "IN_DESEAINGRESAR", "IN_DESCCONVE", "IN_DESCONVVALOR", "IN_DESDEPOTRANS"],
+        "modern_sections": ["preinscripciones", "datos_factura"],
+        "modern_routes": ["preinscription.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "El flujo moderno de preinscripcion reemplaza formularios duplicados de WebForms.",
+    },
+    {
+        "key": "matricula",
+        "title": "Matricula academica y financiera",
+        "description": "Cabecera, materias, pagos, convenios y cambios H/R.",
+        "source_paths": [
+            "ModificarMaterias.aspx",
+            "ModificarMateriasHaR.aspx",
+            "ModificarMateriasConvalida.aspx",
+            "actualizar/EliminarMatricula.aspx",
+            "ImprimirConvalida.aspx",
+            "ImprimirMatricula.aspx",
+            "ImprimirPreMatricula.aspx",
+            "IngresoDiasMatricula.aspx",
+            "IngresoHorasMatricula.aspx",
+            "IngresoModalidadMatricula.aspx",
+            "Reporteshtml/ListaMatriPeriodo.aspx",
+            "Reporteshtml/ListaMatriPeriodoNotas.aspx",
+            "Registropagos.aspx",
+        ],
+        "tables": ["CABECERA_MATRICULA", "CARRERAXESTUD", "REGISTROPAGOS", "CONTROLMATRICULA", "ESTADOMATRICULA"],
+        "modern_sections": ["cabecera_matricula", "matricula_materias", "pagos_matricula", "cambio_periodo_hr"],
+        "modern_routes": ["academic_enrollment.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Las operaciones transaccionales deben permanecer en backend; el CRUD generico queda para mantenimiento.",
+    },
+    {
+        "key": "academico",
+        "title": "Catalogos academicos",
+        "description": "Carreras, pensum, mallas, periodos, jornadas, paralelos y modalidades.",
+        "source_paths": [
+            "Carreras.aspx",
+            "Actualiza_Examenes.aspx",
+            "IngresarMaterias.aspx",
+            "IngresoMallaCarrera.aspx",
+            "IngresoMateriahomoTexto.aspx",
+            "IngModificarExa.aspx",
+            "Ingresoproyecto.aspx",
+            "PeriodosAcademicos.aspx",
+            "IngresoParalelos.aspx",
+            "IngresoModalidadMatricula.aspx",
+            "Provincias.aspx",
+            "Reporteshtml/ActualizarParaleloMatriPeriodo.aspx",
+        ],
+        "tables": ["CARRERAS", "PENSUM", "MALLA_PENSUM", "MATERIAHOMOTEXTOF", "PERIODO", "PARALELOS", "JORNADA", "ModalidadMatricula", "Provincias"],
+        "modern_sections": ["carreras", "materias", "mallas", "materia_homo_textof", "periodos", "paralelos", "jornadas", "modalidades", "provincias"],
+        "modern_routes": ["sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Mantenimiento directo expuesto; reglas complejas se deben mover a endpoints dedicados.",
+    },
+    {
+        "key": "notas",
+        "title": "Notas y apertura de calificaciones",
+        "description": "Ingreso de notas regulares, homologacion, repeticion, Moodle y fechas de apertura.",
+        "source_paths": [
+            "IngNotasAsignatura.aspx",
+            "IngNotasAsignaturaConvav1.aspx",
+            "IngNotasAsignaturaConvavDoce.aspx",
+            "IngNotasAsignaturaDocente.aspx",
+            "IngNotasAsignaturaNO.aspx",
+            "IngNotasAsignaturaRepa.aspx",
+            "IngresoNotasDocente.aspx",
+            "BloqueoNotas.aspx",
+            "PasarnotasdeIngles.aspx",
+            "fechasingresonotas/IngFechasIngNotas.aspx",
+            "fechasingresonotas/IngNotasAsignatura.aspx",
+            "fechasingresonotas/ListaPeriodoAnteriorActual.aspx",
+            "ReporteNotas/Notasweb/",
+        ],
+        "tables": ["CARRERAXESTUD", "CARRERAXDOCENTE", "ACTIVAREXAMEN", "intec_estudiantenota", "intec_moodlegradesynclog"],
+        "modern_sections": ["matricula_materias", "fechas_notas", "moodle_notas", "moodle_sincronizacion"],
+        "modern_routes": ["portal_academico.py", "sisacademico_admin.py"],
+        "coverage": "partial",
+        "notes": "Lectura, reportes y administracion base estan cubiertas; falta cerrar ingreso masivo de notas V1 como flujo dedicado.",
+    },
+    {
+        "key": "docentes",
+        "title": "Docentes y asignaciones",
+        "description": "Ficha docente, usuario, materias asignadas, contratos y estado.",
+        "source_paths": [
+            "NuevoProfe.aspx",
+            "autoridades/NuevoProfe.aspx",
+            "IngNuevoDocente.aspx",
+            "ActualizarProfe.aspx",
+            "ConsultaProfe.aspx",
+            "actualizar/EliminarProfe.aspx",
+            "ReporteAcad/ListaProfesores.aspx",
+        ],
+        "tables": ["DATOSDOCENTE", "USUARIOS", "CARRERAXDOCENTE", "CONTRATOSDOCENTE"],
+        "modern_sections": ["docentes", "actualizacion_est", "docente_materias"],
+        "modern_routes": ["teacher_evaluation.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "No sobrescribir el parche docente actual; se mantiene como puente seguro.",
+    },
+    {
+        "key": "evaluacion_docente",
+        "title": "Evaluacion docente y cuestionarios",
+        "description": "Evaluacion estudiantil, autoevaluacion, banco de preguntas, planes y foros.",
+        "source_paths": ["EvaluacionEstud.aspx", "AutoEvaluacion.aspx", "EncuestaDocEstud/", "CuestionarioVF.aspx", "CuestPregOpMult.aspx", "SubirCuestionario.aspx", "fechasingresonotas/IngFechasAutoevaluacion.aspx", "IngVerEvaluacionalProfe.aspx", "ModificaFechaCuest.aspx", "numpreguntas/"],
+        "tables": ["CUESTIONARIO", "CUESTIONARIOEVALUA", "NUMEROPREGALEAT", "RESULTADO_EVALUACION", "RESULTADOAUTOEVALUACION", "ACTIVARAUTOEVALUACION"],
+        "modern_sections": ["numero_preguntas", "cuestionarios", "preguntas_evaluacion", "evaluacion_resultados", "autoevaluacion_resultados", "fechas_autoevaluacion", "planes_foros"],
+        "modern_routes": ["teacher_evaluation.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "El motor moderno de evaluacion debe prevalecer; tablas V1 quedan como fuente historica y administrable.",
+    },
+    {
+        "key": "practicas",
+        "title": "Practicas y vinculacion con la sociedad",
+        "description": "Practicas preprofesionales, vinculacion con la sociedad, empresas y proyectos.",
+        "source_paths": ["PracticasProfesionales.aspx", "PracticasVinculacion.aspx", "Vinculacion.aspx", "IngresoEmpresas.aspx"],
+        "tables": ["PRACTICASPROFESIONALES", "PRACTICASVINCULACION", "EMPRESA", "Proyecto"],
+        "modern_sections": ["practicas", "practicas_vinculacion", "empresas"],
+        "modern_routes": ["practicas_institucionales.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "El modulo independiente puede reconocer datos legacy sin eliminarlos.",
+    },
+    {
+        "key": "titulacion",
+        "title": "Titulacion, complexivo y defensa",
+        "description": "Verificacion, complexivo, defensa de grado, actas y documentos finales.",
+        "source_paths": [
+            "MatriculaComplexivo.aspx",
+            "IngNotasComplexivo.aspx",
+            "IngresoFechaGrado.aspx",
+            "ReporteNotas/Notasweb/ImprimirNotasComplexivo.aspx",
+            "certificados/",
+        ],
+        "tables": ["CARRERAXESTUD", "CABECERA_MATRICULA", "PENSUM", "MALLA_PENSUM", "CERTIFICADOS_GENERADOS"],
+        "modern_sections": ["certificados_generados", "fecha_grado", "titulacion"],
+        "modern_routes": ["titulacion.py", "titulos_registrados.py"],
+        "coverage": "partial",
+        "notes": "La verificacion y proceso moderno estan en desarrollo; se conserva lectura legacy.",
+    },
+    {
+        "key": "certificados",
+        "title": "Certificados y reportes",
+        "description": "Certificados institucionales y reportes historicos modernizados.",
+        "source_paths": ["certificados/", "ReporteAcad/", "ReporteNotas/", "Reporteshtml/", "ReporteAcadxEstudDirecto.aspx"],
+        "tables": ["CERTIFICADOS_GENERADOS", "CREDENCIALES_CURSO"],
+        "modern_sections": ["certificados_generados", "credenciales_curso"],
+        "modern_routes": ["certificados.py", "credential_generator.py", "legacy_reports.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Los reportes heredados se reemplazan por PDF/Excel/HTML moderno, no se copia el motor Crystal.",
+    },
+    {
+        "key": "financiero_convenios",
+        "title": "Financiero, pagos y convenios",
+        "description": "Registro de pagos, convenios de pago y documentos financieros heredados.",
+        "source_paths": [
+            "RegistropagosFin.aspx",
+            "RepFinanciero/",
+            "SubirArchivoConenioPagos.aspx",
+        ],
+        "tables": ["REGISTROPAGOS", "DATOSFACTURA", "CABECERA_MATRICULA"],
+        "modern_sections": ["pagos_matricula", "datos_factura"],
+        "modern_routes": ["preinscription.py", "legacy_reports.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Los convenios se generan como PDF moderno y los adjuntos deben subirse por endpoint controlado.",
+    },
+    {
+        "key": "educacion_continua",
+        "title": "Educacion continua",
+        "description": "Cursos, cortes, estudiantes, credenciales y certificados de educacion continua.",
+        "source_paths": ["inscripciones/", "IngresarCurso.aspx", "certificados/RepcertificadosEdContinua.aspx"],
+        "tables": ["CursosEduContinua", "CORTE_CURSO", "CORTE_CURSO_ESTUDIANTE", "CABECERAEDUCONTINUA", "EstudiantesEdContinua"],
+        "modern_sections": ["cursos_edu_continua", "corte_curso", "corte_curso_estudiante", "credenciales_curso"],
+        "modern_routes": ["sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Falta una vista dedicada si se requiere flujo completo de inscripcion y certificacion.",
+    },
+    {
+        "key": "repositorio",
+        "title": "Repositorio y documentos",
+        "description": "Repositorio digital, documentos subidos y anexos por estudiante o materia.",
+        "source_paths": ["repositorio/", "SUBIRARCHIVO/", "planes/Subirarchivos.aspx", "VerArchivos.aspx", "VerArchivosEstado.aspx"],
+        "tables": ["REPOSITORIO", "REGISTRODOCESTUD", "TAMANIOARCHIVOS", "TIPODOCUMENTOS"],
+        "modern_sections": ["repositorio", "registro_documentos_estudiante"],
+        "modern_routes": ["sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Los archivos historicos se conservan; nuevas cargas deben pasar por backend validado.",
+    },
+    {
+        "key": "integraciones",
+        "title": "Integraciones Moodle y Microsoft 365",
+        "description": "Notas Moodle, logs de sincronizacion, auditoria Microsoft y credenciales.",
+        "source_paths": ["Intec/", "correo.aspx", "correo/", "CertificadoDigital/"],
+        "tables": ["intec_estudiantenota", "intec_logmatriculacion", "intec_moodlegradesynclog", "Microsoft365Audit", "CREDENCIALES_CURSO"],
+        "modern_sections": ["moodle_notas", "moodle_sincronizacion", "microsoft365_audit", "credenciales_curso"],
+        "modern_routes": ["teams.py", "mass_email.py", "credential_generator.py", "sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "No exponer tokens ni credenciales; usar variables de entorno.",
+    },
+    {
+        "key": "talento_humano",
+        "title": "Talento humano",
+        "description": "Empleados, jefaturas, solicitudes, archivos, tareas y roles RRHH.",
+        "source_paths": ["TH_* en script SQL"],
+        "tables": ["TH_EMPLEADO", "TH_JEFATURA", "TH_SOLICITUD", "TH_SOLICITUD_ARCHIVO", "TH_TAREA", "TH_TIPO_SOLICITUD"],
+        "modern_sections": ["talento_humano_empleados", "talento_humano_solicitudes", "talento_humano_tareas"],
+        "modern_routes": ["sisacademico_admin.py"],
+        "coverage": "base",
+        "notes": "Los binarios de solicitud deben descargarse mediante endpoint dedicado, no en listados.",
+    },
+    {
+        "key": "mantenimiento_controlado",
+        "title": "Mantenimiento controlado y operaciones sensibles",
+        "description": "Pantallas V1 de eliminacion, copia o cambios auxiliares que no deben clonarse como acciones directas.",
+        "source_paths": ["actualizar/CopiarMaterias.aspx", "actualizar/EliminarEstud.aspx", "actualizar/EliminarPreMatricula.aspx", "AuxCambios/cambios.aspx", "pruebas/"],
+        "tables": ["CARRERAXESTUD", "CABECERA_MATRICULA", "PREINSCRIPCION", "DATOS_ESTUD"],
+        "modern_sections": ["estudiantes", "cabecera_matricula", "matricula_materias", "preinscripciones"],
+        "modern_routes": ["sisacademico_admin.py", "academic_enrollment.py", "preinscription.py"],
+        "coverage": "partial",
+        "notes": "Debe ejecutarse con auditoria, confirmacion y permisos altos; no se replica el boton de eliminar de WebForms.",
+    },
+    {
+        "key": "soporte_legacy_no_migrable",
+        "title": "Soporte legacy no migrable",
+        "description": "Respaldos visuales, menus antiguos, archivos estaticos WebForms y visor Crystal que no son modulos operativos.",
+        "source_paths": ["static/page_menu/", "aspnet_client/*/crystalreportviewers13/", "Bin/", ".vs/", "__Intec/", "Web.config", "WebV0.config", "packages.config", "cgi-bin/"],
+        "tables": [],
+        "modern_sections": [],
+        "modern_routes": [],
+        "coverage": "excluded",
+        "notes": "Se conserva como referencia historica del proyecto, pero no se clona en backend/frontend moderno.",
+    },
+]
+
+
 @router.get("/catalog")
 def catalog(_: SessionUser = AllowedEditor) -> dict[str, Any]:
     section_options = _lookup_options_by_section()
@@ -3198,6 +4167,271 @@ def catalog(_: SessionUser = AllowedEditor) -> dict[str, Any]:
     ]
     categories = sorted({section["category"] for section in SECTIONS.values()})
     return {"sections": sections, "categories": categories}
+
+
+@router.get("/legacy-v1/modules")
+def legacy_v1_modules(_: SessionUser = AllowedEditor) -> dict[str, Any]:
+    totals = {
+        "modules": len(LEGACY_CLONE_MODULES),
+        "base": sum(1 for module in LEGACY_CLONE_MODULES if module["coverage"] == "base"),
+        "partial": sum(1 for module in LEGACY_CLONE_MODULES if module["coverage"] == "partial"),
+        "pending": sum(1 for module in LEGACY_CLONE_MODULES if module["coverage"] == "pending"),
+        "excluded": sum(1 for module in LEGACY_CLONE_MODULES if module["coverage"] == "excluded"),
+    }
+    all_sections = set(SECTIONS.keys())
+    modules = []
+    for module in LEGACY_CLONE_MODULES:
+        modern_sections = list(module.get("modern_sections", []))
+        modules.append(
+            {
+                **module,
+                "available_sections": [section for section in modern_sections if section in all_sections],
+                "missing_sections": [section for section in modern_sections if section not in all_sections],
+            }
+        )
+    return {
+        "project": "SisAcademicoV1",
+        "strategy": "Clonacion funcional por modulos, manteniendo INTECBDD y usando parches no destructivos.",
+        "database": "INTECBDD",
+        "compat_schema": "sisv1",
+        "totals": totals,
+        "modules": modules,
+    }
+
+
+def _student_state_safe_filename(filename: str) -> str:
+    original = Path(str(filename or "documento")).name
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", Path(original).stem).strip("-_") or "documento"
+    extension = Path(original).suffix.lower()
+    return f"{stem[:80]}{extension}"
+
+
+@router.post("/actualizacion_estudiantes/{record_key}/cambio-estado-documentado")
+async def update_student_state_with_document(
+    record_key: str,
+    estado: str = Form(...),
+    detalle: str = Form(...),
+    documento: UploadFile = File(...),
+    current_user: SessionUser = AllowedEditor,
+) -> dict[str, Any]:
+    cedula = str(_decode_key(record_key, 1)[0] or "").strip()
+    estado_codigo = str(estado or "").strip().upper()
+    motivo = str(detalle or "").strip()
+    original_name = Path(str(documento.filename or "")).name
+    extension = Path(original_name).suffix.lower()
+
+    if not cedula:
+        raise HTTPException(status_code=400, detail="Clave de estudiante incompleta")
+    if not estado_codigo:
+        raise HTTPException(status_code=400, detail="Selecciona el nuevo estado")
+    if len(motivo) < 5:
+        raise HTTPException(status_code=400, detail="Describe el motivo del cambio de estado")
+    if extension not in _STUDENT_STATE_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Adjunta un documento PDF, imagen, DOC o DOCX")
+
+    file_bytes = await documento.read(_STUDENT_STATE_MAX_FILE_SIZE + 1)
+    await documento.close()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="El documento esta vacio")
+    if len(file_bytes) > _STUDENT_STATE_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="El documento supera el limite de 15 MB")
+
+    saved_path: Path | None = None
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (1)
+                    TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.Estado))) AS estado_anterior,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))) AS estudiante
+                FROM dbo.DATOS_ESTUD d
+                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Cedula_Est))) = ?
+                """,
+                cedula,
+            )
+            student = cursor.fetchone()
+            if not student:
+                raise HTTPException(status_code=404, detail="Estudiante no existe en DATOS_ESTUD")
+
+            cursor.execute(
+                """
+                SELECT TOP (1)
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO))) AS codigo,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ESTADO))) AS nombre
+                FROM dbo.ESTADO
+                WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO)))) = ?
+                """,
+                estado_codigo,
+            )
+            state = cursor.fetchone()
+            if not state:
+                raise HTTPException(status_code=400, detail="El estado seleccionado no existe en dbo.ESTADO")
+
+            estado_anterior = str(student.estado_anterior or "").strip().upper()
+            if estado_anterior == estado_codigo:
+                raise HTTPException(status_code=400, detail="Selecciona un estado diferente al estado actual")
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            target_dir = _STUDENT_STATE_DOCUMENT_ROOT / str(student.codigo_estud)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            saved_name = f"{timestamp}_{_student_state_safe_filename(original_name)}"
+            saved_path = target_dir / saved_name
+            saved_path.write_bytes(file_bytes)
+            document_url = f"/uploads/estados_estudiantes/{student.codigo_estud}/{saved_name}"
+
+            user_name = str(current_user.nombres or current_user.login or "usuario").strip()
+            state_detail = (
+                f"[CAMBIO DE ESTADO] {estado_anterior or 'SIN ESTADO'} -> {estado_codigo}. "
+                f"Motivo: {motivo}. Usuario: {user_name}. Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
+            )[:1000]
+
+            cursor.execute(
+                """
+                UPDATE dbo.DATOS_ESTUD
+                SET Estado = ?
+                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), Cedula_Est))) = ?
+                """,
+                estado_codigo,
+                cedula,
+            )
+            affected = cursor.rowcount
+            cursor.execute(
+                """
+                INSERT INTO dbo.REGISTRODOCESTUD (IDESTUD, LINKURL, DETALLE, TIPO)
+                VALUES (?, ?, ?, 0)
+                """,
+                student.codigo_estud,
+                document_url,
+                state_detail,
+            )
+            conn.commit()
+    except HTTPException:
+        if saved_path is not None:
+            saved_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        if saved_path is not None:
+            saved_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="No se pudo registrar el cambio de estado documentado") from exc
+
+    return {
+        "ok": True,
+        "message": f"Estado actualizado a {_serialize_value(state.nombre) or estado_codigo} con documento de respaldo",
+        "affected_rows": affected,
+        "document_url": document_url,
+    }
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _legacy_project_root() -> Path:
+    return _repo_root() / "SisAcademicoV1"
+
+
+def _path_matches_source(relative_path: str, source: str) -> bool:
+    normalized_path = relative_path.replace("\\", "/").lower()
+    comparable_paths = [normalized_path]
+    if normalized_path.endswith(".aspx.vb"):
+        comparable_paths.append(normalized_path[:-3])
+    normalized_source = source.replace("\\", "/").lower().rstrip("/")
+    if not normalized_source:
+        return False
+    if normalized_source.endswith("*"):
+        return any(path.startswith(normalized_source[:-1]) for path in comparable_paths)
+    return any(path == normalized_source or path.startswith(f"{normalized_source}/") for path in comparable_paths)
+
+
+def _classify_legacy_artifact(relative_path: str) -> dict[str, str]:
+    normalized = relative_path.replace("\\", "/")
+    lower_path = normalized.lower()
+    extension = Path(normalized).suffix.lower().lstrip(".") or "archivo"
+
+    for module in LEGACY_CLONE_MODULES:
+        for source in module.get("source_paths", []):
+            if _path_matches_source(normalized, source):
+                return {
+                    "module_key": str(module["key"]),
+                    "module_title": str(module["title"]),
+                    "coverage": str(module["coverage"]),
+                    "artifact_type": extension,
+                }
+
+    if "/static/" in lower_path or "/aspnet_client/" in lower_path or "/bin/" in lower_path:
+        return {
+            "module_key": "soporte_legacy_no_migrable",
+            "module_title": "Soporte legacy no migrable",
+            "coverage": "excluded",
+            "artifact_type": extension,
+        }
+    if "/actualizar/" in lower_path or "/auxcambios/" in lower_path or "/pruebas/" in lower_path:
+        return {
+            "module_key": "mantenimiento_controlado",
+            "module_title": "Mantenimiento controlado y operaciones sensibles",
+            "coverage": "partial",
+            "artifact_type": extension,
+        }
+    if "/reporteacad/" in lower_path or "/reportenotas/" in lower_path or "/reporteshtml/" in lower_path or lower_path.endswith(".rpt"):
+        return {
+            "module_key": "certificados",
+            "module_title": "Certificados y reportes",
+            "coverage": "base",
+            "artifact_type": extension,
+        }
+    return {
+        "module_key": "pendiente_clasificacion",
+        "module_title": "Pendiente de clasificacion",
+        "coverage": "pending",
+        "artifact_type": extension,
+    }
+
+
+@router.get("/legacy-v1/artifacts")
+def legacy_v1_artifacts(_: SessionUser = AllowedEditor) -> dict[str, Any]:
+    project_root = _legacy_project_root()
+    if not project_root.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No existe la carpeta local SisAcademicoV1")
+
+    artifacts: list[dict[str, Any]] = []
+    extensions = {".aspx", ".vb", ".rpt", ".config"}
+    for path in sorted(project_root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in extensions:
+            continue
+        relative_path = str(path.relative_to(project_root)).replace("\\", "/")
+        classification = _classify_legacy_artifact(relative_path)
+        artifacts.append(
+            {
+                "path": relative_path,
+                "file_name": path.name,
+                "extension": path.suffix.lower().lstrip("."),
+                "size_bytes": path.stat().st_size,
+                **classification,
+            }
+        )
+
+    by_extension: dict[str, int] = {}
+    by_coverage: dict[str, int] = {}
+    by_module: dict[str, int] = {}
+    for artifact in artifacts:
+        by_extension[str(artifact["extension"])] = by_extension.get(str(artifact["extension"]), 0) + 1
+        by_coverage[str(artifact["coverage"])] = by_coverage.get(str(artifact["coverage"]), 0) + 1
+        by_module[str(artifact["module_key"])] = by_module.get(str(artifact["module_key"]), 0) + 1
+
+    return {
+        "project": "SisAcademicoV1",
+        "root": str(project_root),
+        "strategy": "Clonacion total navegable: cada artefacto legacy se clasifica como modulo moderno, mantenimiento controlado o soporte no migrable.",
+        "totals": {
+            "artifacts": len(artifacts),
+            "by_extension": by_extension,
+            "by_coverage": by_coverage,
+            "by_module": by_module,
+        },
+        "artifacts": artifacts,
+    }
 
 
 @router.get("/{section_key}")
@@ -3482,12 +4716,115 @@ def _create_or_update_materia_homo_text(payload: SavePayload) -> dict[str, Any]:
     return {"ok": True, "message": message, "affected_rows": 1, "action": action}
 
 
+def _create_usuario_sis(payload: SavePayload) -> dict[str, Any]:
+    section = _section("usuarios")
+    creatable = _field_map(section, "create_fields")
+    values: dict[str, Any] = {}
+    for name, meta in creatable.items():
+        value = payload.values.get(name)
+        if meta.required and (value is None or value == ""):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido: {meta.label}")
+        if value is not None and value != "":
+            values[name] = _normalize_value(value, meta)
+    for name, default in section.get("defaults", {}).items():
+        if name not in values:
+            values[name] = _default_value(default, None)
+
+    login = str(values.get("login") or "").strip()
+    password = str(values.get("password") or "").strip()
+    nombres = str(values.get("nombres") or "").strip()
+    if not login:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Login")
+    if not password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Contraseña")
+    if not nombres:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campo requerido: Nombres")
+    if len(password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña debe tener al menos 8 caracteres")
+    if len(login) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Login no puede superar 100 caracteres")
+    if len(password) > 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Contraseña no puede superar 50 caracteres")
+    if len(nombres) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombres no puede superar 100 caracteres")
+
+    values["login"] = login
+    values["password"] = password
+    values["nombres"] = nombres
+    estado = str(values.get("estado") or "").strip()
+    if estado:
+        values["estado"] = estado[0].upper()
+    else:
+        values["estado"] = "A"
+    if not values.get("fecha_ingreso"):
+        values["fecha_ingreso"] = datetime.now()
+    values["tipousuario"] = 0
+    if "email" in values:
+        values["email"] = str(values.get("email") or "").strip()
+        if len(str(values["email"])) > 50:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email no puede superar 50 caracteres")
+    if "cedula" in values:
+        values["cedula"] = str(values.get("cedula") or "").strip()
+        if len(str(values["cedula"])) > 10:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cedula no puede superar 10 caracteres")
+    if "tp_us" in values:
+        values["tp_us"] = str(values.get("tp_us") or "").strip() or "1"
+        if len(str(values["tp_us"])) > 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Perfil no puede superar 2 caracteres")
+
+    allowed_columns = {
+        "login",
+        "password",
+        "nombres",
+        "fecha_ingreso",
+        "estado",
+        "email",
+        "coordcarrera",
+        "codprovincia",
+        "tipousuario",
+        "tp_us",
+        "cedula",
+    }
+    insert_values = {key: value for key, value in values.items() if key in allowed_columns}
+    columns = list(insert_values)
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM dbo.USUARIO_SIS
+                WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), login)))) = LOWER(?)
+                """,
+                login,
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe un usuario con ese login")
+            cursor.execute(
+                f"""
+                INSERT INTO dbo.USUARIO_SIS ({", ".join(_quote_column(column) for column in columns)})
+                VALUES ({", ".join("?" for _ in columns)})
+                """,
+                list(insert_values.values()),
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"No se pudo registrar el usuario: {exc}") from exc
+
+    return {"ok": True, "message": "Usuario registrado en USUARIO_SIS", "affected_rows": 1}
+
+
 @router.post("/{section_key}")
 def create_record(
     section_key: str,
     payload: SavePayload,
     current_user: SessionUser = AllowedEditor,
 ) -> dict[str, Any]:
+    if section_key == "usuarios":
+        return _create_usuario_sis(payload)
     if section_key == "docentes":
         return _create_docente_with_user(payload)
     if section_key == "materia_homo_textof":
@@ -3521,5 +4858,8 @@ def create_record(
             cursor.execute(sql, list(values.values()))
             conn.commit()
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo crear el registro") from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudo crear el registro: {exc}",
+        ) from exc
     return {"ok": True, "message": "Registro creado"}

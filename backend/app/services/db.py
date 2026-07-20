@@ -138,3 +138,57 @@ def get_evaluation_connection() -> pyodbc.Connection:
         encrypt=settings.eval_db_encrypt or settings.db_encrypt,
         trust_cert=settings.eval_db_trust_cert or settings.db_trust_cert,
     )
+
+
+def get_practices_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    missing = [
+        name
+        for name, value in {
+            "B_NAME2/DB_NAME2": settings.practices_db_name,
+            "DB_USER2": settings.practices_db_user,
+            "DB_PASSWORD2": settings.practices_db_password,
+            "DB_HOST2": settings.practices_db_host,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Faltan variables de entorno para practicas institucionales: {', '.join(missing)}")
+
+    return _connect_with_fallback(
+        database=settings.practices_db_name or "",
+        user=settings.practices_db_user or "",
+        password=settings.practices_db_password or "",
+        host=settings.practices_db_host or "",
+        port=settings.practices_db_port,
+        driver=settings.practices_db_driver or settings.db_driver,
+        encrypt=settings.practices_db_encrypt or settings.db_encrypt,
+        trust_cert=settings.practices_db_trust_cert or settings.db_trust_cert,
+    )
+
+
+def get_titulation_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    missing = [
+        name
+        for name, value in {
+            "B_NAME3/DB_NAME3": settings.titulation_db_name,
+            "DB_USER3": settings.titulation_db_user,
+            "DB_PASSWORD3": settings.titulation_db_password,
+            "DB_HOST3": settings.titulation_db_host,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Faltan variables de entorno para titulacion: {', '.join(missing)}")
+
+    return _connect_with_fallback(
+        database=settings.titulation_db_name or "",
+        user=settings.titulation_db_user or "",
+        password=settings.titulation_db_password or "",
+        host=settings.titulation_db_host or "",
+        port=settings.titulation_db_port,
+        driver=settings.titulation_db_driver or settings.db_driver,
+        encrypt=settings.titulation_db_encrypt or settings.db_encrypt,
+        trust_cert=settings.titulation_db_trust_cert or settings.db_trust_cert,
+    )

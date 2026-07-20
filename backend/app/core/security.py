@@ -29,6 +29,7 @@ ALLOWED_ROLES = (
     "VICERRECTOR",
     "SOPORTE",
     "INVITADO_SOP",
+    "SECRETARIA",
     "DOCENTE",
     "ESTUDIANTE",
 )
@@ -77,6 +78,15 @@ def verify_password(candidate: str, stored_value: str | None) -> bool:
         return False
     except InvalidHashError:
         return settings.auth_legacy_plaintext_enabled and candidate == normalized
+
+
+def hash_password(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("La contrasena no puede estar vacia")
+    if _HASHER is None:
+        return normalized
+    return _HASHER.hash(normalized)
 
 
 def create_session_token(user: SessionUser) -> str:

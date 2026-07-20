@@ -5,7 +5,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -117,7 +117,7 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "notas_carrera_materia": {
         "title": "Notas por carrera y periodo",
-        "description": "Listado de notas por periodo y carrera, con materia, paralelo y estudiante.",
+        "description": "Estudiantes activos por periodo, con materias y calificaciones regular u homologacion.",
         "category": "Academico",
         "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO"],
         "filters": ["periodo", "carrera", "limite"],
@@ -215,6 +215,203 @@ FUNCTIONAL_INVENTORY = [
         ],
     },
 ]
+
+CRYSTAL_REPORTS: list[dict[str, Any]] = [
+    {
+        "key": "crystal_academico_estudiante_regular",
+        "title": "Reporte académico por estudiante regular",
+        "category": "Académico",
+        "legacy_rpt": ["CryAcadxEstud.rpt", "ReporteAcad/CryAcadxEstud.rpt"],
+        "legacy_pages": ["ReporteAcadxEstudDirecto.aspx", "ReporteAcad/ConsultaNotasEstud.aspx", "ReporteAcad/ReporteAcadxEstud.aspx"],
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PENSUM", "CARRERAS", "PERIODO"],
+        "legacy_filters": ["codigo_estud", "PENSUM.verreporte=1", "PERIODO.estado='A'", "TipoMatricula='N'"],
+        "modern_equivalent": "portal_academico.student_record_pdf_export / titulacion malla académica",
+        "modern_format": ["PDF", "Excel"],
+        "migration_status": "modernizado",
+        "notes": "Usar reglas modernas de notas: R con P1/P2/P3/final; H con teórico/práctico/final.",
+    },
+    {
+        "key": "crystal_academico_estudiante_homologacion",
+        "title": "Reporte académico por estudiante homologación",
+        "category": "Académico",
+        "legacy_rpt": ["CryAcadxEstudHomo.rpt"],
+        "legacy_pages": ["ReporteAcadxEstudDirecto.aspx", "ReporteAcad/ReporteAcadxEstud.aspx"],
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PENSUM", "CARRERAS", "PERIODO"],
+        "legacy_filters": ["codigo_estud", "TipoMatricula<>'N'"],
+        "modern_equivalent": "portal_academico.student_record_pdf_export",
+        "modern_format": ["PDF", "Excel"],
+        "migration_status": "modernizado",
+        "notes": "Debe conservar detalle de teórico y práctico para homologación.",
+    },
+    {
+        "key": "crystal_academico_estudiante_general",
+        "title": "Reporte académico general / pase",
+        "category": "Académico",
+        "legacy_rpt": ["ReporteAcad/CryAcadxEstudGeneral.rpt", "ReporteAcad/CryAcadxEstudGeneralPase.rpt"],
+        "legacy_pages": ["ReporteAcad/ConsultaNotasEstud.aspx", "ReporteAcad/ReporteAcadxEstud.aspx"],
+        "source_tables": ["DATOS_ESTUD", "CARRERAXESTUD", "PENSUM", "CARRERAS", "PERIODO"],
+        "legacy_filters": ["codigo_estud", "PENSUM.verreporte=1", "PERIODO.estado='A'"],
+        "modern_equivalent": "portal_academico.student_record_pdf_export",
+        "modern_format": ["PDF"],
+        "migration_status": "base",
+        "notes": "Pendiente separar visualmente formato general y formato pase si Secretaría los requiere distintos.",
+    },
+    {
+        "key": "crystal_matriculados_periodo",
+        "title": "Total de estudiantes por período/carrera",
+        "category": "Reportería R/H",
+        "legacy_rpt": [
+            "ReporteAcad/CryListaTotalEstudPeriodo.rpt",
+            "ReporteAcad/CryListaTotalEstudPeriodoCarrera.rpt",
+            "ReporteAcad/CryListaTotalEstudPeriodoResumen.rpt",
+        ],
+        "legacy_pages": ["ReporteAcad/ListaTotalEstudPeriodo.aspx", "ReporteAcad/ListaTotalEstudPeriodoDeralle.aspx"],
+        "source_tables": ["TOTALESTUDPERIODO", "TOTALESTUDMATRICULADOSPER", "TOTALESTUDCARRERAPERIODO"],
+        "legacy_filters": ["anio", "cod_periodo"],
+        "modern_equivalent": "reporteria-integral periodo / carrera",
+        "modern_format": ["Excel"],
+        "migration_status": "modernizado",
+        "notes": "Ya se genera bajo reportería integral con separación Regular/Homologación.",
+    },
+    {
+        "key": "crystal_matriculados_genero_estado_provincia",
+        "title": "Resumen por género, estado, carrera y provincia",
+        "category": "Reportería R/H",
+        "legacy_rpt": [
+            "ReporteAcad/CryListaTotalEstudAnioGenero.rpt",
+            "ReporteAcad/CryListaTotalEstudAnioEstado.rpt",
+            "ReporteAcad/CryListaTotalEstudAnioCarrera.rpt",
+            "ReporteAcad/CryListaTotalEstudAnioProvincia.rpt",
+            "ReporteAcad/CryResumenGeneroEstado.rpt",
+            "ReporteAcad/CryResumenEstudCarrera.rpt",
+            "ReporteAcad/CryResumenEstudGraduado.rpt",
+        ],
+        "legacy_pages": ["ReporteAcad/ListaEstudGeneroOtros.aspx", "ReporteAcad/ListaTotalEstudCNE.aspx"],
+        "source_tables": ["ConsGenero", "ConsGeneroprovestado", "RESUMENCONSGENEROESTADO", "RESUMENNoESTUDCARRERA", "ResumenGradoAnio"],
+        "legacy_filters": ["anio", "genero", "estado", "carrera"],
+        "modern_equivalent": "reporteria-integral provincia, provincia_genero, provincia_carrera, genero, graduados_2025",
+        "modern_format": ["Excel"],
+        "migration_status": "modernizado",
+        "notes": "Mantener los totales R/H y permitir exportación Excel para sustituir Crystal.",
+    },
+    {
+        "key": "crystal_docentes_periodo",
+        "title": "Profesores por período y materia",
+        "category": "Docencia",
+        "legacy_rpt": ["ReporteAcad/CrysListaProfesorMateria.rpt"],
+        "legacy_pages": ["ReporteAcad/ListaProfesores.aspx"],
+        "source_tables": ["DATOSDOCENTE", "CARRERAXDOCENTE", "PENSUM", "CARRERAS", "PERIODO"],
+        "legacy_filters": ["codigo_periodo"],
+        "modern_equivalent": "reporteria-integral docentes / portal docente",
+        "modern_format": ["Excel"],
+        "migration_status": "base",
+        "notes": "Debe incluir paralelo, jornada, carrera, materia y docente asignado.",
+    },
+    {
+        "key": "crystal_egresados",
+        "title": "Lista de egresados",
+        "category": "Titulación",
+        "legacy_rpt": ["ReporteAcad/CryListaEgresados.rpt"],
+        "legacy_pages": ["ReporteAcad/ListaEgresados.aspx"],
+        "source_tables": ["ListaEgresadosCarrera"],
+        "legacy_filters": ["codPeriodoMax", "cod_anio_Basica"],
+        "modern_equivalent": "titulacion verificación y estudiantes aptos",
+        "modern_format": ["Excel", "PDF"],
+        "migration_status": "base",
+        "notes": "Debe tomar malla completa, inglés A2+ - INTERMEDIATE, prácticas y vinculación con la sociedad.",
+    },
+    {
+        "key": "crystal_practicas_profesionales",
+        "title": "Prácticas preprofesionales",
+        "category": "Prácticas",
+        "legacy_rpt": ["ReporteAcad/CrysReporteParcticasProfesional.rpt", "ReporteAcad/CrysReporteParcticasProfesionalNivel.rpt"],
+        "legacy_pages": [
+            "ReporteAcad/RepPracticasProfesionales.aspx",
+            "ReporteAcad/RepPracticasProfesionalesPorEstud.aspx",
+            "ReporteAcad/RepPracticasVinculacion.aspx",
+        ],
+        "source_tables": ["PRACTICASPROFESIONALES", "DATOS_ESTUD", "CARRERAS", "PERIODO", "EMPRESA", "DATOSDOCENTE"],
+        "legacy_filters": ["codigo_periodo", "codigo_estud"],
+        "modern_equivalent": "practicas_institucionales / reporteria-integral practicas",
+        "modern_format": ["Excel", "PDF"],
+        "migration_status": "base",
+        "notes": "Separar prácticas preprofesionales de vinculación con la sociedad; vinculación requiere 60 horas.",
+    },
+    {
+        "key": "crystal_convenio_pagos",
+        "title": "Convenio de pagos",
+        "category": "Financiero",
+        "legacy_rpt": ["RepFinanciero/CryConvenioPagos.rpt"],
+        "legacy_pages": ["RepFinanciero/RepConvenioPagos.aspx", "RepFinanciero/RepConvenioPagosAdmin.aspx"],
+        "source_tables": ["REGISTROPAGOS", "DATOS_ESTUD", "CABECERA_MATRICULA", "CARRERAS", "PERIODO"],
+        "legacy_filters": ["Codestu"],
+        "modern_equivalent": "preinscription carta/convenio de pago",
+        "modern_format": ["PDF"],
+        "migration_status": "modernizado",
+        "notes": "Ya se maneja como PDF generado por backend, sin dependencia Crystal.",
+    },
+    {
+        "key": "crystal_certificados_promocion",
+        "title": "Certificados de promoción y matrícula",
+        "category": "Certificados",
+        "legacy_rpt": ["certificados/certificadosf.rpt", "certificados/certificado.rpt"],
+        "legacy_pages": ["certificados/Repcertificados.aspx", "certificados/RepcertificadosEstud.aspx", "certificados/RepCD.aspx"],
+        "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO"],
+        "legacy_filters": ["codigo_periodo", "codigo_estud", "codigo_materia", "PromedioFinal>=7"],
+        "modern_equivalent": "certificados.py generar-pdf",
+        "modern_format": ["PDF", "ZIP"],
+        "migration_status": "modernizado",
+        "notes": "Debe mantener generación individual y masiva.",
+    },
+    {
+        "key": "crystal_certificados_educacion_continua",
+        "title": "Certificados de educación continua",
+        "category": "Educación continua",
+        "legacy_rpt": ["certificados/certificadosEduCon.rpt", "certificados/certificadoEdContinua.rpt"],
+        "legacy_pages": ["certificados/RepcertificadosEdContinua.aspx", "Reporteshtml/ListaEstudPeriodoOnline.aspx"],
+        "source_tables": ["CABECERAEDUCONTINUA", "CursosEduContinua", "EstudiantesEdContinua", "CARRERAXESTUD"],
+        "legacy_filters": ["cod_curso", "codigo_materia"],
+        "modern_equivalent": "sisacademico_admin cursos_edu_continua / certificados pendiente PDF específico",
+        "modern_format": ["PDF", "Excel"],
+        "migration_status": "pendiente",
+        "notes": "Crear generador PDF específico si se requiere conservar diseño de certificados de curso.",
+    },
+    {
+        "key": "crystal_evaluacion_docente",
+        "title": "Evaluación docente",
+        "category": "Evaluación docente",
+        "legacy_rpt": [
+            "EncuestaDocEstud/Reportes/CryEvaluaciondocente.rpt",
+            "EncuestaDocEstud/Reportes/CryEstudEvaluaProfe.rpt",
+            "EncuestaDocEstud/Reportes/CryEstudEvaluaProfeAgrupado.rpt",
+            "EncuestaDocEstud/Reportes/CryNumEstudEvaluaProfe.rpt",
+            "EncuestaDocEstud/Reportes/EstudNOEvaluaProfe.rpt",
+        ],
+        "legacy_pages": [
+            "EncuestaDocEstud/ReporteEncuesta.aspx",
+            "EncuestaDocEstud/Reportes/EvaluacionEstud.aspx",
+            "EncuestaDocEstud/Reportes/ListaEstudNOEvaluaProfe.aspx",
+            "EncuestaDocEstud/Reportes/ListaEvaluacionEstud.aspx",
+            "EncuestaDocEstud/Reportes/ListaEvaluacionEstudProfe.aspx",
+        ],
+        "source_tables": ["resultadoevaluaciondocente", "CUESTIO_ENCUESTA_CADETE", "CARRERAXDOCENTE", "DATOSDOCENTE", "PERIODO"],
+        "legacy_filters": ["cod_periodo", "codigo_materia", "codigo_doc", "paralelo", "Encuesta=0"],
+        "modern_equivalent": "teacher_evaluation.py reporte-docentes.pdf",
+        "modern_format": ["PDF", "ZIP", "Excel"],
+        "migration_status": "modernizado",
+        "notes": "La generación moderna reemplaza Crystal con reportlab y descarga masiva.",
+    },
+]
+
+
+def _modernized_legacy_report_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **report,
+        "engine": "modern-reportlab-openpyxl",
+        "source_engine": "Crystal Reports solo como referencia historica",
+        "target_engine": "FastAPI + SQL Server + reportlab/openpyxl",
+        "replacement_rule": "No ejecutar .rpt; reconstruir dataset SQL y generar PDF/Excel/HTML desde backend.",
+    }
 
 
 def _clean(value: str | None) -> str | None:
@@ -786,10 +983,19 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
             pe.Semestre AS semestre,
             LTRIM(RTRIM(ce.paralelo)) AS paralelo,
             ce.TipoMatricula AS tipo_matricula,
+            CASE
+                WHEN UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                THEN 'HOMOLOGACION'
+                ELSE 'REGULAR'
+            END AS esquema,
             CAST(ce.codigo_estud AS varchar(30)) AS estudiante_codigo,
             de.Cedula_Est AS cedula,
             de.Apellidos_nombre AS estudiante,
             de.Estado AS estado_codigo,
+            ce.teoriaHomo AS teoria_homo,
+            ce.practicahomo AS practica_homo,
             ce.P1Tareas AS p1_tareas,
             ce.P1Proyectos AS p1_proyectos,
             ce.P1Examen AS p1_examen,
@@ -816,7 +1022,7 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
         INNER JOIN dbo.PERIODO p ON ce.codigo_periodo = p.cod_periodo
         WHERE (? IS NULL OR CAST(ce.codigo_periodo AS varchar(30)) = ?)
           AND (? IS NULL OR CAST(c.Cod_AnioBasica AS varchar(30)) = ?)
-          AND (? IS NULL OR de.Estado = ?)
+          AND UPPER(LTRIM(RTRIM(ISNULL(de.Estado, '')))) = 'A'
           AND (
             ? IS NULL
             OR de.Apellidos_nombre LIKE ?
@@ -831,7 +1037,6 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
     return sql, [
         params["periodo"], params["periodo"],
         params["carrera"], params["carrera"],
-        params["estado"], params["estado"],
         buscar, buscar, buscar, buscar, buscar, buscar,
     ]
 
@@ -1178,6 +1383,9 @@ def _student_report_base_where(params: dict[str, str | None]) -> tuple[str, list
 
 
 def _student_report_cte(params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    if not params.get("anio") and not params.get("periodo"):
+        return _student_report_cne_cte(params)
+
     where_sql, values = _student_report_base_where(params)
     sql = f"""
         WITH base AS (
@@ -1202,6 +1410,96 @@ def _student_report_cte(params: dict[str, str | None]) -> tuple[str, list[Any]]:
             LEFT JOIN dbo.Provincias pr ON TRY_CONVERT(int, pr.Cod_Provincia) = TRY_CONVERT(int, de.codprov)
             LEFT JOIN dbo.Sexo s ON de.Sexo = s.id_sexo
             LEFT JOIN dbo.ESTADO es ON de.Estado = es.IDESTADO
+            WHERE {where_sql}
+        )
+    """
+    return sql, values
+
+
+def _student_report_cne_cte(params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    clauses = ["cne.estado_codigo IN ('A', 'G', 'P', 'R')"]
+    values: list[Any] = []
+    if params.get("estado"):
+        clauses.append("cne.estado_codigo = ?")
+        values.append(params["estado"])
+    if params.get("carrera"):
+        clauses.append("TRY_CONVERT(varchar(30), carrera.Cod_AnioBasica) = ?")
+        values.append(params["carrera"])
+    if params.get("genero"):
+        clauses.append(
+            "LOWER(COALESCE(NULLIF(LTRIM(RTRIM(sexo.detalle_sexo)), ''), NULLIF(LTRIM(RTRIM(datos.generoId)), ''), 'Sin genero')) LIKE LOWER(?)"
+        )
+        values.append(params["genero"])
+    if params.get("buscar"):
+        clauses.append(
+            """
+            (
+                cne.Cedula_Est LIKE ?
+                OR cne.Apellidos_nombre LIKE ?
+                OR cne.nombre_carrera LIKE ?
+                OR provincia.Descripcion_Prov LIKE ?
+            )
+            """
+        )
+        values.extend([params["buscar"]] * 4)
+
+    where_sql = " AND ".join(clauses)
+    sql = f"""
+        WITH cne_raw AS (
+            SELECT DISTINCT
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), reporte.Cedula_Est))) AS Cedula_Est,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), reporte.Apellidos_nombre))) AS Apellidos_nombre,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), reporte.ESTADO))) AS estado_nombre,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), reporte.Nombre_Basica))) AS nombre_carrera,
+                UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), reporte.TipoMatricula)))) AS tipo_matricula
+            FROM dbo.TOTALESTUDMATRICCNE reporte
+            WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), reporte.TipoMatricula)))) IN ('R', 'H')
+        ),
+        cne AS (
+            SELECT
+                cne_raw.*,
+                UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estado.IDESTADO)))) AS estado_codigo
+            FROM cne_raw
+            INNER JOIN dbo.ESTADO estado
+              ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), estado.ESTADO)))) = UPPER(cne_raw.estado_nombre)
+        ),
+        base AS (
+            SELECT
+                CONCAT(
+                    cne.Cedula_Est, '|',
+                    cne.Apellidos_nombre, '|',
+                    cne.nombre_carrera, '|',
+                    cne.tipo_matricula, '|',
+                    cne.estado_codigo
+                ) AS estudiante_codigo,
+                cne.Cedula_Est AS cedula,
+                cne.Apellidos_nombre AS estudiante,
+                COALESCE(NULLIF(LTRIM(RTRIM(provincia.Descripcion_Prov)), ''), NULLIF(LTRIM(RTRIM(datos.ciudad)), ''), 'Sin provincia') AS provincia,
+                COALESCE(NULLIF(LTRIM(RTRIM(sexo.detalle_sexo)), ''), NULLIF(LTRIM(RTRIM(datos.generoId)), ''), 'Sin genero') AS genero,
+                COALESCE(TRY_CONVERT(varchar(30), carrera.Cod_AnioBasica), '') AS carrera_codigo,
+                cne.nombre_carrera AS carrera,
+                CAST('' AS varchar(30)) AS periodo_codigo,
+                CAST('Estado actual CNE' AS varchar(100)) AS periodo,
+                CAST(NULL AS int) AS anio,
+                cne.tipo_matricula,
+                cne.estado_codigo,
+                cne.estado_nombre AS estado
+            FROM cne
+            OUTER APPLY (
+                SELECT TOP (1) detalle.*
+                FROM dbo.DATOS_ESTUD detalle
+                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), detalle.Cedula_Est))) = cne.Cedula_Est
+                ORDER BY TRY_CONVERT(bigint, detalle.codigo_estud) DESC
+            ) datos
+            OUTER APPLY (
+                SELECT TOP (1) catalogo.Cod_AnioBasica
+                FROM dbo.CARRERAS catalogo
+                WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), catalogo.Nombre_Basica)))) = UPPER(cne.nombre_carrera)
+                ORDER BY TRY_CONVERT(bigint, catalogo.Cod_AnioBasica) DESC
+            ) carrera
+            LEFT JOIN dbo.Provincias provincia
+              ON TRY_CONVERT(int, provincia.Cod_Provincia) = TRY_CONVERT(int, datos.codprov)
+            LEFT JOIN dbo.Sexo sexo ON datos.Sexo = sexo.id_sexo
             WHERE {where_sql}
         )
     """
@@ -1375,6 +1673,13 @@ def _execute_report(
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": (
+            "dbo.TOTALESTUDMATRICCNE"
+            if report_key in {"provincia", "provincia_genero", "provincia_carrera", "carrera", "graduados_2025", "genero", "periodo"}
+            and not filters["anio"]
+            and not filters["periodo"]
+            else "historico por CARRERAXESTUD y PERIODO"
+        ),
         "report": _report_payload(report_key),
         "columns": columns,
         "rows": rows,
@@ -1451,8 +1756,55 @@ def catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
     }
 
 
+def _modernized_legacy_reports_catalog() -> dict[str, Any]:
+    totals = {
+        "total": len(CRYSTAL_REPORTS),
+        "modernizado": sum(1 for report in CRYSTAL_REPORTS if report["migration_status"] == "modernizado"),
+        "base": sum(1 for report in CRYSTAL_REPORTS if report["migration_status"] == "base"),
+        "pendiente": sum(1 for report in CRYSTAL_REPORTS if report["migration_status"] == "pendiente"),
+    }
+    return {
+        "project": "SisAcademicoV1",
+        "source_engine": "Crystal Reports solo como referencia historica",
+        "target_engine": "FastAPI + SQL Server + reportlab/openpyxl",
+        "strategy": "No se ejecutan .rpt. Cada reporte heredado se convierte en dataset SQL parametrizado y salida PDF/Excel/HTML desde backend.",
+        "totals": totals,
+        "reports": [_modernized_legacy_report_payload(report) for report in CRYSTAL_REPORTS],
+    }
+
+
+@router.get("/modern-catalog")
+def modernized_legacy_reports_catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
+    return _modernized_legacy_reports_catalog()
+
+
+@router.get("/modern-catalog/{report_key}")
+def modernized_legacy_report_detail(report_key: str, _: SessionUser = AllowedUser) -> dict[str, Any]:
+    for report in CRYSTAL_REPORTS:
+        if report["key"] == report_key:
+            return _modernized_legacy_report_payload(report)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reporte heredado no inventariado")
+
+
+@router.get("/crystal-catalog")
+def crystal_catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
+    payload = _modernized_legacy_reports_catalog()
+    payload["deprecated"] = True
+    payload["replacement_endpoint"] = "/api/students/reporteria-integral/modern-catalog"
+    return payload
+
+
+@router.get("/crystal-catalog/{report_key}")
+def crystal_report_detail(report_key: str, _: SessionUser = AllowedUser) -> dict[str, Any]:
+    payload = modernized_legacy_report_detail(report_key, _)
+    payload["deprecated"] = True
+    payload["replacement_endpoint"] = f"/api/students/reporteria-integral/modern-catalog/{report_key}"
+    return payload
+
+
 @router.get("")
 def run_report(
+    response: Response,
     report_key: str = Query(default="provincia_genero"),
     periodo: str | None = Query(default=None),
     carrera: str | None = Query(default=None),
@@ -1463,6 +1815,9 @@ def run_report(
     limit: int = Query(default=500, ge=1, le=10000),
     _: SessionUser = AllowedUser,
 ) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return _execute_report(
         report_key,
         periodo=periodo,

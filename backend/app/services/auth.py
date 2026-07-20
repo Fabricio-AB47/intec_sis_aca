@@ -13,6 +13,7 @@ _ALLOWED_ROLES = {
     "VICERRECTOR",
     "SOPORTE",
     "INVITADO_SOP",
+    "SECRETARIA",
     "DOCENTE",
     "ESTUDIANTE",
 }
@@ -26,6 +27,7 @@ _TP_US_CATALOG = {
     "7": "VICERRECTOR",
     "8": "SOPORTE",
     "9": "INVITADO_SOP",
+    "10": "SECRETARIA",
 }
 
 _ROLE_ALIASES = {
@@ -46,6 +48,8 @@ _ROLE_ALIASES = {
     "INVITADO SOP": "INVITADO_SOP",
     "INVITADO_SOP": "INVITADO_SOP",
     "RECTOR": "RECTOR",
+    "SECRETARIA": "SECRETARIA",
+    "SECRETARIA ACADEMICA": "SECRETARIA",
     "SOPORTE": "SOPORTE",
     "TECNOLOGIA": "SOPORTE",
     "TI": "SOPORTE",
@@ -101,8 +105,14 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
         [coordcarrera],
         [codprovincia],
         [tipousuario],
-        [tp_us]
+        [tp_us],
+        TRY_CONVERT(nvarchar(100), tu.detalle_tipo_us) AS detalle_tipo_us
     FROM [dbo].[USUARIO_SIS]
+    LEFT JOIN [dbo].[TIPO_USUARIO] tu
+      ON TRY_CONVERT(int, tu.Codigo_tipo_us) = COALESCE(
+            TRY_CONVERT(int, [tp_us]),
+            TRY_CONVERT(int, [tipousuario])
+         )
     WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [login])))) = LOWER(?)
        OR LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [email])))) = LOWER(?)
     ORDER BY
@@ -126,7 +136,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
     if not _is_active(row.estado):
         raise PermissionError("El usuario no esta activo")
 
-    role = _normalize_role(row.tp_us) or _normalize_role(row.tipousuario)
+    role = _normalize_role(row.tp_us) or _normalize_role(row.tipousuario) or _normalize_role(row.detalle_tipo_us)
     if not role:
         raise PermissionError("Usuario sin rol valido")
 

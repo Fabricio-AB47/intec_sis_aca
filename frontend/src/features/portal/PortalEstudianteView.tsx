@@ -2,12 +2,15 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import {
   downloadPortalStudentPdf,
+  downloadPortalStudentSecretaryPdf,
   fetchPortalStudentRecord,
 } from '../../lib/api'
 import type {
   PortalAcademicGridItem,
   PortalAcademicRecordItem,
   PortalCurriculumItem,
+  PortalPracticeRequirement,
+  PortalStudentPayment,
   PortalStudentSection,
   PortalStudentRecordResponse,
 } from '../../types/app'
@@ -17,6 +20,25 @@ type PortalEstudianteViewProps = {
   activeSection: PortalStudentSection
   onSectionChange: (section: PortalStudentSection) => void
 }
+
+const DEFAULT_PRACTICE_REQUIREMENTS: PortalPracticeRequirement[] = [
+  {
+    code: 'PPF',
+    label: 'Prácticas preprofesionales',
+    required_hours: 240,
+    completed_hours: 0,
+    percent: 0,
+    status: 'Pendiente',
+  },
+  {
+    code: 'VIN',
+    label: 'Vinculación',
+    required_hours: 60,
+    completed_hours: 0,
+    percent: 0,
+    status: 'Pendiente',
+  },
+]
 
 function numberText(value: number | null | undefined, decimals: number = 2) {
   if (value === null || value === undefined || Number.isNaN(value)) return '-'
@@ -66,6 +88,25 @@ function inferredMalla(item: PortalCurriculumItem | PortalAcademicGridItem | Por
 
 function normalizeSubjectKey(value: string | undefined) {
   return (value || '').trim().toUpperCase()
+}
+
+function moneyText(value: number | null | undefined) {
+  const amount = Number(value ?? 0)
+  if (Number.isNaN(amount)) return '$ 0.00'
+  return `$ ${amount.toFixed(2)}`
+}
+
+function normalizePlainText(value: string | undefined) {
+  return normalizeSubjectKey(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+function practiceRequirementCode(item: PortalCurriculumItem | PortalAcademicGridItem | PortalAcademicRecordItem) {
+  const text = normalizePlainText(`${item.nombre_materia || ''} ${item.cod_materia || ''} ${item.codigo_materia || ''}`)
+  if (text.includes('VINCULACION') || text.includes('SERVICIO COMUNITARIO')) return 'VIN'
+  if (text.includes('PRACTICA')) return 'PPF'
+  return ''
 }
 
 function subjectKeys(item: PortalCurriculumItem | PortalAcademicGridItem | PortalAcademicRecordItem) {
@@ -219,6 +260,7 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
   }, [academicGrid, curriculumRows, items])
   const summary = record?.summary
   const student = record?.student
+  const payments = useMemo<PortalStudentPayment[]>(() => record?.payments || [], [record?.payments])
   const careerName = academicRows[0]?.nombre_carrera || curriculumRows[0]?.nombre_carrera || items[0]?.nombre_carrera || '-'
   const recordTotal = summary?.total_materias ?? items.length
   const academicMetrics = useMemo(() => {
@@ -289,6 +331,64 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
   const approvedCredits = academicMetrics.approvedCredits
   const totalCredits = academicMetrics.totalCredits
   const promedioGeneral = academicMetrics.promedioGeneral
+  const practiceRequirements = useMemo(() => {
+    const source = record?.practice_requirements?.length ? record.practice_requirements : DEFAULT_PRACTICE_REQUIREMENTS
+    return source.map((item) => {
+      const required = Number(item.required_hours ?? 0)
+      const completed = Math.max(0, Number(item.completed_hours ?? 0))
+      const percent = required > 0 ? Math.min(100, (completed / required) * 100) : Math.min(100, Math.max(0, Number(item.percent ?? 0)))
+
+      return {
+        ...item,
+        required_hours: required,
+        completed_hours: completed,
+        percent,
+        status: item.status || (percent >= 100 ? 'Cumplido' : 'Pendiente'),
+      }
+    })
+  }, [record])
+  const practiceSubjectRows = useMemo(() => {
+    const rows = academicRows
+      .map((item) => {
+        const code = practiceRequirementCode(item)
+        if (!code) return null
+        const matchingRecord = items.find((recordItem) => (
+          subjectKeys(recordItem).some((key) => subjectKeys(item).includes(key))
+        ))
+        const requirement = practiceRequirements.find((entry) => entry.code === code)
+        const status = item.estado_academico || 'Pendiente'
+        const finalGrade = status === 'Pendiente' ? null : item.promedio_final
+
+        return {
+          code,
+          process: requirement?.label || (code === 'VIN' ? 'Vinculación' : 'Prácticas preprofesionales'),
+          level: 3,
+          subjectCode: curriculumCode(item),
+          subject: item.nombre_materia || requirement?.label || '-',
+          hours: inferredHours(item) ?? requirement?.required_hours ?? 0,
+          period: item.ultimo_periodo || matchingRecord?.detalle_periodo || matchingRecord?.codigo_periodo || '-',
+          enrollment: matchingRecord?.num_matricula || (item.intentos ? String(item.intentos) : '-'),
+          grade: finalGrade,
+          status,
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+
+    if (rows.length > 0) return rows
+
+    return practiceRequirements.map((item) => ({
+      code: item.code || '',
+      process: item.label || 'Práctica institucional',
+      level: 3,
+      subjectCode: item.code || '-',
+      subject: item.label || 'Práctica institucional',
+      hours: item.required_hours ?? 0,
+      period: '-',
+      enrollment: '-',
+      grade: null,
+      status: item.status || 'Pendiente',
+    }))
+  }, [academicRows, items, practiceRequirements])
 
   async function loadRecord(nextApprovedOnly: boolean = approvedOnly) {
     setLoading(true)
@@ -326,6 +426,28 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
     }
   }
 
+  async function downloadSelectedPeriodSecretary() {
+    if (!selectedPeriod) return
+    setDownloadLoading(true)
+    setError('')
+    try {
+      const blob = await downloadPortalStudentSecretaryPdf(selectedPeriod, 'calificaciones')
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const periodName = selectedPeriod.replace(/[^a-z0-9_-]+/gi, '-')
+      link.href = url
+      link.download = `reporte-notas-secretaria-${student?.codigo_estud || 'estudiante'}-${periodName}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar el formato Secretaría')
+    } finally {
+      setDownloadLoading(false)
+    }
+  }
+
   async function downloadAcademicMap() {
     setDownloadLoading(true)
     setError('')
@@ -341,6 +463,26 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
       window.URL.revokeObjectURL(url)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la malla academica')
+    } finally {
+      setDownloadLoading(false)
+    }
+  }
+
+  async function downloadAcademicMapSecretary() {
+    setDownloadLoading(true)
+    setError('')
+    try {
+      const blob = await downloadPortalStudentSecretaryPdf('', 'malla')
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `malla-secretaria-${student?.codigo_estud || 'estudiante'}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la malla en formato Secretaría')
     } finally {
       setDownloadLoading(false)
     }
@@ -542,6 +684,55 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
     )
   }
 
+  function renderStudentPayments() {
+    return (
+      <section className="portal-payment-panel" aria-label="Pagos del estudiante">
+        <div className="portal-payment-panel__head">
+          <div>
+            <span>Convenio de pago</span>
+            <h3>Pagos a realizar</h3>
+          </div>
+          <p>{payments.length} convenio(s)</p>
+        </div>
+        <div className="portal-payment-grid">
+          {payments.map((payment, index) => (
+            <article className="portal-payment-card" key={`${payment.codigo_periodo || index}-${payment.num_matricula || index}`}>
+              <div className="portal-payment-card__top">
+                <strong>{payment.periodo || payment.codigo_periodo || 'Periodo'}</strong>
+                <span>{payment.carrera || '-'}</span>
+              </div>
+              <div className="portal-payment-card__amounts">
+                <div>
+                  <span>Total convenio</span>
+                  <b>{moneyText(payment.total)}</b>
+                </div>
+                <div>
+                  <span>Saldo</span>
+                  <b>{moneyText(payment.saldo)}</b>
+                </div>
+                <div>
+                  <span>Cuotas</span>
+                  <b>{payment.cuotas || 1} x {moneyText(payment.cuota)}</b>
+                </div>
+              </div>
+              <small>
+                Beca {moneyText(payment.beca)} · Descuento {moneyText(payment.descuento)} · Primer pago {payment.pago_fecha || payment.fecha_pago || '-'}
+              </small>
+              {payment.convenio_url ? (
+                <a className="ghost-button portal-payment-card__link" href={payment.convenio_url} target="_blank" rel="noreferrer" download>
+                  Descargar convenio
+                </a>
+              ) : null}
+            </article>
+          ))}
+          {!loading && payments.length === 0 ? (
+            <p className="portal-payment-empty">No hay convenios de pago registrados para mostrar.</p>
+          ) : null}
+        </div>
+      </section>
+    )
+  }
+
   return (
     <div className="student-dashboard portal-page portal-student-page">
       <header className="student-hero portal-student-hero">
@@ -574,6 +765,7 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
           </div>
 
           {renderAcademicOverview()}
+          {renderStudentPayments()}
 
           <div className="portal-dashboard-shortcuts">
             <div>
@@ -646,10 +838,83 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
             <div className="portal-actions">
               <span>{numberText(progress, 1)}% avance</span>
               <button type="button" className="primary-action" onClick={downloadAcademicMap} disabled={loading || downloadLoading}>
-                {downloadLoading ? 'Descargando...' : 'Descargar PDF'}
+                {downloadLoading ? 'Descargando...' : 'Descargar malla académica PDF'}
+              </button>
+              <button type="button" className="ghost-button" onClick={downloadAcademicMapSecretary} disabled={loading || downloadLoading}>
+                {downloadLoading ? 'Descargando...' : 'Descargar malla formato Secretaría'}
               </button>
             </div>
           </div>
+          <section className="portal-practice-requirements" aria-label="Cumplimiento de prácticas institucionales">
+            <div className="portal-practice-requirements__head">
+              <div>
+                <span>Prácticas institucionales</span>
+                <h3>Cumplimiento de horas requeridas</h3>
+              </div>
+              <p>Requisitos independientes de la malla: preprofesionales y vinculación.</p>
+            </div>
+            <div className="portal-practice-requirements__grid">
+              {practiceRequirements.map((item) => {
+                const required = item.required_hours ?? 0
+                const completed = item.completed_hours ?? 0
+                const percent = item.percent ?? 0
+                return (
+                  <article className="portal-practice-requirement" key={item.code || item.label}>
+                    <div className="portal-practice-requirement__top">
+                      <strong>{item.label || 'Práctica institucional'}</strong>
+                      <span className={statusClass(item.status)}>{item.status || 'Pendiente'}</span>
+                    </div>
+                    <div className="portal-practice-requirement__hours">
+                      <b>{integerText(completed)}</b>
+                      <span>de {integerText(required)} horas</span>
+                    </div>
+                    <div className="portal-practice-requirement__bar" aria-label={`${numberText(percent, 1)}% de cumplimiento`}>
+                      <span style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+                    </div>
+                    <small>{numberText(percent, 1)}% de cumplimiento</small>
+                  </article>
+                )
+              })}
+            </div>
+            <div className="portal-practice-subjects">
+              <div className="portal-practice-subjects__title">
+                <strong>Asignaturas que aportan horas de práctica pre profesional y vinculación</strong>
+              </div>
+              <div className="portal-practice-subjects__table-wrap">
+                <table className="matricula-table portal-practice-subjects__table">
+                  <thead>
+                    <tr>
+                      <th>Nivel</th>
+                      <th>Código Asignatura</th>
+                      <th>Asignatura</th>
+                      <th>Horas</th>
+                      <th>Período Académico</th>
+                      <th>Nro. de Matrícula</th>
+                      <th>Calificación</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {practiceSubjectRows.map((item, index) => (
+                      <tr key={`${item.code}-${item.subjectCode}-${index}`}>
+                        <td>{item.level ?? '-'}</td>
+                        <td>{item.subjectCode}</td>
+                        <td>
+                          <strong>{item.subject}</strong>
+                          <small>{item.process}</small>
+                        </td>
+                        <td>{integerText(item.hours)}</td>
+                        <td>{item.period}</td>
+                        <td>{item.enrollment}</td>
+                        <td>{item.grade === null || item.grade === undefined ? '-' : numberText(item.grade)}</td>
+                        <td><span className={statusClass(item.status)}>{item.status}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
           <div className="excel-table-wrap portal-table-wrap portal-table-wrap--tall portal-table-wrap--no-scroll">
             <table className="matricula-table portal-academic-map-table">
               <thead>
@@ -723,6 +988,9 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
               </button>
               <button type="button" className="primary-action" onClick={downloadSelectedPeriod} disabled={loading || downloadLoading || !selectedPeriod}>
                 {downloadLoading ? 'Descargando...' : 'Descargar PDF'}
+              </button>
+              <button type="button" className="ghost-button" onClick={downloadSelectedPeriodSecretary} disabled={loading || downloadLoading || !selectedPeriod}>
+                {downloadLoading ? 'Descargando...' : 'Formato Secretaría'}
               </button>
             </div>
           </div>

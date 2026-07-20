@@ -8,6 +8,7 @@ import {
   fetchSisAcademicoRecord,
   fetchSisAcademicoRows,
   previewAcademicPeriodChange,
+  updateStudentStateWithDocument,
   updateSisAcademicoRecord,
 } from '../../lib/api'
 import type {
@@ -26,7 +27,7 @@ type GestionSisAcademicoViewProps = {
 
 type FormValue = string | number | boolean | null | undefined
 type OptionItem = { value: string; label: string }
-type InlineEstadoValues = Record<string, { Estado?: string; Informacion?: string }>
+type InlineEstadoValues = Record<string, { Estado?: string; Informacion?: string; Documento?: File | null }>
 type HomoMateriaGroup = {
   key: string
   name: string
@@ -36,6 +37,18 @@ type HomoMateriaGroup = {
 
 type ProcessShortcut = {
   key: string
+  title: string
+  description: string
+  sections: string[]
+}
+
+type ProcessWithSections = ProcessShortcut & {
+  availableSections: SisAcademicoSection[]
+}
+
+type OperationalFlowStep = {
+  key: string
+  number: string
   title: string
   description: string
   sections: string[]
@@ -85,8 +98,8 @@ const processShortcuts: ProcessShortcut[] = [
   },
   {
     key: 'administrativos',
-    title: 'Administrativos',
-    description: 'Usuarios administrativos, perfiles y accesos del menu.',
+    title: 'Usuarios',
+    description: 'Registro de usuarios administrativos, perfiles y accesos del menu.',
     sections: ['usuarios', 'menu_usuarios', 'menu_general'],
   },
   {
@@ -121,6 +134,95 @@ const processShortcuts: ProcessShortcut[] = [
     title: 'Seguimiento y practicas',
     description: 'Observaciones, practicas profesionales, vinculacion y empresas.',
     sections: ['seguimiento', 'practicas', 'practicas_vinculacion', 'empresas'],
+  },
+  {
+    key: 'educacion_continua',
+    title: 'Educacion continua',
+    description: 'Cursos, cortes, participantes y control heredado de ofertas cortas.',
+    sections: ['cursos_edu_continua', 'corte_curso', 'corte_curso_estudiante'],
+  },
+  {
+    key: 'certificados',
+    title: 'Certificados',
+    description: 'Certificados generados, credenciales de cursos y trazabilidad documental.',
+    sections: ['certificados_generados', 'credenciales_curso'],
+  },
+  {
+    key: 'documentacion',
+    title: 'Documentacion',
+    description: 'Repositorio digital y documentos anexados al estudiante.',
+    sections: ['repositorio', 'registro_documentos_estudiante'],
+  },
+  {
+    key: 'talento_humano',
+    title: 'Talento humano',
+    description: 'Empleados, solicitudes y tareas RRHH conservadas desde SisAcademicoV1.',
+    sections: ['talento_humano_empleados', 'talento_humano_solicitudes', 'talento_humano_tareas'],
+  },
+  {
+    key: 'integraciones',
+    title: 'Integraciones',
+    description: 'Notas Moodle, sincronizaciones y auditoria Microsoft 365.',
+    sections: ['moodle_notas', 'moodle_sincronizacion', 'microsoft365_audit'],
+  },
+]
+
+const operationalFlowSteps: OperationalFlowStep[] = [
+  {
+    key: 'inscripcion',
+    number: '01',
+    title: 'Inscripcion y admision',
+    description: 'Aspirante, asesor, datos de factura y documentos iniciales.',
+    sections: ['preinscripciones', 'datos_factura', 'registro_documentos_estudiante'],
+  },
+  {
+    key: 'datos',
+    number: '02',
+    title: 'Datos del estudiante',
+    description: 'Ficha, actualizacion de datos, correos y estado del estudiante.',
+    sections: ['estudiantes', 'actualizacion_estudiantes', 'correos', 'seguimiento'],
+  },
+  {
+    key: 'matricula',
+    number: '03',
+    title: 'Matricula academica',
+    description: 'Cabecera, materias matriculadas, pagos y convenio.',
+    sections: ['cabecera_matricula', 'matricula_materias', 'pagos_matricula'],
+  },
+  {
+    key: 'docencia',
+    number: '04',
+    title: 'Docencia y periodos',
+    description: 'Docentes, asignaciones, paralelos, jornadas y periodos.',
+    sections: ['docentes', 'docente_materias', 'paralelos', 'periodos', 'jornadas'],
+  },
+  {
+    key: 'cursado',
+    number: '05',
+    title: 'Cursado, asistencia y notas',
+    description: 'Notas, aperturas, asistencia y seguimiento academico.',
+    sections: ['matricula_materias', 'fechas_notas', 'asistencia_estudiantes', 'moodle_notas'],
+  },
+  {
+    key: 'practicas',
+    number: '06',
+    title: 'Practicas y vinculacion',
+    description: 'Practicas preprofesionales, vinculacion con la sociedad y empresas.',
+    sections: ['practicas', 'practicas_vinculacion', 'empresas', 'seguimiento'],
+  },
+  {
+    key: 'certificados',
+    number: '07',
+    title: 'Certificados y documentos',
+    description: 'Certificados, credenciales, repositorio y documentos historicos.',
+    sections: ['certificados_generados', 'credenciales_curso', 'repositorio', 'registro_documentos_estudiante'],
+  },
+  {
+    key: 'titulacion',
+    number: '08',
+    title: 'Titulacion y cierre',
+    description: 'Base documental para grado, SENESCYT, titulo INTEC y trazabilidad final.',
+    sections: ['certificados_generados', 'repositorio', 'matricula_materias', 'practicas_vinculacion'],
   },
 ]
 
@@ -232,6 +334,23 @@ function emptyValues(fields: SisAcademicoField[]): Record<string, FormValue> {
   }, {})
 }
 
+function todayIsoDate(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function shouldRenderSelect(sectionKey: string, field: SisAcademicoField, options: OptionItem[]): boolean {
+  if (options.length === 0) return false
+  if (['login', 'password', 'nombres', 'email', 'cedula'].includes(field.name)) {
+    return false
+  }
+  if (sectionKey === 'usuarios' && field.name === 'fecha_ingreso') return false
+  return true
+}
+
 export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }: Readonly<GestionSisAcademicoViewProps>) {
   const [sections, setSections] = useState<SisAcademicoSection[]>([])
   const [selectedSectionKey, setSelectedSectionKey] = useState('')
@@ -286,6 +405,18 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
         .filter((process) => process.availableSections.length > 0),
     [sections],
   )
+  const operationalFlow = useMemo(
+    () =>
+      operationalFlowSteps
+        .map((step) => ({
+          ...step,
+          availableSections: step.sections
+            .map((sectionKey) => sections.find((section) => section.key === sectionKey))
+            .filter((section): section is SisAcademicoSection => Boolean(section)),
+        }))
+        .filter((step) => step.availableSections.length > 0),
+    [sections],
+  )
   const selectedProcess = useMemo(
     () =>
       processMenu.find((process) => process.key === selectedProcessKey)
@@ -299,6 +430,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const createFields = selectedSection?.create_fields || []
   const currentFields = mode === 'create' ? createFields : editableFields
   const canCreate = createFields.length > 0
+  const isOperationalMenuSection = selectedSectionKey === 'menu_general' || selectedSectionKey === 'menu_usuarios'
   const isEstadoInlineSection = selectedSectionKey === 'actualizacion_est' || selectedSectionKey === 'actualizacion_estudiantes'
   const isDocenteEstadoSection = selectedSectionKey === 'actualizacion_est'
   const isStudentEstadoSection = selectedSectionKey === 'actualizacion_estudiantes'
@@ -320,7 +452,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const estadoPeriodField = selectedSection?.list_fields?.find((field) => field.name === 'codigo_periodo')
   const tableFields = isEstadoInlineSection ? listFields.filter((field) => field.name !== 'estado_nombre') : listFields
   const hasIndexColumn = !isEstadoInlineSection
-  const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
+  const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isStudentEstadoSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
   const isMateriaHomoTextSection = selectedSection?.key === 'materia_homo_textof'
   const isPeriodChangeSection = selectedSection?.key === 'cambio_periodo_hr'
   const homoMateriaOptions = useMemo(
@@ -422,6 +554,24 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       listFields.some((field) => displayValue(field, row[field.name]).toLowerCase().includes(needle)),
     )
   }, [listFields, rows, tableFilter])
+  const totalOperationalSections = useMemo(
+    () => processMenu.reduce((total, process) => total + process.availableSections.length, 0),
+    [processMenu],
+  )
+  const workflowTitle = isOperationalMenuSection
+    ? selectedSectionKey === 'menu_usuarios'
+      ? 'Accesos operativos SisAcademicoV1'
+      : 'Mapa operativo SisAcademicoV1'
+    : selectedSection?.title || 'Selecciona una opcion del menu'
+  const workflowCategory = isOperationalMenuSection
+    ? 'Procesos clonados'
+    : selectedProcess?.title || selectedSection?.category || 'Gestion operativa'
+  const workflowTable = isOperationalMenuSection
+    ? 'Backend y frontend integrados'
+    : selectedSection?.table || 'Sin tabla'
+  const workflowRows = isOperationalMenuSection ? totalOperationalSections : rows.length
+  const workflowRowsLabel = isOperationalMenuSection ? `${workflowRows} modulo(s)` : `${workflowRows} registro(s)`
+  const workflowMode = isOperationalMenuSection ? 'Navegacion funcional' : canCreate ? 'Permite crear' : 'Solo edicion'
 
   function processKeyForSection(sectionKey: string) {
     return processShortcuts.find((process) => process.sections.includes(sectionKey))?.key || processShortcuts[0]?.key || ''
@@ -431,7 +581,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     if (!sectionKey) return
     setError('')
     setMessage('')
-    if (sectionKey === 'cambio_periodo_hr') {
+    if (sectionKey === 'cambio_periodo_hr' || sectionKey === 'menu_general' || sectionKey === 'menu_usuarios') {
       setRows([])
       setInlineEstadoValues({})
       setSelectedRecordKey('')
@@ -482,10 +632,17 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setMessage('')
     setSaving(true)
     try {
+      const valuesToSave =
+        mode === 'create' && selectedSection.key === 'usuarios'
+          ? {
+              ...formValues,
+              fecha_ingreso: inputValue(formValues.fecha_ingreso) || todayIsoDate(),
+            }
+          : formValues
       const payload =
         mode === 'create'
-          ? await createSisAcademicoRecord(selectedSection.key, formValues)
-          : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, formValues)
+          ? await createSisAcademicoRecord(selectedSection.key, valuesToSave)
+          : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, valuesToSave)
       setMessage(payload.message || 'Cambios guardados')
       await loadRows(selectedSection.key)
     } catch (apiError) {
@@ -502,7 +659,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     return inputValue(row[fieldName])
   }
 
-  function updateInlineEstado(row: SisAcademicoRow, values: { Estado?: string; Informacion?: string }) {
+  function updateInlineEstado(row: SisAcademicoRow, values: { Estado?: string; Informacion?: string; Documento?: File | null }) {
     const key = recordKey(row)
     setInlineEstadoValues((current) => ({
       ...current,
@@ -519,18 +676,29 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     const key = recordKey(row)
     const estado = inlineEstadoValue(row, 'Estado').trim()
     const informacion = inlineEstadoValue(row, 'Informacion').trim()
+    const documento = inlineEstadoValues[key]?.Documento || null
     if (!estado) {
       setError('Selecciona un estado antes de guardar.')
+      return
+    }
+    if (isStudentEstadoSection && informacion.length < 5) {
+      setError('Describe el motivo del cambio de estado.')
+      return
+    }
+    if (isStudentEstadoSection && !documento) {
+      setError('Adjunta el documento que respalda el cambio de estado.')
       return
     }
     setError('')
     setMessage('')
     setInlineSavingKey(key)
     try {
-      const payload = await updateSisAcademicoRecord(selectedSection.key, key, {
-        Estado: estado,
-        Informacion: informacion,
-      })
+      const payload = isStudentEstadoSection && documento
+        ? await updateStudentStateWithDocument(key, estado, informacion, documento)
+        : await updateSisAcademicoRecord(selectedSection.key, key, {
+            Estado: estado,
+            Informacion: informacion,
+          })
       setMessage(payload.message || 'Estado actualizado')
       await loadRows(selectedSection.key)
     } catch (apiError) {
@@ -544,7 +712,20 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     if (!selectedSection) return
     setMode('create')
     setSelectedRecordKey('')
-    setFormValues(emptyValues(createFields))
+    setFormValues({
+      ...emptyValues(createFields),
+      ...(selectedSection.key === 'usuarios'
+        ? {
+            login: '',
+            password: '',
+            nombres: '',
+            fecha_ingreso: todayIsoDate(),
+            estado: 'A',
+            email: '',
+            cedula: '',
+          }
+        : {}),
+    })
     setMessage('')
     setError('')
   }
@@ -753,7 +934,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
         if (firstSection) {
           setSelectedProcessKey(processKeyForSection(firstSection))
         }
-        if (firstSection && firstSection !== 'cambio_periodo_hr') {
+        if (firstSection && !['cambio_periodo_hr', 'menu_general', 'menu_usuarios'].includes(firstSection)) {
           const rowsPayload = await fetchSisAcademicoRows(firstSection, '')
           if (!cancelled) setRows(rowsPayload.rows || [])
         } else if (!cancelled) {
@@ -790,6 +971,111 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     void loadPeriodChangeCatalog()
   }, [isPeriodChangeSection, periodChangeCatalog])
 
+  function openOperationalSection(sectionKey: string, processKey: string) {
+    openSection(sectionKey, processKey)
+  }
+
+  function renderOperationalMenu(processes: ProcessWithSections[]) {
+    const isAccessMode = selectedSectionKey === 'menu_usuarios'
+    return (
+      <div className="gestion-sis-operational-menu">
+        <div className="gestion-sis-flow-map">
+          <div className="gestion-sis-flow-map__head">
+            <div>
+              <span>Flujo academico completo</span>
+              <strong>De inscripcion a titulacion</strong>
+            </div>
+            <p>
+              Esta ruta conserva el orden operativo de SisAcademicoV1 y abre los modulos modernos necesarios para cada
+              etapa. Use las acciones de cada paso para revisar datos historicos o continuar el proceso.
+            </p>
+          </div>
+          <div className="gestion-sis-flow-steps">
+            {operationalFlow.map((step) => (
+              <article key={step.key} className="gestion-sis-flow-step">
+                <span className="gestion-sis-flow-step__number">{step.number}</span>
+                <div>
+                  <strong>{step.title}</strong>
+                  <p>{step.description}</p>
+                </div>
+                <div className="gestion-sis-flow-step__actions">
+                  {step.availableSections.slice(0, 4).map((section) => (
+                    <button
+                      key={`${step.key}-${section.key}`}
+                      type="button"
+                      onClick={() => openOperationalSection(section.key, processKeyForSection(section.key))}
+                    >
+                      {section.title}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <div className="gestion-sis-process-overview">
+          <div className="gestion-sis-process-overview__head">
+            <div>
+              <span>{isAccessMode ? 'Accesos funcionales' : 'Clon funcional'}</span>
+              <strong>{isAccessMode ? 'Procesos habilitados por perfil operativo' : 'Procesos disponibles del SisAcademicoV1'}</strong>
+            </div>
+            <p>
+              {isAccessMode
+                ? 'Esta vista reemplaza la tabla técnica MENU_USUARIOS. Use los accesos funcionales para entrar a cada módulo y gestione usuarios desde Registrar usuarios cuando corresponda.'
+                : 'Esta vista reemplaza el menú técnico heredado. Cada bloque abre una función real del nuevo sistema: admisión, matrícula, notas, docentes, certificados, titulación, reportes y mantenimiento controlado.'}
+            </p>
+          </div>
+
+          <div className="gestion-sis-process-cards">
+            {processes.map((process) => (
+              <button
+                key={process.key}
+                type="button"
+                className={`gestion-sis-process-card${selectedProcessKey === process.key ? ' gestion-sis-process-card--active' : ''}`}
+                onClick={() => {
+                  setSelectedProcessKey(process.key)
+                  const firstSection = process.availableSections[0]
+                  if (firstSection) openOperationalSection(firstSection.key, process.key)
+                }}
+              >
+                <span className="gestion-sis-process-card__count">{process.availableSections.length}</span>
+                <strong>{process.title}</strong>
+                <span>{process.description}</span>
+                <small>Abrir proceso</small>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {processes.map((process) => (
+          <section key={`operational-${process.key}`} className="gestion-sis-module-strip">
+            <div className="gestion-sis-module-strip__head">
+              <div>
+                <span>{process.title}</span>
+                <strong>{process.description}</strong>
+              </div>
+              <em>{process.availableSections.length} modulo(s)</em>
+            </div>
+            <div className="gestion-sis-module-tabs gestion-sis-module-tabs--grid">
+              {process.availableSections.map((section) => (
+                <button
+                  key={`${process.key}-${section.key}`}
+                  type="button"
+                  className={selectedSectionKey === section.key ? 'gestion-sis-module--active' : ''}
+                  onClick={() => openOperationalSection(section.key, process.key)}
+                >
+                  <strong>{section.title}</strong>
+                  <span>{section.category || section.table || 'Modulo operativo'}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <>
       <header className="student-topbar">
@@ -811,22 +1097,24 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       <section className="gestion-sis-workflow" aria-label="Ruta operativa actual">
         <div className="gestion-sis-workflow__route">
           <span>Modulo actual</span>
-          <strong>{selectedSection?.title || 'Selecciona una opcion del menu'}</strong>
+          <strong>{workflowTitle}</strong>
         </div>
         <div className="gestion-sis-workflow__meta">
-          <span>{selectedProcess?.title || selectedSection?.category || 'Gestion operativa'}</span>
-          <span>{selectedSection?.table || 'Sin tabla'}</span>
-          <span>{rows.length} registros</span>
-          <span>{canCreate ? 'Permite crear' : 'Solo edicion'}</span>
+          <span>{workflowCategory}</span>
+          <span>{workflowTable}</span>
+          <span>{workflowRowsLabel}</span>
+          <span>{workflowMode}</span>
         </div>
       </section>
 
       <section className="student-grid student-grid--content gestion-sis-grid gestion-sis-grid--single">
         <article className="student-card student-card--wide gestion-sis-list">
           <div className="card-head">
-            <h3>{selectedSection?.title || 'Selecciona un modulo'}</h3>
-            <span>{catalogLoading ? 'Cargando...' : selectedSection?.category || 'Modulo'}</span>
+            <h3>{isOperationalMenuSection ? 'Procesos funcionales del sistema' : selectedSection?.title || 'Selecciona un modulo'}</h3>
+            <span>{catalogLoading ? 'Cargando...' : isOperationalMenuSection ? 'SisAcademicoV1 modernizado' : selectedSection?.category || 'Modulo'}</span>
           </div>
+
+          {isOperationalMenuSection ? renderOperationalMenu(processMenu) : null}
 
           {isMateriaHomoTextSection ? (
             <div className="gestion-sis-homo-bulk">
@@ -1069,7 +1357,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
           {message ? <p className="teams-message">{message}</p> : null}
           {error ? <p className="teams-error">{error}</p> : null}
 
-          {isPeriodChangeSection ? (
+          {isOperationalMenuSection ? null : isPeriodChangeSection ? (
             <div className="gestion-sis-homo-bulk gestion-sis-period-change">
               <div className="gestion-sis-homo-bulk__head">
                 <div>
@@ -1375,7 +1663,13 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                   <strong>{visibleRows.length}</strong>
                   <span>de {rows.length} registro(s)</span>
                 </div>
-                <small>{isEstadoInlineSection ? 'Edita estado y descripción directamente en la fila.' : 'Doble clic en una fila para editar'}</small>
+                <small>
+                  {isStudentEstadoSection
+                    ? 'Cada cambio requiere motivo y documento de respaldo.'
+                    : isEstadoInlineSection
+                      ? 'Edita estado y descripción directamente en la fila.'
+                      : 'Doble clic en una fila para editar'}
+                </small>
               </div>
 
               <div className="matricula-table-wrap gestion-sis-table-wrap excel-table-wrap">
@@ -1387,6 +1681,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                         <Fragment key={field.name}>
                           <th>{field.label}</th>
                           {isEstadoInlineSection && field.name === 'Estado' ? <th>Descripción</th> : null}
+                          {isStudentEstadoSection && field.name === 'Estado' ? <th>Documento de respaldo</th> : null}
                         </Fragment>
                       ))}
                       <th>{isEstadoInlineSection ? 'Guardar' : 'Editar'}</th>
@@ -1437,6 +1732,28 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                                       placeholder="Descripción u observación"
                                     />
                                   </td>
+                                  {isStudentEstadoSection ? (
+                                    <td>
+                                      <label className="gestion-sis-state-document">
+                                        <span>{inlineEstadoValues[recordKey(row)]?.Documento?.name || 'Seleccionar archivo'}</span>
+                                        <input
+                                          type="file"
+                                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                          onChange={(event) => updateInlineEstado(row, { Documento: event.target.files?.[0] || null })}
+                                        />
+                                      </label>
+                                      {row.DocumentoEstado ? (
+                                        <a
+                                          className="gestion-sis-state-document__current"
+                                          href={String(row.DocumentoEstado)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          Ver último respaldo
+                                        </a>
+                                      ) : null}
+                                    </td>
+                                  ) : null}
                                 </Fragment>
                               )
                             }
@@ -1580,14 +1897,21 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
 
                 <div className="matricula-acad-form gestion-sis-edit-form">
                   {currentFields.map((field) => {
-                    const options = fieldOptions(field, formValues[field.name])
+                    if (mode === 'create' && selectedSection.key === 'usuarios' && field.name === 'fecha_ingreso') {
+                      return null
+                    }
+                    const forceTextInput =
+                      ['login', 'password', 'nombres', 'email', 'cedula'].includes(field.name) ||
+                      (selectedSection.key === 'usuarios' && field.name === 'fecha_ingreso')
+                    const options = forceTextInput ? [] : fieldOptions(field, formValues[field.name])
+                    const renderSelect = shouldRenderSelect(selectedSection.key, field, options)
                     return (
                       <label key={field.name} className={field.type === 'textarea' ? 'gestion-sis-field--wide' : ''}>
                         <span>
                           {field.label}
                           {field.required ? ' *' : ''}
                         </span>
-                        {options.length > 0 ? (
+                        {renderSelect ? (
                           <select
                             value={inputValue(formValues[field.name])}
                             onChange={(event) =>
@@ -1636,7 +1960,15 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                           </select>
                         ) : (
                           <input
-                            type={field.type === 'date' ? 'date' : field.type === 'number' || field.type === 'decimal' ? 'number' : 'text'}
+                            type={
+                              field.name === 'password'
+                                ? 'password'
+                                : field.name === 'fecha_ingreso' || field.type === 'date'
+                                  ? 'date'
+                                  : field.type === 'number' || field.type === 'decimal'
+                                    ? 'number'
+                                    : 'text'
+                            }
                             step={field.type === 'decimal' ? '0.01' : undefined}
                             value={inputValue(formValues[field.name])}
                             onChange={(event) =>

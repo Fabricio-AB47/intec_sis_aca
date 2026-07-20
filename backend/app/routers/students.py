@@ -10,7 +10,7 @@ from typing import Annotated, Any
 import unicodedata
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -26,7 +26,9 @@ from app.services.db import get_connection
 router = APIRouter(prefix="/api/students", tags=["students"])
 
 _ALLOWED_TIPO_MATRICULA = {"R", "H"}
-_STUDENT_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_STUDENT_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "BIENESTAR", "RECTOR", "VICERRECTOR")
+_DASHBOARD_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "BIENESTAR", "RECTOR", "VICERRECTOR", "ADMISIONES")
+_GRADUATION_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "BIENESTAR", "RECTOR", "VICERRECTOR", "SECRETARIA")
 _MAIN_ESTADOS = (
     ("A", "Activo"),
     ("G", "Graduado"),
@@ -66,10 +68,16 @@ _SPANISH_MONTHS = {
 class GraduationDateItem(BaseModel):
     codigo_estud: str = Field(min_length=1, max_length=50)
     fecha_grado: str | None = None
+    fecha_emision_senescyt: str | None = None
+    cod_refrendacion: str | None = Field(default=None, max_length=50)
 
 
 class GraduationDateSavePayload(BaseModel):
     items: list[GraduationDateItem] = Field(min_length=1, max_length=1000)
+
+
+class DataUpdatePayload(BaseModel):
+    fields: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
 
 class _HtmlTableParser(HTMLParser):
@@ -2184,6 +2192,50 @@ _MATRICULA_REPORTE_CTE = _MATRICULA_MATERIA_VALIDADA_CTE_TEMPLATE.replace(
 )
 _MATRICULA_ACTUAL_CTE = _MATRICULA_REPORTE_CTE
 
+_MATRICULA_CNE_CTE = """
+WITH matricula_cne AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), reporte.Cedula_Est))) AS Cedula_Est,
+        LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), reporte.Apellidos_nombre))) AS Apellidos_nombre,
+        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), reporte.ESTADO))) AS estado_nombre,
+        LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), reporte.Nombre_Basica))) AS nombre_carrera,
+        UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), reporte.TipoMatricula)))) AS tipo_matricula
+    FROM dbo.TOTALESTUDMATRICCNE reporte
+    WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), reporte.TipoMatricula)))) IN ('R', 'H')
+),
+matricula_cne_catalogada AS (
+    SELECT
+        cne.*,
+        UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), estado.IDESTADO)))) AS estado_codigo
+    FROM matricula_cne cne
+    INNER JOIN dbo.ESTADO estado
+      ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), estado.ESTADO)))) =
+         UPPER(LTRIM(RTRIM(cne.estado_nombre)))
+)
+"""
+
+_MATRICULA_CNE_CARRERA_CTE = (
+    _MATRICULA_CNE_CTE
+    + """
+, matricula_cne_carrera AS (
+    SELECT
+        cne.*,
+        COALESCE(TRY_CONVERT(varchar(50), carrera.Cod_AnioBasica), '') AS cod_anio_basica,
+        COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(250), carrera.tp_escuela))), ''), 'Sin escuela') AS escuela
+    FROM matricula_cne_catalogada cne
+    OUTER APPLY (
+        SELECT TOP (1)
+            catalogo.Cod_AnioBasica,
+            catalogo.tp_escuela
+        FROM dbo.CARRERAS catalogo
+        WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), catalogo.Nombre_Basica)))) =
+              UPPER(LTRIM(RTRIM(cne.nombre_carrera)))
+        ORDER BY TRY_CONVERT(bigint, catalogo.Cod_AnioBasica) DESC
+    ) carrera
+)
+"""
+)
+
 def _main_estado_totals(rows: list[Any]) -> dict[str, int]:
     totals = dict.fromkeys((codigo for codigo, _ in _MAIN_ESTADOS), 0)
     for row in rows:
@@ -2269,6 +2321,352 @@ def _first_period_item(row: Any) -> dict[str, Any]:
     }
 
 
+def _resolve_admission_advisor_codes(cursor: pyodbc.Cursor, current_user: SessionUser | None) -> list[str]:
+    if current_user is None:
+        return []
+
+    user_id = str(current_user.id_usuario or "").strip()
+    login = (current_user.login or "").strip()
+    email = (current_user.email or "").strip()
+    cedula = (current_user.cedula or "").strip()
+    codes: list[str] = []
+
+    query = """
+        SELECT DISTINCT NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), us.id_usuarios))), '') AS id_usuarios
+        FROM dbo.USUARIO_SIS us
+        WHERE (
+               NULLIF(LTRIM(RTRIM(?)), '') IS NOT NULL
+               AND TRY_CONVERT(varchar(50), us.id_usuarios) = NULLIF(LTRIM(RTRIM(?)), '')
+            )
+           OR (
+               NULLIF(LTRIM(RTRIM(?)), '') IS NOT NULL
+               AND LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), us.login)))) = LOWER(LTRIM(RTRIM(?)))
+            )
+           OR (
+               NULLIF(LTRIM(RTRIM(?)), '') IS NOT NULL
+               AND LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), us.email)))) = LOWER(LTRIM(RTRIM(?)))
+            )
+           OR (
+               NULLIF(LTRIM(RTRIM(?)), '') IS NOT NULL
+               AND REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), us.cedula))), '-', ''), ' ', '')
+                 = REPLACE(REPLACE(LTRIM(RTRIM(?)), '-', ''), ' ', '')
+            )
+    """
+    cursor.execute(query, (user_id, user_id, login, login, email, email, cedula, cedula))
+    for row in cursor.fetchall():
+        code = str(row.id_usuarios or "").strip()
+        if code and code not in codes:
+            codes.append(code)
+
+    if not codes and user_id:
+        codes.append(user_id)
+    return codes
+
+
+def _dashboard_admisiones(current_user: SessionUser | None = None) -> dict[str, Any]:
+    personal_filter = ""
+    personal_params: list[Any] = []
+    admissions_user_filter = "AND COALESCE(TRY_CONVERT(int, u.tp_us), TRY_CONVERT(int, u.tipousuario)) = 5"
+    advisor_codes: list[str] = []
+    if current_user is not None:
+        with get_connection() as conn:
+            advisor_codes = _resolve_admission_advisor_codes(conn.cursor(), current_user)
+        if advisor_codes:
+            personal_filter = f"""
+              AND TRY_CONVERT(varchar(50), p.codasesor) IN ({_sql_placeholders(advisor_codes)})
+            """
+            personal_params = advisor_codes
+        else:
+            personal_filter = "AND 1 = 0"
+            personal_params = []
+        admissions_user_filter = ""
+
+    trend_query = f"""
+        SELECT
+            YEAR(TRY_CONVERT(date, Fecha_Ingreso)) AS anio,
+            MONTH(TRY_CONVERT(date, Fecha_Ingreso)) AS mes,
+            MIN(TRY_CONVERT(date, Fecha_Ingreso)) AS fecha_inicio,
+            COUNT(*) AS total_estudiantes
+        FROM dbo.PREINSCRIPCION p
+        WHERE TRY_CONVERT(date, Fecha_Ingreso) IS NOT NULL
+        {personal_filter}
+        GROUP BY YEAR(TRY_CONVERT(date, Fecha_Ingreso)), MONTH(TRY_CONVERT(date, Fecha_Ingreso))
+        ORDER BY anio, mes
+    """
+    totals_query = f"""
+        SELECT
+            COUNT(*) AS total_ingresados,
+            COUNT(DISTINCT NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), Codestu))), '')) AS total_con_codigo,
+            COUNT(DISTINCT NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), Cedula))), '')) AS total_con_cedula
+        FROM dbo.PREINSCRIPCION p
+        WHERE 1 = 1
+        {personal_filter}
+    """
+    flow_totals_query = f"""
+        SELECT
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL THEN 1 ELSE 0 END) AS ingresaron_cabecera_matricula,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'A' THEN 1 ELSE 0 END) AS activos,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'P' THEN 1 ELSE 0 END) AS inactivos,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'G' THEN 1 ELSE 0 END) AS graduados,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'R' THEN 1 ELSE 0 END) AS retirados,
+            SUM(CASE WHEN cab.codigo_estud IS NULL THEN 1 ELSE 0 END) AS pendientes_matricula,
+            SUM(CASE
+                WHEN cab.codigo_estud IS NOT NULL
+                 AND COALESCE(matched.estado_codigo, '') NOT IN ('A', 'P', 'G', 'R')
+                THEN 1 ELSE 0
+            END) AS sin_estado
+        FROM dbo.PREINSCRIPCION p
+        LEFT JOIN dbo.USUARIO_SIS u
+          ON TRY_CONVERT(int, u.id_usuarios) = TRY_CONVERT(int, p.codasesor)
+        OUTER APPLY (
+            SELECT TOP (1)
+                d.codigo_estud,
+                d.Cedula_Est,
+                UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado)))) AS estado_codigo
+            FROM dbo.DATOS_ESTUD d
+            WHERE (
+                  NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '') IS NOT NULL
+                  AND TRY_CONVERT(varchar(50), p.Codestu) = TRY_CONVERT(varchar(50), d.codigo_estud)
+                )
+               OR (
+                  NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NOT NULL
+                  AND REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '')
+                      = REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))), '-', ''), ' ', '')
+                )
+            ORDER BY
+                CASE UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado))))
+                    WHEN 'A' THEN 1
+                    WHEN 'P' THEN 2
+                    WHEN 'G' THEN 3
+                    WHEN 'R' THEN 4
+                    ELSE 9
+                END
+        ) matched
+        OUTER APPLY (
+            SELECT TOP (1)
+                cm.codigo_estud,
+                cm.codigo_periodo,
+                cm.cod_anio_Basica,
+                cm.Num_Matricula
+            FROM dbo.CABECERA_MATRICULA cm
+            WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = COALESCE(
+                    TRY_CONVERT(varchar(50), matched.codigo_estud),
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '')
+                )
+              AND TRY_CONVERT(varchar(50), cm.codigo_periodo) = TRY_CONVERT(varchar(50), p.codperiodo)
+              AND (
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.codcarrera))), '') IS NULL
+                    OR TRY_CONVERT(varchar(50), cm.cod_anio_Basica) = TRY_CONVERT(varchar(50), p.codcarrera)
+                  )
+            ORDER BY TRY_CONVERT(int, cm.Num_Matricula) DESC, cm.fecha_pago DESC
+        ) cab
+        WHERE 1 = 1
+          {personal_filter}
+          {admissions_user_filter}
+          AND (
+              NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NULL
+              OR REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '') <> ?
+          )
+        """
+    by_user_period_query = f"""
+        SELECT
+            COALESCE(TRY_CONVERT(varchar(50), p.codperiodo), '') AS codigo_periodo,
+            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo') AS detalle_periodo,
+            COALESCE(TRY_CONVERT(int, pe.anio), YEAR(TRY_CONVERT(date, p.Fecha_Ingreso))) AS anio_periodo,
+            COALESCE(TRY_CONVERT(varchar(50), u.id_usuarios), TRY_CONVERT(varchar(50), p.codasesor), 'SIN_USUARIO') AS usuario_id,
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.nombres))), N''), N'Sin asesor vinculado') AS usuario_nombre,
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))), N''), N'') AS usuario_login,
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), tu.detalle_tipo_us))), N''), N'ADMISIONES') AS tipo_usuario,
+            COUNT(*) AS total_ingresados,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL THEN 1 ELSE 0 END) AS ingresaron_cabecera_matricula,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'A' THEN 1 ELSE 0 END) AS activos,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'P' THEN 1 ELSE 0 END) AS inactivos,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'G' THEN 1 ELSE 0 END) AS graduados,
+            SUM(CASE WHEN cab.codigo_estud IS NOT NULL AND matched.estado_codigo = 'R' THEN 1 ELSE 0 END) AS retirados,
+            SUM(CASE WHEN cab.codigo_estud IS NULL THEN 1 ELSE 0 END) AS pendientes_matricula,
+            SUM(CASE
+                WHEN cab.codigo_estud IS NOT NULL
+                 AND COALESCE(matched.estado_codigo, '') NOT IN ('A', 'P', 'G', 'R')
+                THEN 1 ELSE 0
+            END) AS sin_estado
+        FROM dbo.PREINSCRIPCION p
+        LEFT JOIN dbo.PERIODO pe
+          ON TRY_CONVERT(varchar(50), pe.cod_periodo) = TRY_CONVERT(varchar(50), p.codperiodo)
+        LEFT JOIN dbo.USUARIO_SIS u
+          ON TRY_CONVERT(int, u.id_usuarios) = TRY_CONVERT(int, p.codasesor)
+        LEFT JOIN dbo.TIPO_USUARIO tu
+          ON TRY_CONVERT(int, tu.Codigo_tipo_us) = COALESCE(TRY_CONVERT(int, u.tp_us), TRY_CONVERT(int, u.tipousuario))
+        OUTER APPLY (
+            SELECT TOP (1)
+                d.codigo_estud,
+                d.Cedula_Est,
+                UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado)))) AS estado_codigo
+            FROM dbo.DATOS_ESTUD d
+            WHERE (
+                  NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '') IS NOT NULL
+                  AND TRY_CONVERT(varchar(50), p.Codestu) = TRY_CONVERT(varchar(50), d.codigo_estud)
+                )
+               OR (
+                  NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NOT NULL
+                  AND REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '')
+                      = REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))), '-', ''), ' ', '')
+                )
+            ORDER BY
+                CASE UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado))))
+                    WHEN 'A' THEN 1
+                    WHEN 'P' THEN 2
+                    WHEN 'G' THEN 3
+                    WHEN 'R' THEN 4
+                    ELSE 9
+                END
+        ) matched
+        OUTER APPLY (
+            SELECT TOP (1)
+                cm.codigo_estud,
+                cm.codigo_periodo,
+                cm.cod_anio_Basica,
+                cm.Num_Matricula
+            FROM dbo.CABECERA_MATRICULA cm
+            WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = COALESCE(
+                    TRY_CONVERT(varchar(50), matched.codigo_estud),
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '')
+                )
+              AND TRY_CONVERT(varchar(50), cm.codigo_periodo) = TRY_CONVERT(varchar(50), p.codperiodo)
+              AND (
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.codcarrera))), '') IS NULL
+                    OR TRY_CONVERT(varchar(50), cm.cod_anio_Basica) = TRY_CONVERT(varchar(50), p.codcarrera)
+                  )
+            ORDER BY TRY_CONVERT(int, cm.Num_Matricula) DESC, cm.fecha_pago DESC
+        ) cab
+        WHERE 1 = 1
+          {admissions_user_filter}
+          {personal_filter}
+          AND (
+              NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NULL
+              OR REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '') <> ?
+         )
+        GROUP BY
+            COALESCE(TRY_CONVERT(varchar(50), p.codperiodo), ''),
+            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo'),
+            COALESCE(TRY_CONVERT(int, pe.anio), YEAR(TRY_CONVERT(date, p.Fecha_Ingreso))),
+            COALESCE(TRY_CONVERT(varchar(50), u.id_usuarios), TRY_CONVERT(varchar(50), p.codasesor), 'SIN_USUARIO'),
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.nombres))), N''), N'Sin asesor vinculado'),
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))), N''), N''),
+            COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), tu.detalle_tipo_us))), N''), N'ADMISIONES')
+        ORDER BY anio_periodo DESC, detalle_periodo DESC, usuario_nombre
+        """
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(trend_query, personal_params)
+        trend_rows = cursor.fetchall()
+        cursor.execute(totals_query, personal_params)
+        totals_row = cursor.fetchone()
+        cursor.execute(flow_totals_query, [*personal_params, _DASHBOARD_IGNORED_CEDULA])
+        flow_totals_row = cursor.fetchone()
+        cursor.execute(by_user_period_query, [*personal_params, _DASHBOARD_IGNORED_CEDULA])
+        by_user_period_rows = cursor.fetchall()
+
+    month_names = {
+        1: "Ene",
+        2: "Feb",
+        3: "Mar",
+        4: "Abr",
+        5: "May",
+        6: "Jun",
+        7: "Jul",
+        8: "Ago",
+        9: "Sep",
+        10: "Oct",
+        11: "Nov",
+        12: "Dic",
+    }
+    trend = [
+        {
+            "anio": int(row.anio),
+            "mes": int(row.mes),
+            "fecha_inicio": row.fecha_inicio.isoformat() if isinstance(row.fecha_inicio, date) else str(row.fecha_inicio),
+            "periodo_mes": f"{int(row.anio):04d}-{int(row.mes):02d}",
+            "mes_nombre": f"{month_names.get(int(row.mes), str(row.mes))} {int(row.anio)}",
+            "total_estudiantes": int(row.total_estudiantes or 0),
+        }
+        for row in trend_rows
+        if row.anio is not None and row.mes is not None
+    ]
+    total_ingresados = int(getattr(totals_row, "total_ingresados", 0) or 0)
+    matriculados_cabecera = int(getattr(flow_totals_row, "ingresaron_cabecera_matricula", 0) or 0)
+    activos_desde_admision = int(getattr(flow_totals_row, "activos", 0) or 0)
+    inactivos_desde_admision = int(getattr(flow_totals_row, "inactivos", 0) or 0)
+    graduados_desde_admision = int(getattr(flow_totals_row, "graduados", 0) or 0)
+    retirados_desde_admision = int(getattr(flow_totals_row, "retirados", 0) or 0)
+    pendientes_matricula = int(getattr(flow_totals_row, "pendientes_matricula", 0) or 0)
+    sin_estado_desde_admision = int(getattr(flow_totals_row, "sin_estado", 0) or 0)
+    pendientes = max(0, total_ingresados - activos_desde_admision)
+
+    return {
+        "dashboard_type": "admisiones",
+        "trend": trend,
+        "states": [
+            {"estado_codigo": "ING", "estado_nombre": "Ingresados", "total_estudiantes": total_ingresados},
+            {"estado_codigo": "A", "estado_nombre": "Activos", "total_estudiantes": activos_desde_admision},
+            {"estado_codigo": "PEN", "estado_nombre": "Pendientes o no activos", "total_estudiantes": pendientes},
+        ],
+        "active_by_type": [],
+        "active_regular_students": activos_desde_admision,
+        "active_homologation_students": 0,
+        "active_regular_homologation_students": activos_desde_admision,
+        "total_estudiantes": total_ingresados,
+        "admissions": {
+            "total_ingresados": total_ingresados,
+            "ingresaron_cabecera_matricula": matriculados_cabecera,
+            "activos_desde_admision": activos_desde_admision,
+            "inactivos_desde_admision": inactivos_desde_admision,
+            "graduados_desde_admision": graduados_desde_admision,
+            "retirados_desde_admision": retirados_desde_admision,
+            "pendientes_matricula": pendientes_matricula,
+            "sin_estado_desde_admision": sin_estado_desde_admision,
+            "pendientes_o_no_activos": pendientes,
+            "activos_sistema": activos_desde_admision,
+            "total_con_codigo": int(getattr(totals_row, "total_con_codigo", 0) or 0),
+            "total_con_cedula": int(getattr(totals_row, "total_con_cedula", 0) or 0),
+            "vista_global_por_sin_registros": False,
+            "codigo_asesor": ", ".join(advisor_codes) if advisor_codes else "",
+            "usuario_consultado": current_user.nombres or current_user.login if current_user is not None else "",
+            "mensaje_vista": (
+                "No existen preinscripciones vinculadas directamente a este asesor por PREINSCRIPCION.codasesor."
+                if current_user is not None and total_ingresados == 0
+                else ""
+            ),
+            "por_usuario_periodo": [
+                {
+                    "codigo_periodo": str(row.codigo_periodo or ""),
+                    "detalle_periodo": str(row.detalle_periodo or "Sin periodo"),
+                    "anio_periodo": int(row.anio_periodo) if row.anio_periodo is not None else None,
+                    "usuario_id": str(row.usuario_id or ""),
+                    "usuario_nombre": str(row.usuario_nombre or "Sin asesor"),
+                    "usuario_login": str(row.usuario_login or ""),
+                    "tipo_usuario": str(row.tipo_usuario or "ADMISIONES"),
+                    "total_ingresados": int(row.total_ingresados or 0),
+                    "ingresaron_cabecera_matricula": int(row.ingresaron_cabecera_matricula or 0),
+                    "ingresaron_carreraxestud": int(row.ingresaron_cabecera_matricula or 0),
+                    "activos": int(row.activos or 0),
+                    "inactivos": int(row.inactivos or 0),
+                    "graduados": int(row.graduados or 0),
+                    "retirados": int(row.retirados or 0),
+                    "pendientes_matricula": int(row.pendientes_matricula or 0),
+                    "sin_estado": int(row.sin_estado or 0),
+                }
+                for row in by_user_period_rows
+            ],
+        },
+        "criteria": {
+            "fecha": "PREINSCRIPCION.Fecha_Ingreso",
+            "fuente": "PREINSCRIPCION para estudiantes ingresados; PREINSCRIPCION.codasesor se cruza exclusivamente con USUARIO_SIS.id_usuarios; CABECERA_MATRICULA confirma conversion a matricula; DATOS_ESTUD valida estado activo/inactivo/graduado/retirado",
+            "excluidos": [f"Cedula {_DASHBOARD_IGNORED_CEDULA} solo en dashboard"],
+        },
+    }
+
+
 def _matricula_list_punto_filter(punto: str | None) -> str:
     if punto == "ULTIMA":
         return "AND punto_matricula = 'ULTIMA'"
@@ -2287,21 +2685,23 @@ def _matricula_list_point_param(punto: str | None) -> str:
 )
 def matricula_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
 ) -> dict[str, Any]:
     del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     rows_query = (
-        _MATRICULA_ACTUAL_CTE
+        _MATRICULA_CNE_CTE
         + """
         SELECT
             tipo_matricula,
             estado_codigo,
             estado_nombre,
-            codigo_estud,
-            Apellidos_nombre,
-            Fecha_Ingreso,
-            fechaMatricula
-        FROM base_cruce
-        ORDER BY estado_codigo
+            COUNT(*) AS total_estudiantes
+        FROM matricula_cne_catalogada
+        GROUP BY tipo_matricula, estado_codigo, estado_nombre
+        ORDER BY tipo_matricula, estado_codigo
         """
     )
 
@@ -2314,20 +2714,18 @@ def matricula_summary(
         totals_by_tipo: dict[str, int] = {"R": 0, "H": 0}
         totals_by_estado: dict[str, int] = dict.fromkeys((codigo for codigo, _ in _MAIN_ESTADOS), 0)
         summary_map: dict[tuple[str, str, str], int] = {}
-        reference = _read_matriz_desagregada_reference()
-        filtered_rows = rows
-
-        for row in filtered_rows:
+        for row in rows:
             tipo = str(row.tipo_matricula or "").upper()
             estado_codigo = str(row.estado_codigo or "").upper()
             estado_nombre = str(row.estado_nombre or "Sin estado")
+            total = int(row.total_estudiantes or 0)
             if tipo not in totals_by_tipo:
                 continue
-            totals_by_tipo[tipo] += 1
+            totals_by_tipo[tipo] += total
             if estado_codigo in totals_by_estado:
-                totals_by_estado[estado_codigo] += 1
+                totals_by_estado[estado_codigo] += total
             key = (tipo, estado_codigo, estado_nombre)
-            summary_map[key] = summary_map.get(key, 0) + 1
+            summary_map[key] = summary_map.get(key, 0) + total
 
         items = [
             {
@@ -2343,7 +2741,10 @@ def matricula_summary(
             "items": items,
             "totals_by_tipo": totals_by_tipo,
             "totals_by_estado": totals_by_estado,
-            "referencia_matriz": _matricula_reference_meta(reference, len(rows), len(filtered_rows)),
+            "total_general": sum(totals_by_tipo.values()),
+            "fuente": "dbo.TOTALESTUDMATRICCNE",
+            "criterio": "Misma granularidad del Crystal CryListaTotalEstudResumenCNE.rpt",
+            "consultado_en": datetime.now(timezone.utc).isoformat(),
         }
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando resumen de matricula: {exc}") from exc
@@ -2355,10 +2756,14 @@ def matricula_summary(
 )
 def matricula_career_state_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
 ) -> dict[str, Any]:
     del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     query = (
-        _MATRICULA_ACTUAL_CTE
+        _MATRICULA_CNE_CARRERA_CTE
         + """
         SELECT
             escuela,
@@ -2368,19 +2773,8 @@ def matricula_career_state_summary(
             estado_codigo,
             estado_nombre,
             COUNT(*) AS total_estudiantes
-        FROM (
-            SELECT
-                COALESCE(NULLIF(LTRIM(RTRIM(CAST(ca.tp_escuela AS varchar(250)))), ''), 'Sin escuela') AS escuela,
-                COALESCE(TRY_CONVERT(varchar(50), bc.cod_anio_Basica), '') AS cod_anio_basica,
-                COALESCE(NULLIF(LTRIM(RTRIM(CAST(bc.nombre_carrera AS varchar(250)))), ''), 'Sin carrera registrada') AS nombre_carrera,
-                bc.tipo_matricula,
-                bc.estado_codigo,
-                bc.estado_nombre
-            FROM base_cruce bc
-            LEFT JOIN carrera_catalogo_reporte ca
-                ON TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), bc.cod_anio_Basica)
-               AND ca.rn_carrera = 1
-        ) grouped
+        FROM matricula_cne_carrera
+        WHERE estado_codigo IN ('A', 'G', 'P', 'R')
         GROUP BY escuela, cod_anio_basica, nombre_carrera, tipo_matricula, estado_codigo, estado_nombre
         ORDER BY escuela, nombre_carrera, tipo_matricula, estado_codigo
         """
@@ -2430,6 +2824,8 @@ def matricula_career_state_summary(
             "total_general": sum(totals_by_tipo.values()),
             "total_escuelas": len(escuelas),
             "total_carreras": len(career_keys),
+            "fuente": "dbo.TOTALESTUDMATRICCNE enlazada con dbo.CARRERAS y dbo.ESTADO",
+            "consultado_en": datetime.now(timezone.utc).isoformat(),
         }
     except pyodbc.Error as exc:
         raise HTTPException(
@@ -2444,6 +2840,7 @@ def matricula_career_state_summary(
 )
 def matricula_career_state_students(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
     cod_anio_basica: Annotated[str | None, Query(description="Codigo de carrera")] = None,
     nombre_carrera: Annotated[str | None, Query(description="Nombre de carrera")] = None,
     escuela: Annotated[str | None, Query(description="Escuela")] = None,
@@ -2463,50 +2860,36 @@ def matricula_career_state_students(
     escuela_filter = _clean_cell(escuela) or None
     top_limit = max(1, min(int(limit or 10000), 20000))
     query = (
-        _MATRICULA_ACTUAL_CTE
+        _MATRICULA_CNE_CARRERA_CTE
         + f"""
         SELECT TOP ({top_limit})
-            escuela,
-            cod_anio_basica,
-            nombre_carrera,
-            tipo_matricula,
-            estado_codigo,
-            estado_nombre,
-            codigo_estud,
-            Cedula_Est,
-            Apellidos_nombre,
-            correo_personal_datos,
-            correo_intec_datos,
-            codigo_periodo,
-            Detalle_Periodo,
-            anio_periodo
-        FROM (
-            SELECT
-                COALESCE(NULLIF(LTRIM(RTRIM(CAST(ca.tp_escuela AS varchar(250)))), ''), 'Sin escuela') AS escuela,
-                COALESCE(TRY_CONVERT(varchar(50), bc.cod_anio_Basica), '') AS cod_anio_basica,
-                COALESCE(NULLIF(LTRIM(RTRIM(CAST(bc.nombre_carrera AS varchar(250)))), ''), 'Sin carrera registrada') AS nombre_carrera,
-                bc.tipo_matricula,
-                bc.estado_codigo,
-                bc.estado_nombre,
-                bc.codigo_estud,
-                bc.Cedula_Est,
-                bc.Apellidos_nombre,
-                bc.correo_personal_datos,
-                bc.correo_intec_datos,
-                bc.codigo_periodo,
-                bc.Detalle_Periodo,
-                bc.anio_periodo
-            FROM base_cruce bc
-            LEFT JOIN carrera_catalogo_reporte ca
-                ON TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), bc.cod_anio_Basica)
-               AND ca.rn_carrera = 1
-        ) filtered
-        WHERE (? IS NULL OR cod_anio_basica = ?)
-          AND (? IS NULL OR nombre_carrera = ?)
-          AND (? IS NULL OR escuela = ?)
-          AND (? IS NULL OR estado_codigo = ?)
-          AND (? IS NULL OR tipo_matricula = ?)
-        ORDER BY Apellidos_nombre, codigo_estud
+            cne.escuela,
+            cne.cod_anio_basica,
+            cne.nombre_carrera,
+            cne.tipo_matricula,
+            cne.estado_codigo,
+            cne.estado_nombre,
+            detalle.codigo_estud,
+            cne.Cedula_Est,
+            cne.Apellidos_nombre,
+            detalle.correo AS correo_personal_datos,
+            detalle.correointec AS correo_intec_datos
+        FROM matricula_cne_carrera cne
+        OUTER APPLY (
+            SELECT TOP (1)
+                datos.codigo_estud,
+                datos.correo,
+                datos.correointec
+            FROM dbo.DATOS_ESTUD datos
+            WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
+            ORDER BY TRY_CONVERT(bigint, datos.codigo_estud) DESC
+        ) detalle
+        WHERE (? IS NULL OR cne.cod_anio_basica = ?)
+          AND (? IS NULL OR cne.nombre_carrera = ?)
+          AND (? IS NULL OR cne.escuela = ?)
+          AND (? IS NULL OR cne.estado_codigo = ?)
+          AND (? IS NULL OR cne.tipo_matricula = ?)
+        ORDER BY cne.Apellidos_nombre, detalle.codigo_estud
         """
     )
 
@@ -2542,9 +2925,9 @@ def matricula_career_state_students(
                 "nombre_estudiante": str(row.Apellidos_nombre or ""),
                 "correo_personal": str(row.correo_personal_datos or ""),
                 "correo_intec": str(row.correo_intec_datos or ""),
-                "periodo": str(row.codigo_periodo or ""),
-                "detalle_periodo": str(row.Detalle_Periodo or ""),
-                "anio_periodo": int(row.anio_periodo) if row.anio_periodo is not None else None,
+                "periodo": "",
+                "detalle_periodo": "Reporte general CNE",
+                "anio_periodo": None,
             }
             for row in rows
         ]
@@ -2559,6 +2942,8 @@ def matricula_career_state_students(
                 "estado_codigo": estado,
                 "tipo_matricula": tipo,
             },
+            "fuente": "dbo.TOTALESTUDMATRICCNE",
+            "consultado_en": datetime.now(timezone.utc).isoformat(),
         }
     except pyodbc.Error as exc:
         raise HTTPException(
@@ -2572,9 +2957,19 @@ def matricula_career_state_students(
     responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
 )
 def dashboard_matricula(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
+    response: Response,
 ) -> dict[str, Any]:
-    del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    if (current_user.rol or "").strip().upper() == "ADMISIONES":
+        try:
+            return _dashboard_admisiones(current_user)
+        except pyodbc.Error as exc:
+            raise HTTPException(status_code=500, detail=f"Error consultando dashboard personal de admisiones: {exc}") from exc
+
     trend_query = (
         _MATRICULA_ACTUAL_CTE
         + """
@@ -2608,39 +3003,32 @@ def dashboard_matricula(
         """
     )
     states_query = (
-        _MATRICULA_ACTUAL_CTE
+        _MATRICULA_CNE_CTE
         + """
         SELECT
-            bc.estado_codigo,
-            bc.estado_nombre,
+            cne.estado_codigo,
+            MAX(cne.estado_nombre) AS estado_nombre,
             COUNT(*) AS total_estudiantes
-        FROM base_cruce bc
-        WHERE bc.estado_codigo IN ('A', 'G', 'P', 'R')
-          AND __DASHBOARD_IGNORED_CEDULA_FILTER__
-        GROUP BY bc.estado_codigo, bc.estado_nombre
-        ORDER BY bc.estado_codigo
+        FROM matricula_cne_catalogada cne
+        WHERE cne.estado_codigo IN ('A', 'G', 'P', 'R')
+        GROUP BY cne.estado_codigo
+        ORDER BY cne.estado_codigo
         """
     )
     active_by_type_query = (
-        _MATRICULA_ACTUAL_CTE
+        _MATRICULA_CNE_CTE
         + """
         SELECT
-            bc.tipo_matricula,
+            cne.tipo_matricula,
             COUNT(*) AS total_estudiantes
-        FROM base_cruce bc
-        WHERE bc.estado_codigo = 'A'
-          AND bc.tipo_matricula IN ('R', 'H')
-          AND __DASHBOARD_IGNORED_CEDULA_FILTER__
-        GROUP BY bc.tipo_matricula
-        ORDER BY bc.tipo_matricula
+        FROM matricula_cne_catalogada cne
+        WHERE cne.estado_codigo = 'A'
+          AND cne.tipo_matricula IN ('R', 'H')
+        GROUP BY cne.tipo_matricula
+        ORDER BY cne.tipo_matricula
         """
     )
     trend_query = trend_query.replace("__DASHBOARD_IGNORED_CEDULA_FILTER__", _DASHBOARD_IGNORED_CEDULA_SQL)
-    states_query = states_query.replace("__DASHBOARD_IGNORED_CEDULA_FILTER__", _DASHBOARD_IGNORED_CEDULA_SQL)
-    active_by_type_query = active_by_type_query.replace(
-        "__DASHBOARD_IGNORED_CEDULA_FILTER__",
-        _DASHBOARD_IGNORED_CEDULA_SQL,
-    )
 
     try:
         with get_connection() as conn:
@@ -2725,7 +3113,10 @@ def dashboard_matricula(
             {"tipo_matricula": "H", "total_estudiantes": active_homologation},
         ]
 
+        admissions_dashboard = _dashboard_admisiones()
+
         return {
+            "dashboard_type": "matricula",
             "trend": trend,
             "states": estados,
             "active_by_type": active_by_type,
@@ -2733,20 +3124,224 @@ def dashboard_matricula(
             "active_homologation_students": active_homologation,
             "active_regular_homologation_students": active_total,
             "total_estudiantes": total_estudiantes,
+            "consultado_en": datetime.now(timezone.utc).isoformat(),
             "criteria": {
                 "fecha": "PERIODO.fechain",
-                "excluidos": [
-                    "Cambio Periodo",
-                    "Reingreso",
-                    "Educacion Continua",
-                    "Sin matricula en CARRERAXESTUD",
-                    f"Cedula {_DASHBOARD_IGNORED_CEDULA} solo en dashboard",
-                ],
-                "fuente": "DATOS_ESTUD como universo de estudiantes; CARRERAXESTUD clasifica R/H cuando existe; PENSUM se une para detalle de materia",
+                "excluidos": [],
+                "fuente": "dbo.TOTALESTUDMATRICCNE enlazada con dbo.ESTADO; consulta directa sin cache para igualar el reporte institucional",
             },
+            "admissions": admissions_dashboard.get("admissions", {}),
         }
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando dashboard de matricula: {exc}") from exc
+
+
+@router.get(
+    "/dashboard-matricula/admisiones-students",
+    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+)
+def dashboard_admisiones_students(
+    current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
+    estado: Annotated[
+        str,
+        Query(
+            description=(
+                "Filtro: ALL, A, P, G, R, CABECERA_MATRICULA, PENDIENTE_MATRICULA o SIN_ESTADO"
+            )
+        ),
+    ] = "ALL",
+    codigo_periodo: Annotated[str | None, Query(description="Periodo academico de PREINSCRIPCION.codperiodo")] = None,
+    limit: Annotated[int, Query(ge=1, le=20000)] = 10000,
+) -> dict[str, Any]:
+    status = (estado or "ALL").strip().upper()
+    allowed_statuses = {"ALL", "A", "P", "G", "R", "CABECERA_MATRICULA", "PENDIENTE_MATRICULA", "SIN_ESTADO"}
+    if status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="Estado de admisiones no valido.")
+
+    period_filter = ""
+    period_params: list[Any] = []
+    if codigo_periodo and str(codigo_periodo).strip():
+        period_filter = "AND TRY_CONVERT(varchar(50), p.codperiodo) = ?"
+        period_params.append(str(codigo_periodo).strip())
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            advisor_codes = _resolve_admission_advisor_codes(cursor, current_user)
+            personal_filter = ""
+            personal_params: list[Any] = []
+            admissions_user_filter = "AND COALESCE(TRY_CONVERT(int, u.tp_us), TRY_CONVERT(int, u.tipousuario)) = 5"
+            if (current_user.rol or "").strip().upper() == "ADMISIONES":
+                admissions_user_filter = ""
+                if not advisor_codes:
+                    return {
+                        "items": [],
+                        "total": 0,
+                        "estado": status,
+                        "codigo_periodo": codigo_periodo or "",
+                        "codigo_asesor": "",
+                    }
+                personal_filter = f"AND TRY_CONVERT(varchar(50), p.codasesor) IN ({_sql_placeholders(advisor_codes)})"
+                personal_params = advisor_codes
+
+            status_filter = ""
+            if status == "PENDIENTE_MATRICULA":
+                status_filter = "AND cab.codigo_estud IS NULL"
+            elif status == "CABECERA_MATRICULA":
+                status_filter = "AND cab.codigo_estud IS NOT NULL"
+            elif status == "SIN_ESTADO":
+                status_filter = """
+                  AND cab.codigo_estud IS NOT NULL
+                  AND COALESCE(matched.estado_codigo, '') NOT IN ('A', 'P', 'G', 'R')
+                """
+            elif status in {"A", "P", "G", "R"}:
+                status_filter = "AND cab.codigo_estud IS NOT NULL AND matched.estado_codigo = ?"
+
+            status_params = [status] if status in {"A", "P", "G", "R"} else []
+            query = f"""
+                SELECT TOP ({int(limit)})
+                    TRY_CONVERT(varchar(50), p.Codestu) AS codestu,
+                    TRY_CONVERT(varchar(50), p.Cedula) AS cedula_preinscripcion,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), p.Apellidos_nombre))) AS nombre_preinscripcion,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), p.correo))) AS correo_preinscripcion,
+                    LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.telefono))) AS telefono,
+                    TRY_CONVERT(varchar(50), p.codperiodo) AS codigo_periodo,
+                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo') AS detalle_periodo,
+                    LTRIM(RTRIM(TRY_CONVERT(varchar(10), pe.TipoMatricula))) AS tipo_matricula,
+                    TRY_CONVERT(int, pe.anio) AS anio_periodo,
+                    TRY_CONVERT(varchar(50), p.codcarrera) AS codcarrera,
+                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ca.Nombre_Basica))), N'Sin carrera') AS carrera,
+                    p.Fecha_Ingreso AS fecha_ingreso,
+                    TRY_CONVERT(varchar(50), p.codasesor) AS codasesor,
+                    TRY_CONVERT(varchar(50), u.id_usuarios) AS usuario_id,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.nombres))) AS usuario_nombre,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.login))) AS usuario_login,
+                    matched.codigo_estud AS codigo_estud,
+                    matched.Cedula_Est AS cedula_matricula,
+                    matched.Apellidos_nombre AS nombre_matricula,
+                    matched.estado_codigo AS estado_codigo,
+                    cab.codigo_estud AS codigo_estud_cabecera,
+                    cab.Num_Matricula AS num_matricula
+                FROM dbo.PREINSCRIPCION p
+                LEFT JOIN dbo.PERIODO pe
+                  ON TRY_CONVERT(varchar(50), pe.cod_periodo) = TRY_CONVERT(varchar(50), p.codperiodo)
+                LEFT JOIN dbo.CARRERAS ca
+                  ON TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), p.codcarrera)
+                LEFT JOIN dbo.USUARIO_SIS u
+                  ON TRY_CONVERT(int, u.id_usuarios) = TRY_CONVERT(int, p.codasesor)
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        d.codigo_estud,
+                        d.Cedula_Est,
+                        d.Apellidos_nombre,
+                        UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado)))) AS estado_codigo
+                    FROM dbo.DATOS_ESTUD d
+                    WHERE (
+                          NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '') IS NOT NULL
+                          AND TRY_CONVERT(varchar(50), p.Codestu) = TRY_CONVERT(varchar(50), d.codigo_estud)
+                        )
+                       OR (
+                          NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NOT NULL
+                          AND REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '')
+                              = REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cedula_Est))), '-', ''), ' ', '')
+                        )
+                    ORDER BY
+                        CASE UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado))))
+                            WHEN 'A' THEN 1
+                            WHEN 'P' THEN 2
+                            WHEN 'G' THEN 3
+                            WHEN 'R' THEN 4
+                            ELSE 9
+                        END
+                ) matched
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        cm.codigo_estud,
+                        cm.codigo_periodo,
+                        cm.cod_anio_Basica,
+                        cm.Num_Matricula
+                    FROM dbo.CABECERA_MATRICULA cm
+                    WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = COALESCE(
+                            TRY_CONVERT(varchar(50), matched.codigo_estud),
+                            NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Codestu))), '')
+                        )
+                      AND TRY_CONVERT(varchar(50), cm.codigo_periodo) = TRY_CONVERT(varchar(50), p.codperiodo)
+                      AND (
+                            NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.codcarrera))), '') IS NULL
+                            OR TRY_CONVERT(varchar(50), cm.cod_anio_Basica) = TRY_CONVERT(varchar(50), p.codcarrera)
+                          )
+                    ORDER BY TRY_CONVERT(int, cm.Num_Matricula) DESC, cm.fecha_pago DESC
+                ) cab
+                WHERE 1 = 1
+                  {personal_filter}
+                  {admissions_user_filter}
+                  {period_filter}
+                  {status_filter}
+                  AND (
+                      NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '') IS NULL
+                      OR REPLACE(REPLACE(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Cedula))), '-', ''), ' ', '') <> ?
+                  )
+                ORDER BY pe.anio DESC, pe.cod_periodo DESC, p.Apellidos_nombre
+            """
+            params = [*personal_params, *period_params, *status_params, _DASHBOARD_IGNORED_CEDULA]
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        status_names = {
+            "A": "Activo",
+            "P": "Inactivo",
+            "G": "Graduado",
+            "R": "Retirado",
+            "PENDIENTE_MATRICULA": "Pendiente de matricula",
+            "CABECERA_MATRICULA": "Con cabecera de matricula",
+            "SIN_ESTADO": "Sin estado",
+            "ALL": "Todos",
+        }
+        items = []
+        for row in rows:
+            has_cabecera = row.codigo_estud_cabecera is not None
+            estado_codigo = str(row.estado_codigo or "").strip().upper()
+            if not has_cabecera:
+                estado_final = "PENDIENTE_MATRICULA"
+            elif estado_codigo in {"A", "P", "G", "R"}:
+                estado_final = estado_codigo
+            else:
+                estado_final = "SIN_ESTADO"
+            items.append(
+                {
+                    "codestu": str(row.codestu or ""),
+                    "codigo_estud": str(row.codigo_estud or row.codestu or ""),
+                    "cedula": str(row.cedula_matricula or row.cedula_preinscripcion or ""),
+                    "nombre_estudiante": str(row.nombre_matricula or row.nombre_preinscripcion or ""),
+                    "correo": str(row.correo_preinscripcion or ""),
+                    "telefono": str(row.telefono or ""),
+                    "codigo_periodo": str(row.codigo_periodo or ""),
+                    "detalle_periodo": str(row.detalle_periodo or ""),
+                    "tipo_matricula": str(row.tipo_matricula or ""),
+                    "anio_periodo": int(row.anio_periodo) if row.anio_periodo is not None else None,
+                    "codcarrera": str(row.codcarrera or ""),
+                    "carrera": str(row.carrera or ""),
+                    "fecha_ingreso": row.fecha_ingreso.isoformat() if isinstance(row.fecha_ingreso, date) else str(row.fecha_ingreso or ""),
+                    "codasesor": str(row.codasesor or ""),
+                    "usuario_id": str(row.usuario_id or ""),
+                    "usuario_nombre": str(row.usuario_nombre or ""),
+                    "usuario_login": str(row.usuario_login or ""),
+                    "estado_codigo": estado_final,
+                    "estado_nombre": status_names.get(estado_final, estado_final),
+                    "tiene_cabecera_matricula": has_cabecera,
+                    "num_matricula": str(row.num_matricula or ""),
+                }
+            )
+
+        return {
+            "items": items,
+            "total": len(items),
+            "estado": status,
+            "codigo_periodo": codigo_periodo or "",
+            "codigo_asesor": ", ".join(advisor_codes),
+        }
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error consultando estudiantes de admisiones: {exc}") from exc
 
 
 @router.get(
@@ -2754,7 +3349,7 @@ def dashboard_matricula(
     responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
 )
 def dashboard_matricula_students(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
     anio: Annotated[int, Query(ge=2000, le=2100, description="Anio de PERIODO.fechain")],
     mes: Annotated[int, Query(ge=1, le=12, description="Mes de PERIODO.fechain")],
     limit: Annotated[int, Query(ge=1, le=20000)] = 10000,
@@ -3187,10 +3782,12 @@ def matricula_cruce_completo(
 )
 def matricula_list(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    response: Response,
     tipo_matricula: Annotated[str | None, Query(description="R, H o vacio para cruce unico global")] = None,
     estado_codigo: Annotated[str | None, Query(description="Codigo de estado, por ejemplo A, P, R, G")] = None,
     anio_periodo: Annotated[int | None, Query(description="Anio academico de la primera matricula")] = None,
     punto_matricula: Annotated[str | None, Query(description="PRIMERA, ULTIMA o BOTH para movimiento")] = None,
+    fuente: Annotated[str | None, Query(description="CNE para replicar el reporte Crystal total de estudiantes")] = None,
     limit: Annotated[int, Query(ge=1, le=10000)] = 300,
 ) -> dict[str, Any]:
     del current_user
@@ -3199,10 +3796,83 @@ def matricula_list(
         tipo = "RH" if tipo_matricula.strip().upper() == "RH" else _validate_tipo(tipo_matricula)
     estado = estado_codigo.strip().upper() if estado_codigo else None
     punto = punto_matricula.strip().upper() if punto_matricula else None
+    fuente_reporte = _clean_cell(fuente).upper()
+    if fuente_reporte not in {"", "CNE"}:
+        raise HTTPException(status_code=400, detail="fuente debe ser CNE o permanecer vacia")
     if punto and punto not in {"PRIMERA", "ULTIMA", "BOTH", "ALL"}:
         raise HTTPException(status_code=400, detail="punto_matricula debe ser PRIMERA, ULTIMA, BOTH o ALL")
     punto_filter = _matricula_list_punto_filter(punto)
     punto_return = _matricula_list_point_param(punto)
+
+    if fuente_reporte == "CNE":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        query = (
+            _MATRICULA_CNE_CTE
+            + f"""
+            SELECT TOP ({limit})
+                cne.tipo_matricula,
+                cne.estado_codigo,
+                cne.estado_nombre,
+                detalle.codigo_estud,
+                cne.Cedula_Est,
+                cne.Apellidos_nombre,
+                cne.nombre_carrera,
+                detalle.correo AS correo_personal,
+                detalle.correointec AS correo_intec
+            FROM matricula_cne_catalogada cne
+            OUTER APPLY (
+                SELECT TOP (1)
+                    datos.codigo_estud,
+                    datos.correo,
+                    datos.correointec
+                FROM dbo.DATOS_ESTUD datos
+                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
+                ORDER BY TRY_CONVERT(bigint, datos.codigo_estud) DESC
+            ) detalle
+            WHERE (? IS NULL OR (? = 'RH' AND cne.tipo_matricula IN ('R', 'H')) OR cne.tipo_matricula = ?)
+              AND (? IS NULL OR cne.estado_codigo = ?)
+            ORDER BY cne.Apellidos_nombre, cne.nombre_carrera, cne.tipo_matricula
+            """
+        )
+        try:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, tipo, tipo, tipo, estado, estado)
+                rows = cursor.fetchall()
+
+            items = [
+                {
+                    "punto_matricula": "CNE",
+                    "tipo_matricula": str(row.tipo_matricula or ""),
+                    "estado_codigo": str(row.estado_codigo or ""),
+                    "estado_nombre": str(row.estado_nombre or ""),
+                    "codigo_estud": str(row.codigo_estud or ""),
+                    "cedula": str(row.Cedula_Est or ""),
+                    "nombre_estudiante": str(row.Apellidos_nombre or ""),
+                    "nombre_carrera": str(row.nombre_carrera or ""),
+                    "correo_intec": str(row.correo_intec or ""),
+                    "correo_personal": str(row.correo_personal or ""),
+                    "periodo": "",
+                    "detalle_periodo": "Reporte general CNE",
+                    "anio_periodo": None,
+                }
+                for row in rows
+            ]
+            return {
+                "tipo_matricula": tipo or "ALL",
+                "estado_codigo": estado,
+                "anio_periodo": None,
+                "punto_matricula": "CNE",
+                "total": len(items),
+                "items": items,
+                "fuente": "dbo.TOTALESTUDMATRICCNE",
+                "consultado_en": datetime.now(timezone.utc).isoformat(),
+            }
+        except pyodbc.Error as exc:
+            raise HTTPException(status_code=500, detail=f"Error consultando listado CNE de matricula: {exc}") from exc
+
     source_cte = _MATRICULA_ACTUAL_CTE
     base_row_filter = ""
 
@@ -3460,16 +4130,8 @@ def _fetch_ingreso_ventas_pre_rows(cursor: pyodbc.Cursor, top_limit: int) -> lis
         OUTER APPLY (
             SELECT TOP (1) us.*
             FROM [dbo].[USUARIO_SIS] us
-            WHERE us.id_usuarios = p.codasesor
-               OR TRY_CONVERT(varchar(50), us.id_usuarios) = NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Usuario))), '')
-               OR UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), us.login)))) = UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), p.Usuario))))
-            ORDER BY
-                CASE WHEN us.id_usuarios = p.codasesor THEN 0 ELSE 1 END,
-                CASE
-                    WHEN TRY_CONVERT(varchar(50), us.id_usuarios) = NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.Usuario))), '') THEN 0
-                    ELSE 1
-                END,
-                us.nombres
+            WHERE TRY_CONVERT(varchar(50), us.id_usuarios) = TRY_CONVERT(varchar(50), p.codasesor)
+            ORDER BY us.nombres
         ) u
         LEFT JOIN [dbo].[PERIODO] pp
             ON pp.cod_periodo = p.codperiodo
@@ -3832,7 +4494,7 @@ def _build_ingreso_ventas_payload(top_limit: int) -> dict[str, Any]:
         "datos_estud_items": datos_estud_items,
         "criteria": {
             "fuente": "PREINSCRIPCION + USUARIO_SIS para ventas; base real desde DATOS_ESTUD, clasificada con CARRERAXESTUD cuando existe y enriquecida con PENSUM",
-            "join_usuario": "PREINSCRIPCION.codasesor -> USUARIO_SIS.id_usuarios; respaldo por Usuario/login",
+            "join_usuario": "PREINSCRIPCION.codasesor -> USUARIO_SIS.id_usuarios",
             "join_estudiante": "PREINSCRIPCION.Codestu -> DATOS_ESTUD.codigo_estud; respaldo por Cedula",
         },
     }
@@ -3868,6 +4530,47 @@ def _parse_graduation_date(value: Any) -> date | None:
         raise HTTPException(status_code=400, detail=f"Fecha de grado invalida: {text}") from exc
 
 
+def _parse_optional_excel_date(value: Any, label: str) -> date | None:
+    text = _clean_cell(value)
+    if not text:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{label} invalida: {text}") from exc
+
+
+def _ensure_graduation_extra_columns(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        """
+        IF COL_LENGTH('dbo.DATOS_ESTUD', 'Fecha_Emision_SENESCYT') IS NULL
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ADD Fecha_Emision_SENESCYT date NULL
+        END
+        IF COL_LENGTH('dbo.DATOS_ESTUD', 'Cod_Refrendacion') IS NULL
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ADD Cod_Refrendacion varchar(50) NULL
+        END
+        ELSE
+        BEGIN
+            DECLARE @currentLength int;
+            SELECT @currentLength = c.max_length
+            FROM sys.columns c
+            WHERE c.object_id = OBJECT_ID('dbo.DATOS_ESTUD')
+              AND c.name = 'Cod_Refrendacion';
+            IF ISNULL(@currentLength, 0) < 50
+            BEGIN
+                ALTER TABLE dbo.DATOS_ESTUD ALTER COLUMN Cod_Refrendacion varchar(50) NULL
+            END
+        END
+        """
+    )
+
+
 def _style_excel_header(worksheet: Any) -> None:
     fill = PatternFill("solid", fgColor="DDEBF7")
     for cell in worksheet[1]:
@@ -3887,11 +4590,13 @@ def _graduation_status_sql(alias: str = "d") -> str:
             WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) IN ('A', 'ACTIVO', 'ACTIVA') THEN 'A'
             WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) IN ('P', 'I', 'INACTIVO', 'INACTIVA') THEN 'P'
             WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) IN ('R', 'RETIRADO', 'RETIRADA') THEN 'R'
+            WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) IN ('E', 'EGRESADO', 'EGRESADA') THEN 'E'
             WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) IN ('G', 'GRADUADO', 'GRADUADA') THEN 'G'
             WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))) = 'D' THEN 'D'
             WHEN TRY_CONVERT(int, {alias}.Estado) IN (1, 10, 11, 12, 13, 14) THEN 'A'
             WHEN TRY_CONVERT(int, {alias}.Estado) IN (2, 20, 21, 22) THEN 'P'
             WHEN TRY_CONVERT(int, {alias}.Estado) IN (3, 30, 31, 32) THEN 'R'
+            WHEN TRY_CONVERT(int, {alias}.Estado) IN (5, 50, 51, 52) THEN 'E'
             WHEN TRY_CONVERT(int, {alias}.Estado) IN (4, 40, 41, 42) THEN 'G'
             ELSE COALESCE(NULLIF(UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(50), {alias}.Estado)))), ''), 'SIN ESTADO')
         END
@@ -3904,6 +4609,7 @@ def _graduation_status_name(code: Any) -> str:
         "A": "Activo",
         "P": "Inactivo",
         "R": "Retirado",
+        "E": "Egresado",
         "G": "Graduado",
         "D": "Educación Continua",
         "SIN ESTADO": "Sin estado",
@@ -3937,6 +4643,7 @@ def _graduation_date_student_rows(
         params.extend([needle, needle, f"%{document_needle}%", needle])
     with get_connection() as conn:
         cursor = conn.cursor()
+        _ensure_graduation_extra_columns(cursor)
         cursor.execute(
             f"""
             SELECT TOP ({limit})
@@ -3947,7 +4654,9 @@ def _graduation_date_student_rows(
                 LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), c.Nombre_Basica))) AS carrera,
                 TRY_CONVERT(varchar(50), cx.codigo_periodo) AS codigo_periodo,
                 LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS periodo,
-                d.Fecha_Grado AS fecha_grado
+                d.Fecha_Grado AS fecha_grado,
+                d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
             FROM dbo.CARRERAXESTUD cx
             INNER JOIN dbo.DATOS_ESTUD d
                 ON TRY_CONVERT(varchar(50), d.codigo_estud) = TRY_CONVERT(varchar(50), cx.codigo_estud)
@@ -3959,7 +4668,7 @@ def _graduation_date_student_rows(
             GROUP BY
                 d.codigo_estud, d.Cedula_Est, d.Apellidos_nombre,
                 cx.cod_anio_Basica, c.Nombre_Basica, cx.codigo_periodo, p.Detalle_Periodo,
-                d.Fecha_Grado
+                d.Fecha_Grado, d.Fecha_Emision_SENESCYT, d.Cod_Refrendacion
             ORDER BY d.Apellidos_nombre, c.Nombre_Basica
             """,
             *params,
@@ -3974,6 +4683,8 @@ def _graduation_date_student_rows(
                 "codigo_periodo": _clean_cell(row.codigo_periodo),
                 "periodo": _clean_cell(row.periodo),
                 "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+                "fecha_emision_senescyt": row.fecha_emision_senescyt.isoformat() if row.fecha_emision_senescyt else "",
+                "cod_refrendacion": _clean_cell(row.cod_refrendacion),
             }
             for row in cursor.fetchall()
         ]
@@ -3981,7 +4692,7 @@ def _graduation_date_student_rows(
 
 @router.get("/fecha-grado/catalog")
 def graduation_date_catalog(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
     periodo: Annotated[str, Query(max_length=50)] = "",
 ) -> dict[str, Any]:
     del current_user
@@ -4050,7 +4761,7 @@ def graduation_date_catalog(
 
 @router.get("/fecha-grado/estudiantes")
 def graduation_date_students(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
     periodo: Annotated[str, Query(min_length=1, max_length=50)],
     carrera: Annotated[str, Query(max_length=50)] = "",
     busqueda: Annotated[str, Query(max_length=120)] = "",
@@ -4069,23 +4780,32 @@ def graduation_date_students(
 
 @router.get("/fecha-grado/verificacion")
 def graduation_date_verification(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
     estado: Annotated[str, Query(max_length=50)] = "",
     page: Annotated[int, Query(ge=1, le=100000)] = 1,
     page_size: Annotated[int, Query(ge=10, le=200)] = 25,
 ) -> dict[str, Any]:
-    del current_user
     status_code = _clean_cell(estado).upper()
+    secretary_only = current_user.rol == "SECRETARIA"
+    allowed_secretary_statuses = {"E", "G"}
+    if secretary_only and status_code and status_code not in allowed_secretary_statuses:
+        status_code = "G"
     offset = (page - 1) * page_size
     status_expr = _graduation_status_sql("d")
     where = ""
     params: list[Any] = []
-    if status_code:
+    if secretary_only:
+        where = "WHERE estado_codigo IN ('E', 'G')"
+        if status_code:
+            where += " AND estado_codigo = ?"
+            params.append(status_code)
+    elif status_code:
         where = "WHERE estado_codigo = ?"
         params.append(status_code)
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            _ensure_graduation_extra_columns(cursor)
             cursor.execute(
                 f"""
                 WITH base AS (
@@ -4095,7 +4815,9 @@ def graduation_date_verification(
                         LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), d.Apellidos_nombre))) AS nombres,
                         LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Estado))) AS estado_raw,
                         {status_expr} AS estado_codigo,
-                        d.Fecha_Grado AS fecha_grado
+                        d.Fecha_Grado AS fecha_grado,
+                        d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
                     FROM dbo.DATOS_ESTUD d
                 )
                 SELECT COUNT(1) AS total,
@@ -4118,10 +4840,12 @@ def graduation_date_verification(
                         LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), d.Apellidos_nombre))) AS nombres,
                         LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Estado))) AS estado_raw,
                         {status_expr} AS estado_codigo,
-                        d.Fecha_Grado AS fecha_grado
+                        d.Fecha_Grado AS fecha_grado,
+                        d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
                     FROM dbo.DATOS_ESTUD d
                 )
-                SELECT codigo_estud, cedula, nombres, estado_raw, estado_codigo, fecha_grado
+                SELECT codigo_estud, cedula, nombres, estado_raw, estado_codigo, fecha_grado, fecha_emision_senescyt, cod_refrendacion
                 FROM base
                 {where}
                 ORDER BY nombres, codigo_estud
@@ -4140,6 +4864,8 @@ def graduation_date_verification(
                     "estado_nombre": _graduation_status_name(row.estado_codigo),
                     "estado_raw": _clean_cell(row.estado_raw),
                     "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
+                    "fecha_emision_senescyt": row.fecha_emision_senescyt.isoformat() if row.fecha_emision_senescyt else "",
+                    "cod_refrendacion": _clean_cell(row.cod_refrendacion),
                 }
                 for row in cursor.fetchall()
             ]
@@ -4159,19 +4885,21 @@ def graduation_date_verification(
 
 @router.get("/fecha-grado/plantilla")
 def graduation_date_template(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
 ) -> StreamingResponse:
     del current_user
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Fecha de grado"
-    headers = ["cedula", "fecha_grado"]
+    headers = ["cedula", "fecha_grado", "fecha_emision_senescyt", "cod_refrendacion"]
     sheet.append(headers)
     sheet["A1"].comment = Comment("Numero de cedula del estudiante. Se valida directamente contra DATOS_ESTUD.", "INTEC")
     sheet["B1"].comment = Comment("Fecha de grado en formato AAAA-MM-DD. Ejemplo: 2026-06-30.", "INTEC")
+    sheet["C1"].comment = Comment("Fecha de emision SENESCYT en formato AAAA-MM-DD. Ejemplo: 2026-07-15.", "INTEC")
+    sheet["D1"].comment = Comment("Codigo de refrendacion. Maximo 50 caracteres.", "INTEC")
     _style_excel_header(sheet)
     sheet.freeze_panes = "A2"
-    widths = [18, 18]
+    widths = [18, 18, 26, 24]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     max_row = 1000
@@ -4189,9 +4917,12 @@ def graduation_date_template(
     )
     sheet.add_data_validation(date_validation)
     date_validation.add(f"B2:B{max_row}")
+    date_validation.add(f"C2:C{max_row}")
     for row in range(2, max_row + 1):
         sheet[f"A{row}"].number_format = "@"
         sheet[f"B{row}"].number_format = "yyyy-mm-dd"
+        sheet[f"C{row}"].number_format = "yyyy-mm-dd"
+        sheet[f"D{row}"].number_format = "@"
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -4205,10 +4936,13 @@ def graduation_date_template(
 
 @router.post("/fecha-grado/importar")
 async def import_graduation_dates(
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     filename = file.filename or ""
     if not filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Carga un archivo Excel .xlsx")
@@ -4222,16 +4956,23 @@ async def import_graduation_dates(
     try:
         cedula_index = headers.index("cedula")
         fecha_index = headers.index("fecha_grado")
+        fecha_senescyt_index = headers.index("fecha_emision_senescyt")
+        refrendacion_index = headers.index("cod_refrendacion")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="La plantilla debe incluir columnas cedula y fecha_grado") from exc
+        raise HTTPException(
+            status_code=400,
+            detail="La plantilla debe incluir columnas cedula, fecha_grado, fecha_emision_senescyt y cod_refrendacion",
+        ) from exc
 
-    updates: list[tuple[date | None, str, int]] = []
+    updates: list[tuple[date | None, date | None, str, str, int]] = []
     errors: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row_number, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
         cedula = re.sub(r"\D+", "", _clean_cell(row[cedula_index] if cedula_index < len(row) else ""))
         raw_date = row[fecha_index] if fecha_index < len(row) else None
-        if not cedula and not _clean_cell(raw_date):
+        raw_senescyt_date = row[fecha_senescyt_index] if fecha_senescyt_index < len(row) else None
+        raw_refrendacion = _clean_cell(row[refrendacion_index] if refrendacion_index < len(row) else "")[:50]
+        if not cedula and not _clean_cell(raw_date) and not _clean_cell(raw_senescyt_date) and not raw_refrendacion:
             continue
         if not cedula:
             errors.append({"fila": row_number, "cedula": "", "error": "Cédula vacía"})
@@ -4242,10 +4983,11 @@ async def import_graduation_dates(
         seen.add(cedula)
         try:
             parsed_date = _parse_graduation_date(raw_date)
+            parsed_senescyt_date = _parse_optional_excel_date(raw_senescyt_date, "Fecha de emision SENESCYT")
         except HTTPException as exc:
             errors.append({"fila": row_number, "cedula": cedula, "error": exc.detail})
             continue
-        updates.append((parsed_date, cedula, row_number))
+        updates.append((parsed_date, parsed_senescyt_date, raw_refrendacion, cedula, row_number))
     if errors:
         return {
             "ok": False,
@@ -4260,17 +5002,22 @@ async def import_graduation_dates(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            _ensure_graduation_extra_columns(cursor)
             updated = 0
             not_found: list[dict[str, Any]] = []
             updated_rows: list[dict[str, Any]] = []
-            for graduation_date, cedula, row_number in updates:
+            for graduation_date, senescyt_date, refrendacion, cedula, row_number in updates:
                 cursor.execute(
                     """
                     UPDATE dbo.DATOS_ESTUD
-                    SET Fecha_Grado = ?
+                    SET Fecha_Grado = ?,
+                        Fecha_Emision_SENESCYT = ?,
+                        Cod_Refrendacion = ?
                     WHERE REPLACE(REPLACE(TRY_CONVERT(varchar(50), Cedula_Est), '-', ''), ' ', '') = ?
                     """,
                     graduation_date,
+                    senescyt_date,
+                    refrendacion,
                     cedula,
                 )
                 rowcount = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
@@ -4280,6 +5027,8 @@ async def import_graduation_dates(
                         "fila": row_number,
                         "cedula": cedula,
                         "fecha_grado": graduation_date.isoformat() if graduation_date else "",
+                        "fecha_emision_senescyt": senescyt_date.isoformat() if senescyt_date else "",
+                        "cod_refrendacion": refrendacion,
                         "registros": rowcount,
                     })
                 else:
@@ -4305,23 +5054,30 @@ async def import_graduation_dates(
 @router.post("/fecha-grado/guardar")
 def save_graduation_dates(
     payload: GraduationDateSavePayload,
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
 ) -> dict[str, Any]:
     del current_user
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            _ensure_graduation_extra_columns(cursor)
             updated = 0
             for item in payload.items:
                 code = _clean_cell(item.codigo_estud)
                 graduation_date = _parse_graduation_date(item.fecha_grado)
+                senescyt_date = _parse_optional_excel_date(item.fecha_emision_senescyt, "Fecha de emision SENESCYT")
+                refrendacion = _clean_cell(item.cod_refrendacion)[:50]
                 cursor.execute(
                     """
                     UPDATE dbo.DATOS_ESTUD
-                    SET Fecha_Grado = ?
+                    SET Fecha_Grado = ?,
+                        Fecha_Emision_SENESCYT = ?,
+                        Cod_Refrendacion = ?
                     WHERE TRY_CONVERT(varchar(50), codigo_estud) = ?
                     """,
                     graduation_date,
+                    senescyt_date,
+                    refrendacion,
                     code,
                 )
                 updated += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
@@ -4331,6 +5087,1216 @@ def save_graduation_dates(
         raise
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar las fechas de grado: {exc}") from exc
+
+
+_LEGACY_STUDENT_DATA_FIELDS = [
+    "tipodocumento",
+    "Cedula_Est",
+    "Apellidos_nombre",
+    "Sexo",
+    "generoId",
+    "EstadoCivil",
+    "Etnia",
+    "Nacionalidad",
+    "tiposangre",
+    "discapacidad",
+    "Porce_Capacidad",
+    "No_Carnet",
+    "Tipo_Capacidad",
+    "Fecha_Nac",
+    "paisNacionalidadId",
+    "provinciaNacimeintoId",
+    "cantonNacimeintoId",
+    "paisResidenciaId",
+    "codprov",
+    "Canton",
+    "tipoColegioId",
+    "ModalidadEstudio",
+    "Jornada",
+    "Fecha_Ingreso",
+    "fechaMatricula",
+    "tipoMatriculaId",
+    "nivelAcademicoQueCursa",
+    "duracionPeriodoAcademico",
+    "haRepetidoAlMenosUnaMateria",
+    "Paralelo",
+    "haPerdidoLaGratuidad",
+    "recibePensionDiferenciada",
+    "Ocupacion",
+    "ingresoEstudianteId",
+    "bonoDesarrolloId",
+    "haRealizadoPracticasPreprofesionales",
+    "nroHorasPracticasPreprofesionales",
+    "entornoInstitucionalPracticasProfesionales",
+    "sectorEconomicoPracticaProfesional",
+    "tipoBecaId",
+    "primeraRazonBecaId",
+    "segundaRazonBecaId",
+    "terceraRazonBecaId",
+    "cuartaRazonBecaId",
+    "quintaRazonBecaId",
+    "sextaRazonBecaId",
+    "montoBeca",
+    "porcientoBecaCoberturaArancel",
+    "porcientoBecaCoberturaManuntencion",
+    "financiamientoBeca",
+    "montoAyudaEconomica",
+    "montoCreditoEducativo",
+    "participaEnProyectoVinculacionSociedad",
+    "tipoAlcanceProyectoVinculacionId",
+    "correo",
+    "movil",
+    "nivelFormacionPadre",
+    "nivelFormacionMadre",
+    "IngresoHogar",
+    "Numpersonasvive",
+    "ciudad",
+    "calle_principal",
+    "referencia",
+    "NumHogar",
+    "correointec",
+]
+
+_LEGACY_TEACHER_DATA_FIELDS = [
+    "tipoDocumentoId",
+    "cedula_doc",
+    "apellidos_nombre",
+    "sexo",
+    "generoId",
+    "estado_civil",
+    "etniaId",
+    "nacionalidad",
+    "Direccion",
+    "provinciaSufragio",
+    "movil",
+    "correop",
+    "numDomicilio",
+    "discapacidad",
+    "porcen_discapa",
+    "tipo_discapa",
+    "carnet_conadis",
+    "tipoEnfermedadCatastrofica",
+    "fecha_nac",
+    "paisNacionalidadId",
+    "nivelFormacion",
+    "fechaIngresoIES",
+    "fechaSalidaIES",
+    "relacionLaboralIESId",
+    "ingresoConCursoMeritos",
+    "escalafonDocenteId",
+    "cargoDirectivoId",
+    "tiempoDedicacionId",
+    "nombreUnidadAcademica",
+    "nroasignaturasdocente",
+    "nroHorasLaborablesSemanaEnCarreraPrograma",
+    "nroHorasClaseSemanaCarreraPrograma",
+    "nroHorasInvestigacionSemanaCarreraPrograma",
+    "nroHorasAdministrativasSemanaCarreraPrograma",
+    "nroHorasOtrasActividadesSemanaCarreraPrograma",
+    "nroHorasVinculacionSociedad",
+    "salarioMensual",
+    "docenciaTecnicoSuperior",
+    "docenciaTecnologico",
+    "estaEnPeriodoSabatico",
+    "fechaInicioPeriodoSabatico",
+    "estaCursandoEstudiosId",
+    "institucionDOndeCursaEstudios",
+    "paisEstudiosId",
+    "tituloAObtener",
+    "poseeBecaId",
+    "tipoBecaId",
+    "montoBeca",
+    "financiamientoBecaId",
+    "pubRevistasCienInIndexadasId",
+    "numPubRevistasCientifIndexadas",
+    "docenciaTecnologicoUniversitario",
+    "docenciaEspecializacionTecnologica",
+    "docenciaMaestriaTecnologica",
+    "tiposangre",
+    "correo",
+]
+
+
+def _quote_sql_name(name: str) -> str:
+    return f"[{name.replace(']', ']]')}]"
+
+
+def _table_columns(cursor: pyodbc.Cursor, table_name: str) -> set[str]:
+    cursor.execute(
+        """
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'dbo'
+          AND TABLE_NAME = ?
+        """,
+        table_name,
+    )
+    return {_clean_cell(row.COLUMN_NAME) for row in cursor.fetchall()}
+
+
+def _row_to_dict(row: Any, columns: list[str]) -> dict[str, Any]:
+    return {column: getattr(row, column, None) for column in columns}
+
+
+def _data_update_stats(fields: dict[str, Any], editable_columns: list[str]) -> tuple[int, int, list[str]]:
+    missing = [field for field in editable_columns if not _clean_cell(fields.get(field))]
+    total = len(editable_columns)
+    filled = max(total - len(missing), 0)
+    return filled, len(missing), missing
+
+
+def _student_data_summary(row: Any, editable_columns: list[str]) -> dict[str, Any]:
+    fields = _row_to_dict(row, editable_columns)
+    filled, pending, missing = _data_update_stats(fields, editable_columns)
+    total = len(editable_columns) or 1
+    return {
+        "id": _clean_cell(getattr(row, "codigo_estud", "")),
+        "codigo": _clean_cell(getattr(row, "codigo_estud", "")),
+        "nombre": _clean_cell(getattr(row, "Apellidos_nombre", "")),
+        "cedula": _clean_cell(getattr(row, "Cedula_Est", "")),
+        "tipo": "estudiante",
+        "carrera": _clean_cell(getattr(row, "Nombre_Basica", "")),
+        "correo": _clean_cell(getattr(row, "correo", "")),
+        "campos_llenos": filled,
+        "campos_pendientes": pending,
+        "campos_totales": total,
+        "porcentaje_lleno": round((filled / total) * 100, 2),
+        "campos_faltantes": missing[:20],
+    }
+
+
+def _teacher_data_summary(row: Any, editable_columns: list[str]) -> dict[str, Any]:
+    fields = _row_to_dict(row, editable_columns)
+    filled, pending, missing = _data_update_stats(fields, editable_columns)
+    total = len(editable_columns) or 1
+    return {
+        "id": _clean_cell(getattr(row, "codigo_doc", "")),
+        "codigo": _clean_cell(getattr(row, "codigo_doc", "")),
+        "nombre": _clean_cell(getattr(row, "apellidos_nombre", "")),
+        "cedula": _clean_cell(getattr(row, "cedula_doc", "")),
+        "tipo": "docente",
+        "carrera": _clean_cell(getattr(row, "unidad_academica", "")),
+        "correo": _clean_cell(getattr(row, "correo", "")) or _clean_cell(getattr(row, "correop", "")),
+        "campos_llenos": filled,
+        "campos_pendientes": pending,
+        "campos_totales": total,
+        "porcentaje_lleno": round((filled / total) * 100, 2),
+        "campos_faltantes": missing[:20],
+    }
+
+
+def _actualizacion_datos_columns(cursor: pyodbc.Cursor, target: str) -> list[str]:
+    table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
+    allowed = _LEGACY_STUDENT_DATA_FIELDS if target == "estudiantes" else _LEGACY_TEACHER_DATA_FIELDS
+    existing = _table_columns(cursor, table)
+    return [field for field in allowed if field in existing]
+
+
+_LEGACY_DATA_CATALOG_TABLES: dict[str, list[str]] = {
+    "tipodocumento": ["TIPODOCUMENTOS", "TipoDocumento", "TipoDocumentoIdentidad", "TipoDocumentoSenescyt"],
+    "tipoDocumentoId": ["TIPODOCUMENTOS", "TipoDocumento", "TipoDocumentoIdentidad", "TipoDocumentoSenescyt"],
+    "Sexo": ["Sexo"],
+    "sexo": ["Sexo"],
+    "generoId": ["Sexo"],
+    "EstadoCivil": ["EstadoCivil"],
+    "estado_civil": ["EstadoCivil"],
+    "Etnia": ["Etnia"],
+    "etniaId": ["Etnia"],
+    "Nacionalidad": ["PuebloNacionalidad", "Pais"],
+    "nacionalidad": ["PuebloNacionalidad", "Pais"],
+    "paisNacionalidadId": ["Pais"],
+    "paisResidenciaId": ["Pais"],
+    "paisEstudiosId": ["Pais"],
+    "codprov": ["Provincias"],
+    "provinciaNacimeintoId": ["Provincias"],
+    "provinciaSufragio": ["Provincias"],
+    "Canton": ["Canton"],
+    "cantonNacimeintoId": ["Canton"],
+    "tiposangre": ["TipoSangre"],
+    "tipoColegioId": ["TipoColegio"],
+    "ModalidadEstudio": ["ModalidadCarrera", "ModalidadMatricula"],
+    "Jornada": ["JornadaCarrera"],
+    "tipoMatriculaId": ["TipoMatricula"],
+    "nivelAcademicoQueCursa": ["NivelQueCursa"],
+    "duracionPeriodoAcademico": ["DuracionPeriodoAcademico"],
+    "haRepetidoAlMenosUnaMateria": ["Repeticion"],
+    "Paralelo": ["Paralelo"],
+    "haPerdidoLaGratuidad": ["PerdidaGratuidad"],
+    "recibePensionDiferenciada": ["PensionDiferida"],
+    "Ocupacion": ["Ocupacion"],
+    "ingresoEstudianteId": ["IngresosEstudiante"],
+    "bonoDesarrolloId": ["BonoDesarrollo"],
+    "discapacidad": ["Discapacidad"],
+    "Porce_Capacidad": ["PorcentajeDiscapacidad"],
+    "porcen_discapa": ["PorcentajeDiscapacidad"],
+    "Tipo_Capacidad": ["TipoDiscapacidad"],
+    "tipo_discapa": ["TipoDiscapacidad"],
+    "haRealizadoPracticasPreprofesionales": ["RealizoPracticasPreprofesionales"],
+    "nroHorasPracticasPreprofesionales": ["NroHorasPracticasProfesionales"],
+    "entornoInstitucionalPracticasProfesionales": ["TipoInstitucionPracticaProfesional"],
+    "sectorEconomicoPracticaProfesional": ["SectorEconomico"],
+    "tipoBecaId": ["TipoBeca", "Becas"],
+    "poseeBecaId": ["Becas", "TipoBeca"],
+    "primeraRazonBecaId": ["PrimeraRazonBeca"],
+    "segundaRazonBecaId": ["SegundaRazonBeca"],
+    "terceraRazonBecaId": ["TerceraRazonBeca"],
+    "cuartaRazonBecaId": ["CuartaRazonBeca"],
+    "quintaRazonBecaId": ["QuintaRazonBeca"],
+    "sextaRazonBecaId": ["SextaRazonBeca"],
+    "porcientoBecaCoberturaArancel": ["PorcentajeBecaCoberturaArancel"],
+    "porcientoBecaCoberturaManuntencion": ["PorcentajeBecaCoberturaManutencion"],
+    "financiamientoBeca": ["TipoFinanciacion"],
+    "financiamientoBecaId": ["TipoFinanciacion"],
+    "participaEnProyectoVinculacionSociedad": ["HaParticipadoPracticasVinculacion"],
+    "tipoAlcanceProyectoVinculacionId": ["AlcanceProyectoVinculacion"],
+    "nivelFormacionPadre": ["NivelFormacionPadre"],
+    "nivelFormacionMadre": ["NivelFormacionMadre"],
+    "nivelFormacion": ["NivelFormacion", "NivelFormacionDocente"],
+    "relacionLaboralIESId": ["RelacionLaboralIES", "RelacionLaboral"],
+    "ingresoConCursoMeritos": ["IngresoConCursoMeritos", "SiNo"],
+    "escalafonDocenteId": ["EscalafonDocente"],
+    "cargoDirectivoId": ["CargoDirectivo"],
+    "tiempoDedicacionId": ["TiempoDedicacion"],
+    "tipoEnfermedadCatastrofica": ["TipoEnfermedadCatastrofica", "EnfermedadCatastrofica"],
+    "estaEnPeriodoSabatico": ["SiNo"],
+    "estaCursandoEstudiosId": ["SiNo"],
+    "pubRevistasCienInIndexadasId": ["SiNo"],
+}
+
+
+def _catalog_options_from_pairs(pairs: list[tuple[str, str]]) -> list[dict[str, str]]:
+    return [{"value": value, "label": label} for value, label in pairs]
+
+
+def _numeric_catalog_options(values: list[int | str]) -> list[dict[str, str]]:
+    return [{"value": str(value), "label": str(value)} for value in values]
+
+
+_YES_NO_OPTIONS = [("1", "Si"), ("2", "No")]
+_BLOOD_TYPE_OPTIONS = [
+    ("1", "A +"),
+    ("2", "A -"),
+    ("3", "B +"),
+    ("4", "B -"),
+    ("5", "AB +"),
+    ("6", "AB -"),
+    ("7", "O +"),
+    ("8", "O -"),
+]
+
+
+_LEGACY_STATIC_CATALOGS_BY_TARGET: dict[str, dict[str, list[dict[str, str]]]] = {
+    "estudiantes": {
+        "tiposangre": _catalog_options_from_pairs(_BLOOD_TYPE_OPTIONS),
+    },
+    "docentes": {
+        "tiposangre": _catalog_options_from_pairs(_BLOOD_TYPE_OPTIONS),
+        "tipoEnfermedadCatastrofica": _catalog_options_from_pairs([
+            ("1", "Cancer"),
+            ("2", "Tumor cerebral"),
+            ("3", "Quemaduras graves"),
+            ("4", "Insuficiencia renal"),
+            ("5", "Otros"),
+            ("6", "No aplica"),
+        ]),
+        "nivelFormacion": _catalog_options_from_pairs([
+            ("1", "Tercer Nivel Tecnico"),
+            ("2", "Tercer Nivel Tecnologico"),
+            ("3", "Tercer Nivel de Grado"),
+            ("4", "Especialidad"),
+            ("5", "Especialidad medica u odontologica"),
+            ("6", "Maestria"),
+            ("7", "PhD"),
+            ("8", "Tercer Nivel Tecnologico Universitario"),
+            ("9", "Especializacion Tecnologica"),
+            ("10", "Maestria Tecnologica"),
+        ]),
+        "relacionLaboralIESId": _catalog_options_from_pairs([
+            ("1", "Contrato con relacion de dependencia"),
+            ("2", "Contrato sin relacion de dependencia"),
+            ("3", "Nombramiento provisional"),
+            ("4", "Nombramiento definitivo"),
+            ("5", "Comision de servicios"),
+        ]),
+        "ingresoConCursoMeritos": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "escalafonDocenteId": _catalog_options_from_pairs([
+            ("1", "Titular principal"),
+            ("2", "Titular agregado"),
+            ("3", "Titular auxiliar"),
+            ("4", "Ocasional"),
+            ("5", "Honorario"),
+            ("6", "Invitado"),
+        ]),
+        "cargoDirectivoId": _catalog_options_from_pairs([
+            ("1", "Rector"),
+            ("2", "Vicerrector"),
+            ("3", "Secretario"),
+            ("4", "Tesorero"),
+            ("5", "(en blanco)"),
+            ("6", "Otro"),
+            ("7", "No aplica"),
+        ]),
+        "tiempoDedicacionId": _catalog_options_from_pairs([
+            ("1", "Exclusiva o completa"),
+            ("2", "Semi exclusiva o a medio tiempo"),
+            ("3", "Tiempo parcial"),
+        ]),
+        "docenciaTecnicoSuperior": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "docenciaTecnologico": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "estaEnPeriodoSabatico": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "estaCursandoEstudiosId": _catalog_options_from_pairs([
+            ("1", "Nivel Tecnico"),
+            ("2", "Nivel Tecnologico"),
+            ("3", "Tercer Nivel"),
+            ("4", "Especialidad"),
+            ("5", "Especialidad medica u odontologica"),
+            ("6", "Maestria"),
+            ("7", "PhD"),
+            ("8", "No aplica"),
+            ("9", "Tercer Nivel Tecnologico Universitario"),
+            ("10", "Especializacion Tecnologica"),
+            ("11", "Maestria Tecnologica"),
+        ]),
+        "poseeBecaId": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "tipoBecaId": _catalog_options_from_pairs([
+            ("1", "Total"),
+            ("2", "Parcial"),
+            ("3", "No aplica"),
+        ]),
+        "financiamientoBecaId": _catalog_options_from_pairs([
+            ("1", "IES"),
+            ("2", "Senescyt"),
+            ("3", "Otro"),
+            ("4", "Transferencia del Estado"),
+            ("5", "No aplica"),
+        ]),
+        "pubRevistasCienInIndexadasId": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "docenciaTecnologicoUniversitario": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "docenciaEspecializacionTecnologica": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "docenciaMaestriaTecnologica": _catalog_options_from_pairs(_YES_NO_OPTIONS),
+        "nroasignaturasdocente": _numeric_catalog_options(list(range(0, 7))),
+        "nroHorasLaborablesSemanaEnCarreraPrograma": _numeric_catalog_options(list(range(0, 13)) + [40]),
+        "nroHorasClaseSemanaCarreraPrograma": _numeric_catalog_options(list(range(0, 13))),
+        "nroHorasInvestigacionSemanaCarreraPrograma": _numeric_catalog_options(list(range(0, 13))),
+        "nroHorasAdministrativasSemanaCarreraPrograma": _numeric_catalog_options([0, 15, 20, 25, 30, 40]),
+        "nroHorasOtrasActividadesSemanaCarreraPrograma": _numeric_catalog_options(list(range(0, 13))),
+        "nroHorasVinculacionSociedad": _numeric_catalog_options(list(range(0, 13))),
+    }
+}
+
+
+def _pick_catalog_column(columns: set[str], preferred: tuple[str, ...], contains: tuple[str, ...]) -> str | None:
+    by_lower = {column.lower(): column for column in columns}
+    for candidate in preferred:
+        column = by_lower.get(candidate.lower())
+        if column:
+            return column
+    for column in sorted(columns):
+        lower = column.lower()
+        if any(token in lower for token in contains):
+            return column
+    return None
+
+
+def _catalog_options_from_table(cursor: pyodbc.Cursor, table_name: str) -> list[dict[str, str]]:
+    try:
+        columns = _table_columns(cursor, table_name)
+    except pyodbc.Error:
+        return []
+    if not columns:
+        return []
+    value_column = _pick_catalog_column(
+        columns,
+        (
+            f"codigo_{table_name}",
+            f"id_{table_name}",
+            "codigo",
+            "id",
+            "cod",
+            "Cod_Provincia",
+            "Cod_Pais",
+            "NumDoc",
+            "NumM",
+            "codigo_canton",
+            "id_sexo",
+        ),
+        ("codigo", "cod_", "id_"),
+    )
+    label_column = _pick_catalog_column(
+        columns,
+        (
+            f"nombre_{table_name}",
+            "nombre",
+            "descripcion",
+            "detalle",
+            "Descripcion_Pais",
+            "Descripcion_Prov",
+            "TipoDoc",
+            "DetalleM",
+            "nombre_canton",
+            "detalle_sexo",
+        ),
+        ("nombre", "descripcion", "detalle"),
+    )
+    if not value_column or not label_column:
+        return []
+    active_column = next((column for column in columns if column.lower() == "activo"), None)
+    active_filter = ""
+    if active_column:
+        active_filter = f"AND ISNULL(TRY_CONVERT(int, {_quote_sql_name(active_column)}), 1) = 1"
+    try:
+        cursor.execute(
+            f"""
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), {_quote_sql_name(value_column)}) AS option_value,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), {_quote_sql_name(label_column)}))) AS option_label
+            FROM dbo.{_quote_sql_name(table_name)}
+            WHERE NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), {_quote_sql_name(label_column)}))), N'') IS NOT NULL
+              {active_filter}
+            GROUP BY {_quote_sql_name(value_column)}, {_quote_sql_name(label_column)}
+            ORDER BY option_label
+            """
+        )
+        return [
+            {
+                "value": _clean_cell(row.option_value),
+                "label": _clean_cell(row.option_label),
+            }
+            for row in cursor.fetchall()
+            if _clean_cell(row.option_value) and _clean_cell(row.option_label)
+        ]
+    except pyodbc.Error:
+        return []
+
+
+def _distinct_options_from_data_table(cursor: pyodbc.Cursor, source_table: str, field: str) -> list[dict[str, str]]:
+    try:
+        if field not in _table_columns(cursor, source_table):
+            return []
+        cursor.execute(
+            f"""
+            SELECT TOP (300)
+                TRY_CONVERT(nvarchar(250), {_quote_sql_name(field)}) AS option_value
+            FROM dbo.{_quote_sql_name(source_table)}
+            WHERE NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), {_quote_sql_name(field)}))), N'') IS NOT NULL
+            GROUP BY TRY_CONVERT(nvarchar(250), {_quote_sql_name(field)})
+            ORDER BY option_value
+            """
+        )
+        return [
+            {"value": _clean_cell(row.option_value), "label": _clean_cell(row.option_value)}
+            for row in cursor.fetchall()
+            if _clean_cell(row.option_value)
+        ]
+    except pyodbc.Error:
+        return []
+
+
+_STUDENT_NUMERIC_TEXT_FIELDS = {
+    "Cedula_Est",
+    "No_Carnet",
+    "NumHogar",
+    "Numpersonasvive",
+    "IngresoHogar",
+    "movil",
+}
+_STUDENT_DATE_FIELDS = {"Fecha_Nac", "Fecha_Ingreso", "fechaMatricula"}
+_STUDENT_BECAS_DEFAULTS = {
+    "tipoBecaId": "3",
+    "primeraRazonBecaId": "2",
+    "segundaRazonBecaId": "2",
+    "terceraRazonBecaId": "2",
+    "cuartaRazonBecaId": "2",
+    "quintaRazonBecaId": "2",
+    "sextaRazonBecaId": "2",
+    "montoBeca": "0",
+    "porcientoBecaCoberturaArancel": "NA",
+    "porcientoBecaCoberturaManuntencion": "NA",
+    "financiamientoBeca": "4",
+}
+
+
+_TEACHER_NUMERIC_TEXT_FIELDS = {
+    "cedula_doc",
+    "movil",
+    "numDomicilio",
+    "carnet_conadis",
+    "salarioMensual",
+    "montoBeca",
+    "numPubRevistasCientifIndexadas",
+    "nroasignaturasdocente",
+    "nroHorasLaborablesSemanaEnCarreraPrograma",
+    "nroHorasClaseSemanaCarreraPrograma",
+    "nroHorasInvestigacionSemanaCarreraPrograma",
+    "nroHorasAdministrativasSemanaCarreraPrograma",
+    "nroHorasOtrasActividadesSemanaCarreraPrograma",
+    "nroHorasVinculacionSociedad",
+}
+_TEACHER_DATE_FIELDS = {
+    "fecha_nac",
+    "fechaIngresoIES",
+    "fechaSalidaIES",
+    "fechaInicioPeriodoSabatico",
+}
+_TEACHER_ZERO_DEFAULT_FIELDS = {
+    "nroasignaturasdocente",
+    "nroHorasLaborablesSemanaEnCarreraPrograma",
+    "nroHorasClaseSemanaCarreraPrograma",
+    "nroHorasInvestigacionSemanaCarreraPrograma",
+    "nroHorasAdministrativasSemanaCarreraPrograma",
+    "nroHorasOtrasActividadesSemanaCarreraPrograma",
+    "nroHorasVinculacionSociedad",
+    "numPubRevistasCientifIndexadas",
+    "montoBeca",
+}
+
+
+def _sanitize_student_data_field(field: str, value: Any) -> str:
+    text = _clean_cell(value)
+    if not text:
+        return ""
+    if field in {"correo", "correointec"}:
+        return text if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text) else ""
+    if field in _STUDENT_NUMERIC_TEXT_FIELDS:
+        return re.sub(r"[^0-9+]", "", text)
+    if field in _STUDENT_DATE_FIELDS:
+        return re.sub(r"[^0-9-]", "", text)[:10]
+    return re.sub(r"<[^>]*>", "", text).strip()
+
+
+def _sanitize_teacher_data_field(field: str, value: Any) -> str:
+    text = _clean_cell(value)
+    if not text:
+        return ""
+    if field in {"correo", "correop"}:
+        return text if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text) else ""
+    if field in _TEACHER_NUMERIC_TEXT_FIELDS:
+        return re.sub(r"[^0-9.,+-]", "", text)
+    if field in _TEACHER_DATE_FIELDS:
+        return re.sub(r"[^0-9-]", "", text)[:10]
+    return re.sub(r"<[^>]*>", "", text).strip()
+
+
+def _fetch_single_value(cursor: pyodbc.Cursor, sql: str, *params: Any) -> str:
+    try:
+        cursor.execute(sql, *params)
+        row = cursor.fetchone()
+        if not row:
+            return ""
+        return _clean_cell(row[0])
+    except pyodbc.Error:
+        return ""
+
+
+def _fetch_student_beca_fields(cursor: pyodbc.Cursor, codigo_estud: str) -> dict[str, str]:
+    code = _clean_cell(codigo_estud)
+    if not code:
+        return {}
+    try:
+        beca_columns = _table_columns(cursor, "Becas")
+    except pyodbc.Error:
+        return {}
+    if not beca_columns:
+        return {}
+    code_columns = [column for column in ("codestud", "codigo_estud", "codigoEstud") if column in beca_columns]
+    for code_column in code_columns:
+        try:
+            cursor.execute(
+                f"""
+                SELECT TOP 1
+                    TRY_CONVERT(nvarchar(100), tipo_beca_recibe_id) AS tipoBecaId,
+                    TRY_CONVERT(nvarchar(100), primera_razon_beca_id) AS primeraRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), segunda_razon_beca_id) AS segundaRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), tercera_razon_beca_id) AS terceraRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), cuarta_razon_beca_id) AS cuartaRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), quinta_razon_beca_id) AS quintaRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), sexta_razon_beca_id) AS sextaRazonBecaId,
+                    TRY_CONVERT(nvarchar(100), valor_monto_beca) AS montoBeca,
+                    TRY_CONVERT(nvarchar(100), porcentaje_beca) AS porcientoBecaCoberturaArancel,
+                    N'NA' AS porcientoBecaCoberturaManuntencion,
+                    TRY_CONVERT(nvarchar(100), tipo_financiamiento_beca_id) AS financiamientoBeca
+                FROM dbo.Becas
+                WHERE TRY_CONVERT(nvarchar(100), {_quote_sql_name(code_column)}) = ?
+                ORDER BY id DESC
+                """,
+                code,
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    key: _clean_cell(getattr(row, key, "")) or fallback
+                    for key, fallback in _STUDENT_BECAS_DEFAULTS.items()
+                }
+        except pyodbc.Error:
+            continue
+    return {}
+
+
+def _latest_student_cabecera(cursor: pyodbc.Cursor, cedula: str) -> Any | None:
+    try:
+        cursor.execute(
+            """
+            SELECT TOP 1
+                cm.codmodalidad,
+                cm.codjornada,
+                cm.ControlMatricula
+            FROM dbo.CABECERA_MATRICULA cm
+            INNER JOIN dbo.DATOS_ESTUD de
+                ON TRY_CONVERT(nvarchar(100), cm.codigo_estud) = TRY_CONVERT(nvarchar(100), de.codigo_estud)
+            WHERE REPLACE(REPLACE(TRY_CONVERT(nvarchar(50), de.Cedula_Est), '-', ''), ' ', '') = ?
+            ORDER BY COALESCE(cm.fecha_pago, TRY_CONVERT(datetime, cm.Num_Matricula), '1900-01-01') DESC
+            """,
+            re.sub(r"\D+", "", cedula),
+        )
+        return cursor.fetchone()
+    except pyodbc.Error:
+        return None
+
+
+def _resolve_catalog_value_by_label(cursor: pyodbc.Cursor, table_name: str, label: str) -> str:
+    label_clean = _clean_cell(label).upper()
+    if not label_clean:
+        return ""
+    for option in _catalog_options_from_table(cursor, table_name):
+        if option["label"].upper() == label_clean:
+            return option["value"]
+    return ""
+
+
+def _apply_student_legacy_rules(
+    cursor: pyodbc.Cursor,
+    fields: dict[str, Any],
+    *,
+    codigo_estud: str,
+    cedula: str,
+    editable_columns: list[str],
+) -> dict[str, str]:
+    result = {field: _sanitize_student_data_field(field, fields.get(field)) for field in editable_columns}
+    code = _clean_cell(codigo_estud)
+    document = _clean_cell(cedula) or result.get("Cedula_Est", "")
+
+    for field, default in _STUDENT_BECAS_DEFAULTS.items():
+        if field in result and not result.get(field):
+            result[field] = default
+    beca_fields = _fetch_student_beca_fields(cursor, code)
+    for field, default in _STUDENT_BECAS_DEFAULTS.items():
+        if field in result:
+            result[field] = beca_fields.get(field) or result.get(field) or default
+
+    if "porcientoBecaCoberturaManuntencion" in result:
+        result["porcientoBecaCoberturaManuntencion"] = "NA"
+    for field in ("montoAyudaEconomica", "montoCreditoEducativo"):
+        if field in result and result.get(field) in {"", "NA"}:
+            result[field] = "0"
+    if "NumHogar" in result and not result.get("NumHogar"):
+        result["NumHogar"] = "0"
+
+    if "correointec" in result and code:
+        correo_intec = _fetch_single_value(
+            cursor,
+            """
+            SELECT TOP 1 CorreoIntec
+            FROM dbo.CorreosEstudIntec
+            WHERE TRY_CONVERT(nvarchar(100), codestud) = ?
+              AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(150), CorreoIntec))), N'') IS NOT NULL
+            ORDER BY fecha DESC
+            """,
+            code,
+        )
+        if correo_intec:
+            result["correointec"] = correo_intec if "@" in correo_intec else f"{correo_intec}@intec.edu.ec"
+
+    latest_enrollment = _fetch_single_value(
+        cursor,
+        """
+        SELECT TOP 1 CONVERT(varchar(10), cx.Fecha_Matricula, 23)
+        FROM dbo.CARRERAXESTUD cx
+        INNER JOIN dbo.DATOS_ESTUD de
+            ON TRY_CONVERT(nvarchar(100), cx.codigo_estud) = TRY_CONVERT(nvarchar(100), de.codigo_estud)
+        WHERE REPLACE(REPLACE(TRY_CONVERT(nvarchar(50), de.Cedula_Est), '-', ''), ' ', '') = ?
+          AND cx.Fecha_Matricula IS NOT NULL
+        ORDER BY cx.Fecha_Matricula DESC
+        """,
+        re.sub(r"\D+", "", document),
+    )
+    first_enrollment = _fetch_single_value(
+        cursor,
+        """
+        SELECT TOP 1 CONVERT(varchar(10), cx.Fecha_Matricula, 23)
+        FROM dbo.CARRERAXESTUD cx
+        INNER JOIN dbo.DATOS_ESTUD de
+            ON TRY_CONVERT(nvarchar(100), cx.codigo_estud) = TRY_CONVERT(nvarchar(100), de.codigo_estud)
+        WHERE REPLACE(REPLACE(TRY_CONVERT(nvarchar(50), de.Cedula_Est), '-', ''), ' ', '') = ?
+          AND cx.Fecha_Matricula IS NOT NULL
+        ORDER BY cx.Fecha_Matricula ASC
+        """,
+        re.sub(r"\D+", "", document),
+    )
+    if latest_enrollment and "fechaMatricula" in result:
+        result["fechaMatricula"] = latest_enrollment
+    if first_enrollment and "Fecha_Ingreso" in result:
+        result["Fecha_Ingreso"] = first_enrollment
+
+    if result.get("Sexo") in {"1", "2"} and "generoId" in result:
+        result["generoId"] = result["Sexo"]
+
+    cabecera = _latest_student_cabecera(cursor, document)
+    if cabecera:
+        modalidad_map = {"1": "5", "3": "1"}
+        jornada_map = {"1": "1", "2": "3"}
+        cod_modalidad = modalidad_map.get(_clean_cell(getattr(cabecera, "codmodalidad", "")), _clean_cell(getattr(cabecera, "codmodalidad", "")))
+        cod_jornada = jornada_map.get(_clean_cell(getattr(cabecera, "codjornada", "")), _clean_cell(getattr(cabecera, "codjornada", "")))
+        control_matricula = _clean_cell(getattr(cabecera, "ControlMatricula", ""))
+        if "ModalidadEstudio" in result and cod_modalidad:
+            result["ModalidadEstudio"] = cod_modalidad
+        if "Jornada" in result and cod_jornada:
+            result["Jornada"] = cod_jornada
+        if "tipoMatriculaId" in result and control_matricula in {"1", "2", "3"}:
+            result["tipoMatriculaId"] = control_matricula
+    if "Jornada" in result and not result.get("Jornada"):
+        result["Jornada"] = "3"
+    if "tipoMatriculaId" in result and not result.get("tipoMatriculaId"):
+        result["tipoMatriculaId"] = "1"
+
+    paralelo_label = _fetch_single_value(
+        cursor,
+        """
+        SELECT TOP 1 LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), cx.Paralelo)))
+        FROM dbo.CARRERAXESTUD cx
+        INNER JOIN dbo.DATOS_ESTUD de
+            ON TRY_CONVERT(nvarchar(100), cx.codigo_estud) = TRY_CONVERT(nvarchar(100), de.codigo_estud)
+        WHERE REPLACE(REPLACE(TRY_CONVERT(nvarchar(50), de.Cedula_Est), '-', ''), ' ', '') = ?
+          AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), cx.Paralelo))), N'') IS NOT NULL
+        ORDER BY cx.Fecha_Matricula DESC
+        """,
+        re.sub(r"\D+", "", document),
+    )
+    if "Paralelo" in result and paralelo_label:
+        result["Paralelo"] = _resolve_catalog_value_by_label(cursor, "Paralelo", paralelo_label) or result.get("Paralelo", "")
+
+    if result.get("haRealizadoPracticasPreprofesionales") == "2":
+        result.update({
+            "nroHorasPracticasPreprofesionales": "NA",
+            "entornoInstitucionalPracticasProfesionales": "5",
+            "sectorEconomicoPracticaProfesional": "22",
+        })
+    if result.get("discapacidad") == "2":
+        result.update({"Porce_Capacidad": "0", "No_Carnet": "NA", "Tipo_Capacidad": "7"})
+    if result.get("participaEnProyectoVinculacionSociedad") != "1" and "tipoAlcanceProyectoVinculacionId" in result:
+        result["tipoAlcanceProyectoVinculacionId"] = "5"
+    return {field: value for field, value in result.items() if field in editable_columns}
+
+
+def _apply_teacher_legacy_rules(
+    fields: dict[str, Any],
+    *,
+    editable_columns: list[str],
+) -> dict[str, str]:
+    result = {field: _sanitize_teacher_data_field(field, fields.get(field)) for field in editable_columns}
+
+    if result.get("sexo") in {"1", "2"} and "generoId" in result:
+        result["generoId"] = result["sexo"]
+
+    if result.get("discapacidad") == "2":
+        if "tipo_discapa" in result:
+            result["tipo_discapa"] = "7"
+        if "porcen_discapa" in result:
+            result["porcen_discapa"] = "NA"
+
+    if result.get("estaEnPeriodoSabatico") == "2" and "fechaInicioPeriodoSabatico" in result:
+        result["fechaInicioPeriodoSabatico"] = "0001-01-01"
+
+    if result.get("estaCursandoEstudiosId") == "8":
+        if "poseeBecaId" in result:
+            result["poseeBecaId"] = "2"
+        if "tipoBecaId" in result:
+            result["tipoBecaId"] = "3"
+        if "financiamientoBecaId" in result:
+            result["financiamientoBecaId"] = "5"
+        if "paisEstudiosId" in result:
+            result["paisEstudiosId"] = "NA"
+        if "montoBeca" in result and not result.get("montoBeca"):
+            result["montoBeca"] = "0"
+
+    if result.get("poseeBecaId") == "2":
+        if "tipoBecaId" in result:
+            result["tipoBecaId"] = "3"
+        if "financiamientoBecaId" in result:
+            result["financiamientoBecaId"] = "5"
+        if "montoBeca" in result and not result.get("montoBeca"):
+            result["montoBeca"] = "0"
+
+    if result.get("pubRevistasCienInIndexadasId") == "2" and "numPubRevistasCientifIndexadas" in result:
+        result["numPubRevistasCientifIndexadas"] = "0"
+
+    for field in _TEACHER_ZERO_DEFAULT_FIELDS:
+        if field in result and result.get(field) == "":
+            result[field] = "0"
+
+    return {field: value for field, value in result.items() if field in editable_columns}
+
+
+def _legacy_data_update_catalogs(cursor: pyodbc.Cursor, columns: list[str], target: str) -> dict[str, list[dict[str, str]]]:
+    catalogs: dict[str, list[dict[str, str]]] = {}
+    source_table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
+    for field in columns:
+        options = list(_LEGACY_STATIC_CATALOGS_BY_TARGET.get(target, {}).get(field, []))
+        if not options:
+            for table_name in _LEGACY_DATA_CATALOG_TABLES.get(field, []):
+                options = _catalog_options_from_table(cursor, table_name)
+                if options:
+                    break
+        if not options and field in _LEGACY_DATA_CATALOG_TABLES:
+            options = _distinct_options_from_data_table(cursor, source_table, field)
+        if options:
+            catalogs[field] = options
+    return catalogs
+
+
+@router.get("/actualizacion-datos/{target}/buscar")
+def search_legacy_data_update_records(
+    target: str,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    q: str = Query(default="", max_length=120),
+    limit: int = Query(default=60, ge=1, le=200),
+) -> dict[str, Any]:
+    del current_user
+    if target not in {"estudiantes", "docentes"}:
+        raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
+    query = _clean_cell(q)
+    like = f"%{query}%"
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            editable_columns = _actualizacion_datos_columns(cursor, target)
+            if target == "estudiantes":
+                cursor.execute(
+                    f"""
+                    SELECT TOP ({limit})
+                        d.codigo_estud,
+                        d.Cedula_Est,
+                        d.Apellidos_nombre,
+                        d.correo,
+                        c.Nombre_Basica,
+                        {", ".join("d." + _quote_sql_name(column) for column in editable_columns)}
+                    FROM dbo.DATOS_ESTUD d
+                    OUTER APPLY (
+                        SELECT TOP 1 ca.Nombre_Basica
+                        FROM dbo.CABECERA_MATRICULA cm
+                        LEFT JOIN dbo.CARRERAS ca
+                          ON TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cm.cod_anio_Basica)
+                        WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = TRY_CONVERT(varchar(50), d.codigo_estud)
+                        ORDER BY TRY_CONVERT(int, cm.codigo_periodo) DESC, cm.fecha_pago DESC
+                    ) c
+                    WHERE
+                        NULLIF(?, '') IS NULL
+                        OR TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
+                        OR TRY_CONVERT(varchar(50), d.Cedula_Est) LIKE ?
+                        OR d.Apellidos_nombre LIKE ?
+                        OR d.correo LIKE ?
+                    ORDER BY d.Apellidos_nombre
+                    """,
+                    query,
+                    like,
+                    like,
+                    like,
+                    like,
+                )
+                rows = [_student_data_summary(row, editable_columns) for row in cursor.fetchall()]
+            else:
+                cursor.execute(
+                    f"""
+                    SELECT TOP ({limit})
+                        d.codigo_doc,
+                        d.cedula_doc,
+                        d.apellidos_nombre,
+                        d.correo,
+                        d.correop,
+                        d.nombreUnidadAcademica AS unidad_academica,
+                        {", ".join("d." + _quote_sql_name(column) for column in editable_columns)}
+                    FROM dbo.DATOSDOCENTE d
+                    WHERE
+                        NULLIF(?, '') IS NULL
+                        OR TRY_CONVERT(varchar(50), d.codigo_doc) LIKE ?
+                        OR TRY_CONVERT(varchar(50), d.cedula_doc) LIKE ?
+                        OR d.apellidos_nombre LIKE ?
+                        OR d.correo LIKE ?
+                        OR d.correop LIKE ?
+                    ORDER BY d.apellidos_nombre
+                    """,
+                    query,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                )
+                rows = [_teacher_data_summary(row, editable_columns) for row in cursor.fetchall()]
+            return {"rows": rows, "total": len(rows), "limit": limit, "query": query, "target": target}
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo buscar datos para actualización: {exc}") from exc
+
+
+def _load_legacy_data_update_record(cursor: pyodbc.Cursor, target: str, record_id: str) -> dict[str, Any]:
+    editable_columns = _actualizacion_datos_columns(cursor, target)
+    if not editable_columns:
+        raise HTTPException(status_code=500, detail="No hay columnas compatibles para actualizar")
+    if target == "estudiantes":
+        cursor.execute(
+            f"""
+            SELECT TOP 1
+                d.codigo_estud,
+                d.Cedula_Est,
+                d.Apellidos_nombre,
+                d.correo,
+                c.Nombre_Basica,
+                {", ".join("d." + _quote_sql_name(column) for column in editable_columns)}
+            FROM dbo.DATOS_ESTUD d
+            OUTER APPLY (
+                SELECT TOP 1 ca.Nombre_Basica
+                FROM dbo.CABECERA_MATRICULA cm
+                LEFT JOIN dbo.CARRERAS ca
+                  ON TRY_CONVERT(varchar(50), ca.Cod_AnioBasica) = TRY_CONVERT(varchar(50), cm.cod_anio_Basica)
+                WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = TRY_CONVERT(varchar(50), d.codigo_estud)
+                ORDER BY TRY_CONVERT(int, cm.codigo_periodo) DESC, cm.fecha_pago DESC
+            ) c
+            WHERE TRY_CONVERT(varchar(50), d.codigo_estud) = ?
+               OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.Cedula_Est), '-', ''), ' ', '') = ?
+            """,
+            record_id,
+            re.sub(r"\D+", "", record_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+        summary = _student_data_summary(row, editable_columns)
+    else:
+        cursor.execute(
+            f"""
+            SELECT TOP 1
+                d.codigo_doc,
+                d.cedula_doc,
+                d.apellidos_nombre,
+                d.correo,
+                d.correop,
+                d.nombreUnidadAcademica AS unidad_academica,
+                {", ".join("d." + _quote_sql_name(column) for column in editable_columns)}
+            FROM dbo.DATOSDOCENTE d
+            WHERE TRY_CONVERT(varchar(50), d.codigo_doc) = ?
+               OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.cedula_doc), '-', ''), ' ', '') = ?
+            """,
+            record_id,
+            re.sub(r"\D+", "", record_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Docente no encontrado")
+        summary = _teacher_data_summary(row, editable_columns)
+    fields = _row_to_dict(row, editable_columns)
+    if target == "estudiantes":
+        fields = _apply_student_legacy_rules(
+            cursor,
+            fields,
+            codigo_estud=_clean_cell(getattr(row, "codigo_estud", "")),
+            cedula=_clean_cell(getattr(row, "Cedula_Est", "")),
+            editable_columns=editable_columns,
+        )
+    elif target == "docentes":
+        fields = _apply_teacher_legacy_rules(
+            fields,
+            editable_columns=editable_columns,
+        )
+    return {
+        "ok": True,
+        "person": summary,
+        "fields": fields,
+        "columns": editable_columns,
+        "catalogs": _legacy_data_update_catalogs(cursor, editable_columns, target),
+        "target": target,
+    }
+
+
+@router.get("/actualizacion-datos/{target}/datos/{record_id}")
+def get_legacy_data_update_record(
+    target: str,
+    record_id: str,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    if target not in {"estudiantes", "docentes"}:
+        raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
+    try:
+        with get_connection() as conn:
+            return _load_legacy_data_update_record(conn.cursor(), target, record_id)
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar el registro: {exc}") from exc
+
+
+@router.put("/actualizacion-datos/{target}/datos/{record_id}")
+def update_legacy_data_update_record(
+    target: str,
+    record_id: str,
+    payload: DataUpdatePayload,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    if target not in {"estudiantes", "docentes"}:
+        raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            editable_columns = _actualizacion_datos_columns(cursor, target)
+            valid_updates = {
+                key: value
+                for key, value in payload.fields.items()
+                if key in editable_columns
+            }
+            if not valid_updates:
+                raise HTTPException(status_code=400, detail="No hay campos válidos para actualizar")
+            table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
+            id_column = "codigo_estud" if target == "estudiantes" else "codigo_doc"
+            cedula_column = "Cedula_Est" if target == "estudiantes" else "cedula_doc"
+            if target in {"estudiantes", "docentes"}:
+                cursor.execute(
+                    f"""
+                    SELECT TOP 1
+                        {_quote_sql_name(id_column)} AS record_id,
+                        {_quote_sql_name(cedula_column)} AS record_document,
+                        {", ".join(_quote_sql_name(column) for column in editable_columns)}
+                    FROM dbo.{_quote_sql_name(table)}
+                    WHERE TRY_CONVERT(varchar(50), {_quote_sql_name(id_column)}) = ?
+                       OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), {_quote_sql_name(cedula_column)}), '-', ''), ' ', '') = ?
+                    """,
+                    record_id,
+                    re.sub(r"\D+", "", record_id),
+                )
+                current_row = cursor.fetchone()
+                if not current_row:
+                    raise HTTPException(status_code=404, detail="Registro no encontrado para actualizar")
+                current_fields = _row_to_dict(current_row, editable_columns)
+                merged_fields = {**current_fields, **valid_updates}
+                if target == "estudiantes":
+                    final_fields = _apply_student_legacy_rules(
+                        cursor,
+                        merged_fields,
+                        codigo_estud=_clean_cell(getattr(current_row, "record_id", "")),
+                        cedula=_clean_cell(getattr(current_row, "record_document", "")),
+                        editable_columns=editable_columns,
+                    )
+                else:
+                    final_fields = _apply_teacher_legacy_rules(
+                        merged_fields,
+                        editable_columns=editable_columns,
+                    )
+                valid_updates = {
+                    field: value
+                    for field, value in final_fields.items()
+                    if _clean_cell(value) != _clean_cell(current_fields.get(field))
+                }
+                if not valid_updates:
+                    response = _load_legacy_data_update_record(cursor, target, record_id)
+                    response.update({
+                        "message": "No hay cambios nuevos para guardar",
+                        "updated_fields": [],
+                        "affected_rows": 0,
+                    })
+                    return response
+            set_sql = ", ".join(f"{_quote_sql_name(column)} = ?" for column in valid_updates)
+            params = list(valid_updates.values()) + [record_id, re.sub(r"\D+", "", record_id)]
+            cursor.execute(
+                f"""
+                UPDATE dbo.{_quote_sql_name(table)}
+                SET {set_sql}
+                WHERE TRY_CONVERT(varchar(50), {_quote_sql_name(id_column)}) = ?
+                   OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), {_quote_sql_name(cedula_column)}), '-', ''), ' ', '') = ?
+                """,
+                *params,
+            )
+            affected = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            if affected == 0:
+                raise HTTPException(status_code=404, detail="Registro no encontrado para actualizar")
+            conn.commit()
+            response = _load_legacy_data_update_record(cursor, target, record_id)
+            response.update({
+                "message": "Datos actualizados correctamente",
+                "updated_fields": list(valid_updates.keys()),
+                "affected_rows": affected,
+            })
+            return response
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar el registro: {exc}") from exc
+
+
+@router.get("/senescyt/estudiantes/buscar")
+def search_senescyt_student_data_compat(
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    q: str = Query(default="", max_length=120),
+    limit: int = Query(default=60, ge=1, le=200),
+) -> dict[str, Any]:
+    payload = search_legacy_data_update_records("estudiantes", current_user, q, limit)
+    rows = [
+        {
+            "codigo_estud": item["id"],
+            "estudiante": item["nombre"],
+            "numero_identificacion": item["cedula"],
+            "nombre_carrera": item["carrera"],
+            "campos_llenos": item["campos_llenos"],
+            "campos_pendientes": item["campos_pendientes"],
+            "campos_totales": item["campos_totales"],
+            "porcentaje_lleno": item["porcentaje_lleno"],
+            "campos_faltantes": item["campos_faltantes"],
+        }
+        for item in payload["rows"]
+    ]
+    return {**payload, "rows": rows}
+
+
+@router.get("/senescyt/estudiantes/datos/{codigo_estud}")
+def get_senescyt_student_data_compat(
+    codigo_estud: str,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    payload = get_legacy_data_update_record("estudiantes", codigo_estud, current_user)
+    person = payload["person"]
+    student = {
+        "codigo_estud": person["id"],
+        "estudiante": person["nombre"],
+        "numero_identificacion": person["cedula"],
+        "nombre_carrera": person["carrera"],
+        "campos_llenos": person["campos_llenos"],
+        "campos_pendientes": person["campos_pendientes"],
+        "campos_totales": person["campos_totales"],
+        "porcentaje_lleno": person["porcentaje_lleno"],
+        "campos_faltantes": person["campos_faltantes"],
+    }
+    return {
+        "ok": True,
+        "student": student,
+        "fields": payload["fields"],
+        "report_columns": payload["columns"],
+        "datos_estud_fields": payload["fields"],
+        "datos_estud_columns": payload["columns"],
+    }
+
+
+@router.put("/senescyt/estudiantes/datos/{codigo_estud}")
+def update_senescyt_student_data_compat(
+    codigo_estud: str,
+    payload: DataUpdatePayload,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    result = update_legacy_data_update_record("estudiantes", codigo_estud, payload, current_user)
+    compat = get_senescyt_student_data_compat(codigo_estud, current_user)
+    compat.update({
+        "message": result.get("message"),
+        "updated_fields": result.get("updated_fields", []),
+        "affected_rows": result.get("affected_rows", 0),
+    })
+    return compat
 
 
 

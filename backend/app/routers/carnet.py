@@ -13,6 +13,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as pdf_canvas
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
 from svglib.svglib import svg2rlg
 from reportlab.graphics import renderPDF
 
@@ -631,73 +633,140 @@ def _draw_logo(canvas: Any, x: float, y: float, width: float, height: float) -> 
         return
 
 
+def _draw_qr(canvas: Any, payload: str, x: float, y: float, size: float) -> None:
+    qr = QrCodeWidget(payload or "INTEC")
+    bounds = qr.getBounds()
+    qr_width = bounds[2] - bounds[0]
+    qr_height = bounds[3] - bounds[1]
+    drawing = Drawing(size, size, transform=[size / qr_width, 0, 0, size / qr_height, 0, 0])
+    drawing.add(qr)
+    renderPDF.draw(drawing, canvas, x, y)
+
+
+def _draw_carnet_wave(canvas: Any, x: float, y: float, width: float, height: float) -> None:
+    teal = colors.Color(0.23, 0.62, 0.62, alpha=0.22)
+    teal_dark = colors.Color(0.10, 0.50, 0.50, alpha=0.22)
+    canvas.setFillColor(colors.HexColor("#EAF7FA"))
+    canvas.roundRect(x, y, width, height, 8, stroke=0, fill=1)
+
+    top = canvas.beginPath()
+    top.moveTo(x + width * 0.55, y + height)
+    top.curveTo(x + width * 0.70, y + height * 0.84, x + width * 0.88, y + height * 0.90, x + width, y + height * 0.76)
+    top.lineTo(x + width, y + height)
+    top.close()
+    canvas.setFillColor(teal)
+    canvas.drawPath(top, stroke=0, fill=1)
+
+    top_line = canvas.beginPath()
+    top_line.moveTo(x + width * 0.45, y + height * 0.97)
+    top_line.curveTo(x + width * 0.63, y + height * 0.82, x + width * 0.84, y + height * 0.89, x + width, y + height * 0.66)
+    top_line.lineTo(x + width, y + height * 0.76)
+    top_line.curveTo(x + width * 0.84, y + height * 0.95, x + width * 0.64, y + height * 0.86, x + width * 0.48, y + height)
+    top_line.close()
+    canvas.setFillColor(teal_dark)
+    canvas.drawPath(top_line, stroke=0, fill=1)
+
+    bottom = canvas.beginPath()
+    bottom.moveTo(x, y)
+    bottom.lineTo(x + width, y)
+    bottom.lineTo(x + width, y + height * 0.18)
+    bottom.curveTo(x + width * 0.76, y + height * 0.06, x + width * 0.55, y + height * 0.24, x + width * 0.30, y + height * 0.10)
+    bottom.curveTo(x + width * 0.16, y + height * 0.03, x + width * 0.06, y + height * 0.10, x, y + height * 0.03)
+    bottom.close()
+    canvas.setFillColor(teal)
+    canvas.drawPath(bottom, stroke=0, fill=1)
+
+
 def _build_carnet_pdf(status: dict[str, Any]) -> bytes:
     person = status.get("persona") or {}
     output = BytesIO()
     page_width, page_height = A4
-    card_width = 8.6 * cm
-    card_height = 5.4 * cm
+    card_width = 13.7 * cm
+    card_height = 8.0 * cm
     x = (page_width - card_width) / 2
     y = page_height - card_height - 3 * cm
     canvas = pdf_canvas.Canvas(output, pagesize=A4)
 
-    rojo = colors.HexColor("#931913")
-    celeste = colors.HexColor("#8DBBC7")
-    gris = colors.HexColor("#C7C6C6")
     gris_oscuro = colors.HexColor("#777777")
     azul = colors.HexColor("#071B46")
+    celeste = colors.HexColor("#7CB9CE")
 
     canvas.setFillColor(colors.white)
     canvas.rect(0, 0, page_width, page_height, stroke=0, fill=1)
-    canvas.setFillColor(rojo)
-    canvas.rect(x, y + card_height - 0.32 * cm, card_width, 0.32 * cm, stroke=0, fill=1)
-    canvas.setStrokeColor(gris)
-    canvas.setLineWidth(1)
-    canvas.roundRect(x, y, card_width, card_height, 10, stroke=1, fill=0)
-    _draw_logo(canvas, x + 0.35 * cm, y + card_height - 1.55 * cm, 3.1 * cm, 1.05 * cm)
+    _draw_carnet_wave(canvas, x, y, card_width, card_height)
+    canvas.setStrokeColor(colors.HexColor("#9FCFD9"))
+    canvas.setLineWidth(1.2)
+    canvas.roundRect(x, y, card_width, card_height, 8, stroke=1, fill=0)
+    _draw_logo(canvas, x + 2.25 * cm, y + card_height - 1.52 * cm, 4.7 * cm, 1.18 * cm)
 
     photo_path = _upload_url_to_path(status.get("foto_url", ""))
-    photo_x = x + 0.38 * cm
-    photo_y = y + 0.72 * cm
-    photo_w = 2.25 * cm
-    photo_h = 2.65 * cm
-    canvas.setFillColor(colors.HexColor("#F4F8FA"))
-    canvas.roundRect(photo_x, photo_y, photo_w, photo_h, 7, stroke=0, fill=1)
+    photo_w = 3.55 * cm
+    photo_h = 4.65 * cm
+    photo_x = x + card_width - photo_w - 0.52 * cm
+    photo_y = y + 1.08 * cm
+    canvas.setFillColor(colors.HexColor("#F8FCFD"))
+    canvas.rect(photo_x - 0.07 * cm, photo_y - 0.07 * cm, photo_w + 0.14 * cm, photo_h + 0.14 * cm, stroke=0, fill=1)
+    canvas.setStrokeColor(celeste)
+    canvas.setLineWidth(2.0)
+    canvas.rect(photo_x - 0.05 * cm, photo_y - 0.05 * cm, photo_w + 0.10 * cm, photo_h + 0.10 * cm, stroke=1, fill=0)
     if photo_path:
         try:
-            canvas.drawImage(ImageReader(str(photo_path)), photo_x, photo_y, width=photo_w, height=photo_h, mask="auto")
+            canvas.drawImage(
+                ImageReader(str(photo_path)),
+                photo_x,
+                photo_y,
+                width=photo_w,
+                height=photo_h,
+                preserveAspectRatio=True,
+                anchor="c",
+                mask="auto",
+            )
         except Exception:
             pass
-
-    canvas.setFillColor(azul)
-    canvas.setFont("Helvetica-Bold", 9)
-    canvas.drawString(x + 3.0 * cm, y + card_height - 1.15 * cm, "CARNET INSTITUCIONAL")
-    canvas.setFillColor(rojo)
-    canvas.setFont("Helvetica-Bold", 7)
-    canvas.drawString(x + 3.0 * cm, y + card_height - 1.55 * cm, _clean(person.get("tipo_persona")) or "INTEC")
 
     name = _clean(person.get("nombre")).upper()
     cedula = _clean(person.get("cedula"))
     codigo = _clean(person.get("codigo_persona"))
     correo = _clean(person.get("correo"))
-    valid_until = _date_payload(status.get("fecha_vigencia_hasta"))
+    tipo = _clean(person.get("tipo_persona")).upper() or "ESTUDIANTE"
+    career = "INSTITUTO SUPERIOR TECNOLOGICO INTEC"
+    if tipo == "ESTUDIANTE":
+        career = "ESTUDIANTE"
+    elif tipo == "DOCENTE":
+        career = "DOCENTE"
+    elif tipo == "ADMINISTRATIVO":
+        career = "ADMINISTRATIVO"
 
-    text_x = x + 3.0 * cm
-    text_y = y + 3.0 * cm
+    qr_payload = "\n".join(
+        [
+            "INTEC CARNET INSTITUCIONAL",
+            f"TIPO: {tipo}",
+            f"NOMBRE: {name}",
+            f"CEDULA: {cedula or '-'}",
+            f"CODIGO: {codigo or '-'}",
+        ]
+    )
+    qr_size = 3.7 * cm
+    qr_x = x + 0.42 * cm
+    qr_y = y + 0.62 * cm
+    canvas.setFillColor(colors.white)
+    canvas.rect(qr_x - 0.07 * cm, qr_y - 0.07 * cm, qr_size + 0.14 * cm, qr_size + 0.14 * cm, stroke=0, fill=1)
+    _draw_qr(canvas, qr_payload, qr_x, qr_y, qr_size)
+
+    text_center = x + card_width * 0.54
+    text_top = y + card_height - 2.65 * cm
     canvas.setFillColor(azul)
-    canvas.setFont("Helvetica-Bold", 8)
-    for index, line in enumerate(re.findall(r".{1,32}(?:\s|$)", name)[:3] or [name[:32]]):
-        canvas.drawString(text_x, text_y - index * 0.34 * cm, line.strip())
-    canvas.setFont("Helvetica", 7)
+    canvas.setFont("Helvetica-Bold", 10.2)
+    name_lines = re.findall(r".{1,34}(?:\s|$)", name)[:2] or [name[:34]]
+    for index, line in enumerate(name_lines):
+        canvas.drawCentredString(text_center, text_top - index * 0.42 * cm, line.strip())
+
     canvas.setFillColor(gris_oscuro)
-    canvas.drawString(text_x, y + 1.65 * cm, f"Cedula/Login: {cedula or '-'}")
-    canvas.drawString(text_x, y + 1.30 * cm, f"Codigo: {codigo or '-'}")
-    canvas.drawString(text_x, y + 0.95 * cm, f"Correo: {correo[:36] or '-'}")
-    canvas.setFillColor(celeste)
-    canvas.rect(x, y, card_width, 0.46 * cm, stroke=0, fill=1)
-    canvas.setFillColor(azul)
-    canvas.setFont("Helvetica-Bold", 6.5)
-    canvas.drawString(x + 0.35 * cm, y + 0.16 * cm, f"Vigente hasta: {valid_until or '-'}")
+    canvas.setFont("Helvetica", 9.5)
+    detail_y = text_top - max(len(name_lines), 1) * 0.46 * cm - 0.05 * cm
+    for index, value in enumerate([career, correo or "-", cedula or "-", "QUITO", "CUARTA COHORTE"]):
+        canvas.drawCentredString(text_center, detail_y - index * 0.52 * cm, value[:42])
+
     canvas.save()
     return output.getvalue()
 

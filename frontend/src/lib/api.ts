@@ -45,6 +45,8 @@ import type {
   CredentialBulkResponse,
   CredentialCatalogResponse,
   CredentialListResponse,
+  AdmissionsDashboardStudentsResponse,
+  ActaGradoPayload,
   DashboardMatriculaResponse,
   DashboardMatriculaTrendStudentsResponse,
   ExcelSqlCrossResponse,
@@ -56,9 +58,14 @@ import type {
   FechaGradoStudentsResponse,
   FechaGradoVerificationResponse,
   IngresoVentasResponse,
+  LegacyCrystalCatalogResponse,
+  LegacyDataUpdateDetailResponse,
+  LegacyDataUpdateSearchResponse,
+  LegacyDataUpdateTarget,
   LegacyReportFilters,
   LegacyReportsCatalogResponse,
   LegacyReportResponse,
+  ModernizedLegacyReportsCatalogResponse,
   MassEmailRecipient,
   MassEmailExcelResponse,
   MassEmailResolvePayload,
@@ -76,6 +83,14 @@ import type {
   PortalTeacherGradePayload,
   PortalTeacherGradeSaveResponse,
   PortalTeacherStudentsResponse,
+  PracticasCatalogResponse,
+  PracticasElegiblesResponse,
+  PracticasExpedientesResponse,
+  PracticasPeriodoDesignacionesResponse,
+  PracticasPeriodosResponse,
+  PracticasProcessCode,
+  PracticasResponsableProgressResponse,
+  PracticasStudentResponse,
   PreinscriptionCabeceraPayload,
   PreinscriptionCabeceraSaveResponse,
   PreinscriptionCatalogResponse,
@@ -101,6 +116,8 @@ import type {
   SisAcademicoListResponse,
   SisAcademicoRecordResponse,
   SisAcademicoSaveResponse,
+  SisAcademicoV1ArtifactsResponse,
+  SisAcademicoV1ModulesResponse,
   TeamCallStatus,
   TeamAttendance,
   TeamCollectionResponse,
@@ -143,6 +160,23 @@ import type {
   TeacherEvaluationSubmitPayload,
   TeacherEvaluationSubmitResponse,
   TeacherComplianceReportFormat,
+  DefensaCalificacionPayload,
+  DefensaTemaPayload,
+  ExamenComplexivoCalificacionPayload,
+  TitulacionAptosResponse,
+  TitulacionExpedientePayload,
+  TitulacionMecanismoPayload,
+  TitulacionMallaCalificacionesResponse,
+  TitulacionProgramacionResponse,
+  TitulacionNotasPayload,
+  TitulacionProgramacionPayload,
+  TitulacionResponse,
+  TitulacionTribunalPayload,
+  TituloIntecPayload,
+  TituloRegistradoSaveResponse,
+  TituloSenescytPayload,
+  TituloRegistradoTipo,
+  TitulosRegistradosResponse,
   UserSession,
 } from '../types/app'
 
@@ -512,11 +546,11 @@ export async function executeManualTeamEnrollment(
 }
 
 export async function fetchMatriculaSummary(): Promise<MatriculaSummaryResponse> {
-  return request<MatriculaSummaryResponse>('/api/students/matricula-summary')
+  return request<MatriculaSummaryResponse>('/api/students/matricula-summary', { cache: 'no-store' })
 }
 
 export async function fetchDashboardMatricula(): Promise<DashboardMatriculaResponse> {
-  return request<DashboardMatriculaResponse>('/api/students/dashboard-matricula')
+  return request<DashboardMatriculaResponse>('/api/students/dashboard-matricula', { cache: 'no-store' })
 }
 
 export async function fetchDashboardMatriculaTrendStudents(
@@ -534,8 +568,25 @@ export async function fetchDashboardMatriculaTrendStudents(
   )
 }
 
+export async function fetchDashboardAdmissionsStudents(params: {
+  estado?: string
+  codigo_periodo?: string
+  limit?: number
+}): Promise<AdmissionsDashboardStudentsResponse> {
+  const query = new URLSearchParams({
+    estado: params.estado || 'ALL',
+    limit: String(params.limit ?? 10000),
+  })
+  if (params.codigo_periodo) query.set('codigo_periodo', params.codigo_periodo)
+  return request<AdmissionsDashboardStudentsResponse>(
+    `/api/students/dashboard-matricula/admisiones-students?${query.toString()}`
+  )
+}
+
 export async function fetchMatriculaCareerStateSummary(): Promise<MatriculaCareerStateSummaryResponse> {
-  return request<MatriculaCareerStateSummaryResponse>('/api/students/matricula-career-state-summary')
+  return request<MatriculaCareerStateSummaryResponse>('/api/students/matricula-career-state-summary', {
+    cache: 'no-store',
+  })
 }
 
 export async function fetchMatriculaCareerStateStudents(params: {
@@ -550,7 +601,8 @@ export async function fetchMatriculaCareerStateStudents(params: {
     if (value) query.set(key, value)
   }
   return request<MatriculaCareerStateStudentsResponse>(
-    `/api/students/matricula-career-state-students?${query.toString()}`
+    `/api/students/matricula-career-state-students?${query.toString()}`,
+    { cache: 'no-store' }
   )
 }
 
@@ -567,7 +619,8 @@ export async function fetchMatriculaList(
   estado: string,
   limit: number,
   anioPeriodo?: number | null,
-  puntoMatricula?: 'PRIMERA' | 'ULTIMA' | 'BOTH'
+  puntoMatricula?: 'PRIMERA' | 'ULTIMA' | 'BOTH',
+  fuente?: 'CNE'
 ): Promise<MatriculaListResponse> {
   const params = new URLSearchParams({ limit: String(limit) })
 
@@ -587,7 +640,14 @@ export async function fetchMatriculaList(
     params.set('punto_matricula', puntoMatricula)
   }
 
-  return request<MatriculaListResponse>(`/api/students/matricula-list?${params.toString()}`)
+  if (fuente) {
+    params.set('fuente', fuente)
+  }
+
+  return request<MatriculaListResponse>(
+    `/api/students/matricula-list?${params.toString()}`,
+    fuente ? { cache: 'no-store' } : {}
+  )
 }
 
 export async function fetchIngresoVentas(limit: number = 5000): Promise<IngresoVentasResponse> {
@@ -627,15 +687,26 @@ export async function fetchLegacyReportsCatalog(): Promise<LegacyReportsCatalogR
   return request<LegacyReportsCatalogResponse>('/api/students/reporteria-integral/catalog')
 }
 
+export async function fetchModernizedLegacyReportsCatalog(): Promise<ModernizedLegacyReportsCatalogResponse> {
+  return request<ModernizedLegacyReportsCatalogResponse>('/api/students/reporteria-integral/modern-catalog')
+}
+
+export async function fetchLegacyCrystalReportsCatalog(): Promise<LegacyCrystalCatalogResponse> {
+  return fetchModernizedLegacyReportsCatalog()
+}
+
 export async function fetchLegacyReport(filters: LegacyReportFilters = {}): Promise<LegacyReportResponse> {
   const params = buildLegacyReportParams(filters)
-  return request<LegacyReportResponse>(`/api/students/reporteria-integral?${params.toString()}`)
+  return request<LegacyReportResponse>(`/api/students/reporteria-integral?${params.toString()}`, {
+    cache: 'no-store',
+  })
 }
 
 export async function downloadLegacyReportWorkbook(filters: LegacyReportFilters = {}): Promise<Blob> {
   const params = buildLegacyReportParams({ ...filters, limit: filters.limit ?? 5000 })
   const response = await fetch(`/api/students/reporteria-integral/export?${params.toString()}`, {
     credentials: 'include',
+    cache: 'no-store',
   })
   const contentType = response.headers.get('Content-Type') || ''
 
@@ -658,6 +729,14 @@ export async function downloadLegacyReportWorkbook(filters: LegacyReportFilters 
 
 export async function fetchSisAcademicoCatalog(): Promise<SisAcademicoCatalogResponse> {
   return request<SisAcademicoCatalogResponse>('/api/students/sisacademico/catalog')
+}
+
+export async function fetchSisAcademicoV1Modules(): Promise<SisAcademicoV1ModulesResponse> {
+  return request<SisAcademicoV1ModulesResponse>('/api/students/sisacademico/legacy-v1/modules')
+}
+
+export async function fetchSisAcademicoV1Artifacts(): Promise<SisAcademicoV1ArtifactsResponse> {
+  return request<SisAcademicoV1ArtifactsResponse>('/api/students/sisacademico/legacy-v1/artifacts')
 }
 
 export async function fetchSisAcademicoRows(
@@ -1553,6 +1632,49 @@ export async function downloadPortalStudentPdf(
   return response.blob()
 }
 
+export async function updateStudentStateWithDocument(
+  recordKey: string,
+  estado: string,
+  detalle: string,
+  documento: File
+): Promise<SisAcademicoSaveResponse> {
+  const formData = new FormData()
+  formData.append('estado', estado)
+  formData.append('detalle', detalle)
+  formData.append('documento', documento)
+  return request<SisAcademicoSaveResponse>(
+    `/api/students/sisacademico/actualizacion_estudiantes/${encodeURIComponent(recordKey)}/cambio-estado-documentado`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  )
+}
+
+export async function downloadPortalStudentSecretaryPdf(
+  codigoPeriodo: string = '',
+  tipo: 'calificaciones' | 'malla' = 'calificaciones',
+): Promise<Blob> {
+  const params = new URLSearchParams({ tipo })
+  if (codigoPeriodo) {
+    params.set('codigo_periodo', codigoPeriodo)
+  }
+  const response = await fetch(`/api/portal/student/record/export-secretaria-pdf?${params.toString()}`, {
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const payload = await readResponsePayload(response)
+    const detail =
+      typeof payload === 'string'
+        ? payload
+        : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+    throw new ApiError(detail, response.status)
+  }
+
+  return response.blob()
+}
+
 export async function fetchPortalTeacherCourses(): Promise<PortalTeacherCoursesResponse> {
   return request<PortalTeacherCoursesResponse>('/api/portal/teacher/courses')
 }
@@ -2015,6 +2137,39 @@ export async function updateSenescytStudentData(
   )
 }
 
+export async function searchLegacyDataUpdate(
+  target: LegacyDataUpdateTarget,
+  query: string,
+): Promise<LegacyDataUpdateSearchResponse> {
+  const params = new URLSearchParams({ q: query, limit: '80' })
+  return request<LegacyDataUpdateSearchResponse>(
+    `/api/students/actualizacion-datos/${encodeURIComponent(target)}/buscar?${params.toString()}`,
+  )
+}
+
+export async function fetchLegacyDataUpdateRecord(
+  target: LegacyDataUpdateTarget,
+  recordId: string,
+): Promise<LegacyDataUpdateDetailResponse> {
+  return request<LegacyDataUpdateDetailResponse>(
+    `/api/students/actualizacion-datos/${encodeURIComponent(target)}/datos/${encodeURIComponent(recordId)}`,
+  )
+}
+
+export async function updateLegacyDataUpdateRecord(
+  target: LegacyDataUpdateTarget,
+  recordId: string,
+  fields: Record<string, string | number | null>,
+): Promise<LegacyDataUpdateDetailResponse> {
+  return request<LegacyDataUpdateDetailResponse>(
+    `/api/students/actualizacion-datos/${encodeURIComponent(target)}/datos/${encodeURIComponent(recordId)}`,
+    {
+      method: 'PUT',
+      body: { fields },
+    },
+  )
+}
+
 export async function downloadSenescytStudentReport(): Promise<Blob> {
   const response = await fetch('/api/students/senescyt/estudiantes/export', {
     credentials: 'include',
@@ -2066,4 +2221,450 @@ export async function downloadSenescytAuditWorkbook(
   }
 
   return response.blob()
+}
+
+export async function downloadPortalTeacherStudentGradeReport(params: {
+  codigoPeriodo?: string
+  codigoPeriodos?: string[]
+  codAnioBasica?: string
+  codJornada?: number | null
+  codigoMateria: string
+  paralelo: string
+}): Promise<Blob> {
+  const query = new URLSearchParams({
+    codigo_materia: params.codigoMateria,
+    paralelo: params.paralelo,
+  })
+  if (params.codAnioBasica) {
+    query.set('cod_anio_basica', params.codAnioBasica)
+  }
+  if (params.codJornada !== null && params.codJornada !== undefined) {
+    query.set('cod_jornada', String(params.codJornada))
+  }
+  const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
+  for (const codigoPeriodo of periodos) {
+    query.append('codigo_periodo', codigoPeriodo)
+  }
+  const response = await fetch(`/api/portal/teacher/student-grade-report-pdf?${query.toString()}`, {
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const payload = await readResponsePayload(response)
+    const detail =
+      typeof payload === 'string'
+        ? payload
+        : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
+    throw new ApiError(detail, response.status)
+  }
+
+  return response.blob()
+}
+
+export async function fetchPracticasCatalog(): Promise<PracticasCatalogResponse> {
+  return request<PracticasCatalogResponse>('/api/practicas/catalog')
+}
+
+export async function fetchPracticasStudent(codigoEstud?: number): Promise<PracticasStudentResponse> {
+  const params = new URLSearchParams()
+  if (codigoEstud) params.set('codigo_estud', String(codigoEstud))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return request<PracticasStudentResponse>(`/api/practicas/student/me${suffix}`)
+}
+
+export async function createPracticasExpediente(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_estud?: number | null
+  codigo_carrera?: string | null
+  codigo_periodo?: string | null
+  observacion?: string | null
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/student/expedientes', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function downloadPracticasCartaCompromiso(expedienteId: number): Promise<Blob> {
+  return request<Blob>(`/api/practicas/student/expedientes/${expedienteId}/carta-compromiso.pdf`, {
+    responseType: 'blob',
+  })
+}
+
+export async function uploadPracticasCartaCompromiso(
+  expedienteId: number,
+  file: File,
+): Promise<Record<string, unknown>> {
+  const formData = new FormData()
+  formData.set('file', file)
+  return request<Record<string, unknown>>(`/api/practicas/student/expedientes/${expedienteId}/carta-compromiso`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function uploadPracticasCertificado(
+  expedienteId: number,
+  file: File,
+): Promise<Record<string, unknown>> {
+  const formData = new FormData()
+  formData.set('file', file)
+  return request<Record<string, unknown>>(`/api/practicas/student/expedientes/${expedienteId}/certificado`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function fetchPracticasExpedientes(filters: {
+  tipo_proceso?: PracticasProcessCode | ''
+  search?: string
+  limit?: number
+} = {}): Promise<PracticasExpedientesResponse> {
+  const params = new URLSearchParams()
+  if (filters.tipo_proceso) params.set('tipo_proceso', filters.tipo_proceso)
+  if (filters.search) params.set('search', filters.search)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  return request<PracticasExpedientesResponse>(`/api/practicas/admin/expedientes?${params.toString()}`)
+}
+
+export async function fetchPracticasElegibles(filters: {
+  tipo_proceso?: PracticasProcessCode
+  search?: string
+  codigo_periodo?: string
+  limit?: number
+} = {}): Promise<PracticasElegiblesResponse> {
+  const params = new URLSearchParams()
+  if (filters.tipo_proceso) params.set('tipo_proceso', filters.tipo_proceso)
+  if (filters.search) params.set('search', filters.search)
+  if (filters.codigo_periodo) params.set('codigo_periodo', filters.codigo_periodo)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  return request<PracticasElegiblesResponse>(`/api/practicas/admin/elegibles?${params.toString()}`)
+}
+
+export async function fetchPracticasPeriodos(
+  tipoProceso: PracticasProcessCode = 'PPF',
+): Promise<PracticasPeriodosResponse> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso })
+  return request<PracticasPeriodosResponse>(`/api/practicas/admin/periodos?${params.toString()}`)
+}
+
+export async function fetchPracticasPeriodoDesignaciones(
+  tipoProceso: PracticasProcessCode = 'PPF',
+): Promise<PracticasPeriodoDesignacionesResponse> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso })
+  return request<PracticasPeriodoDesignacionesResponse>(`/api/practicas/admin/designaciones-periodo?${params.toString()}`)
+}
+
+export async function savePracticasPeriodoDesignacion(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_periodo: string
+  codigo_periodo_origen?: string | null
+  nombre_responsable: string
+  rol_responsable?: string
+  codigo_docente: string
+  cedula_responsable?: string | null
+  correo_responsable?: string | null
+  estudiantes: number[]
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/admin/designaciones-periodo', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function uploadPracticasAutorizacion(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_estud: number
+  codigo_periodo: string
+  file: File
+}): Promise<Record<string, unknown>> {
+  const formData = new FormData()
+  formData.append('tipo_proceso_codigo', payload.tipo_proceso_codigo)
+  formData.append('codigo_estud', String(payload.codigo_estud))
+  formData.append('codigo_periodo', payload.codigo_periodo)
+  formData.append('file', payload.file)
+  return request<Record<string, unknown>>('/api/practicas/admin/autorizaciones', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function fetchPracticasResponsableAvance(
+  tipoProceso: PracticasProcessCode = 'PPF',
+): Promise<PracticasResponsableProgressResponse> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso })
+  return request<PracticasResponsableProgressResponse>(`/api/practicas/responsable/avance?${params.toString()}`)
+}
+
+export async function createPracticasResponsable(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  expediente_id?: number | null
+  nombre_responsable: string
+  rol_responsable?: string
+  codigo_docente?: string | null
+  cedula_responsable?: string | null
+  correo_responsable?: string | null
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/admin/responsables', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function assignPracticasResponsable(
+  expedienteId: number,
+  responsableProcesoId: number,
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/admin/expedientes/${expedienteId}/responsable`, {
+    method: 'POST',
+    body: { responsable_proceso_id: responsableProcesoId },
+  })
+}
+
+export async function fetchTitulacionExpediente(numeroIdentificacion: string): Promise<TitulacionResponse> {
+  const params = new URLSearchParams({ numero_identificacion: numeroIdentificacion })
+  return request<TitulacionResponse>(`/api/titulacion/expediente?${params.toString()}`)
+}
+
+export async function fetchTitulacionAptos(filters: {
+  search?: string
+  limit?: number
+} = {}): Promise<TitulacionAptosResponse> {
+  const params = new URLSearchParams()
+  if (filters.search) params.set('search', filters.search)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const query = params.toString()
+  return request<TitulacionAptosResponse>(`/api/titulacion/aptos${query ? `?${query}` : ''}`)
+}
+
+export async function fetchTitulacionMallaCalificaciones(
+  numeroIdentificacion: string,
+  codAnioBasica?: string | null,
+): Promise<TitulacionMallaCalificacionesResponse> {
+  const params = new URLSearchParams({ numero_identificacion: numeroIdentificacion })
+  if (codAnioBasica) params.set('cod_anio_basica', codAnioBasica)
+  return request<TitulacionMallaCalificacionesResponse>(`/api/titulacion/malla-calificaciones?${params.toString()}`)
+}
+
+export async function fetchTitulacionProgramacion(filters: {
+  mecanismo?: string
+  search?: string
+  limit?: number
+} = {}): Promise<TitulacionProgramacionResponse> {
+  const params = new URLSearchParams()
+  if (filters.mecanismo) params.set('mecanismo', filters.mecanismo)
+  if (filters.search) params.set('search', filters.search)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const query = params.toString()
+  return request<TitulacionProgramacionResponse>(`/api/titulacion/programacion${query ? `?${query}` : ''}`)
+}
+
+export async function createTitulacionExpediente(payload: TitulacionExpedientePayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/expediente', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function syncTitulacionPracticas(expedienteId: number): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/sincronizar-practicas', {
+    method: 'POST',
+    body: { expediente_id: expedienteId },
+  })
+}
+
+export async function saveTitulacionNotas(payload: TitulacionNotasPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/notas', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function selectTitulacionMecanismo(payload: TitulacionMecanismoPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/mecanismo', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function programTitulacionExamen(payload: TitulacionProgramacionPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/examen-complexivo/programar', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function gradeTitulacionExamen(payload: ExamenComplexivoCalificacionPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/examen-complexivo/calificar', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function saveTitulacionDefensaTema(payload: DefensaTemaPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/defensa-grado/tema', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function programTitulacionDefensa(payload: TitulacionProgramacionPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/defensa-grado/programar', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function gradeTitulacionDefensa(payload: DefensaCalificacionPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/defensa-grado/calificar', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function addTitulacionTribunal(payload: TitulacionTribunalPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/tribunal', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function uploadTitulacionDocumento(payload: {
+  expediente_id: number
+  tipo_documento_codigo: string
+  observacion?: string
+  file: File
+}): Promise<TitulacionResponse> {
+  const formData = new FormData()
+  formData.append('expediente_id', String(payload.expediente_id))
+  formData.append('tipo_documento_codigo', payload.tipo_documento_codigo)
+  formData.append('observacion', payload.observacion || '')
+  formData.append('file', payload.file)
+  return request<TitulacionResponse>('/api/titulacion/documentos', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function generateTitulacion(expedienteId: number): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/generar', {
+    method: 'POST',
+    body: { expediente_id: expedienteId },
+  })
+}
+
+export async function generateTitulacionActa(payload: ActaGradoPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/acta-grado', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function registerTitulacionSenescyt(payload: TituloSenescytPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/titulo-senescyt', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function registerTitulacionIntec(payload: TituloIntecPayload): Promise<TitulacionResponse> {
+  return request<TitulacionResponse>('/api/titulacion/titulo-intec', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function fetchTitulosRegistrados(filters: {
+  tipo?: TituloRegistradoTipo | string
+  search?: string
+} = {}): Promise<TitulosRegistradosResponse> {
+  const params = new URLSearchParams()
+  if (filters.tipo) params.set('tipo', filters.tipo)
+  if (filters.search) params.set('search', filters.search)
+  const query = params.toString()
+  return request<TitulosRegistradosResponse>(`/api/titulos-registrados${query ? `?${query}` : ''}`)
+}
+
+export async function fetchTitulosRegistradosFolders(tipo: TituloRegistradoTipo | string): Promise<{
+  items: Array<{ id?: string; name: string; web_url?: string }>
+  root: string
+}> {
+  const params = new URLSearchParams({ tipo })
+  return request<{
+    items: Array<{ id?: string; name: string; web_url?: string }>
+    root: string
+  }>(`/api/titulos-registrados/folders?${params.toString()}`)
+}
+
+export async function createTitulosRegistradosFolder(payload: {
+  tipo: TituloRegistradoTipo | string
+  nombre: string
+}): Promise<{
+  ok: boolean
+  message: string
+  item?: { id?: string; name?: string; web_url?: string }
+}> {
+  return request<{
+    ok: boolean
+    message: string
+    item?: { id?: string; name?: string; web_url?: string }
+  }>('/api/titulos-registrados/folders', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function searchTitulosRegistradosStudents(search: string): Promise<{
+  items: Array<{ codigo_estud?: string; cedula: string; estudiante: string; carrera?: string; estado?: string }>
+}> {
+  const params = new URLSearchParams({ search })
+  return request<{
+    items: Array<{ codigo_estud?: string; cedula: string; estudiante: string; carrera?: string; estado?: string }>
+  }>(`/api/titulos-registrados/students?${params.toString()}`)
+}
+
+export async function uploadTituloRegistrado(payload: {
+  tipo: TituloRegistradoTipo | string
+  modelo: string
+  estudiante?: string
+  cedula?: string
+  carrera?: string
+  observacion?: string
+  file: File
+}): Promise<TituloRegistradoSaveResponse> {
+  const formData = new FormData()
+  formData.append('tipo', payload.tipo)
+  formData.append('modelo', payload.modelo)
+  formData.append('estudiante', payload.estudiante || '')
+  formData.append('cedula', payload.cedula || '')
+  formData.append('carrera', payload.carrera || '')
+  formData.append('observacion', payload.observacion || '')
+  formData.append('file', payload.file)
+  return request<TituloRegistradoSaveResponse>('/api/titulos-registrados', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function uploadTitulosSenescytMasivo(payload: {
+  modelo: string
+  observacion?: string
+  files: File[]
+}): Promise<TituloRegistradoSaveResponse> {
+  const formData = new FormData()
+  formData.append('modelo', payload.modelo)
+  formData.append('observacion', payload.observacion || '')
+  payload.files.forEach((file) => {
+    formData.append('files', file)
+  })
+  return request<TituloRegistradoSaveResponse>('/api/titulos-registrados/bulk-senescyt', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function deleteTituloRegistrado(itemId: string): Promise<TituloRegistradoSaveResponse> {
+  return request<TituloRegistradoSaveResponse>(`/api/titulos-registrados/${encodeURIComponent(itemId)}`, {
+    method: 'DELETE',
+  })
 }

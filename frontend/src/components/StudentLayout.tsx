@@ -28,6 +28,8 @@ type StudentLayoutProps = {
   onOpenReporteriaIntegral: (reportKey?: string) => void
   onOpenReportesIndividuales: (reportKey?: string) => void
   onOpenGestionSisAcademico: (sectionKey?: string) => void
+  onOpenSisAcademicoV1: () => void
+  onOpenAsignacionPantallas: () => void
   onOpenPeriodoAcademico: () => void
   onOpenPeriodoMatriculados: () => void
   onOpenIngresoVentas: () => void
@@ -35,6 +37,10 @@ type StudentLayoutProps = {
   onOpenValidarExcel: () => void
   onOpenRangoEdades: () => void
   onOpenFechaGrado: () => void
+  onOpenTitulacion: () => void
+  onOpenTitulacionProceso: () => void
+  onOpenTitulacionResponsables: () => void
+  onOpenTitulosRegistrados: (tipo?: string) => void
   onOpenCertificados: () => void
   onOpenMatriculaExcelCertificados: () => void
   onOpenCertificateRenamer: () => void
@@ -45,6 +51,7 @@ type StudentLayoutProps = {
   onOpenTeacherEvaluationProgress: () => void
   onOpenTeacherEvaluationReports: () => void
   onOpenTeacherComplianceFormat: () => void
+  onOpenPracticasInstitucionales: () => void
   onLogout: () => void
   children: ReactNode
 }
@@ -82,6 +89,7 @@ const roleBrandMap: Record<string, { initials: string; title: string }> = {
   VICERRECTOR: { initials: 'VR', title: 'Vicerrectoria' },
   SOPORTE: { initials: 'TI', title: 'Tecnologia' },
   INVITADO_SOP: { initials: 'IS', title: 'Invitado soporte' },
+  SECRETARIA: { initials: 'SE', title: 'Secretaria' },
   DOCENTE: { initials: 'DC', title: 'Docente' },
   ESTUDIANTE: { initials: 'ES', title: 'Estudiante' },
   TECNOLOGIA: { initials: 'TI', title: 'Tecnologia' },
@@ -89,6 +97,69 @@ const roleBrandMap: Record<string, { initials: string; title: string }> = {
 }
 
 const administratorRoles = new Set(['1', 'ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN'])
+const academicRoles = new Set(['ACADEMICO', 'BIENESTAR'])
+const dashboardOnlyRoles = new Set(['RECTOR', 'VICERRECTOR'])
+const technicalGlobalRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE'])
+const financialPages = new Set<Page>(['dashboard', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'sisacademico-v1', 'reporteria-integral', 'carnet-institucional'])
+const academicPages = new Set<Page>([
+  'dashboard',
+  'matricula',
+  'matricula-acad',
+  'matricula-docente',
+  'estado-docente',
+  'actualizar-datos-estudiante',
+  'reportes-individuales',
+  'gestion-sisacademico',
+  'sisacademico-v1',
+  'periodo-academico',
+  'periodo-matriculados',
+  'rango-edades',
+  'certificados',
+  'fecha-grado',
+  'titulacion',
+  'titulacion-proceso',
+  'titulacion-responsables',
+  'matricula-excel-certificados',
+  'renombrar-certificados',
+  'carnet-institucional',
+  'evaluacion-docente-avance',
+  'evaluacion-docente-reportes',
+  'formato-informe-docente',
+  'practicas-institucionales',
+])
+const academicSisSections = new Set([
+  'estudiantes',
+  'registro_documentos_estudiante',
+  'correos',
+  'matricula_materias',
+  'seguimiento',
+  'actualizacion_estudiantes',
+  'docentes',
+  'docente_materias',
+  'actualizacion_est',
+  'preguntas_evaluacion',
+  'evaluacion_resultados',
+  'autoevaluacion_resultados',
+  'fechas_autoevaluacion',
+  'carreras',
+  'materias',
+  'mallas',
+  'paralelos',
+  'periodos',
+  'fechas_notas',
+  'asistencia_estudiantes',
+  'jornadas',
+  'modalidades',
+  'practicas',
+  'practicas_vinculacion',
+  'empresas',
+])
+const financialSisSections = new Set(['cabecera_matricula', 'pagos_matricula', 'datos_factura'])
+const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente'])
+const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
+const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
+const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
+const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -100,6 +171,50 @@ function normalizeRoleKey(role: string) {
 
 function isAdministratorRole(role: string) {
   return administratorRoles.has(normalizeRoleKey(role))
+}
+
+function customPagesForRole(role: string): Set<Page> | null {
+  try {
+    const raw = window.localStorage.getItem('intec:user-type-screen-access:v1')
+    if (!raw) return null
+    const assignments = JSON.parse(raw) as Partial<Record<string, Page[]>>
+    const pages = assignments[normalizeRoleKey(role)]
+    return Array.isArray(pages) ? new Set(pages) : null
+  } catch {
+    return null
+  }
+}
+
+function navItemAllowedForRole(role: string, item: NavItem) {
+  const normalizedRole = normalizeRoleKey(role)
+  const customPages = customPagesForRole(normalizedRole)
+  const allowedByCustomConfig = !item.page || item.page === 'asignacion-pantallas' || !customPages || customPages.has(item.page)
+  if (!allowedByCustomConfig) return false
+  if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'ADMISIONES') {
+    if (!item.page || !admissionsPages.has(item.page)) return false
+    if (item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
+    return true
+  }
+  if (normalizedRole === 'SECRETARIA') {
+    return Boolean(item.page && secretaryPages.has(item.page))
+  }
+  if (dashboardOnlyRoles.has(normalizedRole)) return item.page === 'dashboard'
+  if (academicRoles.has(normalizedRole)) {
+    if (!item.page || !academicPages.has(item.page)) return false
+    if (item.sectionKey && !academicSisSections.has(item.sectionKey)) return false
+    if (item.reportKey && !academicReportKeys.has(item.reportKey)) return false
+    return true
+  }
+  if (normalizedRole === 'FINANCIERO') {
+    if (!item.page || !financialPages.has(item.page)) return false
+    if (item.sectionKey && !financialSisSections.has(item.sectionKey)) return false
+    if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
+    return true
+  }
+  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe'
+  return item.page === 'dashboard'
 }
 
 function titleFromRole(role: string) {
@@ -134,6 +249,7 @@ function sortNavItems(items: NavItem[]) {
 function sortNavGroups(groups: NavGroup[]) {
   const order: Record<string, number> = {
     inicio: 0,
+    'flujo-academico': 5,
     'actualizacion-estados': 10,
     administracion: 20,
     desempeno: 25,
@@ -355,9 +471,16 @@ export function StudentLayout({
   onOpenReporteriaIntegral,
   onOpenReportesIndividuales,
   onOpenGestionSisAcademico,
+  onOpenSisAcademicoV1,
+  onOpenAsignacionPantallas,
   onOpenPeriodoAcademico,
+  onOpenIngresoVentas,
   onOpenRangoEdades,
   onOpenFechaGrado,
+  onOpenTitulacion,
+  onOpenTitulacionProceso,
+  onOpenTitulacionResponsables,
+  onOpenTitulosRegistrados,
   onOpenCertificados,
   onOpenMatriculaExcelCertificados,
   onOpenCertificateRenamer,
@@ -368,6 +491,7 @@ export function StudentLayout({
   onOpenTeacherEvaluationProgress,
   onOpenTeacherEvaluationReports,
   onOpenTeacherComplianceFormat,
+  onOpenPracticasInstitucionales,
   onLogout,
   children,
 }: Readonly<StudentLayoutProps>) {
@@ -375,9 +499,8 @@ export function StudentLayout({
   const isAdministrator = isAdministratorRole(normalizedRole)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
-  const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
-    () => new Set(['inicio', 'desempeno', 'datos-senecyt', 'portal-estudiante', 'admision-proceso', 'admision-matriculas', 'migracion', 'certificados', 'carnetizacion'])
-  )
+  const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(() => new Set())
+  const [, setAccessConfigVersion] = useState(0)
 
   useEffect(() => {
     const coarsePointerQuery = window.matchMedia('(pointer: coarse)')
@@ -401,6 +524,20 @@ export function StudentLayout({
     }
   }, [])
 
+  useEffect(() => {
+    const refreshAccessConfig = () => setAccessConfigVersion((current) => current + 1)
+    window.addEventListener('intec-screen-access-updated', refreshAccessConfig)
+    window.addEventListener('storage', refreshAccessConfig)
+    return () => {
+      window.removeEventListener('intec-screen-access-updated', refreshAccessConfig)
+      window.removeEventListener('storage', refreshAccessConfig)
+    }
+  }, [])
+
+  useEffect(() => {
+    setOpenMenuGroups(new Set())
+  }, [normalizedRole])
+
   const preinscriptionFlowItems: NavItem[] = [
     {
       label: 'Inscripcion',
@@ -411,35 +548,35 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('registro'),
     },
     {
-      label: 'Preinscritos',
-      description: 'Buscar y seleccionar aspirante.',
+      label: 'Inscritos',
+      description: 'Buscar y seleccionar estudiantes inscritos.',
       page: 'preinscripcion',
       preinscriptionStage: 'inscritos',
       category: 'Ingreso',
       action: () => onOpenPreinscripcion('inscritos'),
     },
     {
-      label: 'Pago y convenio',
-      description: 'Crear prematricula y carta PDF.',
+      label: 'Cabecera matrícula',
+      description: 'Generar matrícula en cabecera, pago y convenio.',
       page: 'preinscripcion',
       preinscriptionStage: 'cabecera',
-      category: 'Prematricula',
+      category: 'Matrícula',
       action: () => onOpenPreinscripcion('cabecera'),
     },
     {
       label: 'Documentos',
-      description: 'Cargar respaldos del aspirante.',
+      description: 'Cargar documentos del estudiante.',
       page: 'preinscripcion',
       preinscriptionStage: 'documentos',
-      category: 'Prematricula',
+      category: 'Matrícula',
       action: () => onOpenPreinscripcion('documentos'),
     },
     {
-      label: 'Materias',
-      description: 'Matricular materias del pensum.',
+      label: 'Matricular primer nivel',
+      description: 'Matricular materias del primer nivel.',
       page: 'preinscripcion',
       preinscriptionStage: 'materias',
-      category: 'Prematricula',
+      category: 'Matrícula',
       action: () => onOpenPreinscripcion('materias'),
     },
     {
@@ -451,14 +588,105 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('seguimiento'),
     },
   ]
+  const salesPreinscriptionFlowItems: NavItem[] = [
+    {
+      label: 'Paso 1: Inscribir',
+      description: 'Registrar al estudiante o seleccionarlo desde inscritos.',
+      page: 'preinscripcion',
+      preinscriptionStage: 'registro',
+      category: 'Proceso regular',
+      action: () => onOpenPreinscripcion('registro'),
+    },
+    {
+      label: 'Paso 2: Matricular y documentar',
+      description: 'Generar cabecera, convenio de pago y subir documentos.',
+      page: 'preinscripcion',
+      preinscriptionStage: 'documentos',
+      category: 'Proceso regular',
+      action: () => onOpenPreinscripcion('documentos'),
+    },
+  ]
+
+  const academicLifecycleItems: NavItem[] = [
+    {
+      label: '1. Inscripción y admisión',
+      description: 'Registrar aspirante, revisar datos de factura y documentos de ingreso.',
+      page: 'preinscripcion',
+      preinscriptionStage: 'registro',
+      category: 'Flujo académico',
+      action: () => onOpenPreinscripcion('registro'),
+    },
+    {
+      label: '2. Actualización de datos',
+      description: 'Actualizar datos de estudiantes y docentes antes de matrícula o continuidad.',
+      page: 'actualizar-datos-estudiante',
+      category: 'Flujo académico',
+      action: onOpenActualizarDatosEstudiante,
+    },
+    {
+      label: '3. Matrícula académica',
+      description: 'Registrar cabecera, materias, pagos y convenio de matrícula.',
+      page: 'matricula-acad',
+      category: 'Flujo académico',
+      action: onOpenMatriculaAcad,
+    },
+    {
+      label: '4. Cursado y notas',
+      description: 'Revisar materias matriculadas, notas, asistencia y seguimiento académico.',
+      page: 'gestion-sisacademico',
+      sectionKey: 'matricula_materias',
+      category: 'Flujo académico',
+      action: () => onOpenGestionSisAcademico('matricula_materias'),
+    },
+    {
+      label: '5. Docencia y evaluación',
+      description: 'Asignar docentes, revisar evaluación docente y cumplimiento académico.',
+      page: 'matricula-docente',
+      category: 'Flujo académico',
+      action: onOpenMatriculaDocente,
+    },
+    {
+      label: '6. Prácticas y vinculación',
+      description: 'Gestionar prácticas preprofesionales y vinculación con la sociedad.',
+      page: 'practicas-institucionales',
+      category: 'Flujo académico',
+      action: onOpenPracticasInstitucionales,
+    },
+    {
+      label: '7. Certificados y grado',
+      description: 'Emitir certificados, revisar fecha de grado y respaldos documentales.',
+      page: 'certificados',
+      category: 'Flujo académico',
+      action: onOpenCertificados,
+    },
+    {
+      label: '8. Titulación',
+      description: 'Verificar requisitos, definir modalidad, responsables, acta y registro final.',
+      page: 'titulacion',
+      category: 'Flujo académico',
+      action: onOpenTitulacion,
+    },
+  ]
 
   const adminMenuGroups: NavGroup[] = [
+    {
+      key: 'flujo-academico',
+      title: 'Flujo académico',
+      summary: 'Inscripción a titulación',
+      items: academicLifecycleItems,
+    },
     {
       key: 'inicio',
       title: 'Inicio',
       summary: 'Vista general',
       items: [
         { label: 'Dashboard', description: 'Indicadores principales del sistema.', page: 'dashboard', action: onOpenDashboard },
+        {
+          label: 'SisAcademicoV1',
+          description: 'Mapa de clonación, tablas V1, módulos y accesos migrados.',
+          page: 'sisacademico-v1',
+          action: onOpenSisAcademicoV1,
+        },
       ],
     },
     {
@@ -490,7 +718,7 @@ export function StudentLayout({
         ...preinscriptionFlowItems,
         {
           label: 'Aspirantes y asesores',
-          description: 'Gestion directa de PREINSCRIPCION.',
+          description: 'Gestion directa de inscripciones.',
           category: 'Consulta directa',
           page: 'gestion-sisacademico',
           sectionKey: 'preinscripciones',
@@ -498,7 +726,7 @@ export function StudentLayout({
         },
         {
           label: 'Datos de factura',
-          description: 'Datos tributarios vinculados al aspirante y prematricula.',
+          description: 'Datos tributarios vinculados a la inscripcion y matricula.',
           page: 'gestion-sisacademico',
           sectionKey: 'datos_factura',
           action: () => onOpenGestionSisAcademico('datos_factura'),
@@ -570,6 +798,85 @@ export function StudentLayout({
           page: 'renombrar-certificados',
           action: onOpenCertificateRenamer,
         },
+        {
+          label: 'Historial de certificados',
+          description: 'Certificados generados en SisAcademicoV1 y su estado.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'certificados_generados',
+          action: () => onOpenGestionSisAcademico('certificados_generados'),
+        },
+        {
+          label: 'Credenciales de curso',
+          description: 'Credenciales temporales, Graph y envio por correo.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'credenciales_curso',
+          action: () => onOpenGestionSisAcademico('credenciales_curso'),
+        },
+      ],
+    },
+    {
+      key: 'educacion-continua',
+      title: 'Educacion continua',
+      summary: 'Cursos, cortes y participantes',
+      items: [
+        {
+          label: 'Cursos',
+          description: 'Cursos de educacion continua conservados del sistema anterior.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'cursos_edu_continua',
+          action: () => onOpenGestionSisAcademico('cursos_edu_continua'),
+        },
+        {
+          label: 'Cortes de curso',
+          description: 'Fechas, cupos, horas y estado de cortes.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'corte_curso',
+          action: () => onOpenGestionSisAcademico('corte_curso'),
+        },
+        {
+          label: 'Estudiantes por corte',
+          description: 'Participantes asociados a cada corte.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'corte_curso_estudiante',
+          action: () => onOpenGestionSisAcademico('corte_curso_estudiante'),
+        },
+      ],
+    },
+    {
+      key: 'titulacion',
+      title: 'Titulación',
+      summary: 'SENESCYT e INTEC',
+      items: [
+        {
+          label: 'Verificación y modalidad',
+          description: 'Validar malla, prácticas, vinculación, aptitud legal y notas.',
+          page: 'titulacion',
+          action: onOpenTitulacion,
+        },
+        {
+          label: 'Proceso de titulación',
+          description: 'Programar complexivo o defensa de grado, responsables, tribunal y enlace Teams.',
+          page: 'titulacion-proceso',
+          action: onOpenTitulacionProceso,
+        },
+        {
+          label: 'Registro de responsables',
+          description: 'Asignar tribunal de defensa y supervisores de examen complexivo.',
+          page: 'titulacion-responsables',
+          action: onOpenTitulacionResponsables,
+        },
+        {
+          label: 'Títulos registrados SENESCYT',
+          description: 'Carpetas y documentos registrados por SENESCYT.',
+          page: 'titulos-registrados',
+          action: () => onOpenTitulosRegistrados('senescyt'),
+        },
+        {
+          label: 'Títulos INTEC',
+          description: 'Carpetas y documentos institucionales INTEC.',
+          page: 'titulos-registrados',
+          action: () => onOpenTitulosRegistrados('intec'),
+        },
       ],
     },
     {
@@ -638,7 +945,7 @@ export function StudentLayout({
           sectionKey: 'seguimiento',
           action: () => onOpenGestionSisAcademico('seguimiento'),
         },
-        { label: 'Actualizar datos estudiante', description: 'Actualizacion de datos personales del estudiante.', page: 'actualizar-datos-estudiante', action: onOpenActualizarDatosEstudiante },
+        { label: 'Actualizar datos', description: 'Actualizacion de datos personales de estudiantes y docentes.', page: 'actualizar-datos-estudiante', action: onOpenActualizarDatosEstudiante },
         {
           label: 'Actualizacion estado estudiante',
           description: 'Actualiza el estado academico usando el catalogo ESTADO.',
@@ -765,25 +1072,87 @@ export function StudentLayout({
       summary: 'Administrativos, usuarios, permisos y menu',
       items: [
         {
-          label: 'Ingreso administrativos',
-          description: 'Usuarios internos y credenciales del sistema.',
+          label: 'Registrar usuarios',
+          description: 'Crear y mantener usuarios administrativos en USUARIO_SIS.',
           page: 'gestion-sisacademico',
           sectionKey: 'usuarios',
           action: () => onOpenGestionSisAcademico('usuarios'),
         },
         {
-          label: 'Permisos por usuario',
-          description: 'Opciones de menu asignadas por tipo de usuario.',
+          label: 'Accesos operativos',
+          description: 'Mapa funcional de accesos por perfil y módulos disponibles.',
           page: 'gestion-sisacademico',
           sectionKey: 'menu_usuarios',
           action: () => onOpenGestionSisAcademico('menu_usuarios'),
         },
         {
-          label: 'Menu general',
-          description: 'Catalogo de grupos, opciones y rutas del sistema.',
+          label: 'Asignar pantallas',
+          description: 'Seleccionar pantallas disponibles por tipo de usuario.',
+          page: 'asignacion-pantallas',
+          action: onOpenAsignacionPantallas,
+        },
+        {
+          label: 'Mapa operativo',
+          description: 'Acceso funcional a los procesos clonados desde SisAcademicoV1.',
           page: 'gestion-sisacademico',
           sectionKey: 'menu_general',
           action: () => onOpenGestionSisAcademico('menu_general'),
+        },
+      ],
+    },
+    {
+      key: 'talento-humano',
+      title: 'Talento humano',
+      summary: 'Empleados, solicitudes y tareas RRHH',
+      items: [
+        {
+          label: 'Empleados',
+          description: 'Ficha base de empleados del modulo RRHH.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'talento_humano_empleados',
+          action: () => onOpenGestionSisAcademico('talento_humano_empleados'),
+        },
+        {
+          label: 'Solicitudes RRHH',
+          description: 'Permisos, vacaciones, validaciones y firmas.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'talento_humano_solicitudes',
+          action: () => onOpenGestionSisAcademico('talento_humano_solicitudes'),
+        },
+        {
+          label: 'Tareas RRHH',
+          description: 'Tareas, prioridad, delegaciones y cierre.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'talento_humano_tareas',
+          action: () => onOpenGestionSisAcademico('talento_humano_tareas'),
+        },
+      ],
+    },
+    {
+      key: 'integraciones-v1',
+      title: 'Integraciones V1',
+      summary: 'Moodle y Microsoft 365',
+      items: [
+        {
+          label: 'Notas Moodle',
+          description: 'Notas sincronizadas por estudiante, materia y componente.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_notas',
+          action: () => onOpenGestionSisAcademico('moodle_notas'),
+        },
+        {
+          label: 'Sincronizacion Moodle',
+          description: 'Historial de procesos de sincronizacion de calificaciones.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_sincronizacion',
+          action: () => onOpenGestionSisAcademico('moodle_sincronizacion'),
+        },
+        {
+          label: 'Auditoria Microsoft 365',
+          description: 'Acciones, estados y errores de servicios Microsoft 365.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'microsoft365_audit',
+          action: () => onOpenGestionSisAcademico('microsoft365_audit'),
         },
       ],
     },
@@ -802,9 +1171,15 @@ export function StudentLayout({
     },
     {
       key: 'vinculacion',
-      title: 'Seguimiento y practicas',
-      summary: 'Practicas profesionales y empresas',
+      title: 'Prácticas institucionales',
+      summary: 'Preprofesionales y vinculación',
       items: [
+        {
+          label: 'Módulo institucional',
+          description: 'Crear expedientes PPF/VIN y designar responsables.',
+          page: 'practicas-institucionales',
+          action: onOpenPracticasInstitucionales,
+        },
         {
           label: 'Practicas profesionales',
           description: 'Registro de practicas, horas, docente y empresa.',
@@ -813,8 +1188,8 @@ export function StudentLayout({
           action: () => onOpenGestionSisAcademico('practicas'),
         },
         {
-          label: 'Practicas de vinculacion',
-          description: 'Proyectos de vinculacion, horas, docente y evidencias.',
+          label: 'Vinculación con la sociedad',
+          description: 'Proyectos de vinculación con la sociedad, horas, docente y evidencias.',
           page: 'gestion-sisacademico',
           sectionKey: 'practicas_vinculacion',
           action: () => onOpenGestionSisAcademico('practicas_vinculacion'),
@@ -1016,14 +1391,33 @@ export function StudentLayout({
 
   const admissionsMenuGroups: NavGroup[] = [
     {
+      key: 'inicio',
+      title: 'Inicio',
+      summary: 'Ventas personales',
+      items: [
+        {
+          label: 'Dashboard',
+          description: 'Inscripciones y estados de tus ventas.',
+          page: 'dashboard',
+          action: onOpenDashboard,
+        },
+        {
+          label: 'SisAcademicoV1',
+          description: 'Módulos, tablas y accesos compatibles del sistema anterior.',
+          page: 'sisacademico-v1',
+          action: onOpenSisAcademicoV1,
+        },
+      ],
+    },
+    {
       key: 'admision-proceso',
       title: 'Admisiones',
       summary: 'Inscripcion, matricula y estudiantes',
       items: [
-        ...preinscriptionFlowItems,
+        ...salesPreinscriptionFlowItems,
         {
-          label: 'Aspirantes inscritos',
-          description: 'Revisar, buscar y seleccionar postulantes registrados.',
+          label: 'Inscripciones registradas',
+          description: 'Revisar, buscar y seleccionar estudiantes inscritos.',
           category: 'Consulta directa',
           page: 'gestion-sisacademico',
           sectionKey: 'preinscripciones',
@@ -1098,7 +1492,7 @@ export function StudentLayout({
     {
       key: 'admision-control',
       title: 'Control de matricula',
-      summary: 'Pago, convenio y materias',
+      summary: 'Pago, convenio y valores',
       items: [
         {
           label: 'Pago y convenio',
@@ -1114,12 +1508,434 @@ export function StudentLayout({
           sectionKey: 'pagos_matricula',
           action: () => onOpenGestionSisAcademico('pagos_matricula'),
         },
+      ],
+    },
+  ]
+  const academicMenuGroups: NavGroup[] = [
+    {
+      key: 'flujo-academico',
+      title: 'Flujo académico',
+      summary: 'Inscripción a titulación',
+      items: academicLifecycleItems,
+    },
+    {
+      key: 'inicio',
+      title: 'Inicio',
+      summary: 'Indicadores académicos',
+      items: [
+        { label: 'Dashboard', description: 'Estudiantes activos, inactivos e indicadores generales.', page: 'dashboard', action: onOpenDashboard },
         {
-          label: 'Materias matriculadas',
-          description: 'Ver materias registradas por estudiante y periodo.',
+          label: 'SisAcademicoV1',
+          description: 'Clonación funcional de módulos académicos y administrativos.',
+          page: 'sisacademico-v1',
+          action: onOpenSisAcademicoV1,
+        },
+      ],
+    },
+    {
+      key: 'admision-matriculas',
+      title: 'Control de matrícula',
+      summary: 'Matrícula, estudiantes y notas',
+      items: [
+        { label: 'Matrícula académica', description: 'Control y registro académico de matrícula.', page: 'matricula-acad', action: onOpenMatriculaAcad },
+        {
+          label: 'Materias y notas',
+          description: 'Materias matriculadas, paralelos, notas y actualización de calificaciones.',
           page: 'gestion-sisacademico',
           sectionKey: 'matricula_materias',
           action: () => onOpenGestionSisAcademico('matricula_materias'),
+        },
+        {
+          label: 'Apertura de notas',
+          description: 'Fechas de habilitación para ingreso y actualización de notas.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'fechas_notas',
+          action: () => onOpenGestionSisAcademico('fechas_notas'),
+        },
+        { label: 'Periodos académicos', description: 'Periodos, estudiantes y estado académico.', page: 'periodo-academico', action: onOpenPeriodoAcademico },
+      ],
+    },
+    {
+      key: 'portal-estudiante',
+      title: 'Estudiantes',
+      summary: 'Listado, ficha e información académica',
+      items: [
+        {
+          label: 'Listado de estudiantes',
+          description: 'Consulta de estudiantes, datos personales y ficha académica.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'estudiantes',
+          action: () => onOpenGestionSisAcademico('estudiantes'),
+        },
+        {
+          label: 'Documentos del estudiante',
+          description: 'Documentos, respaldos y observaciones de la ficha.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'registro_documentos_estudiante',
+          action: () => onOpenGestionSisAcademico('registro_documentos_estudiante'),
+        },
+        {
+          label: 'Actualizar datos',
+          description: 'Actualización de información personal de estudiantes y docentes.',
+          page: 'actualizar-datos-estudiante',
+          action: onOpenActualizarDatosEstudiante,
+        },
+        {
+          label: 'Estado estudiante',
+          description: 'Activar, inactivar o revisar estado académico del estudiante.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'actualizacion_estudiantes',
+          action: () => onOpenGestionSisAcademico('actualizacion_estudiantes'),
+        },
+        {
+          label: 'Seguimiento académico',
+          description: 'Observaciones y acompañamiento académico por estudiante.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'seguimiento',
+          action: () => onOpenGestionSisAcademico('seguimiento'),
+        },
+      ],
+    },
+    {
+      key: 'portal-docente',
+      title: 'Docentes',
+      summary: 'Registro, asignación e información docente',
+      items: [
+        {
+          label: 'Registro de docentes',
+          description: 'Ficha docente, datos laborales e información académica.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'docentes',
+          action: () => onOpenGestionSisAcademico('docentes'),
+        },
+        { label: 'Matriculación docente', description: 'Asignación docente por materia, periodo y paralelo.', page: 'matricula-docente', action: onOpenMatriculaDocente },
+        {
+          label: 'Materias asignadas',
+          description: 'Relación docente, materia, periodo, paralelo y jornada.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'docente_materias',
+          action: () => onOpenGestionSisAcademico('docente_materias'),
+        },
+        {
+          label: 'Estado docente',
+          description: 'Activar, inactivar y actualizar información docente.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'actualizacion_est',
+          action: () => onOpenGestionSisAcademico('actualizacion_est'),
+        },
+      ],
+    },
+    {
+      key: 'reporteria',
+      title: 'Reportes académicos',
+      summary: 'Notas y desempeño',
+      items: [
+        {
+          label: 'Reporte de notas',
+          description: 'Reporte por carrera, materia, periodo y estudiante.',
+          page: 'reportes-individuales',
+          reportKey: 'notas_carrera_materia',
+          action: () => onOpenReportesIndividuales('notas_carrera_materia'),
+        },
+        {
+          label: 'Avance y ponderación',
+          description: 'Avance por periodo y ponderación de evaluación docente.',
+          page: 'evaluacion-docente-avance',
+          action: onOpenTeacherEvaluationProgress,
+        },
+        {
+          label: 'Documentos de evaluación',
+          description: 'Generar documentos PDF de evaluación docente.',
+          page: 'evaluacion-docente-reportes',
+          action: onOpenTeacherEvaluationReports,
+        },
+      ],
+    },
+    {
+      key: 'catalogos',
+      title: 'Catálogos académicos',
+      summary: 'Carreras, materias y periodos',
+      items: [
+        {
+          label: 'Carreras',
+          description: 'Oferta académica y estado de carrera.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'carreras',
+          action: () => onOpenGestionSisAcademico('carreras'),
+        },
+        {
+          label: 'Materias y pensum',
+          description: 'Materias, créditos, niveles y malla.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'materias',
+          action: () => onOpenGestionSisAcademico('materias'),
+        },
+        {
+          label: 'Mallas',
+          description: 'Mallas por carrera y estado.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'mallas',
+          action: () => onOpenGestionSisAcademico('mallas'),
+        },
+        {
+          label: 'Paralelos',
+          description: 'Catálogo y mantenimiento académico de paralelos.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'paralelos',
+          action: () => onOpenGestionSisAcademico('paralelos'),
+        },
+        {
+          label: 'Periodos del sistema',
+          description: 'Mantenimiento directo de periodos académicos.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'periodos',
+          action: () => onOpenGestionSisAcademico('periodos'),
+        },
+      ],
+    },
+    {
+      key: 'educacion-continua',
+      title: 'Educación continua',
+      summary: 'Cursos, cortes y estudiantes',
+      items: [
+        {
+          label: 'Cursos',
+          description: 'Cursos de educación continua del sistema anterior.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'cursos_edu_continua',
+          action: () => onOpenGestionSisAcademico('cursos_edu_continua'),
+        },
+        {
+          label: 'Cortes de curso',
+          description: 'Fechas, cupos, horas y estado de los cortes.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'corte_curso',
+          action: () => onOpenGestionSisAcademico('corte_curso'),
+        },
+        {
+          label: 'Estudiantes por corte',
+          description: 'Participantes inscritos en cada corte.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'corte_curso_estudiante',
+          action: () => onOpenGestionSisAcademico('corte_curso_estudiante'),
+        },
+      ],
+    },
+    {
+      key: 'documentacion-academica',
+      title: 'Documentación',
+      summary: 'Repositorio y certificados',
+      items: [
+        {
+          label: 'Repositorio digital',
+          description: 'Documentos bibliográficos y enlaces por carrera.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'repositorio',
+          action: () => onOpenGestionSisAcademico('repositorio'),
+        },
+        {
+          label: 'Historial de certificados',
+          description: 'Certificados generados y códigos de verificación.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'certificados_generados',
+          action: () => onOpenGestionSisAcademico('certificados_generados'),
+        },
+      ],
+    },
+    {
+      key: 'integraciones-academicas',
+      title: 'Integraciones académicas',
+      summary: 'Moodle y Microsoft 365',
+      items: [
+        {
+          label: 'Notas Moodle',
+          description: 'Notas sincronizadas por estudiante, materia y componente.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_notas',
+          action: () => onOpenGestionSisAcademico('moodle_notas'),
+        },
+        {
+          label: 'Sincronización Moodle',
+          description: 'Historial de procesos de sincronización de calificaciones.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_sincronizacion',
+          action: () => onOpenGestionSisAcademico('moodle_sincronizacion'),
+        },
+        {
+          label: 'Auditoría Microsoft 365',
+          description: 'Acciones y errores de servicios Microsoft 365.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'microsoft365_audit',
+          action: () => onOpenGestionSisAcademico('microsoft365_audit'),
+        },
+      ],
+    },
+    {
+      key: 'vinculacion',
+      title: 'Prácticas institucionales',
+      summary: 'Preprofesionales y vinculación con la sociedad',
+      items: [
+        {
+          label: 'Módulo institucional',
+          description: 'Matricular estudiantes y asignar responsable de prácticas.',
+          page: 'practicas-institucionales',
+          action: onOpenPracticasInstitucionales,
+        },
+      ],
+    },
+    {
+      key: 'titulacion',
+      title: 'Titulación',
+      summary: 'Requisitos y promedio final',
+      items: [
+        {
+          label: 'Verificación y modalidad',
+          description: 'Validar malla, prácticas, vinculación con la sociedad, aptitud legal y notas.',
+          page: 'titulacion',
+          action: onOpenTitulacion,
+        },
+        {
+          label: 'Proceso de titulación',
+          description: 'Programar complexivo o defensa de grado, responsables, tribunal y enlace Teams.',
+          page: 'titulacion-proceso',
+          action: onOpenTitulacionProceso,
+        },
+        {
+          label: 'Registro de responsables',
+          description: 'Asignar tribunal y supervisores del proceso de titulación.',
+          page: 'titulacion-responsables',
+          action: onOpenTitulacionResponsables,
+        },
+      ],
+    },
+  ]
+
+  const executiveMenuGroups: NavGroup[] = [
+    {
+      key: 'inicio',
+      title: 'Inicio',
+      summary: 'Control institucional',
+      items: [
+        { label: 'Dashboard', description: 'Estudiantes activos, inactivos e indicadores generales.', page: 'dashboard', action: onOpenDashboard },
+      ],
+    },
+  ]
+
+  const financialMenuGroups: NavGroup[] = [
+    {
+      key: 'inicio',
+      title: 'Inicio',
+      summary: 'Indicadores financieros',
+      items: [
+        { label: 'Dashboard', description: 'Indicadores principales del sistema.', page: 'dashboard', action: onOpenDashboard },
+      ],
+    },
+    {
+      key: 'ventas-inscripcion',
+      title: 'Ventas e inscripción',
+      summary: 'Inscripción, beca, convenio y cabecera',
+      items: [
+        ...salesPreinscriptionFlowItems,
+      ],
+    },
+    {
+      key: 'admision-matriculas',
+      title: 'Finanzas',
+      summary: 'Pagos, valores e ingresos',
+      items: [
+        {
+          label: 'Pagos y valores',
+          description: 'Registro de pagos, descuentos y valores de matrícula.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'pagos_matricula',
+          action: () => onOpenGestionSisAcademico('pagos_matricula'),
+        },
+        {
+          label: 'Cabecera matrícula',
+          description: 'Valores y control financiero de matrícula.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'cabecera_matricula',
+          action: () => onOpenGestionSisAcademico('cabecera_matricula'),
+        },
+        { label: 'Ingreso ventas', description: 'Reporte de ingresos y ventas.', page: 'ingreso-ventas', action: onOpenIngresoVentas },
+      ],
+    },
+  ]
+
+  const secretaryMenuGroups: NavGroup[] = [
+    {
+      key: 'vinculacion',
+      title: 'Prácticas institucionales',
+      summary: 'Preprofesionales y vinculación con la sociedad',
+      items: [
+        {
+          label: 'Prácticas y vinculación con la sociedad',
+          description: 'Observar expedientes, estudiantes, responsables y avance documental.',
+          page: 'practicas-institucionales',
+          action: onOpenPracticasInstitucionales,
+        },
+      ],
+    },
+    {
+      key: 'certificados',
+      title: 'Graduados',
+      summary: 'Fechas y registro académico',
+      items: [
+        {
+          label: 'Fechas de graduados',
+          description: 'Actualizar fecha de grado, emisión SENESCYT y código de refrendación.',
+          page: 'fecha-grado',
+          action: onOpenFechaGrado,
+        },
+      ],
+    },
+    {
+      key: 'datos-senecyt',
+      title: 'Datos SENESCYT',
+      summary: 'Consulta académica',
+      items: [
+        {
+          label: 'Reportes SENESCYT',
+          description: 'Consultar información registrada y reportes SENESCYT de estudiantes.',
+          page: 'senescyt-estudiantes',
+          action: onOpenSenescytEstudiantes,
+        },
+      ],
+    },
+    {
+      key: 'titulacion',
+      title: 'Titulación',
+      summary: 'SENESCYT e INTEC',
+      items: [
+        {
+          label: 'Verificación y modalidad',
+          description: 'Validar requisitos, notas y documentos de titulación.',
+          page: 'titulacion',
+          action: onOpenTitulacion,
+        },
+        {
+          label: 'Proceso de titulación',
+          description: 'Programar complexivo o defensa de grado, responsables, tribunal y enlace Teams.',
+          page: 'titulacion-proceso',
+          action: onOpenTitulacionProceso,
+        },
+        {
+          label: 'Registro de responsables',
+          description: 'Asignar tribunal de defensa y supervisores de complexivo.',
+          page: 'titulacion-responsables',
+          action: onOpenTitulacionResponsables,
+        },
+        {
+          label: 'Títulos registrados SENESCYT',
+          description: 'Consultar carpetas y documentos registrados por SENESCYT.',
+          page: 'titulos-registrados',
+          action: () => onOpenTitulosRegistrados('senescyt'),
+        },
+        {
+          label: 'Títulos INTEC',
+          description: 'Consultar carpetas y documentos institucionales INTEC.',
+          page: 'titulos-registrados',
+          action: () => onOpenTitulosRegistrados('intec'),
         },
       ],
     },
@@ -1166,6 +1982,12 @@ export function StudentLayout({
           action: onOpenTeacherEvaluation,
         },
         {
+          label: 'Prácticas institucionales',
+          description: 'Crear y revisar prácticas preprofesionales o vinculación.',
+          page: 'practicas-institucionales',
+          action: onOpenPracticasInstitucionales,
+        },
+        {
           label: 'Carnet institucional',
           description: 'Subir foto y revisar estado de aprobacion.',
           page: 'carnet-institucional',
@@ -1210,9 +2032,22 @@ export function StudentLayout({
         ? teacherMenuGroups
         : normalizedRole === 'ADMISIONES'
           ? admissionsMenuGroups
-        : adminMenuGroups
+          : normalizedRole === 'SECRETARIA'
+            ? secretaryMenuGroups
+            : academicRoles.has(normalizedRole)
+              ? academicMenuGroups
+              : dashboardOnlyRoles.has(normalizedRole)
+                ? executiveMenuGroups
+                : normalizedRole === 'FINANCIERO'
+                  ? financialMenuGroups
+                  : adminMenuGroups
 
   const menuGroups = baseMenuGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => navItemAllowedForRole(normalizedRole, item)),
+    }))
+    .filter((group) => group.items.length > 0)
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
