@@ -1,0 +1,12 @@
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\bin\Debug\net8.0\Titulacion.Domain.deps.json
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\bin\Debug\net8.0\Titulacion.Domain.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\bin\Debug\net8.0\Titulacion.Domain.pdb
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.AssemblyInfoInputs.cache
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.AssemblyInfo.cs
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.csproj.CoreCompileInputs.cache
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.sourcelink.json
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\refint\Titulacion.Domain.dll
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\Titulacion.Domain.pdb
+C:\Users\fabri\Documents\INTEC PROYECTOS\Sistema_Academico\intec_sis_aca\backend-dotnet\Titulacion.Domain\obj\Debug\net8.0\ref\Titulacion.Domain.dll

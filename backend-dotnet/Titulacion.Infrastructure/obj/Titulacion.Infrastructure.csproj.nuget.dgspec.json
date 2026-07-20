@@ -1,0 +1,371 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Infrastructure\\Titulacion.Infrastructure.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\Titulacion.Application.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\Titulacion.Application.csproj",
+        "projectName": "Titulacion.Application",
+        "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\Titulacion.Application.csproj",
+        "packagesPath": "C:\\Users\\fabri\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\fabri\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "framework": "net8.0",
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj": {
+                "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj"
+              },
+              "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj": {
+                "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0": {
+          "framework": "net8.0",
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "FluentValidation": {
+              "target": "Package",
+              "version": "[11.11.0, )"
+            },
+            "Microsoft.Extensions.DependencyInjection.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.2, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj",
+        "projectName": "Titulacion.Contracts",
+        "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj",
+        "packagesPath": "C:\\Users\\fabri\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\fabri\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "framework": "net8.0",
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0": {
+          "framework": "net8.0",
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.AspNetCore.Http.Abstractions": {
+              "target": "Package",
+              "version": "[2.3.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj",
+        "projectName": "Titulacion.Domain",
+        "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj",
+        "packagesPath": "C:\\Users\\fabri\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\fabri\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "framework": "net8.0",
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0": {
+          "framework": "net8.0",
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Infrastructure\\Titulacion.Infrastructure.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Infrastructure\\Titulacion.Infrastructure.csproj",
+        "projectName": "Titulacion.Infrastructure",
+        "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Infrastructure\\Titulacion.Infrastructure.csproj",
+        "packagesPath": "C:\\Users\\fabri\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Infrastructure\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\fabri\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "framework": "net8.0",
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\Titulacion.Application.csproj": {
+                "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Application\\Titulacion.Application.csproj"
+              },
+              "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj": {
+                "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Contracts\\Titulacion.Contracts.csproj"
+              },
+              "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj": {
+                "projectPath": "C:\\Users\\fabri\\Documents\\INTEC PROYECTOS\\Sistema_Academico\\intec_sis_aca\\backend-dotnet\\Titulacion.Domain\\Titulacion.Domain.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net8.0": {
+          "framework": "net8.0",
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Dapper": {
+              "target": "Package",
+              "version": "[2.1.66, )"
+            },
+            "Microsoft.Data.SqlClient": {
+              "target": "Package",
+              "version": "[5.2.2, )"
+            },
+            "Microsoft.Extensions.Configuration.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.Extensions.DependencyInjection.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.2, )"
+            },
+            "Microsoft.Extensions.Http": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.Extensions.Logging.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.2, )"
+            },
+            "Microsoft.Extensions.Options.ConfigurationExtensions": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

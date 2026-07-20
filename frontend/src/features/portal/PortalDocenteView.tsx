@@ -105,6 +105,31 @@ function studentKey(item: PortalAcademicRecordItem) {
   ].join('|')
 }
 
+function uniqueStudents(items: PortalAcademicRecordItem[]) {
+  const grouped = new Map<string, PortalAcademicRecordItem>()
+  for (const item of items) {
+    const key = String(item.codigo_estud || item.cedula || '').trim()
+    if (!key) continue
+    const current = grouped.get(key)
+    if (!current) {
+      grouped.set(key, item)
+      continue
+    }
+    const currentPeriod = Number(current.codigo_periodo || 0)
+    const nextPeriod = Number(item.codigo_periodo || 0)
+    if (nextPeriod > currentPeriod) {
+      grouped.set(key, item)
+      continue
+    }
+    if (nextPeriod === currentPeriod && !hasFinalGrade(current) && hasFinalGrade(item)) {
+      grouped.set(key, item)
+    }
+  }
+  return Array.from(grouped.values()).sort((left, right) =>
+    (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
+  )
+}
+
 function draftFromItem(item: PortalAcademicRecordItem): GradeDraft {
   return {
     teoria_homo: item.teoria_homo?.toString() || '',
@@ -448,7 +473,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         paralelo: course.paralelo,
         codJornada: course.cod_jornada ?? null,
       })
-      const items = payload.items || []
+      const items = uniqueStudents(payload.items || [])
       setStudents(items)
       setDrafts(Object.fromEntries(items.map((item) => [studentKey(item), draftFromItem(item)])))
     } catch (apiError) {

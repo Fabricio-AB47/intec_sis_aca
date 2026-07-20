@@ -132,7 +132,7 @@ const processShortcuts: ProcessShortcut[] = [
   {
     key: 'vinculacion',
     title: 'Seguimiento y practicas',
-    description: 'Observaciones, practicas profesionales, vinculacion y empresas.',
+    description: 'Observaciones, prácticas laborales, Servicio Comunitario y empresas.',
     sections: ['seguimiento', 'practicas', 'practicas_vinculacion', 'empresas'],
   },
   {

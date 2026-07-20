@@ -1,0 +1,25 @@
+@Titulacion.Api_HostAddress = http://localhost:5004
+@Token = reemplazar-con-jwt
+
+GET {{Titulacion.Api_HostAddress}}/api/titulacion/dashboard/resumen
+Authorization: Bearer {{Token}}
+Accept: application/json
+
+###
+
+GET {{Titulacion.Api_HostAddress}}/api/titulacion/estudiantes-aptos?page=1&pageSize=20
+Authorization: Bearer {{Token}}
+Accept: application/json
+
+###
+
+POST {{Titulacion.Api_HostAddress}}/api/titulacion/habilitaciones
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "cedula": "0000000000",
+  "mecanismoCodigo": "EXAMEN_COMPLEXIVO",
+  "tema": "Examen complexivo periodo actual",
+  "modalidad": "PRESENCIAL"
+}

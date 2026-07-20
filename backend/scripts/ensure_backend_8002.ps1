@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$port = 8007
+$port = 8002
 $backendDir = Split-Path -Parent $PSScriptRoot
 $repoDir = Split-Path -Parent $backendDir
 $pythonExe = Join-Path $repoDir '.venv\Scripts\python.exe'

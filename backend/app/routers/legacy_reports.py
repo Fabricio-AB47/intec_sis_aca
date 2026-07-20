@@ -88,7 +88,7 @@ REPORTS: dict[str, dict[str, Any]] = {
         "estado_options": [],
     },
     "practicas": {
-        "title": "Practicas profesionales",
+        "title": "Prácticas laborales",
         "description": "Practicas por estudiante, carrera, periodo, empresa, docente tutor y horas registradas.",
         "category": "Vinculacion",
         "source_tables": ["PRACTICASPROFESIONALES", "DATOS_ESTUD", "CARRERAS", "PERIODO", "EMPRESA", "DATOSDOCENTE"],
@@ -201,7 +201,7 @@ FUNCTIONAL_INVENTORY = [
         "legacy_sources": ["CABECERA_MATRICULA", "PRACTICASPROFESIONALES", "EMPRESA", "Microsoft365Audit"],
         "capabilities": [
             "control documental",
-            "practicas profesionales",
+            "prácticas laborales",
             "auditoria de correos institucionales",
         ],
     },

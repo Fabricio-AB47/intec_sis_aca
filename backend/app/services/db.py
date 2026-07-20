@@ -153,7 +153,7 @@ def get_practices_connection() -> pyodbc.Connection:
         if not value
     ]
     if missing:
-        raise RuntimeError(f"Faltan variables de entorno para practicas institucionales: {', '.join(missing)}")
+        raise RuntimeError(f"Faltan variables de entorno para Prácticas laborales y Servicio Comunitario: {', '.join(missing)}")
 
     return _connect_with_fallback(
         database=settings.practices_db_name or "",
@@ -191,4 +191,38 @@ def get_titulation_connection() -> pyodbc.Connection:
         driver=settings.titulation_db_driver or settings.db_driver,
         encrypt=settings.titulation_db_encrypt or settings.db_encrypt,
         trust_cert=settings.titulation_db_trust_cert or settings.db_trust_cert,
+    )
+
+
+def get_teams_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    user = settings.teams_db_user or settings.eval_db_user or settings.db_user
+    password = settings.teams_db_password or settings.eval_db_password or settings.db_password
+    host = settings.teams_db_host or settings.eval_db_host or settings.db_host
+    port = settings.teams_db_port or settings.eval_db_port or settings.db_port
+    driver = settings.teams_db_driver or settings.eval_db_driver or settings.db_driver
+    encrypt = settings.teams_db_encrypt or settings.eval_db_encrypt or settings.db_encrypt
+    trust_cert = settings.teams_db_trust_cert or settings.eval_db_trust_cert or settings.db_trust_cert
+    missing = [
+        name
+        for name, value in {
+            "B_NAME4/DB_NAME4/TEAMS_DB_NAME": settings.teams_db_name,
+            "DB_USER4/TEAMS_DB_USER": user,
+            "DB_PASSWORD4/TEAMS_DB_PASSWORD": password,
+            "DB_HOST4/TEAMS_DB_HOST": host,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Faltan variables de entorno para Teams: {', '.join(missing)}")
+
+    return _connect_with_fallback(
+        database=settings.teams_db_name,
+        user=user or "",
+        password=password or "",
+        host=host or "",
+        port=port,
+        driver=driver,
+        encrypt=encrypt,
+        trust_cert=trust_cert,
     )
