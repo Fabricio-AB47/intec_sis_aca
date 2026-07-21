@@ -45,7 +45,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const periodos = catalog?.periodos || []
+  const periodos = useMemo(() => catalog?.periodos || [], [catalog?.periodos])
   const selectedPeriod = useMemo(
     () => periodos.find((item) => item.cod_periodo === periodo) || null,
     [periodo, periodos],

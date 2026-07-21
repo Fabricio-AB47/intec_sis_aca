@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   balanceAcademicEnrollmentParallels,
@@ -418,14 +418,16 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
   }, [pensumSubjects, semesterFilter])
 
   const selectedSubjectSet = useMemo(() => new Set(selectedSubjects), [selectedSubjects])
-  const cohortStudents = cohort?.items || []
+  const cohortStudents = useMemo(() => cohort?.items || [], [cohort?.items])
   const fichaCohortStudent = fichaStudent
     ? cohortStudents.find((student) => student.codigo_estud === fichaStudent.codigo_estud)
     : null
   const parallelOptions = cohort?.paralelos || []
-  const bulkCareerCodes = selectedCareerCodes.length ? selectedCareerCodes : selectedCareer ? [selectedCareer] : []
-  const bulkCareerKey = bulkCareerCodes.join('|')
-  const selectedCareerSet = useMemo(() => new Set(bulkCareerCodes), [bulkCareerKey])
+  const bulkCareerCodes = useMemo(
+    () => (selectedCareerCodes.length ? selectedCareerCodes : selectedCareer ? [selectedCareer] : []),
+    [selectedCareer, selectedCareerCodes],
+  )
+  const selectedCareerSet = useMemo(() => new Set(bulkCareerCodes), [bulkCareerCodes])
   const selectedBulkStudentSet = useMemo(() => new Set(selectedBulkStudentKeys), [selectedBulkStudentKeys])
   const bulkStudentCount = bulkScope === 'TOTAL' ? cohortStudents.length : selectedBulkStudentKeys.length
   const selectedBulkKey = selectedBulkStudentKeys.join('|')
@@ -435,7 +437,7 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
         ? cohortStudents.filter((student) => selectedBulkStudentSet.has(bulkStudentKey(student)))
         : cohortStudents
       ).filter((student) => bulkCareerCodes.length === 0 || selectedCareerSet.has(student.cod_anio_basica || '')),
-    [bulkScope, bulkCareerKey, cohortStudents, selectedBulkStudentSet, selectedCareerSet]
+    [bulkCareerCodes.length, bulkScope, cohortStudents, selectedBulkStudentSet, selectedCareerSet]
   )
   const promotionCurrentLevels = useMemo(() => {
     const values = new Set<number>()
@@ -447,7 +449,7 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
     }
     return [...values].sort((left, right) => left - right)
   }, [promotionSourceStudents])
-  function createPromotionPlanGroups(pensumMap: Record<string, AcademicEnrollmentSubject[]>) {
+  const createPromotionPlanGroups = useCallback((pensumMap: Record<string, AcademicEnrollmentSubject[]>) => {
     const groups = new Map<string, BulkPlanGroup>()
     for (const student of promotionSourceStudents) {
       const careerCode = student.cod_anio_basica || ''
@@ -487,9 +489,9 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
     return [...groups.values()].sort((left, right) =>
       `${left.careerName}${left.levelLabel}`.localeCompare(`${right.careerName}${right.levelLabel}`)
     )
-  }
+  }, [careerLookup, promotionSourceStudents])
 
-  const promotionPlanGroups = useMemo(() => createPromotionPlanGroups(careerPensums), [careerLookup, careerPensums, promotionSourceStudents])
+  const promotionPlanGroups = useMemo(() => createPromotionPlanGroups(careerPensums), [careerPensums, createPromotionPlanGroups])
   const autoSubjectMap = useMemo(() => {
     const next: Record<string, string[]> = {}
     for (const group of promotionPlanGroups) {

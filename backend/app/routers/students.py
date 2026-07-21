@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_roles
+from app.services.complement_sync import sync_person_complements
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -5960,7 +5961,6 @@ def search_legacy_data_update_records(
     q: str = Query(default="", max_length=120),
     limit: int = Query(default=60, ge=1, le=200),
 ) -> dict[str, Any]:
-    del current_user
     if target not in {"estudiantes", "docentes"}:
         raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
     query = _clean_cell(q)
@@ -6224,6 +6224,20 @@ def update_legacy_data_update_record(
                 "updated_fields": list(valid_updates.keys()),
                 "affected_rows": affected,
             })
+            person = response.get("person", {})
+            fields = response.get("fields", {})
+            response["complementos"] = sync_person_complements(
+                {
+                    "codigo": person.get("codigo"),
+                    "cedula": re.sub(r"\D+", "", str(person.get("cedula") or "")),
+                    "nombre": person.get("nombre"),
+                    "correo": person.get("correo"),
+                    "telefono": fields.get("NumHogar") or fields.get("telefono"),
+                    "movil": fields.get("movil"),
+                    "usuario": current_user.login,
+                },
+                "estudiante" if target == "estudiantes" else "docente",
+            )
             return response
     except HTTPException:
         raise

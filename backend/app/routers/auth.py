@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.security import (
+    SessionProfile,
     SessionUser,
     clear_auth_cookie,
     create_session_token,
@@ -42,6 +43,11 @@ class LoginResponse(BaseModel):
     codigo_estud: int | None = None
     codigo_doc: int | None = None
     cedula: str | None = None
+    perfiles: list[SessionProfile] = Field(default_factory=list)
+
+
+class ProfileSelectionRequest(BaseModel):
+    rol: str = Field(min_length=1)
 
 
 def _build_ms_state(user: SessionUser, team_id: str | None = None) -> str:
@@ -97,6 +103,26 @@ def current_session(
     current_user: Annotated[SessionUser, Depends(get_current_user)],
 ) -> LoginResponse:
     return LoginResponse(**current_user.model_dump())
+
+
+@router.post("/select-profile")
+def select_profile(
+    payload: ProfileSelectionRequest,
+    response: Response,
+    current_user: Annotated[SessionUser, Depends(get_current_user)],
+) -> LoginResponse:
+    requested_role = payload.rol.strip().upper()
+    profiles = current_user.perfiles or [SessionProfile.model_validate(current_user.model_dump())]
+    selected = next((profile for profile in profiles if profile.rol.upper() == requested_role), None)
+    if selected is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El perfil seleccionado no está disponible para esta cuenta.",
+        )
+
+    user = SessionUser(**selected.model_dump(), perfiles=profiles)
+    set_auth_cookie(response, create_session_token(user))
+    return LoginResponse(**user.model_dump())
 
 
 @router.get("/microsoft/connect")

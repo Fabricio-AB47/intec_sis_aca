@@ -1,47 +1,53 @@
-import { useState, type ReactNode } from 'react'
+import { lazy, Suspense, useState, type ComponentType, type ReactNode } from 'react'
 
 import './App.css'
 import { StudentLayout } from './components/StudentLayout'
-import { AsignacionPantallasView } from './features/admin/AsignacionPantallasView'
-import { CarnetInstitucionalView } from './features/admin/CarnetInstitucionalView'
-import { CredentialGeneratorView } from './features/admin/CredentialGeneratorView'
-import { MassEmailView } from './features/admin/MassEmailView'
-import { TeacherComplianceFormatView } from './features/admin/TeacherComplianceFormatView'
 import { LoginView } from './features/auth/LoginView'
+import { ProfileSelectionView } from './features/auth/ProfileSelectionView'
 import { SessionStatusView } from './features/auth/SessionStatusView'
-import { CruceDatosView } from './features/cruce/CruceDatosView'
-import { ExcelValidationView } from './features/cruce/ExcelValidationView'
-import { DashboardView } from './features/dashboard/DashboardView'
-import { TeacherEvaluationAdminView } from './features/evaluacion/TeacherEvaluationAdminView'
 import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
-import { ActualizarDatosEstudianteView } from './features/matricula/ActualizarDatosEstudianteView'
-import { CertificateRenamerView } from './features/matricula/CertificateRenamerView'
-import { CertificadosView } from './features/matricula/CertificadosView'
-import { EstadoDocenteView } from './features/matricula/EstadoDocenteView'
-import { GestionSisAcademicoView } from './features/matricula/GestionSisAcademicoView'
-import { FechaGradoView } from './features/matricula/FechaGradoView'
-import { IngresoVentasView } from './features/matricula/IngresoVentasView'
-import { MatriculaAcadView } from './features/matricula/MatriculaAcadView'
-import { MatriculaDocenteView } from './features/matricula/MatriculaDocenteView'
-import { MatriculaExcelCertificadosView } from './features/matricula/MatriculaExcelCertificadosView'
-import { MatriculaView } from './features/matricula/MatriculaView'
-import { PeriodoAcademicoView } from './features/matricula/PeriodoAcademicoView'
-import { PeriodoMatriculadosView } from './features/matricula/PeriodoMatriculadosView'
-import { PreinscripcionView } from './features/matricula/PreinscripcionView'
-import { RangoEdadesView } from './features/matricula/RangoEdadesView'
-import { ReporteriaCarrerasView } from './features/matricula/ReporteriaCarrerasView'
-import { ReporteriaIntegralView } from './features/matricula/ReporteriaIntegralView'
-import { ReportesIndividualesView } from './features/matricula/ReportesIndividualesView'
-import { SenescytEstudiantesView } from './features/matricula/SenescytEstudiantesView'
-import { SisAcademicoV1CloneView } from './features/matricula/SisAcademicoV1CloneView'
-import { TitulosRegistradosView } from './features/matricula/TitulosRegistradosView'
-import { TitulacionView } from './features/matricula/TitulacionView'
-import { PortalDocenteView } from './features/portal/PortalDocenteView'
-import { PortalEstudianteView } from './features/portal/PortalEstudianteView'
-import { PracticasInstitucionalesView } from './features/practicas/PracticasInstitucionalesView'
-import { TeamsEnrollmentView } from './features/teams/TeamsEnrollmentView'
-import { TeamsView } from './features/teams/TeamsView'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
+
+const lazyView = <T,>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(async () => ({ default: (await loader())[name] as ComponentType<Record<string, unknown>> }))
+
+const AsignacionPantallasView = lazyView(() => import('./features/admin/AsignacionPantallasView'), 'AsignacionPantallasView')
+const CarnetInstitucionalView = lazyView(() => import('./features/admin/CarnetInstitucionalView'), 'CarnetInstitucionalView')
+const CredentialGeneratorView = lazyView(() => import('./features/admin/CredentialGeneratorView'), 'CredentialGeneratorView')
+const MassEmailView = lazyView(() => import('./features/admin/MassEmailView'), 'MassEmailView')
+const TeacherComplianceFormatView = lazyView(() => import('./features/admin/TeacherComplianceFormatView'), 'TeacherComplianceFormatView')
+const CruceDatosView = lazyView(() => import('./features/cruce/CruceDatosView'), 'CruceDatosView')
+const ExcelValidationView = lazyView(() => import('./features/cruce/ExcelValidationView'), 'ExcelValidationView')
+const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'), 'DashboardView')
+const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
+const ActualizarDatosEstudianteView = lazyView(() => import('./features/matricula/ActualizarDatosEstudianteView'), 'ActualizarDatosEstudianteView')
+const CertificateRenamerView = lazyView(() => import('./features/matricula/CertificateRenamerView'), 'CertificateRenamerView')
+const CertificadosView = lazyView(() => import('./features/matricula/CertificadosView'), 'CertificadosView')
+const EstadoDocenteView = lazyView(() => import('./features/matricula/EstadoDocenteView'), 'EstadoDocenteView')
+const GestionSisAcademicoView = lazyView(() => import('./features/matricula/GestionSisAcademicoView'), 'GestionSisAcademicoView')
+const FechaGradoView = lazyView(() => import('./features/matricula/FechaGradoView'), 'FechaGradoView')
+const IngresoVentasView = lazyView(() => import('./features/matricula/IngresoVentasView'), 'IngresoVentasView')
+const MatriculaAcadView = lazyView(() => import('./features/matricula/MatriculaAcadView'), 'MatriculaAcadView')
+const MatriculaDocenteView = lazyView(() => import('./features/matricula/MatriculaDocenteView'), 'MatriculaDocenteView')
+const MatriculaExcelCertificadosView = lazyView(() => import('./features/matricula/MatriculaExcelCertificadosView'), 'MatriculaExcelCertificadosView')
+const MatriculaView = lazyView(() => import('./features/matricula/MatriculaView'), 'MatriculaView')
+const PeriodoAcademicoView = lazyView(() => import('./features/matricula/PeriodoAcademicoView'), 'PeriodoAcademicoView')
+const PeriodoMatriculadosView = lazyView(() => import('./features/matricula/PeriodoMatriculadosView'), 'PeriodoMatriculadosView')
+const PreinscripcionView = lazyView(() => import('./features/matricula/PreinscripcionView'), 'PreinscripcionView')
+const RangoEdadesView = lazyView(() => import('./features/matricula/RangoEdadesView'), 'RangoEdadesView')
+const ReporteriaCarrerasView = lazyView(() => import('./features/matricula/ReporteriaCarrerasView'), 'ReporteriaCarrerasView')
+const ReporteriaIntegralView = lazyView(() => import('./features/matricula/ReporteriaIntegralView'), 'ReporteriaIntegralView')
+const ReportesIndividualesView = lazyView(() => import('./features/matricula/ReportesIndividualesView'), 'ReportesIndividualesView')
+const SenescytEstudiantesView = lazyView(() => import('./features/matricula/SenescytEstudiantesView'), 'SenescytEstudiantesView')
+const SisAcademicoV1CloneView = lazyView(() => import('./features/matricula/SisAcademicoV1CloneView'), 'SisAcademicoV1CloneView')
+const TitulosRegistradosView = lazyView(() => import('./features/matricula/TitulosRegistradosView'), 'TitulosRegistradosView')
+const TitulacionView = lazyView(() => import('./features/matricula/TitulacionView'), 'TitulacionView')
+const PortalDocenteView = lazyView(() => import('./features/portal/PortalDocenteView'), 'PortalDocenteView')
+const PortalDocentePlanificacionView = lazyView(() => import('./features/portal/PortalDocentePlanificacionView'), 'PortalDocentePlanificacionView')
+const PortalEstudianteView = lazyView(() => import('./features/portal/PortalEstudianteView'), 'PortalEstudianteView')
+const PracticasInstitucionalesView = lazyView(() => import('./features/practicas/PracticasInstitucionalesView'), 'PracticasInstitucionalesView')
+const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
+const TeamsView = lazyView(() => import('./features/teams/TeamsView'), 'TeamsView')
 
 function App() {
   const app = useReporteriaApp()
@@ -61,6 +67,22 @@ function App() {
         displayName="Formulario publico"
         publicMode
         onBackToLogin={() => setPublicTeacherEvaluation(false)}
+      />
+    )
+  }
+
+  if (app.session && app.profileSelectionPending) {
+    return (
+      <ProfileSelectionView
+        session={app.session}
+        loading={app.profileSelectionLoading}
+        error={app.profileSelectionError}
+        onSelect={(role) => {
+          void app.selectAccessProfile(role)
+        }}
+        onLogout={() => {
+          void app.logout()
+        }}
       />
     )
   }
@@ -257,6 +279,8 @@ function App() {
       pageContent = <PortalDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'portal-docente-informe') {
       pageContent = <PortalDocenteView displayName={app.displayName} initialMode="compliance" />
+    } else if (app.activePage === 'portal-docente-planificacion') {
+      pageContent = <PortalDocentePlanificacionView displayName={app.displayName} />
     } else if (app.activePage === 'formato-informe-docente') {
       pageContent = <TeacherComplianceFormatView displayName={app.displayName} />
     } else if (app.activePage === 'practicas-institucionales') {
@@ -326,6 +350,7 @@ function App() {
           onOpenPortalEstudiante={app.openPortalEstudiantePage}
           onOpenPortalDocente={app.openPortalDocentePage}
           onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}
+          onOpenPortalDocentePlanificacion={app.openPortalDocentePlanificacionPage}
           onOpenTeams={app.openTeamsPage}
           onOpenTeamsMatricula={app.openTeamsMatriculaPage}
           onOpenMatricula={app.openMatriculaPage}
@@ -367,7 +392,7 @@ function App() {
             void app.logout()
           }}
         >
-          {pageContent}
+          <Suspense fallback={<SessionStatusView message="Cargando modulo..." />}>{pageContent}</Suspense>
         </StudentLayout>
       </main>
     )

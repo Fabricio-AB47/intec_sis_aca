@@ -1318,6 +1318,17 @@ REPORTS = {
         "filters": ["anio", "estado", "genero", "buscar", "limite"],
         "estado_options": STUDENT_ESTADO_OPTIONS,
     },
+    "genero_docentes": {
+        "title": "Género de docentes",
+        "description": "Distribución de docentes por género y estado activo o inactivo.",
+        "category": "Docencia",
+        "source_tables": ["DATOSDOCENTE", "USUARIOS", "Sexo"],
+        "filters": ["estado", "genero", "buscar", "limite"],
+        "estado_options": [
+            {"value": "A", "label": "Activo"},
+            {"value": "P", "label": "Inactivo"},
+        ],
+    },
     "periodo": {
         "title": "Período",
         "description": "Totales de estudiantes por período académico, divididos en regular y homologación.",
@@ -1614,6 +1625,71 @@ def _genero_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[
     return sql, values
 
 
+def _genero_docentes_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
+    sql = f"""
+        WITH docentes AS (
+            SELECT
+                TRY_CONVERT(varchar(50), d.codigo_doc) AS docente_codigo,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))) AS cedula,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))) AS docente,
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))) AS correo,
+                CASE
+                    WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.sexo))))
+                         IN (N'1', N'M', N'MASCULINO', N'HOMBRE') THEN N'Masculino'
+                    WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.sexo))))
+                         IN (N'2', N'F', N'FEMENINO', N'MUJER') THEN N'Femenino'
+                    ELSE N'Sin registrar'
+                END AS genero,
+                UPPER(COALESCE(
+                    NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), usuario.Estado))), N''),
+                    N'SIN_ESTADO'
+                )) AS estado_codigo
+            FROM dbo.DATOSDOCENTE d
+            OUTER APPLY (
+                SELECT TOP (1) u.Estado
+                FROM dbo.USUARIOS u
+                WHERE COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1
+                  AND (
+                        TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                     OR LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+                  )
+                ORDER BY
+                    CASE WHEN TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc) THEN 0 ELSE 1 END,
+                    TRY_CONVERT(int, u.Codigo_Usuario)
+            ) usuario
+        ),
+        filtrados AS (
+            SELECT *
+            FROM docentes
+            WHERE (? IS NULL OR estado_codigo = UPPER(?))
+              AND (? IS NULL OR LOWER(genero) LIKE LOWER(?))
+              AND (
+                    ? IS NULL
+                 OR docente LIKE ?
+                 OR cedula LIKE ?
+                 OR correo LIKE ?
+              )
+        )
+        SELECT TOP ({limit})
+            genero,
+            SUM(CASE WHEN estado_codigo = 'A' THEN 1 ELSE 0 END) AS activos,
+            SUM(CASE WHEN estado_codigo = 'P' THEN 1 ELSE 0 END) AS inactivos,
+            SUM(CASE WHEN estado_codigo NOT IN ('A', 'P') THEN 1 ELSE 0 END) AS sin_estado,
+            COUNT(*) AS total
+        FROM filtrados
+        GROUP BY genero
+        ORDER BY
+            CASE genero WHEN N'Femenino' THEN 1 WHEN N'Masculino' THEN 2 ELSE 3 END
+    """
+    buscar = params["buscar"]
+    return sql, [
+        params["estado"], params["estado"],
+        params["genero"], params["genero"],
+        buscar, buscar, buscar, buscar,
+    ]
+
+
 def _periodo_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
     cte, values = _student_report_cte(params)
     sql = f"""
@@ -1637,6 +1713,7 @@ QUERY_BUILDERS = {
     "carrera": _carrera_query,
     "graduados_2025": _graduados_2025_query,
     "genero": _genero_query,
+    "genero_docentes": _genero_docentes_query,
     "periodo": _periodo_query,
 }
 
@@ -1674,7 +1751,9 @@ def _execute_report(
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": (
-            "dbo.TOTALESTUDMATRICCNE"
+            "dbo.DATOSDOCENTE + dbo.USUARIOS"
+            if report_key == "genero_docentes"
+            else "dbo.TOTALESTUDMATRICCNE"
             if report_key in {"provincia", "provincia_genero", "provincia_carrera", "carrera", "graduados_2025", "genero", "periodo"}
             and not filters["anio"]
             and not filters["periodo"]

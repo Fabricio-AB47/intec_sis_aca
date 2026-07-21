@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.core.security import SessionUser, verify_password
+from app.core.security import SessionProfile, SessionUser, verify_password
 from app.services.db import get_connection
 
 _ALLOWED_ROLES = {
@@ -92,7 +92,7 @@ def _password_matches(candidate: str, *stored_values: Any) -> bool:
     return any(verify_password(candidate, _clean(value)) for value in stored_values if _clean(value))
 
 
-def _authenticate_administrative_user(login_or_email: str, password: str) -> SessionUser | None:
+def _authenticate_administrative_user(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
     SELECT TOP (1)
         [login],
@@ -106,6 +106,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
         [codprovincia],
         [tipousuario],
         [tp_us],
+        TRY_CONVERT(nvarchar(100), [cedula]) AS cedula,
         TRY_CONVERT(nvarchar(100), tu.detalle_tipo_us) AS detalle_tipo_us
     FROM [dbo].[USUARIO_SIS]
     LEFT JOIN [dbo].[TIPO_USUARIO] tu
@@ -115,6 +116,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
          )
     WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [login])))) = LOWER(?)
        OR LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [email])))) = LOWER(?)
+       OR LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), [cedula]), N''))) = ?
     ORDER BY
         CASE
             WHEN LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [login])))) = LOWER(?) THEN 0
@@ -124,13 +126,13 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (login_or_email, login_or_email, login_or_email))
+        cursor.execute(query, (login_or_email, login_or_email, login_or_email, login_or_email))
         row = cursor.fetchone()
 
     if not row:
         return None
 
-    if not verify_password(password, row.password):
+    if password is not None and not verify_password(password, row.password):
         return None
 
     if not _is_active(row.estado):
@@ -149,10 +151,11 @@ def _authenticate_administrative_user(login_or_email: str, password: str) -> Ses
         email=_clean(row.email) or None,
         id_usuario=_int_or_none(row.id_usuarios),
         rol=role,
+        cedula=_clean(row.cedula) or None,
     )
 
 
-def _authenticate_student(login_or_email: str, password: str) -> SessionUser | None:
+def _authenticate_student(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
     SELECT TOP (1)
         TRY_CONVERT(int, de.codigo_estud) AS codigo_estud,
@@ -209,7 +212,7 @@ def _authenticate_student(login_or_email: str, password: str) -> SessionUser | N
     if not row:
         return None
 
-    if not _password_matches(password, row.CorreoPassword, row.clave, row.usuario_password):
+    if password is not None and not _password_matches(password, row.CorreoPassword, row.clave, row.usuario_password):
         return None
 
     return SessionUser(
@@ -223,7 +226,7 @@ def _authenticate_student(login_or_email: str, password: str) -> SessionUser | N
     )
 
 
-def _authenticate_teacher(login_or_email: str, password: str) -> SessionUser | None:
+def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
     SELECT TOP (1)
         TRY_CONVERT(int, d.codigo_doc) AS codigo_doc,
@@ -275,7 +278,7 @@ def _authenticate_teacher(login_or_email: str, password: str) -> SessionUser | N
     if not row:
         return None
 
-    if not verify_password(password, row.password):
+    if password is not None and not verify_password(password, row.password):
         return None
 
     if not _is_active(row.Estado):
@@ -297,13 +300,63 @@ def authenticate_user(login: str, password: str) -> dict[str, Any]:
     if not login_or_email:
         raise ValueError("Credenciales invalidas")
 
-    for resolver in (
+    profiles: list[SessionProfile] = []
+    permission_errors: list[PermissionError] = []
+    resolvers = (
         _authenticate_administrative_user,
         _authenticate_student,
         _authenticate_teacher,
-    ):
-        user = resolver(login_or_email, password)
+    )
+    # Primero se valida la credencial contra los tres origenes oficiales.
+    for resolver in resolvers:
+        try:
+            user = resolver(login_or_email, password)
+        except PermissionError as exc:
+            permission_errors.append(exc)
+            continue
         if user is not None:
-            return user.model_dump()
+            profile = SessionProfile.model_validate(user.model_dump())
+            if not any(existing.rol == profile.rol for existing in profiles):
+                profiles.append(profile)
+
+    if profiles:
+        # Una vez comprobada la identidad, se resuelven sus otros perfiles por
+        # correo/login institucional o cedula. El rol sigue dependiendo de que
+        # exista un registro activo en su tabla de origen.
+        pending_identifiers = [login_or_email]
+        for profile in profiles:
+            pending_identifiers.extend(filter(None, (profile.login, profile.email, profile.cedula)))
+        checked_identifiers: set[str] = set()
+
+        while pending_identifiers:
+            identifier = pending_identifiers.pop(0).strip()
+            identifier_key = identifier.casefold()
+            if not identifier or identifier_key in checked_identifiers:
+                continue
+            checked_identifiers.add(identifier_key)
+
+            for resolver in resolvers:
+                try:
+                    user = resolver(identifier, None)
+                except PermissionError as exc:
+                    permission_errors.append(exc)
+                    continue
+                if user is None:
+                    continue
+                profile = SessionProfile.model_validate(user.model_dump())
+                if any(existing.rol == profile.rol for existing in profiles):
+                    continue
+                profiles.append(profile)
+                for value in (profile.login, profile.email, profile.cedula):
+                    normalized = _clean(value)
+                    if normalized and normalized.casefold() not in checked_identifiers:
+                        pending_identifiers.append(normalized)
+
+    if profiles:
+        primary = profiles[0]
+        return SessionUser(**primary.model_dump(), perfiles=profiles).model_dump()
+
+    if permission_errors:
+        raise permission_errors[0]
 
     raise ValueError("Credenciales invalidas")

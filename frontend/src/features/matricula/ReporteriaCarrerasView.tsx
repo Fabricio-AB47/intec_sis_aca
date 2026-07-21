@@ -72,7 +72,7 @@ export function ReporteriaCarrerasView({
   const [careerStudents, setCareerStudents] = useState<MatriculaStudentItem[]>([])
   const [careerStudentsLoading, setCareerStudentsLoading] = useState(false)
   const [careerStudentsError, setCareerStudentsError] = useState('')
-  const items = report?.items || []
+  const items = useMemo(() => report?.items || [], [report?.items])
   const schools = useMemo(
     () => [...new Set(items.map((item) => item.escuela || 'Sin escuela'))].sort((a, b) => a.localeCompare(b)),
     [items]

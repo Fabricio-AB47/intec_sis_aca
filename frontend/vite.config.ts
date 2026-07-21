@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const apiTarget = 'http://127.0.0.1:8007'
+const apiTarget = 'http://127.0.0.1:8002'
 
 // https://vite.dev/config/
 export default defineConfig({

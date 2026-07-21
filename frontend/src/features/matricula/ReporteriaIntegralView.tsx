@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useState } from 'react'
 
 import {
   downloadLegacyReportWorkbook,
@@ -80,6 +80,18 @@ const defaultReports: LegacyReportDefinition[] = [
     filters: ['anio', 'estado', 'genero', 'buscar', 'limite'],
   },
   {
+    key: 'genero_docentes',
+    title: 'Género de docentes',
+    category: 'Docencia',
+    description: 'Distribución de docentes por género y estado actual.',
+    source_tables: ['DATOSDOCENTE', 'USUARIOS', 'Sexo'],
+    filters: ['estado', 'genero', 'buscar', 'limite'],
+    estado_options: [
+      { value: 'A', label: 'Activo' },
+      { value: 'P', label: 'Inactivo' },
+    ],
+  },
+  {
     key: 'periodo',
     title: 'Período',
     category: 'Reportería R/H',
@@ -141,6 +153,9 @@ function columnLabel(column: string): string {
     periodo_codigo: 'Código período',
     genero: 'Género',
     cedula: 'Cédula',
+    activos: 'Activos',
+    inactivos: 'Inactivos',
+    sin_estado: 'Sin estado',
   }
   if (labels[column]) return labels[column]
   return column
@@ -180,6 +195,9 @@ function isTotalColumn(column: string): boolean {
   return (
     normalized === 'regular' ||
     normalized === 'homologacion' ||
+    normalized === 'activos' ||
+    normalized === 'inactivos' ||
+    normalized === 'sin_estado' ||
     normalized === 'total' ||
     normalized === 'cantidad' ||
     normalized === 'graduados' ||
@@ -246,8 +264,8 @@ export function ReporteriaIntegralView({
     () => new Set(selectedReport?.filters?.length ? selectedReport.filters : ['anio', 'carrera', 'genero', 'buscar', 'limite']),
     [selectedReport],
   )
-  const columns = data?.columns || []
-  const rows = data?.rows || []
+  const columns = useMemo(() => data?.columns || [], [data?.columns])
+  const rows = useMemo(() => data?.rows || [], [data?.rows])
   const isGradesReport = reportKey === 'notas_carrera_materia'
   const ageRangeSummary = useMemo((): AgeRangeSummary[] => {
     if (reportKey !== 'becas_edades') return []
@@ -446,6 +464,9 @@ export function ReporteriaIntegralView({
     }
   }
 
+  const loadReportEffect = useEffectEvent(loadReport)
+  const filtersEffect = useEffectEvent(filters)
+
   async function exportReport() {
     setError('')
     const validationMessage = validateFiltersForReport(reportKey)
@@ -493,7 +514,7 @@ export function ReporteriaIntegralView({
     }
 
     void loadCatalog()
-    void loadReport()
+    void loadReportEffect()
 
     return () => {
       cancelled = true
@@ -512,7 +533,7 @@ export function ReporteriaIntegralView({
     setEstado(nextEstado)
     setGenero('')
     setData(null)
-    void loadReport(nextReportKey, nextEstado)
+    void loadReportEffect(nextReportKey, nextEstado)
   }, [appliedInitialReport, initialReportKey, reports])
 
   useEffect(() => {
@@ -521,7 +542,7 @@ export function ReporteriaIntegralView({
 
     const refreshReport = async () => {
       try {
-        const payload = await fetchLegacyReport(filters())
+        const payload = await fetchLegacyReport(filtersEffect())
         setData(payload)
         setError('')
       } catch {
@@ -569,7 +590,7 @@ export function ReporteriaIntegralView({
   useEffect(() => {
     if (reportKey !== 'graduados_2025') return
     const timeout = window.setTimeout(() => {
-      void loadReport('graduados_2025', estado)
+      void loadReportEffect('graduados_2025', estado)
     }, 250)
 
     return () => window.clearTimeout(timeout)
@@ -744,7 +765,11 @@ export function ReporteriaIntegralView({
             {enabledFilters.has('buscar') ? (
               <label>
                 <span>Buscar</span>
-                <input value={buscar} onChange={(event) => setBuscar(event.target.value)} placeholder="Cédula, estudiante, provincia, carrera o período" />
+                <input
+                  value={buscar}
+                  onChange={(event) => setBuscar(event.target.value)}
+                  placeholder={reportKey === 'genero_docentes' ? 'Docente, cédula o correo' : 'Cédula, estudiante, provincia, carrera o período'}
+                />
               </label>
             ) : null}
             {enabledFilters.has('limite') ? (

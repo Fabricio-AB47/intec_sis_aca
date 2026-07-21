@@ -7,6 +7,7 @@ import {
   fetchPortalTeacherCourses,
   fetchPortalTeacherStudents,
   savePortalTeacherGrades,
+  signPortalTeacherComplianceReport,
 } from '../../lib/api'
 import type {
   PortalAcademicRecordItem,
@@ -282,6 +283,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [previewingSecretaryReport, setPreviewingSecretaryReport] = useState(false)
   const [secretaryReportPreviewUrl, setSecretaryReportPreviewUrl] = useState('')
   const [downloadingComplianceReport, setDownloadingComplianceReport] = useState(false)
+  const [signingComplianceReport, setSigningComplianceReport] = useState(false)
   const [previewingComplianceReport, setPreviewingComplianceReport] = useState(false)
   const [compliancePreviewUrl, setCompliancePreviewUrl] = useState('')
   const [complianceStartDate, setComplianceStartDate] = useState('')
@@ -301,6 +303,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     asistencia: [],
     notas: [],
   })
+  const [signingCertificate, setSigningCertificate] = useState<File | null>(null)
+  const [signingCertificateInputKey, setSigningCertificateInputKey] = useState(0)
+  const [signingPassword, setSigningPassword] = useState('')
+  const [showSigningPassword, setShowSigningPassword] = useState(false)
+  const [signingReason, setSigningReason] = useState('Informe de cumplimiento docente')
+  const [signingLocation, setSigningLocation] = useState('Quito, Ecuador')
+  const [signingContact, setSigningContact] = useState('')
+  const [signingConsent, setSigningConsent] = useState(false)
   const [savingKey, setSavingKey] = useState('')
   const [gradeScreenOpen, setGradeScreenOpen] = useState(initialMode === 'compliance' ? false : false)
   const [error, setError] = useState('')
@@ -866,6 +876,82 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
+  function clearSigningCredentials() {
+    setSigningCertificate(null)
+    setSigningPassword('')
+    setShowSigningPassword(false)
+    setSigningCertificateInputKey((current) => current + 1)
+  }
+
+  async function signComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
+    if (!course) return
+    const params = reportRequestParams(course, compliancePeriodCodes)
+    if (!params) return
+    if (params.periodos.length > 4) {
+      setError('Seleccione máximo 4 periodos para generar el informe.')
+      return
+    }
+    if (complianceStudents.length === 0 || selectedComplianceStudentCodes.length === 0) {
+      setError('Cargue y seleccione al menos un estudiante para anexar calificaciones al informe.')
+      return
+    }
+    if (complianceEvidenceFiles.notas.length === 0) {
+      setError('Debe subir al menos una captura del reporte de notas antes de firmar.')
+      return
+    }
+    if (!signingCertificate || !signingPassword) {
+      setError('Seleccione el archivo .p12 e ingrese su contraseña.')
+      return
+    }
+    if (!signingConsent) {
+      setError('Confirme que es titular del certificado y que aprueba el contenido del informe.')
+      return
+    }
+
+    setSelectedCourseKey(courseKey(course))
+    setTargetCourseKey(courseKey(course))
+    setSigningComplianceReport(true)
+    setError('')
+    setMessage('')
+    try {
+      const blob = await signPortalTeacherComplianceReport({
+        codigoPeriodos: params.periodos,
+        codigoMateria: params.subjectCode,
+        paralelo: params.paralelo,
+        codJornada: params.codJornada,
+        codigoEstudiantes: selectedComplianceStudentCodes,
+        fechaInicio: complianceStartDate,
+        fechaFin: complianceEndDate,
+        telefono: compliancePhone,
+        actualizaciones: complianceUpdates,
+        observaciones: complianceObservations,
+        evidencias: evidencePayload(complianceEvidenceFiles),
+        certificado: signingCertificate,
+        contrasenaCertificado: signingPassword,
+        firmaMotivo: signingReason,
+        firmaUbicacion: signingLocation,
+        firmaContacto: signingContact,
+      })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const subject = safeFilenamePart(course.nombre_materia || params.subjectCode)
+      const period = safeFilenamePart(compliancePeriodCodes.join('-') || course.detalle_periodos || course.detalle_periodo || params.periodos.join('-'))
+      link.href = url
+      link.download = `cumplimiento-docente-${subject}-${period}-firmado.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      setSigningConsent(false)
+      setMessage('Informe firmado y descargado. El certificado y la contraseña fueron descartados de esta pantalla.')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo firmar electrónicamente el informe')
+    } finally {
+      clearSigningCredentials()
+      setSigningComplianceReport(false)
+    }
+  }
+
   function closeReportPreview() {
     setReportPreviewUrl('')
   }
@@ -1253,6 +1339,94 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <p className="form-success">Carga los estudiantes calificados para anexar sus notas al informe.</p>
               )}
             </div>
+            <section className="portal-signature-panel" aria-labelledby="portal-signature-title">
+              <div className="section-title">
+                <div>
+                  <span>Firma electrónica</span>
+                  <h2 id="portal-signature-title">Firmar informe con certificado .p12</h2>
+                </div>
+                <strong>Uso único por solicitud</strong>
+              </div>
+              <p>
+                El certificado y la contraseña se utilizan únicamente para firmar este PDF. Al finalizar el intento,
+                deberá seleccionarlos nuevamente para otra firma.
+              </p>
+              <div className="portal-signature-grid">
+                <label className="portal-signature-certificate">
+                  <span>Archivo de certificado</span>
+                  <input
+                    key={signingCertificateInputKey}
+                    type="file"
+                    accept=".p12,.pfx,application/x-pkcs12"
+                    onChange={(event) => setSigningCertificate(event.target.files?.[0] || null)}
+                  />
+                  <small>{signingCertificate ? signingCertificate.name : 'Seleccione un archivo .p12 o .pfx de máximo 2 MB'}</small>
+                </label>
+                <label>
+                  <span>Contraseña del certificado</span>
+                  <div className="portal-signature-password">
+                    <input
+                      type={showSigningPassword ? 'text' : 'password'}
+                      value={signingPassword}
+                      onChange={(event) => setSigningPassword(event.target.value)}
+                      autoComplete="new-password"
+                      placeholder="Contraseña del archivo .p12"
+                    />
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setShowSigningPassword((current) => !current)}
+                      aria-pressed={showSigningPassword}
+                    >
+                      {showSigningPassword ? 'Ocultar' : 'Mostrar'}
+                    </button>
+                  </div>
+                </label>
+                <label>
+                  <span>Motivo de la firma</span>
+                  <input value={signingReason} onChange={(event) => setSigningReason(event.target.value)} maxLength={200} />
+                </label>
+                <label>
+                  <span>Ubicación</span>
+                  <input value={signingLocation} onChange={(event) => setSigningLocation(event.target.value)} maxLength={120} />
+                </label>
+                <label>
+                  <span>Contacto del firmante</span>
+                  <input
+                    value={signingContact}
+                    onChange={(event) => setSigningContact(event.target.value)}
+                    maxLength={200}
+                    placeholder="Correo institucional (opcional)"
+                  />
+                </label>
+              </div>
+              <label className="portal-signature-consent">
+                <input
+                  type="checkbox"
+                  checked={signingConsent}
+                  onChange={(event) => setSigningConsent(event.target.checked)}
+                />
+                <span>Confirmo que soy titular del certificado y apruebo el contenido definitivo del informe.</span>
+              </label>
+              <div className="portal-signature-actions">
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={clearSigningCredentials}
+                  disabled={!signingCertificate && !signingPassword}
+                >
+                  Limpiar certificado
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => void signComplianceReport(targetCourse)}
+                  disabled={signingComplianceReport || !targetCourse || !signingCertificate || !signingPassword || !signingConsent}
+                >
+                  {signingComplianceReport ? 'Firmando PDF...' : 'Firmar y descargar PDF'}
+                </button>
+              </div>
+            </section>
             <div className="portal-compliance-actions">
               <button
                 type="button"
@@ -1264,11 +1438,11 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               </button>
               <button
                 type="button"
-                className="primary-action"
+                className="ghost-button"
                 onClick={() => void downloadComplianceReport(targetCourse)}
                 disabled={downloadingComplianceReport || !targetCourse}
               >
-                {downloadingComplianceReport ? 'Generando informe...' : 'Crear y descargar documento'}
+                {downloadingComplianceReport ? 'Generando informe...' : 'Descargar PDF sin firma'}
               </button>
             </div>
             {error ? <p className="form-error">{error}</p> : null}

@@ -71,7 +71,7 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const periodos = catalog?.periodos || []
+  const periodos = useMemo(() => catalog?.periodos || [], [catalog?.periodos])
   const selectedBasePeriod = useMemo(
     () => periodos.find((item) => item.cod_periodo === periodo) || null,
     [periodo, periodos],
@@ -97,11 +97,11 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
   }
 
   const selectableMatriculaStudents = useMemo(
-    () => students.filter((student) => canGenerateMatricula(student)),
+    () => students.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_matricula)),
     [periodo, students],
   )
   const selectablePromocionStudents = useMemo(
-    () => students.filter((student) => canGeneratePromocion(student)),
+    () => students.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_promocion)),
     [periodo, students],
   )
   const selectedMatriculaCount = selectedMatriculaCodes.size

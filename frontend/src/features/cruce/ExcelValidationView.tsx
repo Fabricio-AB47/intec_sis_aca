@@ -111,7 +111,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
   const [error, setError] = useState('')
   const [tableFilter, setTableFilter] = useState('')
 
-  const rows = data?.rows || []
+  const rows = useMemo(() => data?.rows || [], [data?.rows])
   const summary = data?.summary
   const visibleRows = useMemo(() => {
     const needle = tableFilter.trim().toLowerCase()

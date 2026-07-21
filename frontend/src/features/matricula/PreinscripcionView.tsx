@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
 
 import {
+  approvePreinscriptionScholarship,
+  approvePreinscriptionScholarshipById,
+  createScholarshipConfiguration,
   approvePreinscriptionCarnetPhoto,
   createPreinscription,
   fetchAcademicEnrollmentDetail,
   fetchAcademicEnrollmentPensum,
   fetchPreinscriptionCarnetPhoto,
   fetchPreinscriptionCatalog,
+  fetchPreinscriptionScholarshipStatus,
+  fetchPendingPreinscriptionScholarships,
+  fetchScholarshipBeneficiaries,
+  fetchScholarshipConfigurations,
   fetchPreinscriptions,
   previewAcademicEnrollment,
   rejectPreinscriptionCarnetPhoto,
@@ -15,6 +22,7 @@ import {
   saveAcademicEnrollment,
   updatePreinscriptionDocuments,
   updatePreinscriptionFollowup,
+  updateScholarshipConfiguration,
   uploadPreinscriptionCarnetPhoto,
   uploadPreinscriptionDocument,
   validatePreinscriptionCedula,
@@ -33,7 +41,12 @@ import type {
   PreinscriptionItem,
   PreinscriptionListResponse,
   PreinscriptionPhotoStatus,
+  PreinscriptionScholarshipApprovalItem,
+  PreinscriptionScholarshipStatus,
   PreinscriptionStage,
+  ScholarshipBeneficiaryItem,
+  ScholarshipConfigurationItem,
+  ScholarshipConfigurationPayload,
 } from '../../types/app'
 
 type PreinscripcionViewProps = {
@@ -104,6 +117,12 @@ const integratedPreinscriptionServices: IntegratedPreinscriptionService[] = [
 ]
 
 const academicEnrollmentRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE', 'ACADEMICO', 'BIENESTAR', 'ADMISIONES'])
+const scholarshipApprovalRoles = new Set(['ADMINISTRADOR', 'BIENESTAR'])
+const scholarshipApprovalThreshold = 15
+const academicSemesterCost = 750
+const standardEnrollmentCost = 75
+const gastronomyEnrollmentCost = 100
+const subjectsPerSemester = 6
 
 function normalizeRoleKey(role?: string) {
   return String(role || '')
@@ -139,6 +158,15 @@ function photoStatusClass(status?: string): string {
 function toNumber(value: string, fallback = 0): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function isNoScholarship(value?: string): boolean {
+  const normalized = String(value || '').trim().toUpperCase()
+  return !normalized || ['SIN BECA', 'NO APLICA', 'NINGUNA'].includes(normalized)
+}
+
+function isMintelScholarship(value?: string): boolean {
+  return String(value || '').trim().toUpperCase().includes('MINTEL')
 }
 
 function formatMoney(value: number): string {
@@ -187,6 +215,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     num_cuotas: '1',
     tipo_beca: '',
     porcentaje_beca: '0',
+    motivo_beca: '',
     descuento: '0',
     num_pago: '1',
     detalle_pago: 'Convenio de pago',
@@ -238,6 +267,39 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   const [createLoading, setCreateLoading] = useState(false)
   const [createError, setCreateError] = useState('')
   const [createMessage, setCreateMessage] = useState('')
+  const [scholarshipStatus, setScholarshipStatus] = useState<PreinscriptionScholarshipStatus | null>(null)
+  const [scholarshipStatusLoading, setScholarshipStatusLoading] = useState(false)
+  const [scholarshipApprovalLoading, setScholarshipApprovalLoading] = useState(false)
+  const [pendingScholarships, setPendingScholarships] = useState<PreinscriptionScholarshipApprovalItem[]>([])
+  const [pendingScholarshipQuery, setPendingScholarshipQuery] = useState('')
+  const [pendingScholarshipsLoading, setPendingScholarshipsLoading] = useState(false)
+  const [pendingScholarshipsError, setPendingScholarshipsError] = useState('')
+  const [pendingScholarshipsMessage, setPendingScholarshipsMessage] = useState('')
+  const [approvingScholarshipId, setApprovingScholarshipId] = useState<number | null>(null)
+  const [scholarshipBeneficiaries, setScholarshipBeneficiaries] = useState<ScholarshipBeneficiaryItem[]>([])
+  const [scholarshipBeneficiaryQuery, setScholarshipBeneficiaryQuery] = useState('')
+  const [scholarshipBeneficiariesLoading, setScholarshipBeneficiariesLoading] = useState(false)
+  const [scholarshipBeneficiariesError, setScholarshipBeneficiariesError] = useState('')
+  const [scholarshipBeneficiarySummary, setScholarshipBeneficiarySummary] = useState({
+    total: 0,
+    valorTotal: 0,
+    porcentajePromedio: 0,
+  })
+  const [scholarshipConfigurations, setScholarshipConfigurations] = useState<ScholarshipConfigurationItem[]>([])
+  const [scholarshipConfigurationLoading, setScholarshipConfigurationLoading] = useState(false)
+  const [scholarshipConfigurationSaving, setScholarshipConfigurationSaving] = useState(false)
+  const [scholarshipConfigurationError, setScholarshipConfigurationError] = useState('')
+  const [scholarshipConfigurationMessage, setScholarshipConfigurationMessage] = useState('')
+  const [editingScholarshipConfigurationId, setEditingScholarshipConfigurationId] = useState<number | null>(null)
+  const [scholarshipConfigurationForm, setScholarshipConfigurationForm] = useState<ScholarshipConfigurationPayload>({
+    codigo: '',
+    nombre: '',
+    es_variable: false,
+    porcentaje: 0,
+    porcentaje_minimo: 0,
+    porcentaje_maximo: 100,
+    activo: true,
+  })
   const [cedulaValidationLoading, setCedulaValidationLoading] = useState(false)
   const [cedulaValidation, setCedulaValidation] = useState<{
     cedula: string
@@ -272,11 +334,17 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   const [enrollmentControl, setEnrollmentControl] = useState('1')
   const [enrollmentFinalizeProcess, setEnrollmentFinalizeProcess] = useState(true)
 
-  const rows = data?.items || []
+  const rows = useMemo(() => data?.items || [], [data?.items])
   const totals = data?.totals || {}
   const normalizedRole = normalizeRoleKey(role)
   const isAdmissionsRole = normalizedRole === 'ADMISIONES'
   const canManageAcademicEnrollment = academicEnrollmentRoles.has(normalizedRole)
+  const canApproveScholarship = scholarshipApprovalRoles.has(normalizedRole)
+  const isScholarshipAdminStage = activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados'
+  const scholarshipSelectionIsEmpty = isNoScholarship(cabeceraValues.tipo_beca)
+  const scholarshipNeedsApproval = Boolean(
+    scholarshipStatus?.requiere_aprobacion && !scholarshipStatus?.puede_continuar,
+  )
   const userRecordCount = totals.usuario_actual ?? totals.mis_registros ?? data?.total ?? 0
   const hasCabecera = Boolean(selectedItem?.en_cabecera_matricula)
   const codigoDocumentacion = selectedItem?.cabecera?.numcodigo || selectedItem?.cabecera?.num_matricula || ''
@@ -333,6 +401,12 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   const displayedIntegratedServices = isAdmissionsRole ? admissionProcessServices : integratedServices
   const integratedReadyCount = displayedIntegratedServices.filter((service) => service.ready).length
 
+  const loadEnrollmentDataEffect = useEffectEvent(loadEnrollmentData)
+  const loadCarnetPhotoStatusEffect = useEffectEvent(loadCarnetPhotoStatus)
+  const loadPendingScholarshipsEffect = useEffectEvent(loadPendingScholarships)
+  const loadScholarshipConfigurationsEffect = useEffectEvent(loadScholarshipConfigurations)
+  const loadScholarshipBeneficiariesEffect = useEffectEvent(loadScholarshipBeneficiaries)
+
   useEffect(() => {
     if (isAdmissionsRole && activeStage === 'seguimiento') {
       onStageChange('inscritos')
@@ -340,8 +414,12 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     }
     if (activeStage === 'materias' && !canManageAcademicEnrollment) {
       onStageChange('cabecera')
+      return
     }
-  }, [activeStage, canManageAcademicEnrollment, isAdmissionsRole, onStageChange])
+    if ((activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados') && !canApproveScholarship) {
+      onStageChange('registro')
+    }
+  }, [activeStage, canApproveScholarship, canManageAcademicEnrollment, isAdmissionsRole, onStageChange])
 
   const periodName =
     catalog?.periodos?.find((period) => period.codigo_periodo === selectedPeriod)?.detalle_periodo || ''
@@ -363,31 +441,22 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     cedulaValidation?.cedula === createCedulaClean &&
     cedulaValidation.exists
   const paymentCareerCode = activeStage === 'registro' ? createValues.codcarrera || '' : selectedEnrollmentCareer || createValues.codcarrera || ''
-  const paymentModalityCode = activeStage === 'registro'
-    ? createModalidadCode
-    : String(selectedItem?.codmodalida || createModalidadCode || '')
   const paymentCareer = useMemo(
     () => (catalog?.carreras || []).find((career) => career.cod_anio_basica === paymentCareerCode),
     [catalog?.carreras, paymentCareerCode],
   )
-  const paymentIsVirtual = useMemo(() => {
-    const label = (catalog?.modalidades || []).find((option) => option.value === paymentModalityCode)?.label || ''
-    const normalized = `${paymentModalityCode} ${label}`.toLowerCase()
-    return normalized.includes('linea') || normalized.includes('línea') || normalized.includes('virtual') || normalized.includes('online')
-  }, [catalog?.modalidades, paymentModalityCode])
+  const isGastronomyCareer = useMemo(() => {
+    const normalized = String(paymentCareer?.nombre_basica || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+    return normalized.includes('GASTRONOM')
+  }, [paymentCareer?.nombre_basica])
 
-  function selectedSemesterCount(value: string) {
+  const selectedSemesterCount = useCallback((value: string) => {
     if (value === 'TODOS') return Math.min(Math.max(paymentCareer?.semestres_disponibles || 4, 1), 4)
     return Math.min(Math.max(Math.round(toNumber(value, 1)), 1), 4)
-  }
-
-  function pensumCostForSemesters(count: number) {
-    const costs = paymentCareer?.costos_semestres || []
-    if (!costs.length) return 0
-    return costs
-      .filter((item) => (item.semestre || 0) >= 1 && (item.semestre || 0) <= count)
-      .reduce((total, item) => total + Number(paymentIsVirtual ? item.virtual || item.presencial || 0 : item.presencial || 0), 0)
-  }
+  }, [paymentCareer?.semestres_disponibles])
 
   const selectedDocuments = useMemo(
     (): Array<{ key: keyof PreinscriptionDocumentsPayload; label: string; value: string }> => [
@@ -400,21 +469,37 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   )
   const paymentPlanPreview = useMemo(() => {
     const selectedSemesters = selectedSemesterCount(cabeceraValues.semestres_convenio)
-    const pensumTotal = pensumCostForSemesters(selectedSemesters)
-    const enteredSemesterCost = Math.max(toNumber(cabeceraValues.costo_semestre), 0)
-    const composedSemesterCost = Math.max(toNumber(cabeceraValues.inscrip_valor) + toNumber(cabeceraValues.matri_valor), 0)
-    const fallbackSemesterCost = enteredSemesterCost > 0 ? enteredSemesterCost : composedSemesterCost > 0 ? composedSemesterCost : Math.max(toNumber(cabeceraValues.valor), 0)
-    const total = Number((pensumTotal > 0 ? pensumTotal : fallbackSemesterCost * selectedSemesters).toFixed(2))
-    const baseSemesterCost = Number((selectedSemesters > 0 ? total / selectedSemesters : fallbackSemesterCost).toFixed(2))
+    const enrollmentCost = isGastronomyCareer ? gastronomyEnrollmentCost : standardEnrollmentCost
+    const baseSemesterCost = academicSemesterCost + enrollmentCost
+    const academicTotal = academicSemesterCost * selectedSemesters
+    const enrollmentTotal = enrollmentCost * selectedSemesters
+    const total = academicTotal + enrollmentTotal
     const porcentajeBeca = Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100)
     const beca = Number((total * porcentajeBeca / 100).toFixed(2))
     const descuento = Math.max(toNumber(cabeceraValues.descuento), 0)
     const saldo = Math.max(Number((total - beca - descuento).toFixed(2)), 0)
     const cuotas = Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1)
     const cuota = Number((saldo / cuotas).toFixed(2))
-    return { total, porcentajeBeca, beca, descuento, saldo, cuotas, cuota, selectedSemesters, baseSemesterCost }
-  }, [cabeceraValues, paymentCareer, paymentIsVirtual])
+    return {
+      total,
+      porcentajeBeca,
+      beca,
+      descuento,
+      saldo,
+      cuotas,
+      cuota,
+      selectedSemesters,
+      baseSemesterCost,
+      academicTotal,
+      enrollmentCost,
+      enrollmentTotal,
+      subjectCount: subjectsPerSemester * selectedSemesters,
+    }
+  }, [cabeceraValues, isGastronomyCareer, selectedSemesterCount])
   const scholarshipOptions = catalog?.becas || []
+  const selectedScholarshipOption = scholarshipOptions.find((option) => option.value === cabeceraValues.tipo_beca)
+  const selectedScholarshipIsMintel = isMintelScholarship(cabeceraValues.tipo_beca)
+  const selectedScholarshipIsFixed = selectedScholarshipOption?.variable === false && selectedScholarshipOption?.amount != null
   const visibleRows = useMemo(() => {
     const needle = tableFilter.trim().toLowerCase()
     if (!needle) return rows
@@ -619,6 +704,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       num_cuotas: String(savedCuotas),
       tipo_beca: selectedItem?.cabecera?.tipo_beca || '',
       porcentaje_beca: String(savedPorcentajeBeca),
+      motivo_beca: '',
       descuento: String(selectedItem?.cabecera?.descuento ?? 0),
       num_pago: String(selectedItem?.cabecera?.num_pago ?? 1),
       detalle_pago: selectedItem?.cabecera?.detalle_pago || 'Convenio de pago',
@@ -653,7 +739,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     setPhotoError('')
     setPhotoMessage('')
     if (selectedItem?.num && selectedItem.en_cabecera_matricula) {
-      void loadCarnetPhotoStatus(selectedItem.num)
+      void loadCarnetPhotoStatusEffect(selectedItem.num)
     } else {
       setPhotoStatus(null)
     }
@@ -661,9 +747,58 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
 
   useEffect(() => {
     if (activeStage === 'materias') {
-      void loadEnrollmentData()
+      void loadEnrollmentDataEffect()
     }
   }, [activeStage, selectedItem?.num])
+
+  useEffect(() => {
+    if (activeStage === 'becas' && canApproveScholarship) {
+      void loadPendingScholarshipsEffect()
+    }
+  }, [activeStage, canApproveScholarship])
+
+  useEffect(() => {
+    if (activeStage === 'gestion-becas' && canApproveScholarship) {
+      void loadScholarshipConfigurationsEffect()
+    }
+  }, [activeStage, canApproveScholarship])
+
+  useEffect(() => {
+    if (activeStage === 'becados' && canApproveScholarship) {
+      void loadScholarshipBeneficiariesEffect()
+    }
+  }, [activeStage, canApproveScholarship])
+
+  useEffect(() => {
+    const num = selectedItem?.num
+    if (!num) {
+      setScholarshipStatus(null)
+      return
+    }
+    let cancelled = false
+    setScholarshipStatusLoading(true)
+    void fetchPreinscriptionScholarshipStatus(num)
+      .then((response) => {
+        if (cancelled) return
+        setScholarshipStatus(response)
+        setCabeceraValues((current) => ({
+          ...current,
+          tipo_beca: response.porcentaje_beca ? response.tipo_beca || current.tipo_beca : '',
+          porcentaje_beca: String(isMintelScholarship(response.tipo_beca) ? 100 : response.porcentaje_beca || 0),
+        }))
+      })
+      .catch((requestError) => {
+        if (cancelled) return
+        setScholarshipStatus(null)
+        setCabeceraError(requestError instanceof Error ? requestError.message : 'No se pudo consultar la aprobación de la beca')
+      })
+      .finally(() => {
+        if (!cancelled) setScholarshipStatusLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedItem?.num])
 
   useEffect(() => {
     if (createCedulaClean.length < 10) {
@@ -753,6 +888,14 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       setCabeceraError('Selecciona una inscripción.')
       return
     }
+    if (scholarshipNeedsApproval) {
+      setCabeceraError('La beca superior al 15% está pendiente de aprobación.')
+      return
+    }
+    if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
+      setCabeceraError('Ingresa el porcentaje otorgado para la beca seleccionada.')
+      return
+    }
     setCabeceraLoading(true)
     setCabeceraError('')
     setCabeceraMessage('')
@@ -760,14 +903,16 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       const payload: PreinscriptionCabeceraPayload = {
         fecha_pago: cabeceraValues.fecha_pago || null,
         valor: paymentPlanPreview.total,
-        inscrip_valor: toNumber(cabeceraValues.inscrip_valor),
-        matri_valor: toNumber(cabeceraValues.matri_valor),
+        inscrip_valor: paymentPlanPreview.academicTotal,
+        matri_valor: paymentPlanPreview.enrollmentTotal,
         costo_semestre: paymentPlanPreview.baseSemesterCost,
         semestres_convenio: cabeceraValues.semestres_convenio,
         control_matricula: toNumber(cabeceraValues.control_matricula, 1),
         num_cuotas: Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1),
-        tipo_beca: cabeceraValues.tipo_beca || '',
-        porcentaje_beca: Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100),
+        tipo_beca: scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
+        porcentaje_beca: scholarshipSelectionIsEmpty
+          ? 0
+          : Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100),
         descuento: toNumber(cabeceraValues.descuento),
         num_pago: Math.max(Math.round(toNumber(cabeceraValues.num_pago, 1)), 1),
         detalle_pago: cabeceraValues.detalle_pago || 'Convenio de pago',
@@ -790,10 +935,18 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
 
   function applyScholarshipSelection(value: string) {
     const selected = scholarshipOptions.find((option) => option.value === value)
+    const withoutScholarship = isNoScholarship(value)
+    setScholarshipStatus(null)
     setCabeceraValues((current) => ({
       ...current,
-      tipo_beca: value,
-      porcentaje_beca: selected?.amount !== null && selected?.amount !== undefined ? String(selected.amount) : value ? current.porcentaje_beca : '0',
+      tipo_beca: withoutScholarship ? '' : value,
+      porcentaje_beca: withoutScholarship
+        ? '0'
+        : selected?.variable || selected?.amount === null || selected?.amount === undefined
+          ? ''
+        : selected?.amount !== null && selected?.amount !== undefined
+          ? String(selected.amount)
+          : current.porcentaje_beca,
     }))
   }
 
@@ -803,7 +956,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         <span>Tipo de beca</span>
         <select value={cabeceraValues.tipo_beca} onChange={(event) => applyScholarshipSelection(event.target.value)}>
           <option value="">Sin beca</option>
-          {scholarshipOptions.map((option) => (
+          {scholarshipOptions.filter((option) => !isNoScholarship(option.value)).map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}{option.detail ? ` (${option.detail})` : ''}
             </option>
@@ -811,6 +964,45 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         </select>
       </label>
     )
+  }
+
+  function renderScholarshipPercentageInput() {
+    return (
+      <label>
+        <span>% beca</span>
+        <input
+          type="number"
+          min={selectedScholarshipOption?.min_amount ?? 0}
+          max={selectedScholarshipOption?.max_amount ?? 100}
+          step="0.01"
+          value={scholarshipSelectionIsEmpty ? '0' : cabeceraValues.porcentaje_beca}
+          placeholder={selectedScholarshipOption?.variable ? 'Ingrese el porcentaje otorgado' : undefined}
+          disabled={scholarshipSelectionIsEmpty || selectedScholarshipIsFixed}
+          readOnly={scholarshipSelectionIsEmpty || selectedScholarshipIsFixed}
+          title={selectedScholarshipIsMintel ? 'La beca Mintel tiene un porcentaje fijo del 100%.' : selectedScholarshipIsFixed ? 'Esta beca tiene un porcentaje fijo.' : undefined}
+          onChange={(event) => {
+            const percentage = Math.min(Math.max(toNumber(event.target.value), 0), 100)
+            setScholarshipStatus(null)
+            setCabeceraValues((current) => ({ ...current, porcentaje_beca: String(percentage) }))
+          }}
+        />
+      </label>
+    )
+  }
+
+  async function approveSelectedScholarship() {
+    if (!selectedItem?.num) return
+    setScholarshipApprovalLoading(true)
+    setCabeceraError('')
+    try {
+      const response = await approvePreinscriptionScholarship(selectedItem.num)
+      setScholarshipStatus(response)
+      setCabeceraMessage(response.message || 'Beca aprobada. El proceso puede continuar.')
+    } catch (requestError) {
+      setCabeceraError(requestError instanceof Error ? requestError.message : 'No se pudo aprobar la beca')
+    } finally {
+      setScholarshipApprovalLoading(false)
+    }
   }
 
   function renderPaymentScopeSelector() {
@@ -825,16 +1017,16 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
             <option value="1">1 semestre</option>
             <option value="2">2 semestres</option>
             <option value="3">3 semestres</option>
-            <option value="TODOS">Todos los semestres</option>
+            <option value="4">4 semestres (carrera completa)</option>
           </select>
         </label>
         <label>
-          <span>Costo desde pensum</span>
+          <span>Total del convenio</span>
           <input
             type="number"
             min="0"
             step="0.01"
-            value={paymentPlanPreview.baseSemesterCost}
+            value={paymentPlanPreview.total}
             readOnly
           />
         </label>
@@ -1140,6 +1332,14 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       setCreateError('Selecciona modalidad y jornada.')
       return
     }
+    if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
+      setCreateError('Ingresa el porcentaje otorgado para la beca seleccionada.')
+      return
+    }
+    if (paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold && !cabeceraValues.motivo_beca.trim()) {
+      setCreateError('Las becas mayores al 15% requieren un motivo para solicitar aprobación.')
+      return
+    }
 
     setCreateLoading(true)
     setCreateError('')
@@ -1153,6 +1353,11 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         nombres: createValues.nombres?.trim(),
         codmodalida: toNumber(String(createValues.codmodalida), 1),
         codjornada: toNumber(String(createValues.codjornada), 0),
+        tipo_beca: scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
+        porcentaje_beca: scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.porcentajeBeca,
+        valor_beca: scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.beca,
+        motivo_beca: cabeceraValues.motivo_beca.trim(),
+        semestres_convenio: cabeceraValues.semestres_convenio,
       })
       if (response.item) {
         setSelectedItem(response.item)
@@ -1166,6 +1371,17 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
           }
         })
       }
+      const requiresApproval = Boolean(response.finanzas?.requiere_aprobacion)
+      const canContinue = !requiresApproval || Boolean(response.finanzas?.puede_continuar)
+      setScholarshipStatus({
+        ok: response.finanzas?.ok,
+        beca_id: response.finanzas?.beca_id,
+        porcentaje_beca: response.finanzas?.porcentaje_beca || 0,
+        estado: response.finanzas?.beca_estado || (requiresApproval ? 'SOLICITADA' : 'SIN_BECA'),
+        requiere_aprobacion: requiresApproval,
+        puede_continuar: canContinue,
+        tipo_beca: scholarshipSelectionIsEmpty ? 'Sin beca' : cabeceraValues.tipo_beca,
+      })
       setCreateValues((current) => ({
         ...current,
         apellidos_nombre: '',
@@ -1175,9 +1391,11 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         correo: '',
         telefono: '',
       }))
-      onStageChange('documentos')
+      if (canContinue) onStageChange('documentos')
       setCreateMessage(
-        `${response.message || 'Inscripción registrada.'} Continua con matricula, convenio de pago y documentacion.`
+        `${response.message || 'Inscripción registrada.'}${
+          response.finanzas?.ok === false ? ` ${response.finanzas.detail || 'La sincronización financiera quedó pendiente.'}` : ''
+        } ${canContinue ? 'Continúa con matrícula, convenio de pago y documentación.' : 'Un responsable debe aprobar la beca para habilitar el siguiente paso.'}`
       )
     } catch (requestError) {
       setCreateError(requestError instanceof Error ? requestError.message : 'Error registrando inscripcion')
@@ -1187,6 +1405,10 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   }
 
   async function openPreinscriptionStage(nextStage: PreinscriptionStage) {
+    if (nextStage !== 'registro' && nextStage !== 'inscritos' && nextStage !== 'becas' && nextStage !== 'gestion-becas' && nextStage !== 'becados' && scholarshipNeedsApproval) {
+      setCabeceraError('La beca superior al 15% debe ser aprobada antes de continuar.')
+      return
+    }
     if (nextStage === 'materias' && !canManageAcademicEnrollment) {
       onStageChange('cabecera')
       return
@@ -1197,6 +1419,15 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     }
     if (nextStage === 'materias') {
       await loadEnrollmentData()
+    }
+    if (nextStage === 'becas') {
+      await loadPendingScholarships()
+    }
+    if (nextStage === 'gestion-becas') {
+      await loadScholarshipConfigurations()
+    }
+    if (nextStage === 'becados') {
+      await loadScholarshipBeneficiaries()
     }
   }
 
@@ -1281,6 +1512,172 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     setFollowupSearchError('')
   }
 
+  async function loadPendingScholarships(queryValue = pendingScholarshipQuery) {
+    if (!canApproveScholarship) return
+    setPendingScholarshipsLoading(true)
+    setPendingScholarshipsError('')
+    try {
+      const response = await fetchPendingPreinscriptionScholarships(queryValue)
+      setPendingScholarships(response.items || [])
+    } catch (requestError) {
+      setPendingScholarships([])
+      setPendingScholarshipsError(
+        requestError instanceof Error ? requestError.message : 'No se pudieron consultar las becas pendientes',
+      )
+    } finally {
+      setPendingScholarshipsLoading(false)
+    }
+  }
+
+  async function loadScholarshipBeneficiaries(queryValue = scholarshipBeneficiaryQuery) {
+    if (!canApproveScholarship) return
+    setScholarshipBeneficiariesLoading(true)
+    setScholarshipBeneficiariesError('')
+    try {
+      const response = await fetchScholarshipBeneficiaries(queryValue)
+      setScholarshipBeneficiaries(response.items || [])
+      setScholarshipBeneficiarySummary({
+        total: response.total || 0,
+        valorTotal: response.valor_total || 0,
+        porcentajePromedio: response.porcentaje_promedio || 0,
+      })
+    } catch (requestError) {
+      setScholarshipBeneficiaries([])
+      setScholarshipBeneficiarySummary({ total: 0, valorTotal: 0, porcentajePromedio: 0 })
+      setScholarshipBeneficiariesError(
+        requestError instanceof Error ? requestError.message : 'No se pudo consultar el listado de becados',
+      )
+    } finally {
+      setScholarshipBeneficiariesLoading(false)
+    }
+  }
+
+  async function approvePendingScholarship(item: PreinscriptionScholarshipApprovalItem) {
+    const accepted = window.confirm(
+      `¿Aprobar la beca ${item.tipo_beca} del ${item.porcentaje_beca}% para ${item.estudiante}?`,
+    )
+    if (!accepted) return
+    setApprovingScholarshipId(item.beca_id)
+    setPendingScholarshipsError('')
+    setPendingScholarshipsMessage('')
+    try {
+      const response = await approvePreinscriptionScholarshipById(item.beca_id)
+      setPendingScholarships((current) => current.filter((row) => row.beca_id !== item.beca_id))
+      setPendingScholarshipsMessage(response.message || 'Beca aprobada correctamente.')
+    } catch (requestError) {
+      setPendingScholarshipsError(
+        requestError instanceof Error ? requestError.message : 'No se pudo aprobar la beca',
+      )
+    } finally {
+      setApprovingScholarshipId(null)
+    }
+  }
+
+  function resetScholarshipConfigurationForm() {
+    setEditingScholarshipConfigurationId(null)
+    setScholarshipConfigurationForm({
+      codigo: '',
+      nombre: '',
+      es_variable: false,
+      porcentaje: 0,
+      porcentaje_minimo: 0,
+      porcentaje_maximo: 100,
+      activo: true,
+    })
+  }
+
+  async function loadScholarshipConfigurations() {
+    if (!canApproveScholarship) return
+    setScholarshipConfigurationLoading(true)
+    setScholarshipConfigurationError('')
+    try {
+      const response = await fetchScholarshipConfigurations()
+      setScholarshipConfigurations(response.items || [])
+    } catch (requestError) {
+      setScholarshipConfigurationError(
+        requestError instanceof Error ? requestError.message : 'No se pudo consultar el catálogo de becas',
+      )
+    } finally {
+      setScholarshipConfigurationLoading(false)
+    }
+  }
+
+  function editScholarshipConfiguration(item: ScholarshipConfigurationItem) {
+    setEditingScholarshipConfigurationId(item.id)
+    setScholarshipConfigurationMessage('')
+    setScholarshipConfigurationError('')
+    setScholarshipConfigurationForm({
+      codigo: item.codigo,
+      nombre: item.nombre,
+      es_variable: item.es_variable,
+      porcentaje: item.porcentaje ?? 0,
+      porcentaje_minimo: item.porcentaje_minimo ?? 0,
+      porcentaje_maximo: item.porcentaje_maximo ?? 100,
+      activo: item.activo,
+    })
+  }
+
+  async function saveScholarshipConfiguration() {
+    if (!scholarshipConfigurationForm.nombre.trim()) {
+      setScholarshipConfigurationError('Ingresa el nombre de la beca.')
+      return
+    }
+    if (
+      scholarshipConfigurationForm.es_variable &&
+      Number(scholarshipConfigurationForm.porcentaje_minimo || 0) > Number(scholarshipConfigurationForm.porcentaje_maximo || 0)
+    ) {
+      setScholarshipConfigurationError('El porcentaje mínimo no puede superar al máximo.')
+      return
+    }
+    setScholarshipConfigurationSaving(true)
+    setScholarshipConfigurationError('')
+    setScholarshipConfigurationMessage('')
+    try {
+      const response = editingScholarshipConfigurationId
+        ? await updateScholarshipConfiguration(editingScholarshipConfigurationId, scholarshipConfigurationForm)
+        : await createScholarshipConfiguration(scholarshipConfigurationForm)
+      setScholarshipConfigurationMessage(response.message || 'Configuración guardada correctamente.')
+      resetScholarshipConfigurationForm()
+      await loadScholarshipConfigurations()
+      const refreshedCatalog = await fetchPreinscriptionCatalog()
+      setCatalog(refreshedCatalog)
+    } catch (requestError) {
+      setScholarshipConfigurationError(
+        requestError instanceof Error ? requestError.message : 'No se pudo guardar la configuración de beca',
+      )
+    } finally {
+      setScholarshipConfigurationSaving(false)
+    }
+  }
+
+  async function toggleScholarshipConfiguration(item: ScholarshipConfigurationItem) {
+    if (item.protegida) return
+    setScholarshipConfigurationSaving(true)
+    setScholarshipConfigurationError('')
+    setScholarshipConfigurationMessage('')
+    try {
+      const response = await updateScholarshipConfiguration(item.id, {
+        codigo: item.codigo,
+        nombre: item.nombre,
+        es_variable: item.es_variable,
+        porcentaje: item.porcentaje,
+        porcentaje_minimo: item.porcentaje_minimo,
+        porcentaje_maximo: item.porcentaje_maximo,
+        activo: !item.activo,
+      })
+      setScholarshipConfigurationMessage(response.message || 'Estado actualizado.')
+      await loadScholarshipConfigurations()
+      const refreshedCatalog = await fetchPreinscriptionCatalog()
+      setCatalog(refreshedCatalog)
+    } catch (requestError) {
+      setScholarshipConfigurationError(
+        requestError instanceof Error ? requestError.message : 'No se pudo actualizar el estado',
+      )
+    } finally {
+      setScholarshipConfigurationSaving(false)
+    }
+  }
+
   function openStudentScreen(item: PreinscriptionItem) {
     setSelectedItem(item)
     setStudentScreenOpen(true)
@@ -1290,20 +1687,20 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     <div className="student-dashboard">
       <header className="student-hero">
         <div>
-          <p className="eyebrow">Admisiones</p>
-          <h1>Inscripcion y matricula</h1>
+          <p className="eyebrow">{isScholarshipAdminStage ? 'Bienestar estudiantil' : 'Admisiones'}</p>
+          <h1>{isScholarshipAdminStage ? 'Gestión y aprobación de becas' : 'Inscripcion y matricula'}</h1>
           <div className="student-user-pill preinscripcion-advisor-pill">
-            <span>Asesor</span>
+            <span>{isScholarshipAdminStage ? 'Responsable' : 'Asesor'}</span>
             <strong>{displayName || 'Usuario actual'}</strong>
           </div>
         </div>
         <div className="student-user-pill">
-          <span>Mis registros</span>
-          <strong>{userRecordCount}</strong>
+          <span>{activeStage === 'becas' ? 'Solicitudes pendientes' : activeStage === 'gestion-becas' ? 'Becas configuradas' : activeStage === 'becados' ? 'Estudiantes becados' : 'Mis registros'}</span>
+          <strong>{activeStage === 'becas' ? pendingScholarships.length : activeStage === 'gestion-becas' ? scholarshipConfigurations.length : activeStage === 'becados' ? scholarshipBeneficiarySummary.total : userRecordCount}</strong>
         </div>
       </header>
 
-      {selectedItem ? (
+      {selectedItem && !isScholarshipAdminStage ? (
         <section className="preinscripcion-current">
           <div>
             <span>Estudiante seleccionado</span>
@@ -1334,6 +1731,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       ) : null}
       {revertError ? <p className="form-error">{revertError}</p> : null}
 
+      {!isScholarshipAdminStage ? (
       <section className="preinscripcion-integrated">
         <div className="preinscripcion-integrated__head">
           <div>
@@ -1392,6 +1790,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
           ))}
         </div>
       </section>
+      ) : null}
 
       {activeStage === 'registro' ? (
       <section className="student-grid student-grid--content preinscripcion-grid">
@@ -1409,27 +1808,6 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
           <div className="preinscripcion-form-intro">
             <strong>Formulario de inscripcion</strong>
             <span>Registre la inscripcion; al guardar continua con matricula, convenio de pago y documentacion.</span>
-          </div>
-
-          <div className="preinscripcion-beca-panel">
-            <div>
-              <span>Convenio y beca</span>
-              <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
-              <small>Selecciona el alcance del convenio y la beca cargada desde la tabla Becas.</small>
-            </div>
-            {renderPaymentScopeSelector()}
-            {renderScholarshipSelector()}
-            <label>
-              <span>% beca</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={cabeceraValues.porcentaje_beca}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
-              />
-            </label>
           </div>
 
           <div className="matricula-acad-form preinscripcion-register-form">
@@ -1550,6 +1928,39 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
             </label>
           </div>
 
+          <div className="preinscripcion-beca-panel">
+            <div>
+              <span>Beca del registro previo</span>
+              <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
+              <small>
+                {paymentPlanPreview.subjectCount} materias: {formatMoney(paymentPlanPreview.academicTotal)} + matrícula {formatMoney(paymentPlanPreview.enrollmentTotal)}.
+              </small>
+            </div>
+            {renderPaymentScopeSelector()}
+            {renderScholarshipSelector()}
+            {renderScholarshipPercentageInput()}
+            <label className="preinscripcion-beca-panel__reason">
+              <span>Motivo o referencia</span>
+              <input
+                value={cabeceraValues.motivo_beca}
+                maxLength={1000}
+                placeholder={paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? 'Obligatorio para solicitar aprobación' : 'Opcional'}
+                onChange={(event) => setCabeceraValues((current) => ({ ...current, motivo_beca: event.target.value }))}
+              />
+            </label>
+            {paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? (
+              <div className={`preinscripcion-beca-approval ${scholarshipStatus?.puede_continuar ? 'preinscripcion-beca-approval--approved' : ''}`}>
+                <span>{scholarshipStatusLoading ? 'Consultando aprobación' : scholarshipStatus?.puede_continuar ? 'Beca aprobada' : 'Requiere aprobación'}</span>
+                <strong>Las becas superiores al 15% deben aprobarse antes de continuar con la matrícula.</strong>
+                {selectedItem?.num && scholarshipNeedsApproval && canApproveScholarship ? (
+                  <button type="button" className="ghost-button" onClick={() => void approveSelectedScholarship()} disabled={scholarshipApprovalLoading}>
+                    {scholarshipApprovalLoading ? 'Aprobando...' : 'Aprobar beca'}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
           <div className="matricula-acad-actions">
             <button
               type="button"
@@ -1578,6 +1989,327 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       {activeStage !== 'registro' ? (
       <>
       <section className="student-grid student-grid--content preinscripcion-grid">
+        {activeStage === 'gestion-becas' && canApproveScholarship ? (
+        <article className="student-card student-card--wide matricula-panel scholarship-management">
+          <div className="section-title">
+            <div>
+              <span>Catálogo institucional</span>
+              <h2>Gestión de becas y porcentajes</h2>
+              <p>Las becas activas aparecen inmediatamente en el formulario de inscripción.</p>
+            </div>
+            <button type="button" className="ghost-button" onClick={resetScholarshipConfigurationForm}>
+              Nueva beca
+            </button>
+          </div>
+
+          <div className="scholarship-management__form">
+            <label>
+              <span>Nombre de la beca</span>
+              <input
+                value={scholarshipConfigurationForm.nombre}
+                placeholder="Ej. Beca institucional"
+                disabled={Boolean(editingScholarshipConfigurationId && isMintelScholarship(scholarshipConfigurationForm.nombre))}
+                onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, nombre: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Código</span>
+              <input
+                value={scholarshipConfigurationForm.codigo || ''}
+                placeholder="Se genera desde el nombre"
+                disabled={Boolean(editingScholarshipConfigurationId && isMintelScholarship(scholarshipConfigurationForm.nombre))}
+                onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, codigo: event.target.value }))}
+              />
+            </label>
+            <label>
+              <span>Tipo de porcentaje</span>
+              <select
+                value={scholarshipConfigurationForm.es_variable ? 'VARIABLE' : 'FIJO'}
+                disabled={isMintelScholarship(scholarshipConfigurationForm.nombre)}
+                onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, es_variable: event.target.value === 'VARIABLE' }))}
+              >
+                <option value="FIJO">Porcentaje fijo</option>
+                <option value="VARIABLE">Porcentaje variable</option>
+              </select>
+            </label>
+            {!scholarshipConfigurationForm.es_variable ? (
+              <label>
+                <span>Porcentaje fijo</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={isMintelScholarship(scholarshipConfigurationForm.nombre) ? 100 : scholarshipConfigurationForm.porcentaje ?? 0}
+                  disabled={isMintelScholarship(scholarshipConfigurationForm.nombre)}
+                  onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, porcentaje: toNumber(event.target.value) }))}
+                />
+              </label>
+            ) : (
+              <>
+                <label>
+                  <span>Porcentaje mínimo</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={scholarshipConfigurationForm.porcentaje_minimo ?? 0}
+                    onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, porcentaje_minimo: toNumber(event.target.value) }))}
+                  />
+                </label>
+                <label>
+                  <span>Porcentaje máximo</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={scholarshipConfigurationForm.porcentaje_maximo ?? 100}
+                    onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, porcentaje_maximo: toNumber(event.target.value) }))}
+                  />
+                </label>
+              </>
+            )}
+            <label className="scholarship-management__active">
+              <input
+                type="checkbox"
+                checked={isMintelScholarship(scholarshipConfigurationForm.nombre) || scholarshipConfigurationForm.activo}
+                disabled={isMintelScholarship(scholarshipConfigurationForm.nombre)}
+                onChange={(event) => setScholarshipConfigurationForm((current) => ({ ...current, activo: event.target.checked }))}
+              />
+              <span>Disponible en inscripción</span>
+            </label>
+            <div className="scholarship-management__actions">
+              <button type="button" className="primary-action" onClick={() => void saveScholarshipConfiguration()} disabled={scholarshipConfigurationSaving}>
+                {scholarshipConfigurationSaving ? 'Guardando...' : editingScholarshipConfigurationId ? 'Guardar cambios' : 'Crear beca'}
+              </button>
+              {editingScholarshipConfigurationId ? (
+                <button type="button" className="ghost-button" onClick={resetScholarshipConfigurationForm}>Cancelar</button>
+              ) : null}
+            </div>
+          </div>
+
+          {scholarshipConfigurationError ? <p className="form-error">{scholarshipConfigurationError}</p> : null}
+          {scholarshipConfigurationMessage ? <p className="form-success">{scholarshipConfigurationMessage}</p> : null}
+
+          <div className="table-scroll scholarship-management__table">
+            <table className="matricula-table">
+              <thead>
+                <tr>
+                  <th>Beca</th>
+                  <th>Código</th>
+                  <th>Modalidad</th>
+                  <th>Porcentaje</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scholarshipConfigurations.map((item) => (
+                  <tr key={item.id}>
+                    <td><strong>{item.nombre}</strong>{item.protegida ? <small>Configuración protegida</small> : null}</td>
+                    <td>{item.codigo}</td>
+                    <td>{item.es_variable ? 'Variable' : 'Fijo'}</td>
+                    <td>
+                      {item.es_variable
+                        ? `${item.porcentaje_minimo ?? 0}% - ${item.porcentaje_maximo ?? 100}%`
+                        : `${item.porcentaje ?? 0}%`}
+                    </td>
+                    <td><span className={item.activo ? 'status-pill status-pill--ready' : 'status-pill'}>{item.activo ? 'Activa' : 'Inactiva'}</span></td>
+                    <td>
+                      <div className="scholarship-management__row-actions">
+                        <button type="button" className="ghost-button" onClick={() => editScholarshipConfiguration(item)}>Editar</button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          disabled={item.protegida || scholarshipConfigurationSaving}
+                          onClick={() => void toggleScholarshipConfiguration(item)}
+                        >
+                          {item.activo ? 'Desactivar' : 'Activar'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!scholarshipConfigurationLoading && scholarshipConfigurations.length === 0 ? (
+                  <tr><td colSpan={6} className="preinscripcion-scholarship-approval__empty">No existen becas configuradas.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </article>
+        ) : null}
+
+        {activeStage === 'becados' && canApproveScholarship ? (
+        <article className="student-card student-card--wide matricula-panel scholarship-beneficiaries">
+          <div className="section-title">
+            <div>
+              <span>Beneficiarios</span>
+              <h2>Listado de estudiantes becados</h2>
+              <p>Estudiantes con becas aprobadas y vinculadas a una cuenta académica activa.</p>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => void loadScholarshipBeneficiaries()} disabled={scholarshipBeneficiariesLoading}>
+              {scholarshipBeneficiariesLoading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          <div className="scholarship-beneficiaries__summary">
+            <div><span>Total becados</span><strong>{scholarshipBeneficiarySummary.total}</strong></div>
+            <div><span>Porcentaje promedio</span><strong>{scholarshipBeneficiarySummary.porcentajePromedio.toLocaleString('es-EC')}%</strong></div>
+            <div><span>Valor total otorgado</span><strong>${scholarshipBeneficiarySummary.valorTotal.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+          </div>
+
+          <div className="preinscripcion-scholarship-approval__toolbar">
+            <label>
+              <span>Buscar becado</span>
+              <input
+                value={scholarshipBeneficiaryQuery}
+                placeholder="Nombre, cédula, carrera, periodo, beca o aprobador"
+                onChange={(event) => setScholarshipBeneficiaryQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void loadScholarshipBeneficiaries()
+                }}
+              />
+            </label>
+            <button type="button" className="primary-action" onClick={() => void loadScholarshipBeneficiaries()} disabled={scholarshipBeneficiariesLoading}>
+              Buscar
+            </button>
+          </div>
+
+          {scholarshipBeneficiariesError ? <p className="form-error">{scholarshipBeneficiariesError}</p> : null}
+
+          <div className="table-scroll scholarship-beneficiaries__table">
+            <table className="matricula-table">
+              <thead>
+                <tr>
+                  <th>Estudiante</th>
+                  <th>Cédula</th>
+                  <th>Carrera</th>
+                  <th>Periodo</th>
+                  <th>Beca</th>
+                  <th>Porcentaje</th>
+                  <th>Valor</th>
+                  <th>Aprobación</th>
+                  <th>Responsable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scholarshipBeneficiaries.map((item) => (
+                  <tr key={item.beca_id}>
+                    <td><strong>{item.estudiante}</strong><small>{item.codigo_estud || '-'}</small></td>
+                    <td>{item.cedula}</td>
+                    <td>{item.carrera || item.codigo_carrera}</td>
+                    <td>{item.periodo || item.codigo_periodo}</td>
+                    <td><strong>{item.tipo_beca}</strong><small>{item.motivo || '-'}</small></td>
+                    <td><strong>{item.porcentaje_beca.toLocaleString('es-EC')}%</strong></td>
+                    <td>${item.valor_beca.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td>{item.fecha_aprobacion || item.fecha_solicitud || '-'}</td>
+                    <td>{item.usuario_aprobacion || '-'}</td>
+                  </tr>
+                ))}
+                {!scholarshipBeneficiariesLoading && scholarshipBeneficiaries.length === 0 ? (
+                  <tr><td colSpan={9} className="preinscripcion-scholarship-approval__empty">No existen estudiantes becados con los filtros actuales.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </article>
+        ) : null}
+
+        {activeStage === 'becas' && canApproveScholarship ? (
+        <article className="student-card student-card--wide matricula-panel preinscripcion-scholarship-approval">
+          <div className="section-title">
+            <div>
+              <span>Bienestar estudiantil</span>
+              <h2>Aprobación de becas</h2>
+              <p>Solicitudes superiores al 15% que deben aprobarse antes de generar la matrícula.</p>
+            </div>
+            <div className="preinscripcion-scholarship-approval__total">
+              <span>Pendientes</span>
+              <strong>{pendingScholarships.length}</strong>
+            </div>
+          </div>
+
+          <div className="preinscripcion-scholarship-approval__toolbar">
+            <label>
+              <span>Buscar estudiante o solicitud</span>
+              <input
+                value={pendingScholarshipQuery}
+                placeholder="Nombre, cédula, carrera, periodo o tipo de beca"
+                onChange={(event) => setPendingScholarshipQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void loadPendingScholarships()
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => void loadPendingScholarships()}
+              disabled={pendingScholarshipsLoading}
+            >
+              {pendingScholarshipsLoading ? 'Consultando...' : 'Buscar'}
+            </button>
+          </div>
+
+          {pendingScholarshipsError ? <p className="form-error">{pendingScholarshipsError}</p> : null}
+          {pendingScholarshipsMessage ? <p className="form-success">{pendingScholarshipsMessage}</p> : null}
+
+          <div className="table-scroll preinscripcion-scholarship-approval__table">
+            <table className="matricula-table">
+              <thead>
+                <tr>
+                  <th>Estudiante</th>
+                  <th>Cédula</th>
+                  <th>Carrera / periodo</th>
+                  <th>Tipo de beca</th>
+                  <th>Porcentaje</th>
+                  <th>Valor</th>
+                  <th>Motivo</th>
+                  <th>Solicitud</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingScholarships.map((item) => (
+                  <tr key={item.beca_id}>
+                    <td><strong>{item.estudiante}</strong><small>{item.codigo_estud || '-'}</small></td>
+                    <td>{item.cedula}</td>
+                    <td><strong>{item.carrera || item.codigo_carrera}</strong><small>{item.periodo || item.codigo_periodo}</small></td>
+                    <td>{item.tipo_beca}</td>
+                    <td><strong>{item.porcentaje_beca.toLocaleString('es-EC')}%</strong></td>
+                    <td>${item.valor_beca.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="preinscripcion-scholarship-approval__reason">{item.motivo || '-'}</td>
+                    <td>{item.fecha_solicitud || '-'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="primary-action"
+                        onClick={() => void approvePendingScholarship(item)}
+                        disabled={approvingScholarshipId === item.beca_id}
+                      >
+                        {approvingScholarshipId === item.beca_id ? 'Aprobando...' : 'Aprobar'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!pendingScholarshipsLoading && pendingScholarships.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="preinscripcion-scholarship-approval__empty">
+                      No existen solicitudes de beca pendientes con los filtros actuales.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </article>
+        ) : null}
+
         {activeStage === 'inscritos' ? (
         <article className="student-card student-card--wide matricula-panel">
           <div className="section-title">
@@ -1909,6 +2641,17 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
           {!selectedItem ? (
             <p className="form-error">Selecciona o registra un estudiante antes de guardar la cabecera de matricula.</p>
           ) : null}
+          {scholarshipNeedsApproval ? (
+            <div className="preinscripcion-beca-approval">
+              <span>Beca pendiente</span>
+              <strong>No se puede crear la matrícula hasta aprobar la beca superior al 15%.</strong>
+              {canApproveScholarship ? (
+                <button type="button" className="ghost-button" onClick={() => void approveSelectedScholarship()} disabled={scholarshipApprovalLoading}>
+                  {scholarshipApprovalLoading ? 'Aprobando...' : 'Aprobar beca'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="matricula-acad-preview">
             <div>
               <span>Estudiante</span>
@@ -1995,23 +2738,23 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
               />
             </label>
             <label>
-              <span>Inscripcion</span>
+              <span>Valor académico ({paymentPlanPreview.subjectCount} materias)</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={cabeceraValues.inscrip_valor}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, inscrip_valor: event.target.value }))}
+                value={paymentPlanPreview.academicTotal}
+                readOnly
               />
             </label>
             <label>
-              <span>Matricula</span>
+              <span>Matrícula ({paymentPlanPreview.selectedSemesters} semestre(s))</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={cabeceraValues.matri_valor}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, matri_valor: event.target.value }))}
+                value={paymentPlanPreview.enrollmentTotal}
+                readOnly
               />
             </label>
             <label>
@@ -2040,17 +2783,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
             </label>
             {renderPaymentScopeSelector()}
             {renderScholarshipSelector()}
-            <label>
-              <span>% beca</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={cabeceraValues.porcentaje_beca}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
-              />
-            </label>
+            {renderScholarshipPercentageInput()}
             <label>
               <span>Descuento</span>
               <input
@@ -2087,7 +2820,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
             type="button"
             className="primary-action"
             onClick={registerCabecera}
-            disabled={cabeceraLoading || !selectedItem?.num}
+            disabled={cabeceraLoading || !selectedItem?.num || scholarshipNeedsApproval}
           >
             {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar matricula/convenio' : 'Matricular y generar convenio'}
           </button>
@@ -2533,17 +3266,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
                 </label>
                 {renderPaymentScopeSelector()}
                 {renderScholarshipSelector()}
-                <label>
-                  <span>% beca</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={cabeceraValues.porcentaje_beca}
-                    onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
-                  />
-                </label>
+                {renderScholarshipPercentageInput()}
                 <label>
                   <span>Inscripcion</span>
                   <input
@@ -2599,7 +3322,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
                 type="button"
                 className="primary-action"
                 onClick={registerCabecera}
-                disabled={cabeceraLoading || !selectedItem?.num}
+                disabled={cabeceraLoading || !selectedItem?.num || scholarshipNeedsApproval}
               >
                 {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio PDF' : 'Crear matricula y generar convenio PDF'}
               </button>
@@ -2639,7 +3362,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
               type="button"
               className="ghost-button"
               onClick={registerCabecera}
-              disabled={cabeceraLoading || !selectedItem?.num}
+              disabled={cabeceraLoading || !selectedItem?.num || scholarshipNeedsApproval}
             >
               {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio' : 'Matricular y generar convenio'}
             </button>
@@ -3000,17 +3723,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
                   </label>
                   {renderPaymentScopeSelector()}
                   {renderScholarshipSelector()}
-                  <label>
-                    <span>% beca</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.01"
-                      value={cabeceraValues.porcentaje_beca}
-                      onChange={(event) => setCabeceraValues((current) => ({ ...current, porcentaje_beca: event.target.value }))}
-                    />
-                  </label>
+                  {renderScholarshipPercentageInput()}
                   <label>
                     <span>Descuento</span>
                     <input
@@ -3047,7 +3760,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
                   type="button"
                   className="primary-action"
                   onClick={registerCabecera}
-                  disabled={cabeceraLoading || !selectedItem.num}
+                  disabled={cabeceraLoading || !selectedItem.num || scholarshipNeedsApproval}
                 >
                   {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar cabecera' : 'Guardar cabecera y generar convenio'}
                 </button>
@@ -3075,7 +3788,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
                     type="button"
                     className="ghost-button"
                     onClick={registerCabecera}
-                    disabled={cabeceraLoading || !selectedItem.num}
+                    disabled={cabeceraLoading || !selectedItem.num || scholarshipNeedsApproval}
                   >
                     {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio' : 'Guardar pago y generar convenio'}
                   </button>

@@ -17,6 +17,7 @@ import {
   getCurrentSession,
   loginRequest,
   logoutRequest,
+  selectProfileRequest,
 } from '../lib/api'
 import { clearStoredPage, readStoredPage, writeStoredPage } from '../lib/storage'
 import type {
@@ -142,7 +143,7 @@ function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   if (normalizedRole === 'ESTUDIANTE') {
     return page === 'portal-estudiante' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
   }
-  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (normalizedRole === 'SECRETARIA') return SECRETARIA_ALLOWED_PAGES.has(page)
   if (DASHBOARD_ONLY_ROLES.has(normalizedRole || '')) return page === 'dashboard'
@@ -151,7 +152,7 @@ function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   if (page === 'credenciales') return normalizedRole === 'ADMINISTRADOR'
   if (page === 'correos-masivos') return MASS_EMAIL_ALLOWED_ROLES.has(normalizedRole || '')
   if (page === 'carnet-institucional') return Boolean(normalizedRole)
-  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe'
+  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe' && page !== 'portal-docente-planificacion'
   return page === 'dashboard'
 }
 
@@ -180,6 +181,9 @@ export function useReporteriaApp() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [session, setSession] = useState<UserSession | null>(null)
+  const [profileSelectionPending, setProfileSelectionPending] = useState(false)
+  const [profileSelectionLoading, setProfileSelectionLoading] = useState(false)
+  const [profileSelectionError, setProfileSelectionError] = useState('')
   const [activePage, setActivePage] = useState<Page>(() => readStoredPage())
   const [sisAcademicoSectionKey, setSisAcademicoSectionKey] = useState('')
   const [legacyReportKey, setLegacyReportKey] = useState('')
@@ -283,6 +287,9 @@ export function useReporteriaApp() {
     setTeamsUserId('')
     setTeamsTeamId('')
     setSelectedTeamIndex(null)
+    setProfileSelectionPending(false)
+    setProfileSelectionLoading(false)
+    setProfileSelectionError('')
     clearStoredPage()
   }, [])
 
@@ -378,7 +385,7 @@ export function useReporteriaApp() {
       return
     }
     if (session.rol === 'DOCENTE') {
-      if (activePage !== 'portal-docente' && activePage !== 'portal-docente-informe' && activePage !== 'carnet-institucional') {
+      if (activePage !== 'portal-docente' && activePage !== 'portal-docente-informe' && activePage !== 'portal-docente-planificacion' && activePage !== 'carnet-institucional') {
         setActivePage('portal-docente')
       }
       return
@@ -535,6 +542,8 @@ export function useReporteriaApp() {
     try {
       const authenticatedSession = await loginRequest(normalizedLogin, password)
       setSession(authenticatedSession)
+      setProfileSelectionPending(true)
+      setProfileSelectionError('')
       setPassword('')
       setSisAcademicoSectionKey('')
       setLegacyReportKey('')
@@ -544,6 +553,24 @@ export function useReporteriaApp() {
       setError(handleApiError(apiError, 'Error inesperado en el login', { expireOnUnauthorized: false }))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const selectAccessProfile = async (role: string) => {
+    setProfileSelectionLoading(true)
+    setProfileSelectionError('')
+    try {
+      const selectedSession = await selectProfileRequest(role)
+      setSession(selectedSession)
+      setActivePage(defaultPageForRole(selectedSession.rol))
+      setSisAcademicoSectionKey('')
+      setLegacyReportKey('')
+      setPortalStudentSection('dashboard')
+      setProfileSelectionPending(false)
+    } catch (apiError) {
+      setProfileSelectionError(handleApiError(apiError, 'No se pudo abrir el perfil seleccionado'))
+    } finally {
+      setProfileSelectionLoading(false)
     }
   }
 
@@ -973,6 +1000,9 @@ export function useReporteriaApp() {
   const openPortalDocenteInformePage = () => {
     setActivePage('portal-docente-informe')
   }
+  const openPortalDocentePlanificacionPage = () => {
+    setActivePage('portal-docente-planificacion')
+  }
   const openTeacherEvaluationPage = () => {
     setActivePage('evaluacion-docente')
   }
@@ -1122,6 +1152,9 @@ export function useReporteriaApp() {
     loading,
     error,
     session,
+    profileSelectionPending,
+    profileSelectionLoading,
+    profileSelectionError,
     activePage,
     sisAcademicoSectionKey,
     legacyReportKey,
@@ -1180,11 +1213,13 @@ export function useReporteriaApp() {
     setPassword,
     setShowPassword,
     onSubmit,
+    selectAccessProfile,
     openDashboard,
     openPortalEstudiantePage,
     setPortalStudentSection,
     openPortalDocentePage,
     openPortalDocenteInformePage,
+    openPortalDocentePlanificacionPage,
     openTeacherEvaluationPage,
     openTeacherEvaluationAdminPage,
     openTeacherEvaluationProgressPage,

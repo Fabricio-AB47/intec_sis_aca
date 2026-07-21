@@ -18,11 +18,18 @@ from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, T
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
-from app.services.db import get_connection
+from app.services.complement_sync import sync_preinscription_complements
+from app.services.db import get_connection, get_finance_connection
 
 router = APIRouter(prefix="/api/students/preinscripcion", tags=["preinscripcion"])
 
-_PREINSCRIPTION_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "ADMISIONES", "RECTOR")
+_PREINSCRIPTION_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "ADMISIONES", "BIENESTAR", "RECTOR")
+_SCHOLARSHIP_APPROVAL_ACCESS = require_roles("ADMINISTRADOR", "BIENESTAR")
+_SCHOLARSHIP_APPROVAL_THRESHOLD = 15.0
+_ACADEMIC_SEMESTER_COST = 750.0
+_STANDARD_ENROLLMENT_COST = 75.0
+_GASTRONOMY_ENROLLMENT_COST = 100.0
+_SUBJECTS_PER_SEMESTER = 6
 _DOCUMENT_FILTERS = {"ALL", "PENDIENTES", "COMPLETOS", "CON_CABECERA", "SIN_CABECERA"}
 _DOCUMENT_FIELDS = {"urlcedula", "urltitulo", "urldeposito", "urlconvenio"}
 _PHOTO_MIME_BY_EXTENSION = {
@@ -100,12 +107,238 @@ class PreinscriptionCreatePayload(BaseModel):
     telefono: str | None = ""
     codmodalida: int = 1
     codjornada: int = 0
+    tipo_beca: str | None = ""
+    porcentaje_beca: float = 0
+    valor_beca: float = 0
+    motivo_beca: str | None = ""
+    semestres_convenio: str | int | None = "1"
+
+
+class ScholarshipConfigurationPayload(BaseModel):
+    codigo: str | None = ""
+    nombre: str
+    es_variable: bool = False
+    porcentaje: float | None = 0
+    porcentaje_minimo: float | None = 0
+    porcentaje_maximo: float | None = 100
+    activo: bool = True
 
 
 def _clean(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value).replace("\xa0", " ")).strip()
+
+
+def _is_no_scholarship(value: Any) -> bool:
+    normalized = _clean(value).upper()
+    return normalized in {"", "SIN BECA", "NO APLICA", "NINGUNA"}
+
+
+def _is_mintel_scholarship(value: Any) -> bool:
+    return "MINTEL" in _clean(value).upper()
+
+
+def _scholarship_code(value: Any) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", _clean(value).upper()).strip("_")
+    return normalized[:50] or "BECA"
+
+
+def _normalized_scholarship(tipo_beca: Any, porcentaje_beca: Any, valor_beca: Any = 0) -> tuple[str, float, float]:
+    scholarship_type = _clean(tipo_beca)
+    if _is_no_scholarship(scholarship_type):
+        return "", 0.0, 0.0
+    percentage = 100.0 if _is_mintel_scholarship(scholarship_type) else min(max(float(porcentaje_beca or 0), 0), 100)
+    scholarship_value = max(float(valor_beca or 0), 0)
+    return scholarship_type, percentage, scholarship_value
+
+
+def _ensure_scholarship_configuration_table() -> None:
+    legacy_rows: list[tuple[str, float, float]] = []
+    try:
+        with get_connection() as legacy_conn:
+            legacy_cursor = legacy_conn.cursor()
+            legacy_cursor.execute(
+                """
+                IF OBJECT_ID(N'dbo.Becas', N'U') IS NOT NULL
+                    SELECT LTRIM(RTRIM(tipo_beca)),
+                           MIN(ISNULL(TRY_CONVERT(decimal(9,2), porcentaje_beca), 0)),
+                           MAX(ISNULL(TRY_CONVERT(decimal(9,2), porcentaje_beca), 0))
+                    FROM dbo.Becas
+                    WHERE NULLIF(LTRIM(RTRIM(tipo_beca)), '') IS NOT NULL
+                    GROUP BY LTRIM(RTRIM(tipo_beca))
+                ELSE
+                    SELECT TOP (0) '', CAST(0 AS decimal(9,2)), CAST(0 AS decimal(9,2))
+                """
+            )
+            legacy_rows = [(_clean(row[0]), float(row[1] or 0), float(row[2] or 0)) for row in legacy_cursor.fetchall()]
+    except pyodbc.Error:
+        legacy_rows = []
+
+    with get_finance_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'cat')
+                EXEC(N'CREATE SCHEMA cat AUTHORIZATION dbo');
+
+            IF OBJECT_ID(N'cat.ConfiguracionBecaPreinscripcion', N'U') IS NULL
+            BEGIN
+                CREATE TABLE cat.ConfiguracionBecaPreinscripcion
+                (
+                    ConfiguracionBecaId INT IDENTITY(1,1) NOT NULL
+                        CONSTRAINT PK_ConfiguracionBecaPreinscripcion PRIMARY KEY,
+                    Codigo VARCHAR(50) NOT NULL,
+                    Nombre NVARCHAR(150) NOT NULL,
+                    EsVariable BIT NOT NULL CONSTRAINT DF_ConfiguracionBeca_EsVariable DEFAULT 0,
+                    PorcentajeFijo DECIMAL(9,2) NULL,
+                    PorcentajeMinimo DECIMAL(9,2) NULL,
+                    PorcentajeMaximo DECIMAL(9,2) NULL,
+                    Protegida BIT NOT NULL CONSTRAINT DF_ConfiguracionBeca_Protegida DEFAULT 0,
+                    Activo BIT NOT NULL CONSTRAINT DF_ConfiguracionBeca_Activo DEFAULT 1,
+                    FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_ConfiguracionBeca_Fecha DEFAULT SYSDATETIME(),
+                    UsuarioCreacion NVARCHAR(128) NULL,
+                    FechaActualizacion DATETIME2 NULL,
+                    UsuarioActualizacion NVARCHAR(128) NULL,
+                    CONSTRAINT UQ_ConfiguracionBeca_Codigo UNIQUE(Codigo),
+                    CONSTRAINT CK_ConfiguracionBeca_Porcentajes CHECK
+                    (
+                        (PorcentajeFijo IS NULL OR PorcentajeFijo BETWEEN 0 AND 100)
+                        AND (PorcentajeMinimo IS NULL OR PorcentajeMinimo BETWEEN 0 AND 100)
+                        AND (PorcentajeMaximo IS NULL OR PorcentajeMaximo BETWEEN 0 AND 100)
+                    )
+                );
+            END
+            """
+        )
+        cursor.execute("SELECT COUNT(1) FROM cat.ConfiguracionBecaPreinscripcion")
+        is_empty = int(cursor.fetchone()[0] or 0) == 0
+        if is_empty:
+            seeds = legacy_rows or [
+                ("Beca Intec", 0.0, 100.0),
+                ("Beca Futuro Femenino", 100.0, 100.0),
+                ("Beca Mintel", 100.0, 100.0),
+                ("Suzuki", 100.0, 100.0),
+            ]
+            for name, minimum, maximum in seeds:
+                is_mintel = _is_mintel_scholarship(name)
+                is_variable = not is_mintel and abs(maximum - minimum) > 0.001
+                fixed_percentage = 100.0 if is_mintel else (None if is_variable else maximum)
+                cursor.execute(
+                    """
+                    INSERT INTO cat.ConfiguracionBecaPreinscripcion
+                        (Codigo, Nombre, EsVariable, PorcentajeFijo, PorcentajeMinimo,
+                         PorcentajeMaximo, Protegida, Activo, UsuarioCreacion)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'MIGRACION_INICIAL')
+                    """,
+                    _scholarship_code(name),
+                    name,
+                    int(is_variable),
+                    fixed_percentage,
+                    100.0 if is_mintel else minimum,
+                    100.0 if is_mintel else maximum,
+                    int(is_mintel),
+                )
+        cursor.execute(
+            """
+            UPDATE cat.ConfiguracionBecaPreinscripcion
+               SET EsVariable = 0, PorcentajeFijo = 100, PorcentajeMinimo = 100,
+                   PorcentajeMaximo = 100, Protegida = 1, Activo = 1,
+                   FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = N'SISTEMA'
+             WHERE (UPPER(Codigo) = 'BECA_MINTEL' OR UPPER(Nombre) LIKE '%MINTEL%')
+               AND
+               (
+                   EsVariable <> 0 OR ISNULL(PorcentajeFijo, -1) <> 100
+                   OR ISNULL(PorcentajeMinimo, -1) <> 100
+                   OR ISNULL(PorcentajeMaximo, -1) <> 100
+                   OR Protegida <> 1 OR Activo <> 1
+               );
+
+            IF NOT EXISTS
+            (
+                SELECT 1 FROM cat.ConfiguracionBecaPreinscripcion
+                WHERE UPPER(Codigo) = 'BECA_MINTEL' OR UPPER(Nombre) LIKE '%MINTEL%'
+            )
+                INSERT INTO cat.ConfiguracionBecaPreinscripcion
+                    (Codigo, Nombre, EsVariable, PorcentajeFijo, PorcentajeMinimo,
+                     PorcentajeMaximo, Protegida, Activo, UsuarioCreacion)
+                VALUES ('BECA_MINTEL', N'Beca Mintel', 0, 100, 100, 100, 1, 1, N'SISTEMA');
+
+            UPDATE cat.ConfiguracionBecaPreinscripcion
+               SET EsVariable = 1, PorcentajeFijo = NULL, PorcentajeMinimo = 0,
+                   PorcentajeMaximo = 100, FechaActualizacion = SYSDATETIME(),
+                   UsuarioActualizacion = N'MIGRACION_INICIAL'
+             WHERE Codigo = 'BECA_INTEC'
+               AND UsuarioCreacion = N'MIGRACION_INICIAL'
+               AND EsVariable = 0;
+            """
+        )
+        conn.commit()
+
+
+def _scholarship_configurations(active_only: bool = False) -> list[dict[str, Any]]:
+    _ensure_scholarship_configuration_table()
+    with get_finance_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ConfiguracionBecaId, Codigo, Nombre, EsVariable, PorcentajeFijo,
+                   PorcentajeMinimo, PorcentajeMaximo, Protegida, Activo,
+                   FechaActualizacion, UsuarioActualizacion
+            FROM cat.ConfiguracionBecaPreinscripcion
+            WHERE (? = 0 OR Activo = 1)
+            ORDER BY Activo DESC, Nombre
+            """,
+            int(active_only),
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "id": int(row.ConfiguracionBecaId),
+            "codigo": _clean(row.Codigo),
+            "nombre": _clean(row.Nombre),
+            "es_variable": bool(row.EsVariable),
+            "porcentaje": None if row.PorcentajeFijo is None else float(row.PorcentajeFijo),
+            "porcentaje_minimo": None if row.PorcentajeMinimo is None else float(row.PorcentajeMinimo),
+            "porcentaje_maximo": None if row.PorcentajeMaximo is None else float(row.PorcentajeMaximo),
+            "protegida": bool(row.Protegida),
+            "activo": bool(row.Activo),
+            "fecha_actualizacion": _date_text(row.FechaActualizacion),
+            "usuario_actualizacion": _clean(row.UsuarioActualizacion),
+        }
+        for row in rows
+    ]
+
+
+def _validate_scholarship_selection(tipo_beca: Any, porcentaje_beca: Any) -> tuple[str, float]:
+    scholarship_type, percentage, _ = _normalized_scholarship(tipo_beca, porcentaje_beca)
+    if not scholarship_type:
+        return "", 0.0
+
+    configurations = _scholarship_configurations(active_only=True)
+    selected_code = _scholarship_code(scholarship_type)
+    selected = next(
+        (
+            item
+            for item in configurations
+            if item["codigo"].upper() == selected_code or item["nombre"].upper() == scholarship_type.upper()
+        ),
+        None,
+    )
+    if not selected:
+        raise HTTPException(status_code=400, detail="La beca seleccionada no está disponible en inscripción")
+
+    if selected["es_variable"]:
+        minimum = float(selected["porcentaje_minimo"] or 0)
+        maximum = float(selected["porcentaje_maximo"] if selected["porcentaje_maximo"] is not None else 100)
+        if percentage < minimum or percentage > maximum:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El porcentaje de {selected['nombre']} debe estar entre {minimum:g}% y {maximum:g}%",
+            )
+    else:
+        percentage = float(selected["porcentaje"] or 0)
+    return selected["nombre"], percentage
 
 
 def _date_text(value: Any) -> str:
@@ -169,13 +402,35 @@ def _convenio_semester_count(value: str | int | None) -> int:
         return 1
 
 
-def _payment_plan(payload: PreinscriptionCabeceraPayload) -> dict[str, float | int | str]:
-    semester_count = _convenio_semester_count(payload.semestres_convenio)
-    base_semester_cost = max(float(payload.costo_semestre or 0), 0)
-    if base_semester_cost <= 0:
-        base_semester_cost = max(float(payload.valor or 0), 0)
-    total = round(base_semester_cost * semester_count, 2) if base_semester_cost > 0 else max(float(payload.valor or 0), 0)
-    porcentaje_beca = min(max(float(payload.porcentaje_beca or 0), 0), 100)
+def _institutional_study_costs(
+    semesters: str | int | None,
+    career_name: str = "",
+) -> dict[str, float | int]:
+    semester_count = _convenio_semester_count(semesters)
+    is_gastronomy = "GASTRONOM" in _clean(career_name).upper()
+    enrollment_cost = _GASTRONOMY_ENROLLMENT_COST if is_gastronomy else _STANDARD_ENROLLMENT_COST
+    base_semester_cost = _ACADEMIC_SEMESTER_COST + enrollment_cost
+    academic_total = round(_ACADEMIC_SEMESTER_COST * semester_count, 2)
+    enrollment_total = round(enrollment_cost * semester_count, 2)
+    total = round(academic_total + enrollment_total, 2)
+    return {
+        "total": total,
+        "costo_semestre": round(base_semester_cost, 2),
+        "valor_academico": academic_total,
+        "valor_matricula": enrollment_total,
+        "materias": _SUBJECTS_PER_SEMESTER * semester_count,
+        "semestres": semester_count,
+    }
+
+
+def _payment_plan(
+    payload: PreinscriptionCabeceraPayload,
+    career_name: str = "",
+) -> dict[str, float | int | str]:
+    costs = _institutional_study_costs(payload.semestres_convenio, career_name)
+    semester_count = int(costs["semestres"])
+    total = float(costs["total"])
+    _, porcentaje_beca, _ = _normalized_scholarship(payload.tipo_beca, payload.porcentaje_beca)
     beca_valor = round(total * porcentaje_beca / 100, 2)
     descuento = max(float(payload.descuento or 0), 0)
     saldo = max(total - beca_valor - descuento, 0)
@@ -183,7 +438,10 @@ def _payment_plan(payload: PreinscriptionCabeceraPayload) -> dict[str, float | i
     cuota_valor = round(saldo / num_cuotas, 2) if num_cuotas else saldo
     return {
         "total": round(total, 2),
-        "costo_semestre": round(base_semester_cost, 2),
+        "costo_semestre": costs["costo_semestre"],
+        "valor_academico": costs["valor_academico"],
+        "valor_matricula": costs["valor_matricula"],
+        "materias": costs["materias"],
         "semestres": semester_count,
         "alcance": "Todos los semestres" if _clean(payload.semestres_convenio).upper() in {"TODOS", "TODO", "ALL"} else f"{semester_count} semestre(s)",
         "porcentaje_beca": round(porcentaje_beca, 2),
@@ -692,6 +950,307 @@ def _sync_student_scholarship(
         scholarship_type,
         beca_valor,
     )
+
+
+def _finance_scholarship_code(value: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "", value.upper())
+    if "SOCIO" in normalized:
+        return "SOCIOECONOMICA"
+    if "MERIT" in normalized or "EXCEL" in normalized:
+        return "MERITO"
+    if "CONVEN" in normalized:
+        return "CONVENIO"
+    if "DEPORT" in normalized:
+        return "DEPORTIVA"
+    return "INSTITUCIONAL"
+
+
+def _sync_financial_preinscription(
+    *,
+    codestu: int,
+    cedula: str,
+    student_name: str,
+    codperiodo: int,
+    codcarrera: int,
+    codmodalidad: int,
+    codjornada: int,
+    correo: str,
+    telefono: str,
+    codasesor: str,
+    usuario: str,
+    tipo_beca: str,
+    porcentaje_beca: float,
+    valor_beca: float,
+    motivo_beca: str,
+) -> dict[str, Any]:
+    scholarship_type, percentage, scholarship_value = _normalized_scholarship(
+        tipo_beca, porcentaje_beca, valor_beca
+    )
+
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                MERGE adm.PreinscripcionFinanciera AS tgt
+                USING (SELECT ? AS Cedula, ? AS CodigoPeriodo, ? AS CodigoCarrera) AS src
+                   ON tgt.Cedula = src.Cedula
+                  AND tgt.CodigoPeriodo = src.CodigoPeriodo
+                  AND tgt.CodigoCarrera = src.CodigoCarrera
+                WHEN MATCHED THEN UPDATE SET
+                    Codestu = ?, ApellidosNombre = ?, CodigoModalidad = ?, CodigoJornada = ?,
+                    Correo = ?, Telefono = ?, UsuarioOrigen = ?, CodigoAsesor = ?,
+                    ObservacionIngreso = ?, Prematricula = 0, FechaSincronizacion = SYSDATETIME()
+                WHEN NOT MATCHED THEN INSERT
+                    (Codestu, Cedula, ApellidosNombre, CodigoPeriodo, CodigoCarrera,
+                     CodigoModalidad, CodigoJornada, Correo, Telefono, UsuarioOrigen,
+                     FechaIngreso, CodigoAsesor, ObservacionIngreso, Prematricula)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), ?, ?, 0);
+                """,
+                cedula, str(codperiodo), str(codcarrera),
+                codestu, student_name, str(codmodalidad), str(codjornada), correo, telefono,
+                usuario, codasesor, "Registro previo creado desde preinscripcion",
+                codestu, cedula, student_name, str(codperiodo), str(codcarrera),
+                str(codmodalidad), str(codjornada), correo, telefono, usuario, codasesor,
+                "Registro previo creado desde preinscripcion",
+            )
+            cursor.execute(
+                """
+                MERGE core.Estudiante AS tgt
+                USING (SELECT ? AS NumeroIdentificacion) AS src
+                   ON tgt.NumeroIdentificacion = src.NumeroIdentificacion
+                WHEN MATCHED THEN UPDATE SET
+                    CodigoEstud = COALESCE(tgt.CodigoEstud, ?), NombreCompleto = ?,
+                    Correo = ?, Telefono = ?, FuenteOrigen = 'PREINSCRIPCION',
+                    FechaSincronizacion = SYSDATETIME()
+                WHEN NOT MATCHED THEN INSERT
+                    (CodigoEstud, NumeroIdentificacion, NombreCompleto, Correo, Telefono, FuenteOrigen)
+                VALUES (?, ?, ?, ?, ?, 'PREINSCRIPCION');
+                """,
+                cedula, codestu, student_name, correo, telefono,
+                codestu, cedula, student_name, correo, telefono,
+            )
+            cursor.execute(
+                "SELECT EstudianteId FROM core.Estudiante WHERE NumeroIdentificacion = ?",
+                cedula,
+            )
+            estudiante_id = int(cursor.fetchone()[0])
+            cursor.execute(
+                """
+                SELECT TOP (1) CuentaEstudianteId
+                FROM fin.CuentaEstudiante
+                WHERE EstudianteId = ? AND ISNULL(CodigoCarrera, '') = ?
+                  AND ISNULL(CodigoPeriodo, '') = ? AND Activo = 1
+                """,
+                estudiante_id, str(codcarrera), str(codperiodo),
+            )
+            account_row = cursor.fetchone()
+            if account_row:
+                cuenta_id = int(account_row[0])
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO fin.CuentaEstudiante
+                        (EstudianteId, CodigoCarrera, CodigoPeriodo, UsuarioApertura)
+                    OUTPUT INSERTED.CuentaEstudianteId
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    estudiante_id, str(codcarrera), str(codperiodo), usuario,
+                )
+                cuenta_id = int(cursor.fetchone()[0])
+
+            beca_id: int | None = None
+            scholarship_status = "SIN_BECA"
+            if scholarship_type and percentage > 0:
+                type_code = _finance_scholarship_code(scholarship_type)
+                cursor.execute(
+                    "SELECT TipoBecaId FROM cat.TipoBeca WHERE Codigo = ? AND Activo = 1",
+                    type_code,
+                )
+                type_row = cursor.fetchone()
+                desired_status_code = (
+                    "SOLICITADA" if percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD else "APROBADA"
+                )
+                cursor.execute(
+                    "SELECT EstadoBecaId FROM cat.EstadoBeca WHERE Codigo = ? AND Activo = 1",
+                    desired_status_code,
+                )
+                status_row = cursor.fetchone()
+                if not type_row or not status_row:
+                    raise RuntimeError("No estan configurados los catalogos de beca solicitada")
+                cursor.execute(
+                    """
+                    SELECT TOP (1) b.BecaId, eb.Codigo
+                    FROM bec.BecaEstudiante b
+                    INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+                    WHERE b.EstudianteId = ? AND b.CuentaEstudianteId = ?
+                      AND eb.Codigo IN ('SOLICITADA', 'APROBADA')
+                    ORDER BY b.BecaId DESC
+                    """,
+                    estudiante_id, cuenta_id,
+                )
+                scholarship_row = cursor.fetchone()
+                if scholarship_row:
+                    beca_id = int(scholarship_row[0])
+                    current_status = _clean(scholarship_row[1]).upper()
+                    if percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD and current_status == "APROBADA":
+                        cursor.execute(
+                            "SELECT EstadoBecaId FROM cat.EstadoBeca WHERE Codigo = 'APROBADA' AND Activo = 1"
+                        )
+                        approved_status = cursor.fetchone()
+                        if approved_status:
+                            status_row = approved_status
+                            desired_status_code = "APROBADA"
+                    cursor.execute(
+                        """
+                        UPDATE bec.BecaEstudiante
+                        SET TipoBecaId = ?, EstadoBecaId = ?, PorcentajeBeca = ?,
+                            ValorBeca = ?, Motivo = ?, FechaSolicitud = CAST(GETDATE() AS DATE),
+                            FechaAprobacion = CASE WHEN ? = 'APROBADA' THEN COALESCE(FechaAprobacion, CAST(GETDATE() AS DATE)) ELSE NULL END,
+                            UsuarioAprobacion = CASE WHEN ? = 'APROBADA' THEN COALESCE(UsuarioAprobacion, ?) ELSE NULL END
+                        WHERE BecaId = ?
+                        """,
+                        int(type_row[0]), int(status_row[0]), percentage, scholarship_value,
+                        motivo_beca or f"Solicitud registrada en preinscripcion: {scholarship_type}",
+                        desired_status_code, desired_status_code, usuario, beca_id,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO bec.BecaEstudiante
+                            (EstudianteId, CuentaEstudianteId, TipoBecaId, EstadoBecaId,
+                             CodigoBeca, PorcentajeBeca, ValorBeca, Motivo, FechaSolicitud,
+                             FechaAprobacion, UsuarioAprobacion)
+                        OUTPUT INSERTED.BecaId
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(GETDATE() AS DATE),
+                                CASE WHEN ? = 'APROBADA' THEN CAST(GETDATE() AS DATE) END,
+                                CASE WHEN ? = 'APROBADA' THEN ? END)
+                        """,
+                        estudiante_id, cuenta_id, int(type_row[0]), int(status_row[0]),
+                        f"PRE-{codestu}-{codperiodo}", percentage, scholarship_value,
+                        motivo_beca or f"Solicitud registrada en preinscripcion: {scholarship_type}",
+                        desired_status_code, desired_status_code, usuario,
+                    )
+                    beca_id = int(cursor.fetchone()[0])
+                scholarship_status = desired_status_code
+            conn.commit()
+        requires_approval = percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD
+        return {
+            "ok": True,
+            "cuenta_estudiante_id": cuenta_id,
+            "beca_id": beca_id,
+            "beca_estado": scholarship_status,
+            "requiere_aprobacion": requires_approval,
+            "puede_continuar": not requires_approval or scholarship_status == "APROBADA",
+            "porcentaje_beca": percentage,
+        }
+    except (pyodbc.Error, RuntimeError) as exc:
+        return {"ok": False, "detail": f"No se pudo sincronizar Finanzas: {exc}"}
+
+
+def _financial_scholarship_status(cedula: str, codperiodo: Any, codcarrera: Any) -> dict[str, Any]:
+    with get_finance_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP (1)
+                b.BecaId,
+                tb.Nombre AS TipoBeca,
+                b.PorcentajeBeca,
+                b.ValorBeca,
+                eb.Codigo AS Estado,
+                b.FechaSolicitud,
+                b.FechaAprobacion,
+                b.UsuarioAprobacion
+            FROM core.Estudiante e
+            INNER JOIN fin.CuentaEstudiante c ON c.EstudianteId = e.EstudianteId AND c.Activo = 1
+            INNER JOIN bec.BecaEstudiante b ON b.EstudianteId = e.EstudianteId
+                AND b.CuentaEstudianteId = c.CuentaEstudianteId
+            INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
+            INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+            WHERE e.NumeroIdentificacion = ?
+              AND ISNULL(c.CodigoPeriodo, '') = ?
+              AND ISNULL(c.CodigoCarrera, '') = ?
+            ORDER BY b.BecaId DESC
+            """,
+            _clean(cedula), _clean(codperiodo), _clean(codcarrera),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return {
+            "beca_id": None,
+            "tipo_beca": "Sin beca",
+            "porcentaje_beca": 0.0,
+            "valor_beca": 0.0,
+            "estado": "SIN_BECA",
+            "requiere_aprobacion": False,
+            "puede_continuar": True,
+        }
+    percentage = float(row.PorcentajeBeca or 0)
+    status_code = _clean(row.Estado).upper()
+    requires_approval = percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD
+    return {
+        "beca_id": int(row.BecaId),
+        "tipo_beca": _clean(row.TipoBeca),
+        "porcentaje_beca": percentage,
+        "valor_beca": float(row.ValorBeca or 0),
+        "estado": status_code,
+        "requiere_aprobacion": requires_approval,
+        "puede_continuar": not requires_approval or status_code == "APROBADA",
+        "fecha_solicitud": _date_text(row.FechaSolicitud),
+        "fecha_aprobacion": _date_text(row.FechaAprobacion),
+        "usuario_aprobacion": _clean(row.UsuarioAprobacion),
+    }
+
+
+def _preinscription_scholarship_status(row: Any) -> dict[str, Any]:
+    return _financial_scholarship_status(
+        _clean(getattr(row, "Cedula", "")),
+        getattr(row, "codperiodo", ""),
+        getattr(row, "codcarrera", ""),
+    )
+
+
+def _approve_financial_scholarship(beca_id: int, usuario: str) -> dict[str, Any]:
+    with get_finance_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT b.PorcentajeBeca, eb.Codigo
+            FROM bec.BecaEstudiante b
+            INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+            WHERE b.BecaId = ?
+            """,
+            beca_id,
+        )
+        scholarship_row = cursor.fetchone()
+        if not scholarship_row:
+            raise HTTPException(status_code=404, detail="No existe la solicitud de beca")
+        if float(scholarship_row.PorcentajeBeca or 0) <= _SCHOLARSHIP_APPROVAL_THRESHOLD:
+            raise HTTPException(status_code=400, detail="Esta beca no requiere aprobación especial")
+        if _clean(scholarship_row.Codigo).upper() == "APROBADA":
+            return {"beca_id": beca_id, "estado": "APROBADA", "already_approved": True}
+
+        cursor.execute(
+            "SELECT EstadoBecaId FROM cat.EstadoBeca WHERE Codigo = 'APROBADA' AND Activo = 1"
+        )
+        approved_row = cursor.fetchone()
+        if not approved_row:
+            raise HTTPException(status_code=500, detail="No está configurado el estado APROBADA en Finanzas")
+        cursor.execute(
+            """
+            UPDATE bec.BecaEstudiante
+            SET EstadoBecaId = ?,
+                FechaAprobacion = CAST(GETDATE() AS DATE),
+                UsuarioAprobacion = ?
+            WHERE BecaId = ?
+            """,
+            int(approved_row[0]),
+            usuario[:128],
+            beca_id,
+        )
+        conn.commit()
+    return {"beca_id": beca_id, "estado": "APROBADA", "already_approved": False}
 
 
 def _sync_registration_payment(
@@ -1458,7 +2017,8 @@ def preinscription_catalog(
                 BEGIN
                     SELECT TOP (120)
                         TRY_CONVERT(nvarchar(255), NULLIF(LTRIM(RTRIM(tipo_beca)), '')) AS option_value,
-                        TRY_CONVERT(decimal(18, 2), MAX(ISNULL(porcentaje_beca, 0))) AS amount
+                        TRY_CONVERT(decimal(18, 2), MIN(ISNULL(porcentaje_beca, 0))) AS min_amount,
+                        TRY_CONVERT(decimal(18, 2), MAX(ISNULL(porcentaje_beca, 0))) AS max_amount
                     FROM dbo.Becas
                     WHERE NULLIF(LTRIM(RTRIM(tipo_beca)), '') IS NOT NULL
                     GROUP BY TRY_CONVERT(nvarchar(255), NULLIF(LTRIM(RTRIM(tipo_beca)), ''))
@@ -1468,20 +2028,32 @@ def preinscription_catalog(
                 BEGIN
                     SELECT TOP (0)
                         TRY_CONVERT(nvarchar(255), '') AS option_value,
-                        TRY_CONVERT(decimal(18, 2), 0) AS amount
+                        TRY_CONVERT(decimal(18, 2), 0) AS min_amount,
+                        TRY_CONVERT(decimal(18, 2), 0) AS max_amount
                 END
                 """
             )
-            becas = [
-                {
-                    "value": _clean(row.option_value),
-                    "label": _clean(row.option_value),
-                    "detail": f"{_number_value(row.amount) or 0:g}%",
-                    "amount": _number_value(row.amount),
-                }
-                for row in cursor.fetchall()
-                if _clean(row.option_value)
-            ]
+            becas = []
+            for row in cursor.fetchall():
+                scholarship_name = _clean(row.option_value)
+                if not scholarship_name:
+                    continue
+                minimum = _number_value(row.min_amount) or 0
+                maximum = _number_value(row.max_amount) or 0
+                is_mintel = _is_mintel_scholarship(scholarship_name)
+                is_variable = not is_mintel and abs(maximum - minimum) > 0.001
+                fixed_amount = 100.0 if is_mintel else maximum
+                becas.append(
+                    {
+                        "value": scholarship_name,
+                        "label": scholarship_name,
+                        "detail": "Fija 100%" if is_mintel else (f"Variable ({minimum:g}% - {maximum:g}%)" if is_variable else f"{maximum:g}%"),
+                        "amount": None if is_variable else fixed_amount,
+                        "variable": is_variable,
+                        "min_amount": fixed_amount if is_mintel else minimum,
+                        "max_amount": fixed_amount if is_mintel else maximum,
+                    }
+                )
             cursor.execute(
                 """
                 SELECT
@@ -1510,6 +2082,50 @@ def preinscription_catalog(
                 }
                 for row in cursor.fetchall()
             ]
+        try:
+            with get_finance_connection() as finance_conn:
+                finance_cursor = finance_conn.cursor()
+                finance_cursor.execute(
+                    "SELECT Codigo, Nombre FROM cat.TipoBeca WHERE Activo = 1 ORDER BY Nombre"
+                )
+                known_scholarships = {_clean(option["value"]).upper() for option in becas}
+                for row in finance_cursor.fetchall():
+                    code = _clean(row.Codigo)
+                    name = _clean(row.Nombre)
+                    if code and code.upper() not in known_scholarships:
+                        becas.append(
+                            {
+                                "value": code,
+                                "label": name or code,
+                                "detail": "Porcentaje variable",
+                                "amount": None,
+                                "variable": True,
+                            }
+                        )
+                        known_scholarships.add(code.upper())
+        except (pyodbc.Error, RuntimeError):
+            pass
+        try:
+            managed_scholarships = _scholarship_configurations(active_only=True)
+            if managed_scholarships:
+                becas = [
+                    {
+                        "value": item["nombre"],
+                        "label": item["nombre"],
+                        "detail": (
+                            f"Variable ({float(item['porcentaje_minimo'] or 0):g}% - {float(item['porcentaje_maximo'] or 100):g}%)"
+                            if item["es_variable"]
+                            else f"Fija {float(item['porcentaje'] or 0):g}%"
+                        ),
+                        "amount": None if item["es_variable"] else item["porcentaje"],
+                        "variable": item["es_variable"],
+                        "min_amount": item["porcentaje_minimo"],
+                        "max_amount": item["porcentaje_maximo"],
+                    }
+                    for item in managed_scholarships
+                ]
+        except (pyodbc.Error, RuntimeError):
+            pass
         return {
             "periodos": periodos,
             "carreras": carreras,
@@ -1744,13 +2360,89 @@ def create_preinscription(
                 apellido1,
                 apellido2,
             )
+            scholarship_type, scholarship_percentage = _validate_scholarship_selection(
+                payload.tipo_beca, payload.porcentaje_beca
+            )
+            scholarship_value = max(float(payload.valor_beca or 0), 0)
+            if scholarship_type and scholarship_percentage <= 0:
+                raise HTTPException(status_code=400, detail="Ingresa el porcentaje otorgado para la beca seleccionada")
+            if scholarship_percentage > 0 and not scholarship_type:
+                raise HTTPException(status_code=400, detail="Selecciona el tipo de beca")
+            if scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD and not _clean(payload.motivo_beca):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Las becas mayores al 15% requieren un motivo para solicitar aprobación",
+                )
+            cursor.execute(
+                "SELECT TOP (1) Nombre_Basica FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?",
+                codcarrera,
+            )
+            career_row = cursor.fetchone()
+            institutional_costs = _institutional_study_costs(
+                payload.semestres_convenio,
+                _clean(getattr(career_row, "Nombre_Basica", "")),
+            )
+            scholarship_value = round(
+                float(institutional_costs["total"]) * scholarship_percentage / 100,
+                2,
+            )
+            _sync_student_scholarship(
+                cursor,
+                codestu,
+                scholarship_type,
+                scholarship_percentage,
+                scholarship_value,
+            )
             conn.commit()
             row = _fetch_preinscription_row(cursor, str(num))
+        finance_sync = _sync_financial_preinscription(
+            codestu=codestu,
+            cedula=cedula,
+            student_name=student_name,
+            codperiodo=codperiodo,
+            codcarrera=codcarrera,
+            codmodalidad=int(payload.codmodalida or 1),
+            codjornada=int(payload.codjornada or 0),
+            correo=_clean(payload.correo)[:150],
+            telefono=_clean(payload.telefono)[:50],
+            codasesor=str(codasesor),
+            usuario=usuario[:80],
+            tipo_beca=scholarship_type,
+            porcentaje_beca=scholarship_percentage,
+            valor_beca=scholarship_value,
+            motivo_beca=_clean(payload.motivo_beca)[:1000],
+        )
+        complement_sync = sync_preinscription_complements(
+            {
+                "origen_id": str(num),
+                "codigo_estud": codestu,
+                "cedula": cedula,
+                "nombre": student_name,
+                "codigo_periodo": codperiodo,
+                "codigo_carrera": codcarrera,
+                "codigo_modalidad": int(payload.codmodalida or 1),
+                "codigo_jornada": int(payload.codjornada or 0),
+                "codigo_asesor": str(codasesor),
+                "correo": _clean(payload.correo)[:150],
+                "telefono": _clean(payload.telefono)[:50],
+                "estado": "REGISTRADA",
+                "tiene_beca": bool(scholarship_type and scholarship_percentage > 0),
+                "usuario": usuario[:80],
+            },
+            finance_sync,
+        )
+        requires_approval = scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD
         return {
             "ok": True,
-            "message": "Preinscripcion registrada correctamente.",
+            "message": (
+                "Preinscripción registrada. La beca requiere aprobación antes de continuar."
+                if requires_approval
+                else "Preinscripción registrada correctamente."
+            ),
             "item": _preinscription_item(row),
             "asesor": {"codigo": str(codasesor), "usuario": usuario},
+            "finanzas": finance_sync,
+            "complementos": complement_sync,
         }
     except HTTPException:
         raise
@@ -1760,6 +2452,449 @@ def create_preinscription(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Error registrando preinscripcion: {exc}") from exc
+
+
+def _validated_scholarship_configuration(payload: ScholarshipConfigurationPayload) -> dict[str, Any]:
+    name = _clean(payload.nombre)
+    if not name:
+        raise HTTPException(status_code=400, detail="El nombre de la beca es obligatorio")
+    code = _scholarship_code(payload.codigo or name)
+    is_mintel = _is_mintel_scholarship(code) or _is_mintel_scholarship(name)
+    is_variable = False if is_mintel else bool(payload.es_variable)
+    fixed = 100.0 if is_mintel else min(max(float(payload.porcentaje or 0), 0), 100)
+    minimum = 100.0 if is_mintel else min(max(float(payload.porcentaje_minimo or 0), 0), 100)
+    maximum = 100.0 if is_mintel else min(max(float(payload.porcentaje_maximo or 100), 0), 100)
+    if is_variable and minimum > maximum:
+        raise HTTPException(status_code=400, detail="El porcentaje mínimo no puede superar al máximo")
+    return {
+        "codigo": code,
+        "nombre": "Beca Mintel" if is_mintel else name,
+        "es_variable": is_variable,
+        "porcentaje": None if is_variable else fixed,
+        "porcentaje_minimo": minimum if is_variable else fixed,
+        "porcentaje_maximo": maximum if is_variable else fixed,
+        "protegida": is_mintel,
+        "activo": True if is_mintel else bool(payload.activo),
+    }
+
+
+@router.get("/becas/configuracion")
+def list_scholarship_configurations(
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        items = _scholarship_configurations(active_only=False)
+        return {"ok": True, "items": items, "total": len(items)}
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo consultar la configuración de becas: {exc}") from exc
+
+
+@router.post("/becas/configuracion")
+def create_scholarship_configuration(
+    payload: ScholarshipConfigurationPayload,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> dict[str, Any]:
+    values = _validated_scholarship_configuration(payload)
+    try:
+        _ensure_scholarship_configuration_table()
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO cat.ConfiguracionBecaPreinscripcion
+                    (Codigo, Nombre, EsVariable, PorcentajeFijo, PorcentajeMinimo,
+                     PorcentajeMaximo, Protegida, Activo, UsuarioCreacion)
+                OUTPUT INSERTED.ConfiguracionBecaId
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values["codigo"], values["nombre"], int(values["es_variable"]),
+                values["porcentaje"], values["porcentaje_minimo"], values["porcentaje_maximo"],
+                int(values["protegida"]), int(values["activo"]), current_user.login[:128],
+            )
+            configuration_id = int(cursor.fetchone()[0])
+            conn.commit()
+        item = next(item for item in _scholarship_configurations() if item["id"] == configuration_id)
+        return {"ok": True, "message": "Beca creada y disponible en inscripción.", "item": item}
+    except pyodbc.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Ya existe una beca con ese código") from exc
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo crear la beca: {exc}") from exc
+
+
+@router.put("/becas/configuracion/{configuration_id}")
+def update_scholarship_configuration(
+    configuration_id: int,
+    payload: ScholarshipConfigurationPayload,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> dict[str, Any]:
+    values = _validated_scholarship_configuration(payload)
+    try:
+        _ensure_scholarship_configuration_table()
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT Protegida FROM cat.ConfiguracionBecaPreinscripcion WHERE ConfiguracionBecaId = ?",
+                configuration_id,
+            )
+            existing = cursor.fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="No existe la configuración de beca")
+            if bool(existing.Protegida):
+                values.update({
+                    "codigo": "BECA_MINTEL",
+                    "nombre": "Beca Mintel",
+                    "es_variable": False,
+                    "porcentaje": 100.0,
+                    "porcentaje_minimo": 100.0,
+                    "porcentaje_maximo": 100.0,
+                    "protegida": True,
+                    "activo": True,
+                })
+            cursor.execute(
+                """
+                UPDATE cat.ConfiguracionBecaPreinscripcion
+                SET Codigo = ?, Nombre = ?, EsVariable = ?, PorcentajeFijo = ?,
+                    PorcentajeMinimo = ?, PorcentajeMaximo = ?, Protegida = ?, Activo = ?,
+                    FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ?
+                WHERE ConfiguracionBecaId = ?
+                """,
+                values["codigo"], values["nombre"], int(values["es_variable"]),
+                values["porcentaje"], values["porcentaje_minimo"], values["porcentaje_maximo"],
+                int(values["protegida"]), int(values["activo"]), current_user.login[:128],
+                configuration_id,
+            )
+            conn.commit()
+        item = next(item for item in _scholarship_configurations() if item["id"] == configuration_id)
+        return {"ok": True, "message": "Beca actualizada en el catálogo de inscripción.", "item": item}
+    except HTTPException:
+        raise
+    except pyodbc.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Ya existe una beca con ese código") from exc
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo actualizar la beca: {exc}") from exc
+
+
+@router.get("/becas/pendientes")
+def list_pending_preinscription_scholarships(
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    query: str = Query(default="", max_length=120),
+    limit: int = Query(default=250, ge=1, le=1000),
+) -> dict[str, Any]:
+    del current_user
+    search = _clean(query)
+    pattern = f"%{search}%"
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (?)
+                    b.BecaId,
+                    e.CodigoEstud,
+                    e.NumeroIdentificacion,
+                    e.NombreCompleto,
+                    c.CodigoCarrera,
+                    COALESCE(ca.NombreCarrera, c.CodigoCarrera) AS Carrera,
+                    c.CodigoPeriodo,
+                    COALESCE(pe.NombrePeriodo, c.CodigoPeriodo) AS Periodo,
+                    tb.Nombre AS TipoBeca,
+                    b.PorcentajeBeca,
+                    b.ValorBeca,
+                    b.Motivo,
+                    b.FechaSolicitud,
+                    eb.Codigo AS Estado
+                FROM bec.BecaEstudiante b
+                INNER JOIN core.Estudiante e ON e.EstudianteId = b.EstudianteId
+                INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
+                    AND c.Activo = 1
+                INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
+                INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+                LEFT JOIN core.Carrera ca ON ca.CodigoCarrera = c.CodigoCarrera
+                LEFT JOIN core.Periodo pe ON pe.CodigoPeriodo = c.CodigoPeriodo
+                WHERE ISNULL(b.PorcentajeBeca, 0) > ?
+                  AND eb.Codigo = 'SOLICITADA'
+                  AND (
+                    ? = '' OR e.NumeroIdentificacion LIKE ? OR e.NombreCompleto LIKE ?
+                    OR ISNULL(ca.NombreCarrera, c.CodigoCarrera) LIKE ?
+                    OR tb.Nombre LIKE ? OR c.CodigoPeriodo LIKE ?
+                  )
+                ORDER BY b.FechaSolicitud ASC, e.NombreCompleto ASC, b.BecaId ASC
+                """,
+                limit,
+                _SCHOLARSHIP_APPROVAL_THRESHOLD,
+                search,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            )
+            rows = cursor.fetchall()
+
+        items = [
+            {
+                "beca_id": int(row.BecaId),
+                "codigo_estud": str(row.CodigoEstud or ""),
+                "cedula": _clean(row.NumeroIdentificacion),
+                "estudiante": _clean(row.NombreCompleto),
+                "codigo_carrera": _clean(row.CodigoCarrera),
+                "carrera": _clean(row.Carrera),
+                "codigo_periodo": _clean(row.CodigoPeriodo),
+                "periodo": _clean(row.Periodo),
+                "tipo_beca": _clean(row.TipoBeca),
+                "porcentaje_beca": float(row.PorcentajeBeca or 0),
+                "valor_beca": float(row.ValorBeca or 0),
+                "motivo": _clean(row.Motivo),
+                "fecha_solicitud": _date_text(row.FechaSolicitud),
+                "estado": _clean(row.Estado).upper(),
+            }
+            for row in rows
+        ]
+        return {
+            "ok": True,
+            "items": items,
+            "total": len(items),
+            "threshold": _SCHOLARSHIP_APPROVAL_THRESHOLD,
+        }
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudieron consultar las becas pendientes: {exc}") from exc
+
+
+@router.get("/becas/beneficiarios")
+def list_preinscription_scholarship_beneficiaries(
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    query: str = Query(default="", max_length=120),
+    limit: int = Query(default=1000, ge=1, le=2000),
+) -> dict[str, Any]:
+    del current_user
+    search = _clean(query)
+    pattern = f"%{search}%"
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (?)
+                    b.BecaId,
+                    e.CodigoEstud,
+                    e.NumeroIdentificacion,
+                    e.NombreCompleto,
+                    c.CodigoCarrera,
+                    COALESCE(ca.NombreCarrera, c.CodigoCarrera) AS Carrera,
+                    c.CodigoPeriodo,
+                    COALESCE(pe.NombrePeriodo, c.CodigoPeriodo) AS Periodo,
+                    COALESCE(NULLIF(LTRIM(RTRIM(lb.tipo_beca)), ''), tb.Nombre) AS TipoBeca,
+                    b.PorcentajeBeca,
+                    b.ValorBeca,
+                    b.Motivo,
+                    b.FechaSolicitud,
+                    b.FechaAprobacion,
+                    b.UsuarioAprobacion,
+                    eb.Codigo AS Estado
+                FROM bec.BecaEstudiante b
+                INNER JOIN core.Estudiante e ON e.EstudianteId = b.EstudianteId
+                INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
+                    AND c.Activo = 1
+                INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
+                INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+                LEFT JOIN core.Carrera ca ON ca.CodigoCarrera = c.CodigoCarrera
+                LEFT JOIN core.Periodo pe ON pe.CodigoPeriodo = c.CodigoPeriodo
+                OUTER APPLY
+                (
+                    SELECT TOP (1) legacy.tipo_beca
+                    FROM INTECBDD.dbo.Becas legacy
+                    WHERE TRY_CONVERT(nvarchar(50), legacy.codestud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                      AND ISNULL(TRY_CONVERT(decimal(9,2), legacy.porcentaje_beca), 0) > 0
+                    ORDER BY
+                        CASE WHEN ABS(ISNULL(TRY_CONVERT(decimal(9,2), legacy.porcentaje_beca), 0) - ISNULL(b.PorcentajeBeca, 0)) < 0.01 THEN 0 ELSE 1 END,
+                        legacy.tipo_beca
+                ) lb
+                WHERE eb.Codigo = 'APROBADA'
+                  AND ISNULL(b.PorcentajeBeca, 0) > 0
+                  AND (
+                    ? = '' OR e.NumeroIdentificacion LIKE ? OR e.NombreCompleto LIKE ?
+                    OR ISNULL(ca.NombreCarrera, c.CodigoCarrera) LIKE ?
+                    OR COALESCE(NULLIF(LTRIM(RTRIM(lb.tipo_beca)), ''), tb.Nombre) LIKE ?
+                    OR c.CodigoPeriodo LIKE ? OR ISNULL(b.UsuarioAprobacion, '') LIKE ?
+                  )
+                ORDER BY COALESCE(b.FechaAprobacion, b.FechaSolicitud) DESC,
+                         e.NombreCompleto ASC, b.BecaId DESC
+                """,
+                limit,
+                search,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            )
+            rows = cursor.fetchall()
+
+        items = [
+            {
+                "beca_id": int(row.BecaId),
+                "codigo_estud": str(row.CodigoEstud or ""),
+                "cedula": _clean(row.NumeroIdentificacion),
+                "estudiante": _clean(row.NombreCompleto),
+                "codigo_carrera": _clean(row.CodigoCarrera),
+                "carrera": _clean(row.Carrera),
+                "codigo_periodo": _clean(row.CodigoPeriodo),
+                "periodo": _clean(row.Periodo),
+                "tipo_beca": _clean(row.TipoBeca),
+                "porcentaje_beca": float(row.PorcentajeBeca or 0),
+                "valor_beca": float(row.ValorBeca or 0),
+                "motivo": _clean(row.Motivo),
+                "fecha_solicitud": _date_text(row.FechaSolicitud),
+                "fecha_aprobacion": _date_text(row.FechaAprobacion),
+                "usuario_aprobacion": _clean(row.UsuarioAprobacion),
+                "estado": _clean(row.Estado).upper(),
+            }
+            for row in rows
+        ]
+        financial_student_codes = {item["codigo_estud"] for item in items if item["codigo_estud"]}
+        with get_connection() as legacy_conn:
+            legacy_cursor = legacy_conn.cursor()
+            legacy_cursor.execute(
+                """
+                SELECT TOP (?)
+                    b.id AS BecaId,
+                    b.codestud AS CodigoEstud,
+                    d.Cedula_Est AS NumeroIdentificacion,
+                    d.Apellidos_nombre AS NombreCompleto,
+                    TRY_CONVERT(nvarchar(50), ce.cod_anio_Basica) AS CodigoCarrera,
+                    COALESCE(c.Nombre_Basica, TRY_CONVERT(nvarchar(50), ce.cod_anio_Basica)) AS Carrera,
+                    TRY_CONVERT(nvarchar(50), ce.codigo_periodo) AS CodigoPeriodo,
+                    COALESCE(p.Detalle_Periodo, TRY_CONVERT(nvarchar(50), ce.codigo_periodo)) AS Periodo,
+                    b.tipo_beca AS TipoBeca,
+                    b.porcentaje_beca AS PorcentajeBeca,
+                    b.valor_monto_beca AS ValorBeca
+                FROM dbo.Becas b
+                LEFT JOIN dbo.DATOS_ESTUD d
+                    ON TRY_CONVERT(nvarchar(50), d.codigo_estud) = TRY_CONVERT(nvarchar(50), b.codestud)
+                OUTER APPLY
+                (
+                    SELECT TOP (1) cx.cod_anio_Basica, cx.codigo_periodo
+                    FROM dbo.CARRERAXESTUD cx
+                    WHERE TRY_CONVERT(nvarchar(50), cx.codigo_estud) = TRY_CONVERT(nvarchar(50), b.codestud)
+                    ORDER BY cx.Fecha_Matricula DESC, cx.codigo_periodo DESC, cx.num DESC
+                ) ce
+                LEFT JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = ce.cod_anio_Basica
+                LEFT JOIN dbo.PERIODO p ON p.cod_periodo = ce.codigo_periodo
+                WHERE ISNULL(TRY_CONVERT(decimal(9,2), b.porcentaje_beca), 0) > 0
+                  AND (
+                    ? = '' OR d.Cedula_Est LIKE ? OR d.Apellidos_nombre LIKE ?
+                    OR ISNULL(c.Nombre_Basica, '') LIKE ? OR ISNULL(b.tipo_beca, '') LIKE ?
+                    OR ISNULL(p.Detalle_Periodo, '') LIKE ?
+                  )
+                ORDER BY d.Apellidos_nombre, b.id
+                """,
+                limit,
+                search,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            )
+            legacy_rows = legacy_cursor.fetchall()
+
+        for row in legacy_rows:
+            student_code = str(row.CodigoEstud or "")
+            if student_code in financial_student_codes:
+                continue
+            items.append(
+                {
+                    "beca_id": -int(row.BecaId),
+                    "codigo_estud": student_code,
+                    "cedula": _clean(row.NumeroIdentificacion),
+                    "estudiante": _clean(row.NombreCompleto) or f"Estudiante {student_code}",
+                    "codigo_carrera": _clean(row.CodigoCarrera),
+                    "carrera": _clean(row.Carrera),
+                    "codigo_periodo": _clean(row.CodigoPeriodo),
+                    "periodo": _clean(row.Periodo),
+                    "tipo_beca": _clean(row.TipoBeca),
+                    "porcentaje_beca": float(row.PorcentajeBeca or 0),
+                    "valor_beca": float(row.ValorBeca or 0),
+                    "motivo": "Registro histórico de INTECBDD",
+                    "fecha_solicitud": "",
+                    "fecha_aprobacion": "",
+                    "usuario_aprobacion": "INTECBDD",
+                    "estado": "REGISTRADA",
+                }
+            )
+        items.sort(key=lambda item: (item["estudiante"].upper(), item["codigo_estud"]))
+        items = items[:limit]
+        return {
+            "ok": True,
+            "items": items,
+            "total": len(items),
+            "valor_total": round(sum(item["valor_beca"] for item in items), 2),
+            "porcentaje_promedio": (
+                round(sum(item["porcentaje_beca"] for item in items) / len(items), 2)
+                if items else 0.0
+            ),
+        }
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo consultar el listado de becados: {exc}") from exc
+
+
+@router.post("/becas/{beca_id}/aprobar")
+def approve_pending_preinscription_scholarship(
+    beca_id: int,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        result = _approve_financial_scholarship(beca_id, current_user.login)
+        return {
+            "ok": True,
+            "message": "Beca aprobada. El estudiante puede continuar con la matrícula.",
+            **result,
+        }
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo aprobar la beca: {exc}") from exc
+
+
+@router.get("/{num}/beca")
+def get_preinscription_scholarship(
+    num: str,
+    current_user: Annotated[SessionUser, Depends(_PREINSCRIPTION_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            row = _fetch_preinscription_row(conn.cursor(), num.strip())
+        return {"ok": True, **_preinscription_scholarship_status(row)}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo consultar la aprobación de la beca: {exc}") from exc
+
+
+@router.post("/{num}/beca/aprobar")
+def approve_preinscription_scholarship(
+    num: str,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        with get_connection() as conn:
+            row = _fetch_preinscription_row(conn.cursor(), num.strip())
+        status_data = _preinscription_scholarship_status(row)
+        beca_id = status_data.get("beca_id")
+        if not beca_id:
+            raise HTTPException(status_code=404, detail="La preinscripción no tiene una solicitud de beca")
+        if float(status_data.get("porcentaje_beca") or 0) <= _SCHOLARSHIP_APPROVAL_THRESHOLD:
+            raise HTTPException(status_code=400, detail="Esta beca no requiere aprobación especial")
+        _approve_financial_scholarship(int(beca_id), current_user.login)
+        refreshed = _preinscription_scholarship_status(row)
+        return {"ok": True, "message": "Beca aprobada. El proceso puede continuar.", **refreshed}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo aprobar la beca: {exc}") from exc
 
 
 @router.post("/{num}/cabecera")
@@ -1782,8 +2917,25 @@ def register_preinscription_cabecera(
             cod_jornada = _int_value(getattr(row, "codjornada", None)) or 0
             cod_modalidad = _int_value(getattr(row, "codmodalida", None)) or 0
             fecha_pago = payload.fecha_pago or date.today().isoformat()
-            plan = _payment_plan(payload)
+            scholarship_type, scholarship_percentage = _validate_scholarship_selection(
+                payload.tipo_beca, payload.porcentaje_beca
+            )
+            payload.tipo_beca = scholarship_type
+            payload.porcentaje_beca = scholarship_percentage
+            if scholarship_type and scholarship_percentage <= 0:
+                raise HTTPException(status_code=400, detail="Ingresa el porcentaje otorgado para la beca seleccionada")
+            plan = _payment_plan(payload, _clean(getattr(row, "Nombre_Basica", "")))
             payload.valor = float(plan["total"])
+            payload.costo_semestre = float(plan["costo_semestre"])
+            payload.inscrip_valor = float(plan["valor_academico"])
+            payload.matri_valor = float(plan["valor_matricula"])
+            if scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD:
+                approval = _preinscription_scholarship_status(row)
+                if _clean(approval.get("estado")).upper() != "APROBADA":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="La beca superior al 15% está pendiente de aprobación. No se puede continuar con la matrícula.",
+                    )
             _sync_preinscription_student_records(cursor, row, codigo_estud, codigo_periodo)
 
             cursor.execute(
@@ -1923,6 +3075,47 @@ def register_preinscription_cabecera(
                 )
             conn.commit()
             refreshed = _fetch_preinscription_row(cursor, clean_num)
+        finance_sync = _sync_financial_preinscription(
+            codestu=codigo_estud,
+            cedula=_clean(getattr(row, "Cedula", "")),
+            student_name=_clean(getattr(row, "Apellidos_nombre", "")),
+            codperiodo=codigo_periodo,
+            codcarrera=cod_anio_basica,
+            codmodalidad=cod_modalidad,
+            codjornada=cod_jornada,
+            correo=_clean(getattr(row, "correo", ""))[:150],
+            telefono=_clean(getattr(row, "telefono", ""))[:50],
+            codasesor=_clean(getattr(row, "codasesor", "")),
+            usuario=current_user.login[:80],
+            tipo_beca=_clean(payload.tipo_beca),
+            porcentaje_beca=float(plan["porcentaje_beca"]),
+            valor_beca=float(plan["beca_valor"]),
+            motivo_beca="Beca confirmada al generar cabecera de matricula",
+        )
+        complement_sync = sync_preinscription_complements(
+            {
+                "origen_id": clean_num,
+                "codigo_estud": codigo_estud,
+                "cedula": _clean(getattr(row, "Cedula", "")),
+                "nombre": _clean(getattr(row, "Apellidos_nombre", "")),
+                "codigo_periodo": codigo_periodo,
+                "codigo_carrera": cod_anio_basica,
+                "codigo_modalidad": cod_modalidad,
+                "codigo_jornada": cod_jornada,
+                "codigo_asesor": _clean(getattr(row, "codasesor", "")),
+                "correo": _clean(getattr(row, "correo", ""))[:150],
+                "telefono": _clean(getattr(row, "telefono", ""))[:50],
+                "estado": "CABECERA_GENERADA",
+                "url_cedula": _clean(getattr(row, "urlcedula", "")),
+                "url_titulo": _clean(getattr(row, "urltitulo", "")),
+                "url_deposito": _clean(getattr(row, "urldeposito", "")),
+                "url_convenio": convenio_url or _clean(getattr(row, "urlconvenio", "")),
+                "tiene_beca": bool(_clean(payload.tipo_beca) and float(plan["porcentaje_beca"]) > 0),
+                "usuario": current_user.login[:80],
+            },
+            finance_sync,
+            event_type="PREINSCRIPCION_CABECERA",
+        )
         response = _cabecera_response_from_row(refreshed)
         response["message"] = (
             "Cabecera de matricula registrada correctamente. Convenio generado."
@@ -1933,6 +3126,8 @@ def register_preinscription_cabecera(
         response["num_matricula"] = str(num_matricula)
         response["codigo_documentacion"] = codigo_documentacion
         response["convenio_url"] = convenio_url
+        response["finanzas"] = finance_sync
+        response["complementos"] = complement_sync
         return response
     except HTTPException:
         raise

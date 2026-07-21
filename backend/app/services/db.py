@@ -226,3 +226,109 @@ def get_teams_connection() -> pyodbc.Connection:
         encrypt=encrypt,
         trust_cert=trust_cert,
     )
+
+
+def _get_complement_connection(
+    *,
+    database: str,
+    user: str | None,
+    password: str | None,
+    host: str | None,
+    port: int | None,
+    driver: str | None,
+    encrypt: str | None,
+    trust_cert: str | None,
+    label: str,
+) -> pyodbc.Connection:
+    settings = get_settings()
+    resolved_user = user or settings.eval_db_user or settings.titulation_db_user or settings.db_user
+    resolved_password = password or settings.eval_db_password or settings.titulation_db_password or settings.db_password
+    resolved_host = host or settings.eval_db_host or settings.titulation_db_host or settings.db_host
+    resolved_port = port or settings.eval_db_port or settings.titulation_db_port or settings.db_port
+    resolved_driver = driver or settings.eval_db_driver or settings.titulation_db_driver or settings.db_driver
+    resolved_encrypt = encrypt or settings.eval_db_encrypt or settings.titulation_db_encrypt or settings.db_encrypt
+    resolved_trust_cert = trust_cert or settings.eval_db_trust_cert or settings.titulation_db_trust_cert or settings.db_trust_cert
+
+    missing = [
+        name
+        for name, value in {
+            f"{label}_DB_NAME": database,
+            f"{label}_DB_USER": resolved_user,
+            f"{label}_DB_PASSWORD": resolved_password,
+            f"{label}_DB_HOST": resolved_host,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Faltan variables de entorno para {label.lower()}: {', '.join(missing)}")
+
+    return _connect_with_fallback(
+        database=database,
+        user=resolved_user or "",
+        password=resolved_password or "",
+        host=resolved_host or "",
+        port=resolved_port,
+        driver=resolved_driver,
+        encrypt=resolved_encrypt,
+        trust_cert=resolved_trust_cert,
+    )
+
+
+def get_expedient_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    return _get_complement_connection(
+        database=settings.expedient_db_name,
+        user=settings.expedient_db_user,
+        password=settings.expedient_db_password,
+        host=settings.expedient_db_host,
+        port=settings.expedient_db_port,
+        driver=settings.expedient_db_driver,
+        encrypt=settings.expedient_db_encrypt,
+        trust_cert=settings.expedient_db_trust_cert,
+        label="EXPEDIENT",
+    )
+
+
+def get_finance_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    return _get_complement_connection(
+        database=settings.finance_db_name,
+        user=settings.finance_db_user,
+        password=settings.finance_db_password,
+        host=settings.finance_db_host,
+        port=settings.finance_db_port,
+        driver=settings.finance_db_driver,
+        encrypt=settings.finance_db_encrypt,
+        trust_cert=settings.finance_db_trust_cert,
+        label="FINANCE",
+    )
+
+
+def get_graph_database_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    return _get_complement_connection(
+        database=settings.graph_db_name,
+        user=settings.graph_db_user,
+        password=settings.graph_db_password,
+        host=settings.graph_db_host,
+        port=settings.graph_db_port,
+        driver=settings.graph_db_driver,
+        encrypt=settings.graph_db_encrypt,
+        trust_cert=settings.graph_db_trust_cert,
+        label="GRAPH",
+    )
+
+
+def get_integration_control_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    return _get_complement_connection(
+        database=settings.integration_control_db_name,
+        user=settings.integration_control_db_user,
+        password=settings.integration_control_db_password,
+        host=settings.integration_control_db_host,
+        port=settings.integration_control_db_port,
+        driver=settings.integration_control_db_driver,
+        encrypt=settings.integration_control_db_encrypt,
+        trust_cert=settings.integration_control_db_trust_cert,
+        label="INTEGRATION_CONTROL",
+    )

@@ -358,6 +358,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const [selectedProcessKey, setSelectedProcessKey] = useState(processShortcuts[0]?.key || '')
   const [query, setQuery] = useState('')
   const [estadoPeriodFilter, setEstadoPeriodFilter] = useState('')
+  const [docenteEstadoFilter, setDocenteEstadoFilter] = useState('')
   const [rows, setRows] = useState<SisAcademicoRow[]>([])
   const [selectedRecordKey, setSelectedRecordKey] = useState('')
   const [formValues, setFormValues] = useState<Record<string, FormValue>>({})
@@ -425,7 +426,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       || null,
     [processMenu, selectedProcessKey, selectedSectionKey],
   )
-  const listFields = selectedSection?.list_fields || []
+  const listFields = useMemo(() => selectedSection?.list_fields || [], [selectedSection?.list_fields])
   const editableFields = selectedSection?.editable_fields || []
   const createFields = selectedSection?.create_fields || []
   const currentFields = mode === 'create' ? createFields : editableFields
@@ -549,11 +550,17 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   )
   const visibleRows = useMemo(() => {
     const needle = tableFilter.trim().toLowerCase()
-    if (!needle) return rows
-    return rows.filter((row) =>
-      listFields.some((field) => displayValue(field, row[field.name]).toLowerCase().includes(needle)),
-    )
-  }, [listFields, rows, tableFilter])
+    const estado = docenteEstadoFilter.trim().toUpperCase()
+    return rows.filter((row) => {
+      const matchesTable = !needle || listFields.some((field) =>
+        displayValue(field, row[field.name]).toLowerCase().includes(needle),
+      )
+      const matchesTeacherState = !isDocenteEstadoSection
+        || !estado
+        || String(row.Estado || '').trim().toUpperCase() === estado
+      return matchesTable && matchesTeacherState
+    })
+  }, [docenteEstadoFilter, isDocenteEstadoSection, listFields, rows, tableFilter])
   const totalOperationalSections = useMemo(
     () => processMenu.reduce((total, process) => total + process.availableSections.length, 0),
     [processMenu],
@@ -735,6 +742,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setSelectedProcessKey(processKey || processKeyForSection(sectionKey))
     setQuery('')
     setEstadoPeriodFilter('')
+    setDocenteEstadoFilter('')
     setTableFilter('')
     setSelectedRecordKey('')
     setFormValues({})
@@ -956,14 +964,38 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [initialSectionKey])
 
   useEffect(() => {
     if (!initialSectionKey || initialSectionKey === appliedInitialSection) return
     const exists = sections.some((section) => section.key === initialSectionKey)
     if (!exists) return
     setAppliedInitialSection(initialSectionKey)
-    openSection(initialSectionKey)
+    setSelectedSectionKey(initialSectionKey)
+    setSelectedProcessKey(processShortcuts.find((process) => process.sections.includes(initialSectionKey))?.key || processShortcuts[0]?.key || '')
+    setQuery('')
+    setEstadoPeriodFilter('')
+    setDocenteEstadoFilter('')
+    setTableFilter('')
+    setSelectedRecordKey('')
+    setFormValues({})
+    setMode('edit')
+    if (['cambio_periodo_hr', 'menu_general', 'menu_usuarios'].includes(initialSectionKey)) {
+      setRows([])
+      return
+    }
+    let cancelled = false
+    setListLoading(true)
+    void fetchSisAcademicoRows(initialSectionKey, '').then((payload) => {
+      if (!cancelled) setRows(payload.rows || [])
+    }).catch((apiError) => {
+      if (!cancelled) setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar la seccion')
+    }).finally(() => {
+      if (!cancelled) setListLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [appliedInitialSection, initialSectionKey, sections])
 
   useEffect(() => {
@@ -1632,6 +1664,19 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                           {option.label}
                         </option>
                       ))}
+                    </select>
+                  </label>
+                ) : null}
+                {isDocenteEstadoSection ? (
+                  <label>
+                    <span>Estado docente</span>
+                    <select
+                      value={docenteEstadoFilter}
+                      onChange={(event) => setDocenteEstadoFilter(event.target.value)}
+                    >
+                      <option value="">Todos los docentes</option>
+                      <option value="A">Activos</option>
+                      <option value="P">Inactivos</option>
                     </select>
                   </label>
                 ) : null}

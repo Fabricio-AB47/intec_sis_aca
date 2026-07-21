@@ -3,7 +3,7 @@ from typing import Callable
 
 import jwt
 from fastapi import Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 
@@ -48,7 +48,7 @@ _HASHER = PasswordHasher() if PasswordHasher is not None else None
 _JWT_ALGORITHM = "HS256"
 
 
-class SessionUser(BaseModel):
+class SessionProfile(BaseModel):
     login: str
     nombres: str | None = None
     email: str | None = None
@@ -57,6 +57,10 @@ class SessionUser(BaseModel):
     codigo_estud: int | None = None
     codigo_doc: int | None = None
     cedula: str | None = None
+
+
+class SessionUser(SessionProfile):
+    perfiles: list[SessionProfile] = Field(default_factory=list)
 
 
 def verify_password(candidate: str, stored_value: str | None) -> bool:
@@ -104,6 +108,7 @@ def create_session_token(user: SessionUser) -> str:
         "codigo_estud": user.codigo_estud,
         "codigo_doc": user.codigo_doc,
         "cedula": user.cedula,
+        "perfiles": [profile.model_dump() for profile in user.perfiles],
         "iat": issued_at,
         "exp": expires_at,
     }

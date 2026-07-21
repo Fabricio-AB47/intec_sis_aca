@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
 
 import { downloadAgeRangesWorkbook, fetchAgeRanges, fetchAgeRangesCatalog } from '../../lib/api'
 import type { AgeRangeCatalogResponse, AgeRangeFilters, AgeRangeResponse, AgeRangeRow } from '../../types/app'
@@ -72,8 +72,8 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
   const [downloadLoading, setDownloadLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const rows = data?.rows || []
-  const ranges = data?.ranges || []
+  const rows = useMemo(() => data?.rows || [], [data?.rows])
+  const ranges = useMemo(() => data?.ranges || [], [data?.ranges])
   const maxRangeTotal = useMemo(() => Math.max(1, ...ranges.map((item) => item.total || 0)), [ranges])
   const visibleRows = useMemo(() => rows.filter((row) => rowMatches(row, tableFilter)), [rows, tableFilter])
   const filters = useMemo<AgeRangeFilters>(
@@ -101,7 +101,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
     }
   }
 
-  async function loadData(nextFilters: AgeRangeFilters = filters) {
+  const loadData = useCallback(async (nextFilters: AgeRangeFilters) => {
     setError('')
     setLoading(true)
     try {
@@ -113,7 +113,8 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+  const loadInitialData = useEffectEvent(() => loadData(filters))
 
   async function exportExcel() {
     setError('')
@@ -130,7 +131,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
 
   useEffect(() => {
     void loadCatalog()
-    void loadData()
+    void loadInitialData()
   }, [])
 
   const statItems = [
@@ -236,7 +237,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
           </div>
 
           <div className="teams-actions age-ranges-actions">
-            <button type="button" onClick={() => void loadData()} disabled={loading}>
+            <button type="button" onClick={() => void loadData(filters)} disabled={loading}>
               {loading ? 'Consultando...' : 'Consultar'}
             </button>
             <button type="button" onClick={() => void exportExcel()} disabled={downloadLoading || rows.length === 0}>

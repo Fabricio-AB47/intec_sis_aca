@@ -12,7 +12,7 @@ export type Role =
   | 'DOCENTE'
   | 'ESTUDIANTE'
 
-export type UserSession = {
+export type UserProfile = {
   login: string
   nombres?: string
   email?: string
@@ -21,6 +21,10 @@ export type UserSession = {
   codigo_estud?: number
   codigo_doc?: number
   cedula?: string
+}
+
+export type UserSession = UserProfile & {
+  perfiles?: UserProfile[]
 }
 
 export type Page =
@@ -64,11 +68,12 @@ export type Page =
   | 'portal-estudiante'
   | 'portal-docente'
   | 'portal-docente-informe'
+  | 'portal-docente-planificacion'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
-export type PreinscriptionStage = 'registro' | 'inscritos' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
+export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
 export type TeacherEvaluationFlow = 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente' | 'academico_docente'
@@ -1613,6 +1618,7 @@ export type LegacyReportKey =
   | 'carrera'
   | 'graduados_2025'
   | 'genero'
+  | 'genero_docentes'
   | 'periodo'
   | 'matriculados'
   | 'becas_edades'
@@ -2187,6 +2193,9 @@ export type PreinscriptionProcessOption = {
   label: string
   detail?: string
   amount?: number | null
+  variable?: boolean
+  min_amount?: number | null
+  max_amount?: number | null
   parent?: string
   modalidad?: string
 }
@@ -2362,6 +2371,11 @@ export type PreinscriptionCreatePayload = {
   telefono?: string
   codmodalida?: number
   codjornada?: number
+  tipo_beca?: string
+  porcentaje_beca?: number
+  valor_beca?: number
+  motivo_beca?: string
+  semestres_convenio?: string | number
 }
 
 export type PreinscriptionCreateResponse = {
@@ -2372,6 +2386,109 @@ export type PreinscriptionCreateResponse = {
     codigo?: string
     usuario?: string
   }
+  finanzas?: {
+    ok?: boolean
+    cuenta_estudiante_id?: number | null
+    beca_id?: number | null
+    beca_estado?: string
+    requiere_aprobacion?: boolean
+    puede_continuar?: boolean
+    porcentaje_beca?: number
+    detail?: string
+  }
+  detail?: string
+}
+
+export type PreinscriptionScholarshipStatus = {
+  ok?: boolean
+  message?: string
+  beca_id?: number | null
+  tipo_beca?: string
+  porcentaje_beca?: number
+  valor_beca?: number
+  estado?: string
+  requiere_aprobacion?: boolean
+  puede_continuar?: boolean
+  fecha_solicitud?: string
+  fecha_aprobacion?: string
+  usuario_aprobacion?: string
+  detail?: string
+}
+
+export type PreinscriptionScholarshipApprovalItem = {
+  beca_id: number
+  codigo_estud: string
+  cedula: string
+  estudiante: string
+  codigo_carrera: string
+  carrera: string
+  codigo_periodo: string
+  periodo: string
+  tipo_beca: string
+  porcentaje_beca: number
+  valor_beca: number
+  motivo: string
+  fecha_solicitud: string
+  estado: string
+}
+
+export type PreinscriptionScholarshipApprovalListResponse = {
+  ok?: boolean
+  items: PreinscriptionScholarshipApprovalItem[]
+  total: number
+  threshold: number
+  detail?: string
+}
+
+export type ScholarshipBeneficiaryItem = PreinscriptionScholarshipApprovalItem & {
+  fecha_aprobacion: string
+  usuario_aprobacion: string
+}
+
+export type ScholarshipBeneficiaryListResponse = {
+  ok?: boolean
+  items: ScholarshipBeneficiaryItem[]
+  total: number
+  valor_total: number
+  porcentaje_promedio: number
+  detail?: string
+}
+
+export type ScholarshipConfigurationItem = {
+  id: number
+  codigo: string
+  nombre: string
+  es_variable: boolean
+  porcentaje: number | null
+  porcentaje_minimo: number | null
+  porcentaje_maximo: number | null
+  protegida: boolean
+  activo: boolean
+  fecha_actualizacion?: string
+  usuario_actualizacion?: string
+}
+
+export type ScholarshipConfigurationPayload = {
+  codigo?: string
+  nombre: string
+  es_variable: boolean
+  porcentaje?: number | null
+  porcentaje_minimo?: number | null
+  porcentaje_maximo?: number | null
+  activo: boolean
+}
+
+export type ScholarshipConfigurationListResponse = {
+  ok?: boolean
+  items: ScholarshipConfigurationItem[]
+  total: number
+  detail?: string
+}
+
+export type ScholarshipConfigurationSaveResponse = {
+  ok?: boolean
+  message?: string
+  item?: ScholarshipConfigurationItem
   detail?: string
 }
 
@@ -2979,6 +3096,8 @@ export type PortalTeacherCourse = {
   paralelo?: string
   cod_jornada?: number | null
   jornada?: string
+  semestre?: number | null
+  unidad_curricular?: string
   period_count?: number
   total_estudiantes?: number
   estado_moodle_doc?: boolean
@@ -2988,6 +3107,64 @@ export type PortalTeacherCoursesResponse = {
   total?: number
   items?: PortalTeacherCourse[]
   detail?: string
+}
+
+export type PortalAcademicPlanningTopic = {
+  tema: string
+  semana: number
+  horas_docencia: number
+  horas_practica: number
+  horas_autonomo: number
+  actividad_docencia: string
+  actividad_practica: string
+  actividad_autonoma: string
+  evaluacion: string
+}
+
+export type PortalAcademicPlanningUnit = {
+  nombre: string
+  resultado_aprendizaje: string
+  temas: PortalAcademicPlanningTopic[]
+}
+
+export type PortalAcademicPlanningPayload = {
+  document_type: 'pea' | 'silabo'
+  codigo_periodos: number[]
+  codigo_materia: string
+  paralelo: string
+  cod_anio_basica?: number | null
+  cod_jornada?: number | null
+  nivel: string
+  unidad_curricular: string
+  campo_formacion: string
+  modalidad: string
+  prerrequisitos: string
+  correquisitos: string
+  horario_clases: string
+  horario_tutorias: string
+  descripcion: string
+  objetivo_general: string
+  resultados_aprendizaje: string
+  mision_intec: string
+  mision_escuela: string
+  mision_carrera: string
+  unidades: PortalAcademicPlanningUnit[]
+  estrategias_metodologicas: string
+  formacion_ciudadana: string
+  sostenibilidad: string
+  recursos_didacticos: string
+  evaluacion_tareas: number
+  evaluacion_individual: number
+  evaluacion_colaborativo: number
+  evaluacion_acumulativa: number
+  bibliografia_basica: string
+  bibliografia_complementaria: string
+  proyecto_tema: string
+  proyecto_tiempo: string
+  proyecto_objetivo: string
+  proyecto_contexto: string
+  version: string
+  fecha_elaboracion: string
 }
 
 export type PortalTeacherStudentsResponse = {

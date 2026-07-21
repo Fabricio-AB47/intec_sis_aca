@@ -1895,6 +1895,97 @@
   box-sizing: border-box;
 }
 
+.profile-selection {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.profile-option {
+  width: 100%;
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--blanco);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+
+.profile-option:hover:not(:disabled),
+.profile-option:focus-visible {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.profile-option:focus-visible {
+  outline: 2px solid var(--celeste);
+  outline-offset: 2px;
+}
+
+.profile-option:disabled,
+.profile-logout:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.profile-option__icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--rojo);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.profile-option__copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.profile-option__copy strong {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.profile-option__copy small {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.profile-option__arrow {
+  font-size: 28px;
+  line-height: 1;
+  text-align: right;
+}
+
+.profile-logout {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--blanco);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-logout:hover:not(:disabled),
+.profile-logout:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -12764,6 +12855,109 @@
   text-align: center;
 }
 
+.portal-signature-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(141, 187, 199, 0.68);
+  border-radius: 8px;
+  background: #f8fbfc;
+}
+
+.portal-signature-panel .section-title {
+  margin: 0;
+}
+
+.portal-signature-panel .section-title strong {
+  color: #087f79;
+  font-size: 0.86rem;
+}
+
+.portal-signature-panel > p {
+  margin: 0;
+  color: #33415f;
+  line-height: 1.5;
+}
+
+.portal-signature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.portal-signature-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.portal-signature-grid label > span {
+  color: #4d5a78;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portal-signature-grid input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid rgba(21, 34, 74, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #06143a;
+  font: inherit;
+  padding: 9px 11px;
+}
+
+.portal-signature-grid small {
+  color: #53607b;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.portal-signature-certificate {
+  grid-column: span 2;
+}
+
+.portal-signature-password {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.portal-signature-password .ghost-button {
+  min-width: 92px;
+}
+
+.portal-signature-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid rgba(8, 127, 121, 0.28);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0c1f42;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.portal-signature-consent input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.portal-signature-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .portal-compliance-panel label:nth-last-child(-n + 2) {
   grid-column: span 2;
 }
@@ -12794,6 +12988,24 @@
     width: 100%;
     max-width: none;
     text-align: left;
+  }
+
+  .portal-signature-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portal-signature-certificate {
+    grid-column: auto;
+  }
+
+  .portal-signature-password,
+  .portal-signature-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .portal-signature-actions button {
+    width: 100%;
   }
 }
 
@@ -13330,10 +13542,11 @@
 }
 
 .preinscripcion-beca-panel {
+  margin-top: 18px;
   margin-bottom: 16px;
   padding: 14px;
   display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) minmax(140px, 0.45fr);
+  grid-template-columns: minmax(220px, 1.2fr) minmax(190px, 0.8fr) minmax(210px, 1fr) minmax(120px, 0.45fr);
   gap: 12px;
   align-items: end;
   border: 1px solid rgba(141, 187, 199, 0.65);
@@ -13369,6 +13582,10 @@
   min-width: 0;
   display: grid;
   gap: 7px;
+}
+
+.preinscripcion-beca-panel__reason {
+  grid-column: 2 / -1;
 }
 
 .preinscripcion-beca-panel select,
@@ -15639,6 +15856,11 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .preinscripcion-beca-panel .preinscripcion-beca-approval,
+  .preinscripcion-beca-approval {
+    grid-template-columns: 1fr;
+  }
+
   .preinscripcion-register-form label,
   .preinscripcion-register-form label:nth-child(1),
   .preinscripcion-register-form label:nth-child(n) {
@@ -15935,6 +16157,10 @@
   .preinscripcion-student-screen,
   .portal-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .preinscripcion-beca-panel__reason {
+    grid-column: auto;
   }
 
   .portal-nav-grid,
@@ -27006,3 +27232,613 @@ body .student-sidebar .logout-button {
   }
 }
 
+.planning-page {
+  width: 100%;
+  max-width: none;
+}
+
+.preinscripcion-scholarship-approval {
+  grid-column: 1 / -1;
+}
+
+.preinscripcion-scholarship-approval .section-title {
+  align-items: flex-start;
+}
+
+.preinscripcion-scholarship-approval .section-title p {
+  max-width: 760px;
+  margin: 5px 0 0;
+  color: #4d5775;
+  font-size: 14px;
+}
+
+.preinscripcion-scholarship-approval__total {
+  min-width: 130px;
+  padding: 10px 14px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(141, 187, 199, 0.65);
+  border-radius: 8px;
+  background: #f4fafb;
+  text-align: center;
+}
+
+.preinscripcion-scholarship-approval__total span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.preinscripcion-scholarship-approval__total strong {
+  color: #0c1f42;
+  font-size: 22px;
+}
+
+.preinscripcion-scholarship-approval__toolbar {
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.preinscripcion-scholarship-approval__toolbar label {
+  display: grid;
+  gap: 7px;
+}
+
+.preinscripcion-scholarship-approval__toolbar label span {
+  color: #5f6b85;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.preinscripcion-scholarship-approval__toolbar input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d4d9e1;
+  border-radius: 8px;
+}
+
+.preinscripcion-scholarship-approval__table {
+  width: 100%;
+}
+
+.preinscripcion-scholarship-approval__table td {
+  vertical-align: middle;
+}
+
+.preinscripcion-scholarship-approval__table td small {
+  margin-top: 3px;
+  display: block;
+  color: #65708a;
+}
+
+.preinscripcion-scholarship-approval__reason {
+  min-width: 220px;
+  max-width: 360px;
+  white-space: normal;
+}
+
+.preinscripcion-scholarship-approval__empty {
+  padding: 28px !important;
+  color: #65708a;
+  text-align: center;
+}
+
+.scholarship-management {
+  grid-column: 1 / -1;
+}
+
+.scholarship-management .section-title p {
+  margin: 5px 0 0;
+  color: #4d5775;
+  font-size: 14px;
+}
+
+.scholarship-management__form {
+  margin: 16px 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+  border: 1px solid rgba(141, 187, 199, 0.65);
+  border-radius: 8px;
+  background: #f8fbfc;
+}
+
+.scholarship-management__form label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.scholarship-management__form label > span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-management__form input:not([type='checkbox']),
+.scholarship-management__form select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d4d9e1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.scholarship-management__active {
+  min-height: 44px;
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px !important;
+}
+
+.scholarship-management__active input {
+  width: 18px;
+  height: 18px;
+}
+
+.scholarship-management__actions,
+.scholarship-management__row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scholarship-management__table td {
+  vertical-align: middle;
+}
+
+.scholarship-management__table td small {
+  margin-top: 3px;
+  display: block;
+  color: #65708a;
+}
+
+.scholarship-beneficiaries {
+  grid-column: 1 / -1;
+}
+
+.scholarship-beneficiaries .section-title p {
+  margin: 5px 0 0;
+  color: #4d5775;
+  font-size: 14px;
+}
+
+.scholarship-beneficiaries__summary {
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scholarship-beneficiaries__summary > div {
+  min-height: 82px;
+  padding: 14px 16px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid #d6e0e5;
+  border-radius: 8px;
+  background: #f7fafb;
+}
+
+.scholarship-beneficiaries__summary span {
+  color: #66708a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-beneficiaries__summary strong {
+  color: #101f43;
+  font-size: 22px;
+}
+
+.scholarship-beneficiaries__table td {
+  vertical-align: middle;
+}
+
+.scholarship-beneficiaries__table td small {
+  margin-top: 3px;
+  display: block;
+  max-width: 260px;
+  color: #65708a;
+  white-space: normal;
+}
+
+@media (max-width: 1050px) {
+  .scholarship-management__form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .preinscripcion-scholarship-approval__toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-management__form {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-beneficiaries__summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.preinscripcion-beca-panel input:disabled {
+  cursor: not-allowed;
+  background: #edf1f4;
+  color: #566174;
+  opacity: 1;
+}
+
+.preinscripcion-beca-panel .preinscripcion-beca-approval,
+.preinscripcion-beca-approval {
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #e3b7b2;
+  border-radius: 8px;
+  background: #fff3f1;
+  color: #8f211c;
+}
+
+.preinscripcion-beca-panel .preinscripcion-beca-approval strong,
+.preinscripcion-beca-approval strong {
+  color: inherit;
+  font-size: 14px;
+}
+
+.preinscripcion-beca-approval--approved {
+  border-color: #a9d6bf;
+  background: #edf9f3;
+  color: #17613d;
+}
+
+.planning-form {
+  display: grid;
+  gap: 16px;
+  padding: 0 6px 24px;
+}
+
+.planning-section {
+  width: 100%;
+  padding: 18px;
+  border: 1px solid #d2dbe1;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(17 26 58 / 5%);
+}
+
+.planning-section[hidden] {
+  display: none;
+}
+
+.planning-module-nav {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
+  gap: 7px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 8px;
+  border: 1px solid #d2dbe1;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.planning-module-button {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #cbd7dc;
+  border-radius: 5px;
+  background: #f7fafb;
+  color: #394761;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planning-module-button span {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #dce9ed;
+  color: #111a3a;
+}
+
+.planning-module-button--active {
+  border-color: #a51f1a;
+  background: #a51f1a;
+  color: #ffffff;
+}
+
+.planning-module-button--active span {
+  background: #ffffff;
+  color: #a51f1a;
+}
+
+.planning-section--course {
+  border-top: 3px solid #a51f1a;
+}
+
+.planning-course-select {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+}
+
+.planning-course-select select {
+  width: 100%;
+}
+
+.planning-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.planning-fields--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.planning-fields--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.planning-fields label,
+.planning-section label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.planning-fields label > span,
+.planning-course-select > span {
+  color: #56627b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.planning-fields input,
+.planning-fields select,
+.planning-fields textarea,
+.planning-course-select select,
+.planning-topic-table input,
+.planning-topic-table textarea {
+  width: 100%;
+  border: 1px solid #cbd5dc;
+  border-radius: 5px;
+  background: #fff;
+  color: #111a3a;
+}
+
+.planning-fields input,
+.planning-fields select,
+.planning-course-select select {
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.planning-fields input[readonly] {
+  border-color: #bfd1d8;
+  background: #edf4f6;
+  color: #24334f;
+  cursor: default;
+  font-weight: 750;
+}
+
+.planning-fields textarea {
+  min-height: 108px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+
+.planning-span-two {
+  grid-column: span 2;
+}
+
+.planning-span-three {
+  grid-column: span 3;
+}
+
+.planning-actions,
+.planning-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.planning-message {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 5px;
+  font-weight: 700;
+}
+
+.planning-message--ok {
+  background: #e0f3e8;
+  color: #12623b;
+}
+
+.planning-message--error {
+  background: #f9dddd;
+  color: #9c201b;
+}
+
+.planning-unit {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #c7d8df;
+  border-radius: 6px;
+  background: #f8fbfc;
+}
+
+.planning-unit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #111a3a;
+}
+
+.planning-topic-table-wrap {
+  width: 100%;
+  margin: 14px 0 10px;
+  overflow-x: auto;
+  border: 1px solid #cfdae0;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.planning-topic-table {
+  width: 100%;
+  min-width: 1420px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.planning-topic-table th {
+  padding: 9px 7px;
+  background: #eaf3f6;
+  color: #111a3a;
+  font-size: 11px;
+  text-align: left;
+}
+
+.planning-topic-table th:nth-child(1) { width: 190px; }
+.planning-topic-table th:nth-child(2),
+.planning-topic-table th:nth-child(3),
+.planning-topic-table th:nth-child(4),
+.planning-topic-table th:nth-child(5) { width: 66px; text-align: center; }
+.planning-topic-table th:nth-child(6),
+.planning-topic-table th:nth-child(7),
+.planning-topic-table th:nth-child(8) { width: 180px; }
+.planning-topic-table th:nth-child(9) { width: 150px; }
+.planning-topic-table th:nth-child(10) { width: 78px; text-align: center; }
+
+.planning-topic-table td {
+  padding: 6px;
+  border-top: 1px solid #dce4e8;
+  vertical-align: top;
+}
+
+.planning-topic-table input {
+  min-height: 38px;
+  padding: 7px;
+  text-align: center;
+}
+
+.planning-topic-table textarea {
+  min-height: 72px;
+  padding: 7px;
+  resize: vertical;
+}
+
+.planning-topic-table td:last-child {
+  text-align: center;
+}
+
+.planning-total-ok { color: #147547; }
+.planning-total-error { color: #a51f1a; }
+
+.planning-signature-section {
+  border-left: 4px solid #a51f1a;
+}
+
+.planning-signer-card {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid #bfd1d8;
+  border-radius: 5px;
+  background: #edf4f6;
+  color: #24334f;
+}
+
+.planning-signer-card span,
+.planning-signer-card small {
+  color: #5b6880;
+  font-size: 12px;
+}
+
+.planning-signer-card strong {
+  font-size: 17px;
+}
+
+.planning-preview-modal {
+  width: min(1280px, 100%);
+  height: min(94vh, 920px);
+}
+
+.planning-signature-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 18px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: #eef5f7;
+  color: #4f5d70;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.planning-footer-actions {
+  position: sticky;
+  bottom: 8px;
+  z-index: 4;
+  padding: 12px;
+  border: 1px solid #cbd7dc;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 8px 24px rgb(17 26 58 / 12%);
+}
+
+@media (max-width: 1100px) {
+  .planning-fields--four,
+  .planning-fields--three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .planning-span-three { grid-column: span 2; }
+}
+
+@media (max-width: 700px) {
+  .planning-section { padding: 14px; }
+  .planning-fields,
+  .planning-fields--four,
+  .planning-fields--three { grid-template-columns: 1fr; }
+  .planning-span-two,
+  .planning-span-three { grid-column: auto; }
+  .planning-actions,
+  .planning-footer-actions { display: grid; grid-template-columns: 1fr; }
+  .planning-actions button,
+  .planning-footer-actions button { width: 100%; }
+  .planning-module-nav { grid-template-columns: repeat(8, minmax(150px, 1fr)); }
+}

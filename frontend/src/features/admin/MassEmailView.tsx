@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useCallback, useMemo, useState, type ChangeEvent } from 'react'
 
 import { analyzeMassEmailExcel, resolveMassEmailRecipients, searchMassEmailUsers, sendMassEmail } from '../../lib/api'
 import type { MassEmailExcelResponse, MassEmailExcelRow, MassEmailRecipient, MassEmailSendResponse } from '../../types/app'
@@ -222,7 +222,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
     return next
   }, [sendResults])
   const totalAttachmentCount = studentFiles.length + commonFiles.length
-  const excelRows = excelAnalysis?.rows || []
+  const excelRows = useMemo(() => excelAnalysis?.rows || [], [excelAnalysis?.rows])
   const excelSummary = excelAnalysis?.summary || {}
   const excelCedulaList = useMemo(() => excelCedulas(excelRows), [excelRows])
   const filteredExcelRows = useMemo(() => {
@@ -246,6 +246,13 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
       )
       .slice(0, 80)
   }, [excelRows, excelSearch])
+  const assignedCedulaForFile = useCallback((file: File) => {
+    const manual = studentFileAssignments[file.name]
+    if (manual) return manual
+    const excelMatch = matchExcelRowByFilename(file.name, excelRows)
+    if (excelMatch?.cedula) return excelMatch.cedula
+    return findRecipientByFilename(file.name, recipientAssignmentOptions)?.cedula || ''
+  }, [excelRows, recipientAssignmentOptions, studentFileAssignments])
   const studentFileRows = useMemo(
     () =>
       studentFiles.map((file, index) => {
@@ -263,7 +270,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
           status: assignedRecipient ? 'assigned' : 'pending',
         }
       }),
-    [excelRows, recipientAssignmentOptions, studentFileAssignments, studentFiles],
+    [assignedCedulaForFile, recipientAssignmentOptions, studentFiles],
   )
   const assignedStudentFileCount = useMemo(
     () => studentFileRows.filter((row) => row.assignedRecipient).length,
@@ -287,14 +294,6 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
         .some((value) => value.includes(query))
     })
   }, [assignmentSearch, assignmentStatusFilter, studentFileRows])
-
-  function assignedCedulaForFile(file: File) {
-    const manual = studentFileAssignments[file.name]
-    if (manual) return manual
-    const excelMatch = matchExcelRowByFilename(file.name, excelRows)
-    if (excelMatch?.cedula) return excelMatch.cedula
-    return findRecipientByFilename(file.name, recipientAssignmentOptions)?.cedula || ''
-  }
 
   function buildAttachmentAssignments() {
     const assignments: Record<string, string> = {}

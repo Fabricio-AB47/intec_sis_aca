@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   downloadPortalStudentPdf,
@@ -390,7 +390,7 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
     }))
   }, [academicRows, items, practiceRequirements])
 
-  async function loadRecord(nextApprovedOnly: boolean = approvedOnly) {
+  const loadRecord = useCallback(async (nextApprovedOnly: boolean) => {
     setLoading(true)
     setError('')
     try {
@@ -402,7 +402,7 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   async function downloadSelectedPeriod() {
     if (!selectedPeriod) return
@@ -490,7 +490,7 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
 
   useEffect(() => {
     void loadRecord(false)
-  }, [])
+  }, [loadRecord])
 
   useEffect(() => {
     if (periodOptions.length === 0) {

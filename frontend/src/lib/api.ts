@@ -78,6 +78,7 @@ import type {
   MatriculaPeriodSummaryResponse,
   MatriculaSummaryResponse,
   MatriculaTipo,
+  PortalAcademicPlanningPayload,
   PortalStudentRecordResponse,
   PortalTeacherCoursesResponse,
   PortalTeacherGradePayload,
@@ -105,6 +106,8 @@ import type {
   PreinscriptionListResponse,
   PreinscriptionPhotoResponse,
   PreinscriptionRevertResponse,
+  PreinscriptionScholarshipApprovalListResponse,
+  PreinscriptionScholarshipStatus,
   SenescytAuditResponse,
   SenescytCatalogResponse,
   SenescytExportMode,
@@ -112,6 +115,10 @@ import type {
   SenescytStudentDataSearchResponse,
   SenescytStudentReportResponse,
   SenescytTarget,
+  ScholarshipConfigurationListResponse,
+  ScholarshipConfigurationPayload,
+  ScholarshipConfigurationSaveResponse,
+  ScholarshipBeneficiaryListResponse,
   SisAcademicoCatalogResponse,
   SisAcademicoListResponse,
   SisAcademicoRecordResponse,
@@ -283,6 +290,13 @@ export async function loginRequest(login: string, password: string): Promise<Use
   return request<UserSession>('/api/auth/login', {
     method: 'POST',
     body: { login, password },
+  })
+}
+
+export async function selectProfileRequest(role: string): Promise<UserSession> {
+  return request<UserSession>('/api/auth/select-profile', {
+    method: 'POST',
+    body: { rol: role },
   })
 }
 
@@ -1254,6 +1268,75 @@ export async function registerPreinscriptionCabecera(
   )
 }
 
+export async function fetchPreinscriptionScholarshipStatus(
+  num: string
+): Promise<PreinscriptionScholarshipStatus> {
+  return request<PreinscriptionScholarshipStatus>(
+    `/api/students/preinscripcion/${encodeURIComponent(num)}/beca`
+  )
+}
+
+export async function approvePreinscriptionScholarship(
+  num: string
+): Promise<PreinscriptionScholarshipStatus> {
+  return request<PreinscriptionScholarshipStatus>(
+    `/api/students/preinscripcion/${encodeURIComponent(num)}/beca/aprobar`,
+    { method: 'POST' }
+  )
+}
+
+export async function fetchPendingPreinscriptionScholarships(
+  query = ''
+): Promise<PreinscriptionScholarshipApprovalListResponse> {
+  const params = new URLSearchParams({ limit: '1000' })
+  if (query.trim()) params.set('query', query.trim())
+  return request<PreinscriptionScholarshipApprovalListResponse>(
+    `/api/students/preinscripcion/becas/pendientes?${params.toString()}`
+  )
+}
+
+export async function fetchScholarshipBeneficiaries(
+  query = ''
+): Promise<ScholarshipBeneficiaryListResponse> {
+  const params = new URLSearchParams({ limit: '1000' })
+  if (query.trim()) params.set('query', query.trim())
+  return request<ScholarshipBeneficiaryListResponse>(
+    `/api/students/preinscripcion/becas/beneficiarios?${params.toString()}`
+  )
+}
+
+export async function approvePreinscriptionScholarshipById(
+  becaId: number
+): Promise<PreinscriptionScholarshipStatus> {
+  return request<PreinscriptionScholarshipStatus>(
+    `/api/students/preinscripcion/becas/${encodeURIComponent(String(becaId))}/aprobar`,
+    { method: 'POST' }
+  )
+}
+
+export async function fetchScholarshipConfigurations(): Promise<ScholarshipConfigurationListResponse> {
+  return request<ScholarshipConfigurationListResponse>('/api/students/preinscripcion/becas/configuracion')
+}
+
+export async function createScholarshipConfiguration(
+  payload: ScholarshipConfigurationPayload
+): Promise<ScholarshipConfigurationSaveResponse> {
+  return request<ScholarshipConfigurationSaveResponse>('/api/students/preinscripcion/becas/configuracion', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function updateScholarshipConfiguration(
+  configurationId: number,
+  payload: ScholarshipConfigurationPayload
+): Promise<ScholarshipConfigurationSaveResponse> {
+  return request<ScholarshipConfigurationSaveResponse>(
+    `/api/students/preinscripcion/becas/configuracion/${encodeURIComponent(String(configurationId))}`,
+    { method: 'PUT', body: payload }
+  )
+}
+
 export async function uploadPreinscriptionDocument(
   num: string,
   field: string,
@@ -1679,6 +1762,48 @@ export async function fetchPortalTeacherCourses(): Promise<PortalTeacherCoursesR
   return request<PortalTeacherCoursesResponse>('/api/portal/teacher/courses')
 }
 
+export async function downloadPortalAcademicPlanningPdf(
+  payload: PortalAcademicPlanningPayload,
+): Promise<Blob> {
+  return request<Blob>('/api/portal/teacher/academic-planning-pdf', {
+    method: 'POST',
+    body: payload,
+    responseType: 'blob',
+  })
+}
+
+export async function previewPortalAcademicPlanningPdf(
+  payload: PortalAcademicPlanningPayload,
+): Promise<Blob> {
+  return request<Blob>('/api/portal/teacher/academic-planning-pdf?preview=true', {
+    method: 'POST',
+    body: payload,
+    responseType: 'blob',
+  })
+}
+
+export async function signPortalAcademicPlanningPdf(params: {
+  payload: PortalAcademicPlanningPayload
+  certificado: File
+  contrasenaCertificado: string
+  firmaMotivo: string
+  firmaUbicacion: string
+  firmaContacto?: string
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('payload_json', JSON.stringify(params.payload))
+  formData.append('certificado', params.certificado)
+  formData.append('contrasena_certificado', params.contrasenaCertificado)
+  formData.append('firma_motivo', params.firmaMotivo)
+  formData.append('firma_ubicacion', params.firmaUbicacion)
+  if (params.firmaContacto) formData.append('firma_contacto', params.firmaContacto)
+  return request<Blob>('/api/portal/teacher/academic-planning-sign', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
+}
+
 export async function fetchPortalTeacherStudents(params: {
   codigoPeriodo?: string
   codigoPeriodos?: string[]
@@ -1764,7 +1889,7 @@ export async function updateTeacherComplianceFormat(
   })
 }
 
-export async function downloadPortalTeacherComplianceReport(params: {
+type TeacherComplianceReportParams = {
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
@@ -1778,7 +1903,9 @@ export async function downloadPortalTeacherComplianceReport(params: {
   actualizaciones?: string
   observaciones?: string
   evidencias?: Array<{ label: string; file: File }>
-}): Promise<Blob> {
+}
+
+function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): FormData {
   const formData = new FormData()
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('paralelo', params.paralelo)
@@ -1802,7 +1929,34 @@ export async function downloadPortalTeacherComplianceReport(params: {
     formData.append('evidencia_label', evidence.label)
     formData.append('evidencia', evidence.file)
   }
+  return formData
+}
+
+export async function downloadPortalTeacherComplianceReport(params: TeacherComplianceReportParams): Promise<Blob> {
+  const formData = buildTeacherComplianceFormData(params)
   return request<Blob>('/api/portal/teacher/compliance-report-pdf', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
+}
+
+export async function signPortalTeacherComplianceReport(
+  params: TeacherComplianceReportParams & {
+    certificado: File
+    contrasenaCertificado: string
+    firmaMotivo: string
+    firmaUbicacion: string
+    firmaContacto?: string
+  }
+): Promise<Blob> {
+  const formData = buildTeacherComplianceFormData(params)
+  formData.append('certificado', params.certificado)
+  formData.append('contrasena_certificado', params.contrasenaCertificado)
+  formData.append('firma_motivo', params.firmaMotivo)
+  formData.append('firma_ubicacion', params.firmaUbicacion)
+  if (params.firmaContacto) formData.append('firma_contacto', params.firmaContacto)
+  return request<Blob>('/api/portal/teacher/compliance-report-sign', {
     method: 'POST',
     body: formData,
     responseType: 'blob',

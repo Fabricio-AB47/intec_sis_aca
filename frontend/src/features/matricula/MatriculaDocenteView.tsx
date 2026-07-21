@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   fetchAcademicEnrollmentCatalog,
@@ -116,6 +116,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const selectedSubjectCode = selectedSubject?.cod_materia || ''
   const selectedSubjectLevels = useMemo(() => subjectLevels(selectedSubject), [selectedSubject])
   const selectedCareerCodes = useMemo(() => subjectCareerCodes(selectedSubject), [selectedSubject])
+  const selectedCareerCodesKey = selectedCareerCodes.join('|')
   const selectedCareerNames = useMemo(() => subjectCareerNames(selectedSubject), [selectedSubject])
   const selectedParallelOption = parallelOptions.find((item) => item.paralelo === parallel)
   const enrollmentSummary = useMemo(() => {
@@ -155,48 +156,6 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    setSelectedSubject(null)
-    setSelectedSubjectLevel('')
-    setSubjectQuery('')
-    setParallel('')
-    setParallelOptions([])
-    setTeacherEnrollments([])
-    setTeacherStudents([])
-    setTeacherActionError('')
-    setTeacherActionMessage('')
-    if (selectedPeriod) {
-      void loadSubjectOptions('', selectedPeriod)
-    } else {
-      setSubjectOptions([])
-    }
-  }, [selectedPeriod])
-
-  useEffect(() => {
-    if (!selectedPeriod) {
-      clearParallelOptions()
-      return
-    }
-    void loadParallelOptions()
-  }, [selectedPeriod, selectedSubjectCode, selectedCareerCodes.join('|'), selectedSubjectLevel])
-
-  useEffect(() => {
-    if (!selectedPeriod || !selectedSubjectCode) {
-      setTeacherEnrollments([])
-      return
-    }
-    void loadTeacherEnrollments()
-  }, [selectedPeriod, selectedSubjectCode, selectedCareerCodes.join('|'), selectedSubjectLevel, parallel])
-
-  useEffect(() => {
-    if (!selectedPeriod || !selectedSubjectCode || !parallel) {
-      setTeacherStudents([])
-      setTeacherStudentsError('')
-      return
-    }
-    void loadTeacherStudents()
-  }, [selectedPeriod, selectedSubjectCode, selectedCareerCodes.join('|'), selectedSubjectLevel, parallel])
 
   function teacherLabel(teacher: AcademicTeacherOption): string {
     const name = teacher.descripcion || teacher.login || teacher.codigo_doc
@@ -321,7 +280,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     await loadTeacherOptions()
   }
 
-  async function loadSubjectOptions(queryValue: string = subjectQuery, periodCode: string = selectedPeriod) {
+  const loadSubjectOptions = useCallback(async (queryValue: string = subjectQuery, periodCode: string = selectedPeriod) => {
     if (!periodCode) {
       setSubjectError('Selecciona primero el periodo.')
       return
@@ -345,11 +304,13 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setSubjectLoading(false)
     }
-  }
+  }, [selectedPeriod, subjectQuery])
 
-  async function loadParallelOptions() {
+  const loadParallelOptions = useCallback(async () => {
     if (!selectedPeriod) {
-      clearParallelOptions()
+      setParallel('')
+      setParallelOptions([])
+      setParallelOptionsError('')
       return
     }
     setParallelOptionsLoading(true)
@@ -366,9 +327,9 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setParallelOptionsLoading(false)
     }
-  }
+  }, [selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
 
-  async function loadTeacherEnrollments() {
+  const loadTeacherEnrollments = useCallback(async () => {
     if (!selectedPeriod || !selectedSubjectCode) {
       setTeacherEnrollments([])
       return
@@ -390,9 +351,9 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setTeacherEnrollmentsLoading(false)
     }
-  }
+  }, [parallel, selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
 
-  async function loadTeacherStudents() {
+  const loadTeacherStudents = useCallback(async () => {
     if (!selectedPeriod || !selectedSubjectCode || !parallel) {
       setTeacherStudents([])
       setTeacherStudentsError('Selecciona periodo, materia y paralelo para ver estudiantes.')
@@ -415,7 +376,51 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setTeacherStudentsLoading(false)
     }
-  }
+  }, [parallel, selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+
+  useEffect(() => {
+    setSelectedSubject(null)
+    setSelectedSubjectLevel('')
+    setSubjectQuery('')
+    setParallel('')
+    setParallelOptions([])
+    setTeacherEnrollments([])
+    setTeacherStudents([])
+    setTeacherActionError('')
+    setTeacherActionMessage('')
+    if (selectedPeriod) {
+      void loadSubjectOptions('', selectedPeriod)
+    } else {
+      setSubjectOptions([])
+    }
+  }, [loadSubjectOptions, selectedPeriod])
+
+  useEffect(() => {
+    if (!selectedPeriod) {
+      setParallel('')
+      setParallelOptions([])
+      setParallelOptionsError('')
+      return
+    }
+    void loadParallelOptions()
+  }, [loadParallelOptions, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+
+  useEffect(() => {
+    if (!selectedPeriod || !selectedSubjectCode) {
+      setTeacherEnrollments([])
+      return
+    }
+    void loadTeacherEnrollments()
+  }, [loadTeacherEnrollments, parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+
+  useEffect(() => {
+    if (!selectedPeriod || !selectedSubjectCode || !parallel) {
+      setTeacherStudents([])
+      setTeacherStudentsError('')
+      return
+    }
+    void loadTeacherStudents()
+  }, [loadTeacherStudents, parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
 
   async function saveTeacherEnrollment() {
     if (!selectedTeacherCode || !selectedPeriod || !selectedSubjectCode) {

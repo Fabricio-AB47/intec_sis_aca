@@ -108,7 +108,7 @@ function getQuestionCategory(question: TeacherEvaluationQuestion) {
 function getQuestionText(question: TeacherEvaluationQuestion) {
   return (question.detalle_preg || '')
     .replace(
-      /^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:(?:\d+(?:\.\d+)*)\s*(?:[\).\-\u2013\u2014:]|\s)+|(?:[ivxlcdm]+)\s*[\).\-\u2013\u2014:]+)/iu,
+      /^\s*(?:(?:pregunta|item|ítem|indicador)\s*)?(?:(?:\d+(?:\.\d+)*)\s*(?:[).\-\u2013\u2014:]|\s)+|(?:[ivxlcdm]+)\s*[).\-\u2013\u2014:]+)/iu,
       '',
     )
     .trim()

@@ -484,7 +484,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const columns = detail?.columns || []
+  const columns = useMemo(() => detail?.columns || [], [detail?.columns])
   const catalogs = detail?.catalogs || {}
   const visibleColumns = useMemo(
     () => target === 'estudiantes' ? columns.filter((field) => shouldShowStudentField(field, formFields)) : columns,

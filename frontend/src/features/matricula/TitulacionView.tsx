@@ -559,7 +559,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
         ruta_documento_nube: String(generation.intec.RutaDocumentoNube || ''),
       })
     }
-  }, [data])
+  }, [academic?.promedio_asignaturas, data, expediente, generation?.acta, generation?.intec, generation?.senescyt, mechanism?.defensa, mechanism?.examen, mechanism?.programacion, mechanism?.selected?.MecanismoCodigo])
 
   useEffect(() => {
     if (mainSection === 'verificacion' && data && !requisitosInicialesCumplidos && activeArea !== 'verificacion') {
@@ -668,7 +668,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
     if (section === 'responsables' && programacionFilter === 'TODOS') {
       setProgramacionFilter('EXAMEN_COMPLEXIVO')
     }
-  }, [section])
+  }, [programacionFilter, section])
 
   useEffect(() => {
     if (mainSection === 'proceso' || mainSection === 'responsables') {

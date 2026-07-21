@@ -15,6 +15,7 @@ type StudentLayoutProps = {
   onOpenPortalEstudiante: (section?: PortalStudentSection) => void
   onOpenPortalDocente: () => void
   onOpenPortalDocenteInforme: () => void
+  onOpenPortalDocentePlanificacion: () => void
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
   onOpenMatricula: () => void
@@ -155,7 +156,7 @@ const academicSisSections = new Set([
   'empresas',
 ])
 const financialSisSections = new Set(['cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente'])
+const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente', 'genero_docentes'])
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
 const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
@@ -188,10 +189,15 @@ function customPagesForRole(role: string): Set<Page> | null {
 function navItemAllowedForRole(role: string, item: NavItem) {
   const normalizedRole = normalizeRoleKey(role)
   const customPages = customPagesForRole(normalizedRole)
-  const allowedByCustomConfig = !item.page || item.page === 'asignacion-pantallas' || !customPages || customPages.has(item.page)
+  const isTeacherCorePage = normalizedRole === 'DOCENTE' && (
+    item.page === 'portal-docente'
+    || item.page === 'portal-docente-informe'
+    || item.page === 'portal-docente-planificacion'
+  )
+  const allowedByCustomConfig = isTeacherCorePage || !item.page || item.page === 'asignacion-pantallas' || !customPages || customPages.has(item.page)
   if (!allowedByCustomConfig) return false
   if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
-  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
     if (item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
@@ -213,7 +219,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
     if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
     return true
   }
-  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe'
+  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion'
   return item.page === 'dashboard'
 }
 
@@ -254,6 +260,7 @@ function sortNavGroups(groups: NavGroup[]) {
     administracion: 20,
     desempeno: 25,
     'admision-matriculas': 30,
+    becas: 32,
     migracion: 35,
     carnetizacion: 50,
     certificados: 60,
@@ -296,6 +303,7 @@ function groupIconName(groupKey: string): GroupIconName {
     inicio: 'home',
     'actualizacion-estados': 'status',
     'admision-matriculas': 'matricula',
+    becas: 'briefcase',
     'admision-proceso': 'admission',
     migracion: 'matricula',
     certificados: 'certificate',
@@ -460,6 +468,7 @@ export function StudentLayout({
   onOpenPortalEstudiante,
   onOpenPortalDocente,
   onOpenPortalDocenteInforme,
+  onOpenPortalDocentePlanificacion,
   onOpenTeams,
   onOpenTeamsMatricula,
   onOpenMatriculaAcad,
@@ -534,10 +543,6 @@ export function StudentLayout({
     }
   }, [])
 
-  useEffect(() => {
-    setOpenMenuGroups(new Set())
-  }, [normalizedRole])
-
   const preinscriptionFlowItems: NavItem[] = [
     {
       label: 'Inscripcion',
@@ -588,6 +593,34 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('seguimiento'),
     },
   ]
+  const scholarshipMenuGroup: NavGroup = {
+    key: 'becas',
+    title: 'Becas',
+    summary: 'Configuración, aprobación y beneficiarios',
+    items: [
+      {
+        label: 'Gestión de becas',
+        description: 'Configurar tipos, porcentajes y disponibilidad en inscripción.',
+        page: 'preinscripcion',
+        preinscriptionStage: 'gestion-becas',
+        action: () => onOpenPreinscripcion('gestion-becas'),
+      },
+      {
+        label: 'Aprobaciones pendientes',
+        description: 'Revisar solicitudes de beca superiores al 15%.',
+        page: 'preinscripcion',
+        preinscriptionStage: 'becas',
+        action: () => onOpenPreinscripcion('becas'),
+      },
+      {
+        label: 'Listado de becados',
+        description: 'Consultar estudiantes con becas aprobadas y sus porcentajes.',
+        page: 'preinscripcion',
+        preinscriptionStage: 'becados',
+        action: () => onOpenPreinscripcion('becados'),
+      },
+    ],
+  }
   const salesPreinscriptionFlowItems: NavItem[] = [
     {
       label: 'Paso 1: Inscribir',
@@ -755,6 +788,7 @@ export function StudentLayout({
         },
       ],
     },
+    ...(isAdministratorRole(normalizedRole) ? [scholarshipMenuGroup] : []),
     {
       key: 'migracion',
       title: 'Migracion',
@@ -1312,13 +1346,20 @@ export function StudentLayout({
     {
       key: 'reporteria',
       title: 'Reportes y control',
-      summary: 'Rango de edades',
+      summary: 'Edades y género docente',
       items: [
         {
           label: 'Rango de edades',
           description: 'Edades calculadas, becas y porcentaje exportable.',
           page: 'rango-edades',
           action: onOpenRangoEdades,
+        },
+        {
+          label: 'Género de docentes',
+          description: 'Distribución de docentes por género y estado activo o inactivo.',
+          page: 'reporteria-integral',
+          reportKey: 'genero_docentes',
+          action: () => onOpenReporteriaIntegral('genero_docentes'),
         },
       ],
     },
@@ -1532,6 +1573,11 @@ export function StudentLayout({
         },
       ],
     },
+    ...(
+      normalizedRole === 'BIENESTAR'
+        ? [scholarshipMenuGroup]
+        : []
+    ),
     {
       key: 'admision-matriculas',
       title: 'Control de matrícula',
@@ -1636,6 +1682,13 @@ export function StudentLayout({
           page: 'reportes-individuales',
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
+        },
+        {
+          label: 'Género de docentes',
+          description: 'Distribución de docentes por género y estado activo o inactivo.',
+          page: 'reporteria-integral',
+          reportKey: 'genero_docentes',
+          action: () => onOpenReporteriaIntegral('genero_docentes'),
         },
         {
           label: 'Avance y ponderación',
@@ -2014,6 +2067,12 @@ export function StudentLayout({
           description: 'Generar el documento de cumplimiento con el formato institucional.',
           page: 'portal-docente-informe',
           action: onOpenPortalDocenteInforme,
+        },
+        {
+          label: 'Crear Sílabo y PEA',
+          description: 'Planificación por unidades, temas, horas, evaluación y bibliografía.',
+          page: 'portal-docente-planificacion',
+          action: onOpenPortalDocentePlanificacion,
         },
         {
           label: 'Carnet institucional',

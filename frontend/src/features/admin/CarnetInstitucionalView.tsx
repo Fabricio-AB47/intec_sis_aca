@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   approveCarnetPhoto,
@@ -165,7 +165,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
     }
   }
 
-  async function runSearch(nextQuery = query, nextType = personType) {
+  const runSearch = useCallback(async (nextQuery = query, nextType = personType) => {
     if (!canManage) return
     setSearchLoading(true)
     setError('')
@@ -186,7 +186,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
     } finally {
       setSearchLoading(false)
     }
-  }
+  }, [canManage, personType, query, selectedPerson])
 
   async function selectPerson(person: CarnetPersona) {
     setSelectedPerson(person)
@@ -292,7 +292,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
     if (canManage) {
       void runSearch('', 'TODOS')
     }
-  }, [canManage])
+  }, [canManage, runSearch])
 
   const myCanUpload = myStatus?.puede_subir !== false
   const selectedCanUpload = Boolean(selectedPerson) && selectedStatus?.puede_subir !== false

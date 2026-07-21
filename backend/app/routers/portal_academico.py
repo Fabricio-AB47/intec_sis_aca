@@ -1,12 +1,14 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from html import escape
 from io import BytesIO
 import json
+import logging
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any
+import unicodedata
+from typing import Annotated, Any, Literal
 from zipfile import ZipFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -18,6 +20,14 @@ from openpyxl import Workbook
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
 import pyodbc
+from asn1crypto import pkcs12 as asn1_pkcs12
+from cryptography import x509 as crypto_x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12 as crypto_pkcs12
+from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+from pyhanko.sign import signers
+from pyhanko.sign.fields import SigFieldSpec, SigSeedSubFilter
+from pyhanko.stamp import QRStampStyle
 from reportlab.graphics import renderPDF
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
@@ -26,13 +36,14 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Flowable, Image as PdfImage, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image as PdfImage, Indenter, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/portal", tags=["portal-academico"])
+logger = logging.getLogger(__name__)
 
 _STUDENT_ACCESS = require_roles("ESTUDIANTE")
 _TEACHER_ACCESS = require_roles("DOCENTE")
@@ -43,6 +54,8 @@ _REPORT_TEMPLATE_PATH = _PROJECT_ROOT / "frontend" / "doc" / "Plantilla word (1)
 _TEACHER_COMPLIANCE_WORD_TEMPLATE_PATH = Path.home() / "Documents" / "FABRICIO BORJA" / "FABRICIO BORJA CUMPLIMIENTO GRSI.docx"
 _TEACHER_COMPLIANCE_BACKGROUND_PATH = _BACKEND_ROOT.parent / "backend" / ".codex_template_image1.png"
 _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.svg"
+_ACADEMIC_PLANNING_PEA_BACKGROUND_PATH = _BACKEND_ROOT / "app" / "assets" / "academic_planning_pea_background.png"
+_ACADEMIC_PLANNING_SYLLABUS_BACKGROUND_PATH = _BACKEND_ROOT / "app" / "assets" / "academic_planning_silabo_background.png"
 _PORTAL_CONFIG_ROOT = _BACKEND_ROOT / "data"
 _TEACHER_COMPLIANCE_FORMAT_PATH = _PORTAL_CONFIG_ROOT / "teacher_compliance_format.json"
 
@@ -74,6 +87,64 @@ class TeacherGradePayload(BaseModel):
     recuperacion: float | None = Field(default=None, ge=0, le=10)
     promedio_final: float | None = Field(default=None, ge=0, le=10)
     caprueba: str | None = Field(default=None, max_length=10)
+
+
+class AcademicPlanningTopicPayload(BaseModel):
+    tema: str = Field(min_length=1, max_length=500)
+    semana: int = Field(ge=1, le=52)
+    horas_docencia: int = Field(default=0, ge=0, le=100)
+    horas_practica: int = Field(default=0, ge=0, le=100)
+    horas_autonomo: int = Field(default=0, ge=0, le=100)
+    actividad_docencia: str = Field(default="", max_length=1000)
+    actividad_practica: str = Field(default="", max_length=1000)
+    actividad_autonoma: str = Field(default="", max_length=1000)
+    evaluacion: str = Field(default="", max_length=500)
+
+
+class AcademicPlanningUnitPayload(BaseModel):
+    nombre: str = Field(min_length=1, max_length=300)
+    resultado_aprendizaje: str = Field(default="", max_length=1500)
+    temas: list[AcademicPlanningTopicPayload] = Field(default_factory=list, max_length=30)
+
+
+class AcademicPlanningPayload(BaseModel):
+    document_type: Literal["pea", "silabo"]
+    codigo_periodos: list[int] = Field(min_length=1, max_length=4)
+    codigo_materia: str = Field(min_length=1, max_length=100)
+    paralelo: str = Field(min_length=1, max_length=10)
+    cod_anio_basica: int | None = None
+    cod_jornada: int | None = None
+    nivel: str = Field(default="", max_length=100)
+    unidad_curricular: str = Field(default="", max_length=150)
+    campo_formacion: str = Field(default="", max_length=150)
+    modalidad: str = Field(default="Presencial / En línea", max_length=150)
+    prerrequisitos: str = Field(default="", max_length=500)
+    correquisitos: str = Field(default="", max_length=500)
+    horario_clases: str = Field(default="", max_length=500)
+    horario_tutorias: str = Field(default="", max_length=500)
+    descripcion: str = Field(default="", max_length=5000)
+    objetivo_general: str = Field(default="", max_length=3000)
+    resultados_aprendizaje: str = Field(default="", max_length=5000)
+    mision_intec: str = Field(default="", max_length=3000)
+    mision_escuela: str = Field(default="", max_length=3000)
+    mision_carrera: str = Field(default="", max_length=3000)
+    unidades: list[AcademicPlanningUnitPayload] = Field(min_length=1, max_length=12)
+    estrategias_metodologicas: str = Field(default="", max_length=5000)
+    formacion_ciudadana: str = Field(default="", max_length=3000)
+    sostenibilidad: str = Field(default="", max_length=3000)
+    recursos_didacticos: str = Field(default="", max_length=5000)
+    evaluacion_tareas: int = Field(default=30, ge=0, le=100)
+    evaluacion_individual: int = Field(default=15, ge=0, le=100)
+    evaluacion_colaborativo: int = Field(default=15, ge=0, le=100)
+    evaluacion_acumulativa: int = Field(default=40, ge=0, le=100)
+    bibliografia_basica: str = Field(default="", max_length=5000)
+    bibliografia_complementaria: str = Field(default="", max_length=5000)
+    proyecto_tema: str = Field(default="", max_length=1000)
+    proyecto_tiempo: str = Field(default="Un semestre", max_length=300)
+    proyecto_objetivo: str = Field(default="", max_length=2000)
+    proyecto_contexto: str = Field(default="", max_length=5000)
+    version: str = Field(default="001", max_length=20)
+    fecha_elaboracion: date = Field(default_factory=date.today)
 
 
 class TeacherComplianceReportFormat(BaseModel):
@@ -1743,6 +1814,8 @@ def _course_item(row: Any) -> dict[str, Any]:
         "jornada": _clean(getattr(row, "jornada", "")) or (
             f"Jornada {_clean(row.cod_jornada)}" if _clean(row.cod_jornada) else ""
         ),
+        "semestre": _int(getattr(row, "semestre", None)),
+        "unidad_curricular": _clean(getattr(row, "unidad_curricular", "")),
         "periodo_orden": _int(getattr(row, "periodo_orden", None)) or _int(codigo_periodo) or 0,
         "period_count": 1,
         "total_estudiantes": _int(row.total_estudiantes) or 0,
@@ -1908,6 +1981,8 @@ def teacher_courses(
                     TRY_CONVERT(nvarchar(50), cxd.Paralelo) AS paralelo,
                     TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
                     TRY_CONVERT(nvarchar(255), j.DetalleJ) AS jornada,
+                    TRY_CONVERT(int, p.Semestre) AS semestre,
+                    TRY_CONVERT(nvarchar(255), p.Unidad_Organiza) AS unidad_curricular,
                     TRY_CONVERT(int, cxd.estadoMoodleDoc) AS estado_moodle_doc,
                     stats.total_estudiantes
                 FROM dbo.CARRERAXDOCENTE cxd
@@ -2238,6 +2313,7 @@ def _teacher_course_report_meta(
                     TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
                     TRY_CONVERT(nvarchar(255), j.DetalleJ) AS jornada,
                     TRY_CONVERT(int, p.Semestre) AS semestre,
+                    TRY_CONVERT(nvarchar(255), p.Unidad_Organiza) AS unidad_curricular,
                     TRY_CONVERT(float, p.Horas) AS horas
                 FROM dbo.CARRERAXDOCENTE cxd
                 LEFT JOIN dbo.CARRERAS c
@@ -2293,6 +2369,7 @@ def _teacher_course_report_meta(
         "cod_jornada": _clean(first.cod_jornada),
         "jornada": _clean(first.jornada) or (f"Jornada {_clean(first.cod_jornada)}" if _clean(first.cod_jornada) else ""),
         "semestre": _int(first.semestre),
+        "unidad_curricular": _clean(first.unidad_curricular),
         "horas": _number(first.horas),
         "es_homologacion": _is_homologation_type(first.tipo_periodo, first.detalle_periodo),
     }
@@ -4230,7 +4307,7 @@ def update_teacher_compliance_format(
     return _write_teacher_compliance_format(payload)
 
 
-def _teacher_compliance_response(
+def _build_teacher_compliance_pdf(
     current_user: SessionUser,
     codigo_periodo: list[int],
     codigo_materia: str,
@@ -4244,7 +4321,7 @@ def _teacher_compliance_response(
     actualizaciones: str = "",
     observaciones: str = "",
     evidence_images: list[dict[str, Any]] | None = None,
-) -> StreamingResponse:
+) -> tuple[bytes, str]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
     subject_filter = _clean(codigo_materia).upper()
@@ -4312,11 +4389,870 @@ def _teacher_compliance_response(
         report_params,
         evidence_images=evidence_images,
     )
-    filename = f"{filename_stem}.pdf"
+    return pdf_bytes, filename_stem
+
+
+def _teacher_compliance_response(
+    current_user: SessionUser,
+    codigo_periodo: list[int],
+    codigo_materia: str,
+    paralelo: str,
+    codigo_estud: list[int] | None = None,
+    cod_anio_basica: int | None = None,
+    cod_jornada: int | None = None,
+    fecha_inicio: str = "",
+    fecha_fin: str = "",
+    telefono: str = "",
+    actualizaciones: str = "",
+    observaciones: str = "",
+    evidence_images: list[dict[str, Any]] | None = None,
+) -> StreamingResponse:
+    pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        telefono=telefono,
+        actualizaciones=actualizaciones,
+        observaciones=observaciones,
+        evidence_images=evidence_images,
+    )
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename_stem}.pdf"'},
+    )
+
+
+async def _read_compliance_evidence(
+    uploads: list[UploadFile] | None,
+    labels: list[str] | None,
+) -> list[dict[str, Any]]:
+    evidence_images: list[dict[str, Any]] = []
+    evidence_labels = labels or []
+    for index, upload in enumerate(uploads or []):
+        if not upload.filename:
+            continue
+        content_type = (upload.content_type or "").lower()
+        if content_type and not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Las evidencias deben ser imágenes")
+        content = await upload.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Cada captura debe pesar máximo 5 MB")
+        evidence_images.append(
+            {
+                "label": evidence_labels[index] if index < len(evidence_labels) else upload.filename,
+                "content": content,
+            }
+        )
+    return evidence_images
+
+
+def _certificate_subject_text(certificate: Any) -> str:
+    subject = certificate.subject.native
+    values: list[str] = []
+    for value in subject.values():
+        if isinstance(value, (list, tuple)):
+            values.extend(_clean(item) for item in value if _clean(item))
+        elif _clean(value):
+            values.append(_clean(value))
+    return " | ".join(values)
+
+
+def _certificate_signer_name(certificate: Any, current_user: SessionUser) -> str:
+    subject = certificate.subject.native
+    candidate = subject.get("common_name") or subject.get("name") or current_user.nombres or current_user.login
+    if isinstance(candidate, (list, tuple)):
+        candidate = " ".join(_clean(value) for value in candidate if _clean(value))
+    normalized = unicodedata.normalize("NFKD", _clean(candidate)).encode("ascii", "ignore").decode("ascii")
+    return (normalized or "DOCENTE INTEC").upper()[:100]
+
+
+def _validate_signing_certificate(certificate: Any) -> str:
+    validity = certificate["tbs_certificate"]["validity"]
+    valid_from = validity["not_before"].native
+    valid_until = validity["not_after"].native
+    now = datetime.now(timezone.utc)
+    if valid_from.tzinfo is None:
+        valid_from = valid_from.replace(tzinfo=timezone.utc)
+    if valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    if now < valid_from:
+        raise HTTPException(status_code=400, detail="El certificado todavía no se encuentra vigente")
+    if now > valid_until:
+        raise HTTPException(status_code=400, detail="El certificado de firma electrónica está caducado")
+
+    subject_text = _certificate_subject_text(certificate)
+    return subject_text
+
+
+def _pkcs12_private_key_entries(pkcs12_bytes: bytes, password: bytes) -> list[tuple[Any, str]]:
+    """Read every private key bag; cryptography's PKCS#12 loader returns only one."""
+    try:
+        pfx = asn1_pkcs12.Pfx.load(pkcs12_bytes)
+        authenticated_safe = asn1_pkcs12.AuthenticatedSafe.load(pfx["auth_safe"]["content"].native)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="El archivo .p12 no tiene una estructura PKCS#12 válida") from exc
+
+    entries: list[tuple[Any, str]] = []
+
+    def read_bags(safe_contents: Any) -> None:
+        for bag in safe_contents:
+            bag_type = bag["bag_id"].native
+            friendly_name = ""
+            for attribute in bag["bag_attributes"] or []:
+                if attribute["type"].native == "friendly_name" and len(attribute["values"]):
+                    friendly_name = _clean(attribute["values"][0].native)
+                    break
+
+            try:
+                if bag_type == "pkcs8_shrouded_key_bag":
+                    key = serialization.load_der_private_key(bag["bag_value"].untag().dump(), password=password)
+                    entries.append((key, friendly_name))
+                elif bag_type == "key_bag":
+                    key = serialization.load_der_private_key(bag["bag_value"].untag().dump(), password=None)
+                    entries.append((key, friendly_name))
+                elif bag_type == "safe_contents":
+                    read_bags(bag["bag_value"])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se pudo abrir el archivo .p12. Verifique el archivo y la contraseña",
+                ) from exc
+
+    for content_info in authenticated_safe:
+        if content_info["content_type"].native != "data":
+            continue
+        read_bags(asn1_pkcs12.SafeContents.load(content_info["content"].native))
+    return entries
+
+
+def _public_key_der(value: Any) -> bytes:
+    public_key = value.public_key()
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def _certificate_signature_usage(certificate: crypto_x509.Certificate) -> tuple[bool, bool]:
+    try:
+        usage = certificate.extensions.get_extension_for_class(crypto_x509.KeyUsage).value
+    except crypto_x509.ExtensionNotFound:
+        return True, False
+    may_sign = usage.digital_signature or usage.content_commitment
+    return may_sign, usage.digital_signature
+
+
+def _certificate_chain(
+    leaf: crypto_x509.Certificate,
+    certificates: list[crypto_x509.Certificate],
+) -> list[crypto_x509.Certificate]:
+    chain: list[crypto_x509.Certificate] = []
+    current = leaf
+    remaining = [certificate for certificate in certificates if certificate != leaf]
+    while current.issuer != current.subject:
+        issuer = next((certificate for certificate in remaining if certificate.subject == current.issuer), None)
+        if issuer is None:
+            break
+        chain.append(issuer)
+        remaining.remove(issuer)
+        current = issuer
+    return chain
+
+
+def _load_digital_signature_pkcs12(pkcs12_bytes: bytes, password: str) -> signers.SimpleSigner:
+    password_bytes = password.encode("utf-8")
+    try:
+        primary_key, primary_certificate, additional_certificates = crypto_pkcs12.load_key_and_certificates(
+            pkcs12_bytes,
+            password_bytes,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo abrir el archivo .p12. Verifique el archivo y la contraseña",
+        ) from exc
+
+    certificates = [
+        certificate
+        for certificate in [primary_certificate, *(additional_certificates or [])]
+        if certificate is not None
+    ]
+    key_entries = _pkcs12_private_key_entries(pkcs12_bytes, password_bytes)
+    if primary_key is not None and all(_public_key_der(key) != _public_key_der(primary_key) for key, _ in key_entries):
+        key_entries.append((primary_key, ""))
+
+    candidates: list[tuple[int, Any, crypto_x509.Certificate]] = []
+    for key, friendly_name in key_entries:
+        key_public = _public_key_der(key)
+        certificate = next(
+            (candidate for candidate in certificates if _public_key_der(candidate) == key_public),
+            None,
+        )
+        if certificate is None:
+            continue
+        may_sign, has_digital_signature = _certificate_signature_usage(certificate)
+        if not may_sign:
+            continue
+        normalized_name = friendly_name.casefold()
+        score = (100 if has_digital_signature else 60) + (40 if "signing" in normalized_name else 0)
+        candidates.append((score, key, certificate))
+
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El archivo .p12 no contiene una clave habilitada para firma digital. "
+                "No se puede firmar con una clave destinada únicamente a cifrado"
+            ),
+        )
+
+    _, signing_key, signing_certificate = max(candidates, key=lambda candidate: candidate[0])
+    chain = _certificate_chain(signing_certificate, certificates)
+    normalized_pkcs12 = crypto_pkcs12.serialize_key_and_certificates(
+        name=b"FirmaDocente",
+        key=signing_key,
+        cert=signing_certificate,
+        cas=chain,
+        encryption_algorithm=serialization.BestAvailableEncryption(password_bytes),
+    )
+    signer = signers.SimpleSigner.load_pkcs12_data(
+        normalized_pkcs12,
+        other_certs=[],
+        passphrase=password_bytes,
+    )
+    if signer is None or signer.signing_cert is None:
+        raise HTTPException(status_code=400, detail="No se pudo preparar el certificado para firma digital")
+    return signer
+
+
+async def _sign_pdf_with_pkcs12(
+    pdf_bytes: bytes,
+    pkcs12_bytes: bytes,
+    password: str,
+    current_user: SessionUser,
+    reason: str,
+    location: str,
+    contact: str,
+    signature_box: tuple[float, float, float, float] = (72, 450, 392, 520),
+    field_name: str = "FirmaDocente",
+    readable_field_name: str = "Firma electrónica del docente",
+) -> bytes:
+    signer = _load_digital_signature_pkcs12(pkcs12_bytes, password)
+
+    _validate_signing_certificate(signer.signing_cert)
+    signer_name = _certificate_signer_name(signer.signing_cert, current_user)
+    stamp_reason = _clean(reason) or "Informe de cumplimiento docente"
+    stamp_text = (
+        "Firmado electronicamente por:\n"
+        f"{signer_name}\n"
+        "Validar unicamente con FirmaEC"
+    )
+    writer = IncrementalPdfFileWriter(BytesIO(pdf_bytes))
+    metadata = signers.PdfSignatureMetadata(
+        field_name=field_name,
+        md_algorithm="sha512",
+        location=_clean(location)[:120] or None,
+        reason=stamp_reason[:200],
+        contact_info=_clean(contact)[:200] or None,
+        subfilter=SigSeedSubFilter.ADOBE_PKCS7_DETACHED,
+    )
+    pdf_signer = signers.PdfSigner(
+        metadata,
+        signer=signer,
+        stamp_style=QRStampStyle(
+            border_width=0,
+            stamp_text=stamp_text,
+            qr_inner_size=58,
+        ),
+        new_field_spec=SigFieldSpec(
+            sig_field_name=field_name,
+            on_page=-1,
+            box=signature_box,
+            readable_field_name=readable_field_name,
+        ),
+    )
+    output = BytesIO()
+    try:
+        await pdf_signer.async_sign_pdf(
+            writer,
+            output=output,
+            appearance_text_params={"url": "https://www.firmadigital.gob.ec/"},
+        )
+    except Exception as exc:
+        logger.exception("No se pudo firmar el informe de cumplimiento con el certificado PKCS#12")
+        technical_detail = _clean(str(exc))[:240]
+        detail = f"No se pudo aplicar la firma electrónica al PDF ({type(exc).__name__})"
+        if technical_detail:
+            detail = f"{detail}: {technical_detail}"
+        raise HTTPException(status_code=400, detail=detail) from exc
+    return output.getvalue()
+
+
+def _planning_paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
+    text = escape(_clean(value)).replace("\n", "<br/>") or "-"
+    return Paragraph(text, style)
+
+
+def _teacher_academic_planning_pdf(
+    payload: AcademicPlanningPayload,
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+) -> bytes:
+    dark = colors.black
+    red = colors.HexColor("#CC0000")
+    pale = colors.HexColor("#EEDDDD")
+    header_fill = colors.HexColor("#D9DADA")
+    border = colors.HexColor("#888888")
+    page_size = A4 if payload.document_type == "pea" else landscape(A4)
+    page_width, page_height = page_size
+    background_path = (
+        _ACADEMIC_PLANNING_PEA_BACKGROUND_PATH
+        if payload.document_type == "pea"
+        else _ACADEMIC_PLANNING_SYLLABUS_BACKGROUND_PATH
+    )
+    content_width = 17.8 * cm if payload.document_type == "pea" else 26.6 * cm
+    narrative_width = 17.8 * cm
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="PlanningTitle", parent=styles["Title"], fontSize=20, leading=23, alignment=TA_CENTER, textColor=dark, spaceAfter=4))
+    styles.add(ParagraphStyle(name="PlanningHeading", parent=styles["Heading2"], fontSize=10, leading=12, textColor=dark, alignment=TA_CENTER, spaceBefore=9, spaceAfter=5))
+    styles.add(ParagraphStyle(name="PlanningBody", parent=styles["BodyText"], fontSize=7.2, leading=9.2, textColor=dark, alignment=TA_JUSTIFY))
+    styles.add(ParagraphStyle(name="PlanningCell", parent=styles["BodyText"], fontSize=6.4, leading=7.8, textColor=dark))
+    styles.add(ParagraphStyle(name="PlanningCellCenter", parent=styles["PlanningCell"], alignment=TA_CENTER))
+    styles.add(ParagraphStyle(name="PlanningCellBold", parent=styles["PlanningCell"], fontName="Helvetica-Bold"))
+
+    def p(value: Any, style: str = "PlanningBody") -> Paragraph:
+        return _planning_paragraph(value, styles[style])
+
+    def section(title: str, value: Any = None) -> None:
+        story.append(p(title, "PlanningHeading"))
+        if _clean(value):
+            story.append(p(value))
+            story.append(Spacer(1, 4))
+
+    def boxed_section(title: str, value: Any) -> None:
+        story.append(table([
+            [p(title, "PlanningCellBold")],
+            [p(value)],
+        ], [narrative_width]))
+        story.append(Spacer(1, 5))
+
+    def structured_section(title: str, value: Any) -> None:
+        raw_lines = [line.strip(" -•\t") for line in _clean(value).splitlines() if line.strip(" -•\t")]
+        pairs: list[tuple[str, str]] = []
+        for line in raw_lines:
+            if ":" in line:
+                label, detail = line.split(":", 1)
+                pairs.append((label.strip(), detail.strip()))
+            else:
+                pairs.append(("", line))
+        if not pairs:
+            pairs = [("", "-")]
+        rows: list[list[Any]] = [[p(title, "PlanningCellBold"), ""]]
+        rows.extend([
+            [p(label, "PlanningCellBold") if label else "", p(detail)]
+            for label, detail in pairs
+        ])
+        result = table(rows, [narrative_width * 0.30, narrative_width * 0.70])
+        result.setStyle(TableStyle([
+            ("SPAN", (0, 0), (1, 0)),
+            ("ALIGN", (0, 0), (1, 0), "CENTER"),
+        ]))
+        story.append(result)
+        story.append(Spacer(1, 6))
+
+    def table(
+        data: list[list[Any]],
+        widths: list[float],
+        header_rows: int = 0,
+        header_background: Any = None,
+        h_align: str = "LEFT",
+    ) -> Table:
+        result = Table(data, colWidths=widths, repeatRows=header_rows, hAlign=h_align)
+        commands: list[tuple[Any, ...]] = [
+            ("GRID", (0, 0), (-1, -1), 0.45, border),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]
+        if header_rows:
+            commands.extend([
+                ("FONTNAME", (0, 0), (-1, header_rows - 1), "Helvetica-Bold"),
+                ("ALIGN", (0, 0), (-1, header_rows - 1), "CENTER"),
+            ])
+            if header_background is not None:
+                commands.append(("BACKGROUND", (0, 0), (-1, header_rows - 1), header_background))
+        result.setStyle(TableStyle(commands))
+        return result
+
+    total_docencia = sum(topic.horas_docencia for unit in payload.unidades for topic in unit.temas)
+    total_practica = sum(topic.horas_practica for unit in payload.unidades for topic in unit.temas)
+    total_autonomo = sum(topic.horas_autonomo for unit in payload.unidades for topic in unit.temas)
+    document_label = "PEA" if payload.document_type == "pea" else "Silabo"
+    subject = _clean(meta.get("nombre_materia") or meta.get("cod_materia") or payload.codigo_materia)
+    career = _clean(meta.get("nombre_carrera"))
+    period = _clean(meta.get("detalle_periodo") or meta.get("detalle_periodos") or ", ".join(str(code) for code in payload.codigo_periodos))
+    teacher_name = _clean(teacher.get("docente")) or "DOCENTE INTEC"
+    coordinator_name = "Roberto Castro"
+    spanish_months = (
+        "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+        "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+    )
+    change_date = f"{spanish_months[payload.fecha_elaboracion.month - 1]} {payload.fecha_elaboracion.year}"
+    semester = _int(meta.get("semestre"))
+    level = f"{semester}.º semestre" if semester else (_clean(payload.nivel) or "-")
+    curricular_unit = _clean(meta.get("unidad_curricular")) or _clean(payload.unidad_curricular) or "-"
+
+    story: list[Flowable] = [Spacer(1, 2.15 * cm if payload.document_type == "pea" else 0.68 * cm)]
+    story.append(p(f"{document_label} DE LA ASIGNATURA", "PlanningTitle"))
+    story.append(p(subject.upper(), "PlanningTitle"))
+    story.append(Spacer(1, 1.05 * cm))
+    control_total = 15.0 * cm
+    control_widths = [control_total * 0.42, control_total * 0.14, control_total * 0.24, control_total * 0.20]
+    control_table = table([
+        [p("CONTROL DE CAMBIOS", "PlanningCellBold"), "", "", ""],
+        [p("Descripción", "PlanningCellBold"), p("Versión", "PlanningCellBold"), p("Responsable", "PlanningCellBold"), p("Fecha", "PlanningCellBold")],
+        [p(f"Desarrollo de {document_label}", "PlanningCell"), p(payload.version, "PlanningCellCenter"), p(teacher_name.upper(), "PlanningCell"), p(change_date, "PlanningCellCenter")],
+        ["", "", "", ""],
+        ["", "", "", ""],
+    ], control_widths, 2, h_align="CENTER")
+    control_table.setStyle(TableStyle([
+        ("SPAN", (0, 0), (-1, 0)),
+        ("ALIGN", (0, 0), (-1, 1), "CENTER"),
+    ]))
+    story.append(control_table)
+    story.append(Spacer(1, 8))
+    if payload.document_type == "silabo":
+        story.append(Indenter(left=1.0 * cm))
+    overview_widths = [
+        narrative_width * 0.18, narrative_width * 0.15,
+        narrative_width * 0.18, narrative_width * 0.15,
+        narrative_width * 0.18, narrative_width * 0.16,
+    ]
+    overview_table = table([
+        [p("PROGRAMA DE ESTUDIOS DE ASIGNATURA - PEA", "PlanningCellBold"), "", "", "", "", ""],
+        [p("Carrera:", "PlanningCellBold"), p(career), "", "", "", ""],
+        [p("Datos Generales:", "PlanningCellBold"), "", "", "", "", ""],
+        [p("Código de la asignatura", "PlanningCellBold"), p(meta.get("cod_materia") or payload.codigo_materia), p("Nombre de la asignatura", "PlanningCellBold"), p(subject), "", ""],
+        [p("Nivel de la asignatura", "PlanningCellBold"), p(level), p("Unidad de organización curricular", "PlanningCellBold"), p(curricular_unit), p("Campo de formación", "PlanningCellBold"), p(payload.campo_formacion)],
+        [p("Distribución de horas en las actividades de aprendizaje", "PlanningCellBold"), "", "", "", "", ""],
+        [p("Docencia:", "PlanningCellBold"), p(total_docencia, "PlanningCellCenter"), p("Trabajo Autónomo", "PlanningCellBold"), p(total_autonomo, "PlanningCellCenter"), p("Prácticas Aprendizaje", "PlanningCellBold"), p(total_practica, "PlanningCellCenter")],
+        [p("Práctica profesional", "PlanningCellBold"), p(0, "PlanningCellCenter"), p("Vinculación", "PlanningCellBold"), p(0, "PlanningCellCenter"), p("Trabajo de titulación", "PlanningCellBold"), p(0, "PlanningCellCenter")],
+        [p("Periodo Académico", "PlanningCellBold"), p(period, "PlanningCellCenter"), "", p("Modalidad", "PlanningCellBold"), p(payload.modalidad, "PlanningCellCenter"), ""],
+        [p("Prerrequisitos de la asignatura", "PlanningCellBold"), "", "", p("Co Requisitos de la asignatura", "PlanningCellBold"), "", ""],
+        [p(payload.prerrequisitos), "", "", p(payload.correquisitos), "", ""],
+        [p("Horario de clases", "PlanningCellBold"), "", "", p("Horario atención de tutorías", "PlanningCellBold"), "", ""],
+        [p(payload.horario_clases), "", "", p(payload.horario_tutorias), "", ""],
+    ], overview_widths)
+    overview_table.setStyle(TableStyle([
+        ("TOPPADDING", (0, 0), (-1, -1), 1.4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("SPAN", (0, 0), (-1, 0)),
+        ("SPAN", (1, 1), (-1, 1)),
+        ("SPAN", (0, 2), (-1, 2)),
+        ("SPAN", (3, 3), (-1, 3)),
+        ("SPAN", (0, 5), (-1, 5)),
+        ("SPAN", (1, 8), (2, 8)),
+        ("SPAN", (4, 8), (5, 8)),
+        ("SPAN", (0, 9), (2, 9)),
+        ("SPAN", (3, 9), (5, 9)),
+        ("SPAN", (0, 10), (2, 10)),
+        ("SPAN", (3, 10), (5, 10)),
+        ("SPAN", (0, 11), (2, 11)),
+        ("SPAN", (3, 11), (5, 11)),
+        ("SPAN", (0, 12), (2, 12)),
+        ("SPAN", (3, 12), (5, 12)),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("ALIGN", (0, 5), (-1, 5), "LEFT"),
+        ("ALIGN", (0, 9), (-1, 9), "CENTER"),
+        ("ALIGN", (0, 11), (-1, 11), "CENTER"),
+    ]))
+    story.append(overview_table)
+    if payload.document_type == "silabo":
+        story.append(PageBreak())
+    boxed_section("Descripción de la asignatura:", payload.descripcion)
+    boxed_section("Objetivo General:", payload.objetivo_general)
+    boxed_section("Resultados de Aprendizaje de la asignatura y como aporta al perfil profesional:", payload.resultados_aprendizaje)
+    if payload.document_type == "silabo":
+        section("ALINEAMIENTO CURRICULAR")
+        story.append(PageBreak())
+    else:
+        section("ALINEAMIENTO CURRICULAR")
+    story.append(table([
+        [p("Misión INTEC", "PlanningCellBold"), p("Misión Escuela", "PlanningCellBold"), p("Misión Carrera", "PlanningCellBold")],
+        [p(payload.mision_intec), p(payload.mision_escuela), p(payload.mision_carrera)],
+    ], [narrative_width / 3, narrative_width / 3, narrative_width / 3], 1))
+    if payload.document_type == "silabo":
+        story.append(Indenter(left=-1.0 * cm))
+    section("CONTENIDOS DE LA ASIGNATURA")
+
+    class VerticalPlanningLabel(Flowable):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+            self.width = 10
+            self.height = 45
+
+        def wrap(self, available_width: float, available_height: float) -> tuple[float, float]:
+            return min(self.width, available_width), min(self.height, available_height)
+
+        def draw(self) -> None:
+            self.canv.saveState()
+            self.canv.setFont("Helvetica", 5.4)
+            self.canv.rotate(90)
+            self.canv.drawString(0, -6, self.text)
+            self.canv.restoreState()
+
+    silabo_header_added = False
+    for unit_index, unit in enumerate(payload.unidades, start=1):
+        if payload.document_type == "pea":
+            rows = [
+                [p(f"UNIDAD {unit_index}: {unit.nombre}", "PlanningCellBold"), "", "", "", "", ""],
+                [p("Resultado de Aprendizaje:", "PlanningCellBold"), p(unit.resultado_aprendizaje), "", "", "", ""],
+                [p("Contenidos", "PlanningCellBold"), p("Horas de la Unidad", "PlanningCellBold"), "", "", p("Observaciones", "PlanningCellBold"), ""],
+                ["", p("Docencia", "PlanningCellBold"), p("Prácticas", "PlanningCellBold"), p("Autónomo", "PlanningCellBold"), p("Trabajo Autónomo del estudiante", "PlanningCellBold"), p("Mecanismo de Evaluación", "PlanningCellBold")],
+            ]
+            rows.extend([
+                [p(topic.tema), p(topic.horas_docencia, "PlanningCellCenter"), p(topic.horas_practica, "PlanningCellCenter"),
+                 p(topic.horas_autonomo, "PlanningCellCenter"), p(topic.actividad_autonoma), p(topic.evaluacion)]
+                for topic in unit.temas
+            ])
+            rows.append([
+                p("Total", "PlanningCellBold"),
+                p(sum(topic.horas_docencia for topic in unit.temas), "PlanningCellCenter"),
+                p(sum(topic.horas_practica for topic in unit.temas), "PlanningCellCenter"),
+                p(sum(topic.horas_autonomo for topic in unit.temas), "PlanningCellCenter"), "", "",
+            ])
+            unit_table = table(rows, [content_width * 0.30, content_width * 0.09, content_width * 0.09, content_width * 0.10, content_width * 0.23, content_width * 0.19], 4)
+            unit_table.setStyle(TableStyle([
+                ("SPAN", (0, 0), (-1, 0)),
+                ("SPAN", (1, 1), (-1, 1)),
+                ("SPAN", (0, 2), (0, 3)),
+                ("SPAN", (1, 2), (3, 2)),
+                ("SPAN", (4, 2), (5, 2)),
+                ("ALIGN", (0, 0), (-1, 3), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(unit_table)
+        else:
+            widths = [
+                content_width * 0.117, content_width * 0.169, content_width * 0.081,
+                content_width * 0.043, content_width * 0.043, content_width * 0.043,
+                content_width * 0.157, content_width * 0.131, content_width * 0.102,
+                content_width * 0.114,
+            ]
+            if not silabo_header_added:
+                header_rows = [
+                    [p("UNIDAD"), p("TEMA"), p("SEMANA"), p("No. Horas"), "", "", p("Componente de docencia"), p("Componente de práctica de aplicación y experimentación de los aprendizajes"), p("Componente de aprendizaje autónomo"), p("Actividad calificada")],
+                    ["", "", "", VerticalPlanningLabel("DOCENCIA"), VerticalPlanningLabel("PRÁCTICA"), VerticalPlanningLabel("AUTÓNOMO"), "", "", "", ""],
+                ]
+                header_table = Table(header_rows, colWidths=widths, rowHeights=[3.2 * cm, 1.5 * cm], hAlign="LEFT")
+                header_table.setStyle(TableStyle([
+                    ("GRID", (0, 0), (-1, -1), 0.6, border),
+                    ("BACKGROUND", (0, 0), (-1, -1), header_fill),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("SPAN", (0, 0), (0, 1)),
+                    ("SPAN", (1, 0), (1, 1)),
+                    ("SPAN", (2, 0), (2, 1)),
+                    ("SPAN", (3, 0), (5, 0)),
+                    ("SPAN", (6, 0), (6, 1)),
+                    ("SPAN", (7, 0), (7, 1)),
+                    ("SPAN", (8, 0), (8, 1)),
+                    ("SPAN", (9, 0), (9, 1)),
+                ]))
+                story.append(header_table)
+                story.append(PageBreak())
+                silabo_header_added = True
+
+            rows = [
+                [p(f"UNIDAD {unit_index}: {unit.nombre}" if topic_index == 0 else ""), p(topic.tema), p(topic.semana, "PlanningCellCenter"), p(topic.horas_docencia, "PlanningCellCenter"),
+                 p(topic.horas_practica, "PlanningCellCenter"), p(topic.horas_autonomo, "PlanningCellCenter"),
+                 p(topic.actividad_docencia), p(topic.actividad_practica), p(topic.actividad_autonoma), p(topic.evaluacion)]
+                for topic_index, topic in enumerate(unit.temas)
+            ]
+            if not rows:
+                rows = [[
+                    p(f"UNIDAD {unit_index}: {unit.nombre}"),
+                    p("Pendiente de registrar"),
+                    p("-", "PlanningCellCenter"),
+                    p("0", "PlanningCellCenter"),
+                    p("0", "PlanningCellCenter"),
+                    p("0", "PlanningCellCenter"),
+                    p("-"),
+                    p("-"),
+                    p("-"),
+                    p("-"),
+                ]]
+            unit_table = table(
+                rows,
+                widths,
+            )
+            evaluation_commands: list[tuple[Any, ...]] = []
+            for row_index, topic in enumerate(unit.temas):
+                if "EVALU" in f"{topic.tema} {topic.evaluacion}".upper() or "PARCIAL" in f"{topic.tema} {topic.evaluacion}".upper():
+                    evaluation_commands.extend([
+                        ("BACKGROUND", (0, row_index), (-1, row_index), red),
+                        ("TEXTCOLOR", (0, row_index), (-1, row_index), colors.white),
+                    ])
+            if evaluation_commands:
+                unit_table.setStyle(TableStyle(evaluation_commands))
+            story.append(unit_table)
+        story.append(Spacer(1, 5))
+
+    if payload.document_type == "silabo":
+        story.append(Indenter(left=1.0 * cm))
+    structured_section("Estrategias Metodológicas", payload.estrategias_metodologicas)
+    structured_section("1. Formación ciudadana / Desarrollo de habilidades blandas", payload.formacion_ciudadana)
+    structured_section("1.2. Educación ambiental / Desarrollo sostenible", payload.sostenibilidad)
+    structured_section("Recursos Didácticos", payload.recursos_didacticos)
+    section("EVALUACIÓN")
+    if payload.document_type == "silabo":
+        story.append(Indenter(left=-1.0 * cm))
+        story.append(PageBreak())
+    evaluation_rows: list[list[Any]] = [["", p("Actividad", "PlanningCellBold"), p("Peso", "PlanningCellBold")]]
+    for partial in range(1, 4):
+        evaluation_rows.extend([
+            [p(f"PARCIAL {partial}", "PlanningCellBold"), p("Tareas"), p(f"{payload.evaluacion_tareas}%", "PlanningCellCenter")],
+            ["", p("Trabajo individual"), p(f"{payload.evaluacion_individual}%", "PlanningCellCenter")],
+            ["", p("Trabajo colaborativo"), p(f"{payload.evaluacion_colaborativo}%", "PlanningCellCenter")],
+            ["", p("Evaluación acumulativa"), p(f"{payload.evaluacion_acumulativa}%", "PlanningCellCenter")],
+        ])
+    evaluation_table = table(
+        evaluation_rows,
+        [4.0 * cm, 5.0 * cm, 2.0 * cm],
+        1,
+        h_align="CENTER",
+    )
+    evaluation_style: list[tuple[Any, ...]] = []
+    for start in (1, 5, 9):
+        evaluation_style.extend([
+            ("SPAN", (0, start), (0, start + 3)),
+            ("BACKGROUND", (0, start), (0, start + 3), red),
+            ("TEXTCOLOR", (0, start), (0, start + 3), colors.white),
+            ("ALIGN", (0, start), (0, start + 3), "CENTER"),
+            ("VALIGN", (0, start), (0, start + 3), "MIDDLE"),
+        ])
+    evaluation_table.setStyle(TableStyle(evaluation_style))
+    story.append(evaluation_table)
+    if payload.document_type == "silabo":
+        story.append(PageBreak())
+    section("BIBLIOGRAFÍA BÁSICA", payload.bibliografia_basica)
+    section("BIBLIOGRAFÍA COMPLEMENTARIA", payload.bibliografia_complementaria)
+    section("PROYECTO DE APLICACIÓN PRÁCTICA")
+    story.append(table([
+        [p("Tema", "PlanningCellBold"), p(payload.proyecto_tema)],
+        [p("Tiempo", "PlanningCellBold"), p(payload.proyecto_tiempo)],
+        [p("Objetivo", "PlanningCellBold"), p(payload.proyecto_objetivo)],
+        [p("Contexto", "PlanningCellBold"), p(payload.proyecto_contexto)],
+    ], [narrative_width * 0.18, narrative_width * 0.82], h_align="CENTER"))
+    story.append(PageBreak())
+    story.append(Spacer(1, 4.1 * cm if payload.document_type == "pea" else 2.2 * cm))
+    signature_table = Table([
+        [p("Elaborado por", "PlanningCellBold"), p("Revisado por", "PlanningCellBold")],
+        ["", ""],
+        [p("Cargo: Docente\nNombre: " + teacher_name + "\nFecha: " + payload.fecha_elaboracion.isoformat()),
+         p("Cargo: Coordinador Académico\nNombre: " + coordinator_name + "\nFecha: " + payload.fecha_elaboracion.isoformat())],
+    ], [5.3 * cm, 5.3 * cm], rowHeights=[0.8 * cm, 3.1 * cm, 1.8 * cm], hAlign="CENTER")
+    signature_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.5, border),
+        ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(signature_table)
+
+    output = BytesIO()
+    document = SimpleDocTemplate(
+        output,
+        pagesize=page_size,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=4.3 * cm,
+        bottomMargin=1.5 * cm,
+        title=f"{document_label} - {subject}",
+        author=teacher_name,
+    )
+
+    def page_header(canvas: Canvas, doc: Any) -> None:
+        canvas.saveState()
+        width, height = page_size
+
+        if background_path.exists():
+            canvas.drawImage(
+                ImageReader(str(background_path)),
+                0,
+                0,
+                width=width,
+                height=height,
+                preserveAspectRatio=False,
+                mask="auto",
+            )
+
+        # El fondo procede de los documentos oficiales. Solo se reemplazan las
+        # celdas variables de materia y paginacion, conservando sus bordes.
+        header_x = 262.0
+        subject_split = 447.5
+        header_right = 553.6
+        header_y = height - 117.6
+        bottom_row_height = 33.5
+        canvas.setFillColor(colors.white)
+        canvas.rect(
+            header_x + 0.8,
+            header_y + 0.8,
+            subject_split - header_x - 1.6,
+            bottom_row_height - 1.6,
+            fill=1,
+            stroke=0,
+        )
+        canvas.rect(
+            subject_split + 0.8,
+            header_y + 0.8,
+            header_right - subject_split - 1.6,
+            bottom_row_height - 1.6,
+            fill=1,
+            stroke=0,
+        )
+        canvas.setFillColor(dark)
+        canvas.setFont("Helvetica", 9.5)
+        canvas.drawCentredString((header_x + subject_split) / 2, header_y + 13.0, subject[:42])
+        canvas.drawCentredString((subject_split + header_right) / 2, header_y + 18.0, f"Página {canvas.getPageNumber()} de")
+        if payload.document_type == "silabo":
+            canvas.setStrokeColor(border)
+            canvas.setLineWidth(0.6)
+            canvas.line(header_x, header_y, header_right, header_y)
+        canvas.restoreState()
+
+    total_x = (447.5 + 553.6) / 2
+    total_y = page_height - 114.0
+
+    class PlanningNumberedCanvas(Canvas):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._saved_page_states: list[dict[str, Any]] = []
+
+        def showPage(self) -> None:
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self) -> None:
+            page_count = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.setFillColor(dark)
+                self.setFont("Helvetica-Bold", 9.5)
+                self.drawCentredString(total_x, total_y, str(page_count))
+                super().showPage()
+            super().save()
+
+    document.build(
+        story,
+        onFirstPage=page_header,
+        onLaterPages=page_header,
+        canvasmaker=PlanningNumberedCanvas,
+    )
+    return output.getvalue()
+
+
+@router.post("/teacher/academic-planning-pdf")
+def teacher_academic_planning_pdf(
+    payload: AcademicPlanningPayload,
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    preview: Annotated[bool, Query()] = False,
+) -> StreamingResponse:
+    if not preview and payload.evaluacion_tareas + payload.evaluacion_individual + payload.evaluacion_colaborativo + payload.evaluacion_acumulativa != 100:
+        raise HTTPException(status_code=400, detail="Los porcentajes de evaluación deben sumar 100%")
+    if not preview and not any(unit.temas for unit in payload.unidades):
+        raise HTTPException(status_code=400, detail="Debe registrar al menos un tema en la planificación")
+    codigo_doc = _teacher_code(current_user)
+    meta = _teacher_course_report_meta(
+        codigo_doc,
+        payload.codigo_periodos,
+        payload.codigo_materia.strip().upper(),
+        payload.paralelo.strip().upper(),
+        payload.cod_anio_basica,
+    )
+    if not meta:
+        raise HTTPException(status_code=404, detail="La asignatura seleccionada no está vinculada al docente autenticado")
+    teacher = teacher_profile(current_user)["teacher"]
+    pdf_bytes = _teacher_academic_planning_pdf(payload, teacher, meta)
+    document_label = "pea" if payload.document_type == "pea" else "silabo"
+    filename = f"{document_label}-{_safe_filename(meta.get('nombre_materia') or payload.codigo_materia)}.pdf"
+    disposition = "inline" if preview else "attachment"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+@router.post("/teacher/academic-planning-sign")
+async def teacher_sign_academic_planning_pdf(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    payload_json: Annotated[str, Form()],
+    certificado: Annotated[UploadFile, File()],
+    contrasena_certificado: Annotated[str, Form()],
+    firma_motivo: Annotated[str, Form()] = "Planificación académica docente",
+    firma_ubicacion: Annotated[str, Form()] = "Quito",
+    firma_contacto: Annotated[str, Form()] = "",
+) -> StreamingResponse:
+    try:
+        payload = AcademicPlanningPayload.model_validate_json(payload_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="La información de planificación no es válida") from exc
+    if payload.evaluacion_tareas + payload.evaluacion_individual + payload.evaluacion_colaborativo + payload.evaluacion_acumulativa != 100:
+        raise HTTPException(status_code=400, detail="Los porcentajes de evaluación deben sumar 100%")
+    if not any(unit.temas for unit in payload.unidades):
+        raise HTTPException(status_code=400, detail="Debe registrar al menos un tema en la planificación")
+    if not certificado.filename or not certificado.filename.lower().endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Seleccione un certificado PKCS#12 con extensión .p12 o .pfx")
+    certificate_bytes = await certificado.read()
+    if not certificate_bytes or len(certificate_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El certificado está vacío o supera el máximo de 2 MB")
+    codigo_doc = _teacher_code(current_user)
+    meta = _teacher_course_report_meta(
+        codigo_doc,
+        payload.codigo_periodos,
+        payload.codigo_materia.strip().upper(),
+        payload.paralelo.strip().upper(),
+        payload.cod_anio_basica,
+    )
+    if not meta:
+        raise HTTPException(status_code=404, detail="La asignatura seleccionada no está vinculada al docente autenticado")
+    teacher = teacher_profile(current_user)["teacher"]
+    pdf_bytes = _teacher_academic_planning_pdf(payload, teacher, meta)
+    signed_pdf = await _sign_pdf_with_pkcs12(
+        pdf_bytes=pdf_bytes,
+        pkcs12_bytes=certificate_bytes,
+        password=contrasena_certificado,
+        current_user=current_user,
+        reason=firma_motivo,
+        location=firma_ubicacion,
+        contact=firma_contacto,
+        signature_box=(150, 510, 290, 590) if payload.document_type == "pea" else (275, 315, 415, 395),
+        field_name=f"FirmaDocente{payload.document_type.upper()}",
+        readable_field_name=f"Firma electrónica docente del {payload.document_type.upper()}",
+    )
+    document_label = "pea" if payload.document_type == "pea" else "silabo"
+    filename = f"{document_label}-{_safe_filename(meta.get('nombre_materia') or payload.codigo_materia)}-firmado.pdf"
+    return StreamingResponse(
+        BytesIO(signed_pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
     )
 
 
@@ -4485,23 +5421,7 @@ async def teacher_compliance_report_pdf_with_evidence(
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
 ) -> StreamingResponse:
-    evidence_images: list[dict[str, Any]] = []
-    labels = evidencia_label or []
-    for index, upload in enumerate(evidencia or []):
-        if not upload.filename:
-            continue
-        content_type = (upload.content_type or "").lower()
-        if content_type and not content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="Las evidencias deben ser imágenes")
-        content = await upload.read()
-        if len(content) > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Cada captura debe pesar máximo 5 MB")
-        evidence_images.append(
-            {
-                "label": labels[index] if index < len(labels) else upload.filename,
-                "content": content,
-            }
-        )
+    evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
     return _teacher_compliance_response(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -4516,6 +5436,72 @@ async def teacher_compliance_report_pdf_with_evidence(
         actualizaciones=actualizaciones,
         observaciones=observaciones,
         evidence_images=evidence_images,
+    )
+
+
+@router.post("/teacher/compliance-report-sign")
+async def teacher_sign_compliance_report(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Form()],
+    codigo_materia: Annotated[str, Form()],
+    paralelo: Annotated[str, Form(min_length=1)],
+    certificado: Annotated[UploadFile, File()],
+    contrasena_certificado: Annotated[str, Form(min_length=1, max_length=256)],
+    firma_motivo: Annotated[str, Form(max_length=200)] = "Informe de cumplimiento docente",
+    firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
+    firma_contacto: Annotated[str, Form(max_length=200)] = "",
+    codigo_estud: Annotated[list[int] | None, Form()] = None,
+    cod_anio_basica: Annotated[int | None, Form()] = None,
+    cod_jornada: Annotated[int | None, Form()] = None,
+    fecha_inicio: Annotated[str, Form(max_length=40)] = "",
+    fecha_fin: Annotated[str, Form(max_length=40)] = "",
+    telefono: Annotated[str, Form(max_length=40)] = "",
+    actualizaciones: Annotated[str, Form(max_length=1000)] = "",
+    observaciones: Annotated[str, Form(max_length=1000)] = "",
+    evidencia_label: Annotated[list[str] | None, Form()] = None,
+    evidencia: Annotated[list[UploadFile] | None, File()] = None,
+) -> StreamingResponse:
+    certificate_name = _clean(certificado.filename).lower()
+    if not certificate_name.endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
+    certificate_bytes = await certificado.read()
+    if not certificate_bytes:
+        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
+    if len(certificate_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+
+    evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
+    pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        telefono=telefono,
+        actualizaciones=actualizaciones,
+        observaciones=observaciones,
+        evidence_images=evidence_images,
+    )
+    signed_pdf = await _sign_pdf_with_pkcs12(
+        pdf_bytes=pdf_bytes,
+        pkcs12_bytes=certificate_bytes,
+        password=contrasena_certificado,
+        current_user=current_user,
+        reason=firma_motivo,
+        location=firma_ubicacion,
+        contact=firma_contacto,
+    )
+    return StreamingResponse(
+        BytesIO(signed_pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename_stem}-firmado.pdf"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

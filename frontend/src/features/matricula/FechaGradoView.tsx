@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { downloadFechaGradoTemplate, fetchFechaGradoVerification, importFechaGradoExcel, saveFechaGrado } from '../../lib/api'
 import type { FechaGradoVerificationRow } from '../../types/app'
@@ -118,7 +118,7 @@ export function FechaGradoView({ displayName, role = '' }: Readonly<FechaGradoVi
     }
   }
 
-  async function loadVerification(targetPage = page) {
+  const loadVerification = useCallback(async (targetPage: number) => {
     setVerificationLoading(true)
     try {
       const response = await fetchFechaGradoVerification({
@@ -139,7 +139,7 @@ export function FechaGradoView({ displayName, role = '' }: Readonly<FechaGradoVi
     } finally {
       setVerificationLoading(false)
     }
-  }
+  }, [pageSize, statusFilter])
 
   function openEditModal(row: FechaGradoVerificationRow) {
     setEditingRow(row)
@@ -180,7 +180,7 @@ export function FechaGradoView({ displayName, role = '' }: Readonly<FechaGradoVi
 
   useEffect(() => {
     void loadVerification(1)
-  }, [statusFilter, pageSize])
+  }, [loadVerification])
 
   return (
     <>

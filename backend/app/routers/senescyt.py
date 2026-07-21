@@ -11,7 +11,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
-from app.routers.students import _MATRICULA_ACTUAL_CTE
+from app.routers.students import _MATRICULA_CNE_CTE
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/senescyt", tags=["senescyt"])
@@ -198,32 +198,26 @@ class SenescytStudentUpdatePayload(BaseModel):
     fields: dict[str, Any] = Field(default_factory=dict)
 
 _DASHBOARD_ACTIVE_COUNT_QUERY = (
-    _MATRICULA_ACTUAL_CTE
+    _MATRICULA_CNE_CTE
     + """
 SELECT COUNT(*)
-FROM base_cruce bc
-WHERE bc.estado_codigo = 'A'
-  AND bc.cod_anio_Basica IS NOT NULL
-  AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), bc.nombre_carrera))), '') IS NOT NULL
-  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), bc.nombre_carrera)))) NOT LIKE N'SIN CARRERA%';
+FROM matricula_cne_catalogada cne
+WHERE cne.estado_codigo = 'A';
 """
 )
 
-_QUERY = """
-WITH UltimaMatricula AS (
-    SELECT
-        *,
-        ROW_NUMBER() OVER (
-            PARTITION BY codigo_estud
-            ORDER BY fecha_pago DESC, codigo_periodo DESC, numcodigo DESC
-        ) AS rn
-    FROM dbo.CABECERA_MATRICULA
-)
+_QUERY = _MATRICULA_CNE_CTE + """
 SELECT
     TRY_CONVERT(varchar(50), e.codigo_estud) AS codigoEstud,
     e.tipodocumento AS tipoDocumentoId,
-    e.Cedula_Est AS numeroIdentificacion,
-    e.Apellidos_nombre,
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(TRY_CONVERT(varchar(50), e.Cedula_Est))), ''),
+        cne.Cedula_Est
+    ) AS numeroIdentificacion,
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), e.Apellidos_nombre))), ''),
+        cne.Apellidos_nombre
+    ) AS Apellidos_nombre,
     e.Sexo AS sexoId,
     e.generoId,
     e.EstadoCivil AS estadocivilId,
@@ -275,22 +269,29 @@ SELECT
     e.montoCreditoEducativo,
     e.participaEnProyectoVinculacionSociedad,
     e.tipoAlcanceProyectoVinculacionId,
-    c.CorreoIntec AS correoElectronico,
+    correo.CorreoIntec AS correoElectronico,
     e.movil AS numeroCelular,
     e.nivelFormacionPadre,
     e.nivelFormacionMadre,
     e.IngresoHogar AS ingresoTotalHogar,
     e.Numpersonasvive AS cantidadMiembrosHogar,
-    ca.Nombre_Basica AS nombreCarrera
-FROM dbo.DATOS_ESTUD e
-INNER JOIN dbo.CorreosEstudIntec c
-    ON TRY_CONVERT(varchar(50), e.codigo_estud) = TRY_CONVERT(varchar(50), c.codestud)
-INNER JOIN UltimaMatricula m
-    ON TRY_CONVERT(varchar(50), e.codigo_estud) = TRY_CONVERT(varchar(50), m.codigo_estud)
-    AND m.rn = 1
-INNER JOIN dbo.CARRERAS ca
-    ON TRY_CONVERT(varchar(50), m.cod_anio_Basica) = TRY_CONVERT(varchar(50), ca.Cod_AnioBasica)
-WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), e.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA');
+    cne.nombre_carrera AS nombreCarrera
+FROM matricula_cne_catalogada cne
+OUTER APPLY (
+    SELECT TOP (1) datos.*
+    FROM dbo.DATOS_ESTUD datos
+    WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
+    ORDER BY TRY_CONVERT(bigint, datos.codigo_estud) DESC
+) e
+OUTER APPLY (
+    SELECT TOP (1) correos.CorreoIntec
+    FROM dbo.CorreosEstudIntec correos
+    WHERE TRY_CONVERT(varchar(50), correos.codestud) = TRY_CONVERT(varchar(50), e.codigo_estud)
+    ORDER BY
+        CASE WHEN NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(320), correos.CorreoIntec))), '') IS NULL THEN 1 ELSE 0 END,
+        TRY_CONVERT(nvarchar(320), correos.CorreoIntec)
+) correo
+WHERE cne.estado_codigo = 'A';
 """
 
 
