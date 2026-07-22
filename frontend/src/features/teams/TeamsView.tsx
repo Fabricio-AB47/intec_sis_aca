@@ -557,16 +557,6 @@ export function TeamsView({
     [memberParticipants.length, ownerParticipants.length, participants]
   )
 
-  const latestRecording = useMemo(
-    () =>
-      recordings.reduce<TeamRecording | null>((latest, current) => {
-        const currentTime = timestampValue(current.fileCreatedAt || current.uploadedAt || current.lastModifiedDateTime)
-        const latestTime = timestampValue(latest?.fileCreatedAt || latest?.uploadedAt || latest?.lastModifiedDateTime)
-        return currentTime > latestTime ? current : latest
-      }, null),
-    [recordings]
-  )
-
   const messageThreads = useMemo<MessageThread[]>(() => {
     return buildMessageThreads(messages)
   }, [messages])
@@ -585,49 +575,27 @@ export function TeamsView({
   }, [messageThreads])
 
   const recordingSummaryItems = useMemo<InfoSummaryItem[]>(() => {
-    const totalSeconds = recordings.reduce((total, item) => total + (item.durationSeconds || 0), 0)
-    const knownDurations = recordings.filter((item) => Number.isFinite(item.durationSeconds)).length
+    const totalSeconds = recordings.reduce(
+      (total, item) => total + (item.recordingDurationSeconds ?? item.durationSeconds ?? 0),
+      0
+    )
+    const knownDurations = recordings.filter((item) =>
+      Number.isFinite(item.recordingDurationSeconds ?? item.durationSeconds)
+    ).length
     return [
       { label: 'Grabaciones', value: recordings.length },
       {
-        label: 'Duración multimedia total',
+        label: 'Duración total grabada',
         value: knownDurations > 0
           ? recordingSummary?.totalDurationLabel || formatDurationFromSeconds(totalSeconds)
-          : 'Sin metadatos',
+          : 'No disponible',
       },
       {
-        label: 'Duración verificada',
-        value: `${recordingSummary?.knownDurationCount ?? knownDurations} / ${recordings.length}`,
-      },
-      {
-        label: 'Horarios verificados',
+        label: 'Grabaciones con horario',
         value: `${recordingDiscovery?.verifiedTimeCount || 0} / ${recordings.length}`,
       },
-      {
-        label: 'Metadatos completos',
-        value: `${recordingSummary?.completeMetadataCount ?? recordings.filter((item) => item.metadataStatus === 'COMPLETA').length} / ${recordings.length}`,
-      },
-      {
-        label: 'Ubicaciones consultadas',
-        value: `${recordingDiscovery?.sourcesSucceeded || 0} / ${recordingDiscovery?.sourcesScanned || 0}`,
-      },
-      {
-        label: 'SharePoint / OneDrive',
-        value: `${(recordingDiscovery?.sourceCounts?.TEAM_SHAREPOINT || 0) + (recordingDiscovery?.sourceCounts?.CHANNEL_SHAREPOINT || 0)} / ${recordingDiscovery?.sourceCounts?.OWNER_ONEDRIVE || 0}`,
-      },
-      {
-        label: 'Tiempo de consulta',
-        value: recordingDiscovery?.queryElapsedMs != null
-          ? `${recordingDiscovery.queryElapsedMs} ms${recordingDiscovery.cacheHit ? ' · caché' : ''}`
-          : 'N/D',
-      },
-      {
-        label: 'Último archivo creado EC',
-        value: latestRecording?.fileCreatedDateLabel || latestRecording?.uploadedDateLabel || formatDateTimeInEcuador(latestRecording?.fileCreatedAt || latestRecording?.uploadedAt) || 'N/D',
-      },
-      { label: 'Hora de creación EC', value: latestRecording?.fileCreatedHourLabel || latestRecording?.uploadedHourLabel || 'N/D' },
     ]
-  }, [latestRecording, recordingDiscovery, recordingSummary, recordings])
+  }, [recordingDiscovery, recordingSummary, recordings])
 
   const loadTeamInfo = useCallback(async (teamId: string) => {
     setTeamInfoError('')
@@ -1049,78 +1017,42 @@ export function TeamsView({
       return (
         <div className="teams-activity-section">
           <InfoSummary items={recordingSummaryItems} />
-          {recordingDiscovery?.warnings?.length ? (
-            <div className="teams-recording-discovery" role="status">
-              <strong>Ubicaciones no disponibles</strong>
-              <span>
-                Se conservaron los resultados obtenidos en las demás bibliotecas de SharePoint y OneDrive.
-              </span>
-              {recordingDiscovery.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-            </div>
-          ) : null}
           <div className="teams-data-list teams-activity-list">
           {recordings.length > 0 ? (
             recordings.map((item) => (
               <article key={`${item.driveId || 'drive'}-${item.id || `${item.name}-${item.uploadedAt || item.startTime}`}`} className="teams-activity-card teams-recording-card">
                 <div className="teams-activity-card__head">
                   <strong>{item.name || 'Grabacion sin nombre'}</strong>
-                  <div className="teams-recording-card__badges">
-                    <span className="teams-recording-source">
-                      {item.storageSource === 'OWNER_ONEDRIVE' ? 'OneDrive' : 'SharePoint'}
-                    </span>
-                    <span className={item.metadataStatus === 'COMPLETA' ? 'teams-recording-status teams-recording-status--complete' : 'teams-recording-status teams-recording-status--warning'}>
-                      {item.metadataStatus === 'COMPLETA' ? 'Metadatos completos' : 'Requiere revisión'}
-                    </span>
-                  </div>
                 </div>
                 <InfoMetaGrid
                   items={[
-                    { label: 'Almacenamiento', value: item.sourceLabel || (item.storageSource === 'OWNER_ONEDRIVE' ? 'OneDrive del responsable' : 'SharePoint del equipo') },
-                    { label: 'Biblioteca', value: item.driveName || item.driveType || 'Documentos' },
-                    { label: 'Canal', value: item.channelName || 'No asociado a canal' },
-                    { label: 'Propietario', value: item.ownerName || 'Equipo de Teams' },
-                    { label: 'Ruta en Microsoft 365', value: item.parentPath || 'No informada por Graph' },
-                    { label: 'Creado por', value: item.createdByName || 'No informado por Graph' },
-                    { label: 'Modificado por', value: item.lastModifiedByName || 'No informado por Graph' },
-                    { label: 'ID del sitio', value: item.siteId || 'N/D' },
-                    { label: 'ID de lista / elemento', value: item.listId && item.listItemId ? `${item.listId} / ${item.listItemId}` : 'N/D' },
-                    { label: 'Fecha de creación del archivo EC', value: item.fileCreatedDateLabel || item.uploadedDateLabel || formatDateOnlyInEcuador(item.fileCreatedAt || item.uploadedAt) },
-                    { label: 'Hora de creación del archivo EC', value: item.fileCreatedHourLabel || item.uploadedHourLabel || formatTimeOnlyInEcuador(item.fileCreatedAt || item.uploadedAt) },
-                    { label: 'Fecha de inicio de grabación EC', value: item.startDateLabel || formatDateOnlyInEcuador(item.startTime) || 'No disponible' },
-                    { label: 'Hora de inicio de grabación EC', value: item.startHourLabel || formatTimeOnlyInEcuador(item.startTime) || 'No disponible' },
-                    { label: 'Fecha de fin de grabación EC', value: item.endDateLabel || formatDateOnlyInEcuador(item.endTime) || 'No disponible' },
-                    { label: 'Hora de fin de grabación EC', value: item.endHourLabel || formatTimeOnlyInEcuador(item.endTime) || 'No disponible' },
-                    { label: 'Duración calculada', value: item.calculatedDurationLabel || 'No calculable' },
-                    { label: 'Intervalo HH:MM:SS', value: item.calculatedDurationClock || 'N/D' },
-                    { label: 'Duración multimedia', value: item.durationLabel || (item.durationSeconds != null ? formatDurationFromSeconds(item.durationSeconds) : 'No informada por Graph') },
-                    { label: 'Multimedia HH:MM:SS', value: item.durationClock || 'N/D' },
-                    { label: 'Estado de duración', value: item.durationStatus === 'VERIFIED_GRAPH_MEDIA' ? 'Verificada por Microsoft Graph' : 'No disponible' },
-                    { label: 'Última modificación', value: item.modifiedDateTimeLabel || formatDateTimeInEcuador(item.modifiedAt || item.lastModifiedDateTime) },
-                    { label: 'Tamaño', value: item.sizeLabel || (item.sizeBytes || item.size ? `${item.sizeBytes || item.size} bytes` : 'N/D') },
-                    { label: 'Tipo de archivo', value: item.fileExtension || 'N/D' },
-                    { label: 'Tipo MIME', value: item.mimeType || 'N/D' },
-                    { label: 'Origen duración', value: item.durationSource === 'GRAPH_MEDIA_METADATA' ? 'Metadatos multimedia de Microsoft Graph' : item.durationSource === 'GRAPH_CALL_RECORDING' ? 'Intervalo de grabación de Microsoft Graph' : item.durationSource === 'GRAPH_CALL_RECORD' ? 'Intervalo del registro de llamada de Microsoft Graph' : 'No disponible' },
-                    { label: 'Origen del horario', value: item.recordingTimeSource === 'GRAPH_CALL_RECORDING' ? 'Grabación de reunión en Microsoft Graph' : item.recordingTimeSource === 'GRAPH_CALL_RECORD' ? 'Registro de llamada en Microsoft Graph' : 'No disponible' },
-                    { label: 'Validación del horario', value: item.recordingTimeStatus === 'VERIFIED_GRAPH_INTERVAL' ? 'Verificado' : 'Pendiente de metadatos Graph' },
-                    { label: 'Fechas del archivo', value: 'Carga y modificación; no representan el horario de la reunión' },
-                    { label: 'Zona horaria', value: item.timeZone || ECUADOR_TIME_ZONE },
+                    {
+                      label: 'Fecha',
+                      value: item.callDateLabel || item.recordingDateLabel || item.startDateLabel || 'No disponible',
+                    },
+                    {
+                      label: 'Hora de inicio',
+                      value: item.callStartHourLabel || item.recordingStartHourLabel || item.startHourLabel || 'No disponible',
+                    },
+                    {
+                      label: 'Hora de fin',
+                      value: item.callEndHourLabel || item.recordingEndHourLabel || item.endHourLabel || 'No disponible',
+                    },
+                    {
+                      label: 'Duración de la llamada',
+                      value: item.callDurationLabel || 'No disponible',
+                    },
+                    {
+                      label: 'Duración de la grabación',
+                      value: item.recordingDurationLabel || item.durationLabel || 'No disponible',
+                    },
                   ]}
                 />
-                {item.warnings?.length ? (
-                  <div className="teams-recording-warnings" role="status">
-                    {item.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-                  </div>
-                ) : null}
                 {item.webUrl ? (
                   <div className="teams-actions">
                     <a href={item.webUrl} target="_blank" rel="noreferrer" className="teams-link-btn">
                       Abrir grabacion
                     </a>
-                    {item.driveWebUrl && item.driveWebUrl !== item.webUrl ? (
-                      <a href={item.driveWebUrl} target="_blank" rel="noreferrer" className="teams-link-btn teams-link-btn--secondary">
-                        Abrir ubicacion
-                      </a>
-                    ) : null}
                   </div>
                 ) : null}
               </article>

@@ -514,6 +514,24 @@ def _recording_item_with_hours(file_item: dict[str, Any]) -> dict[str, Any]:
         "durationRemainingSeconds": duration_seconds % 60 if duration_seconds is not None else None,
         "durationSource": "GRAPH_MEDIA_METADATA" if duration_seconds is not None else "NOT_AVAILABLE",
         "durationStatus": "VERIFIED_GRAPH_MEDIA" if duration_seconds is not None else "NOT_AVAILABLE",
+        "recordingStartTime": None,
+        "recordingEndTime": None,
+        "recordingDateLabel": None,
+        "recordingStartHourLabel": None,
+        "recordingEndHourLabel": None,
+        "recordingDurationSeconds": duration_seconds,
+        "recordingDurationLabel": _format_duration_label(duration_seconds),
+        "recordingDurationClock": _format_duration_clock(duration_seconds),
+        "recordingDurationSource": "GRAPH_MEDIA_METADATA" if duration_seconds is not None else "NOT_AVAILABLE",
+        "callStartTime": None,
+        "callEndTime": None,
+        "callDateLabel": None,
+        "callStartHourLabel": None,
+        "callEndHourLabel": None,
+        "callDurationSeconds": None,
+        "callDurationLabel": None,
+        "callDurationClock": None,
+        "callDurationSource": "NOT_AVAILABLE",
         "timestampSource": "DRIVE_ITEM_FILE_LIFECYCLE",
         "recordingTimeStatus": "NOT_PROVIDED_BY_DRIVE_ITEM",
         "estimatedDurationSeconds": None,
@@ -628,7 +646,10 @@ def _enrich_recording_times(
     artifacts: list[dict[str, Any]],
     team_owner_ids: set[str],
 ) -> int:
-    available: list[tuple[int, dict[str, Any], datetime, datetime]] = []
+    available_by_source: dict[str, list[tuple[int, dict[str, Any], datetime, datetime]]] = {
+        "GRAPH_CALL_RECORD": [],
+        "GRAPH_CALL_RECORDING": [],
+    }
     for index, artifact in enumerate(artifacts):
         interval = _recording_artifact_interval(artifact)
         if interval is None:
@@ -636,74 +657,96 @@ def _enrich_recording_times(
         organizer_id = _recording_artifact_organizer_id(artifact)
         if team_owner_ids and organizer_id and organizer_id not in team_owner_ids:
             continue
-        available.append((index, artifact, interval[0], interval[1]))
+        source = str(artifact.get("timeSource") or "GRAPH_CALL_RECORDING")
+        available_by_source.setdefault(source, []).append((index, artifact, interval[0], interval[1]))
 
-    used_artifacts: set[int] = set()
+    used_artifacts: dict[str, set[int]] = {source: set() for source in available_by_source}
     enriched_count = 0
     for recording in recordings:
         file_created = _parse_graph_datetime(recording.get("fileCreatedAt") or recording.get("uploadedAt"))
         if file_created is None:
             continue
         recording_owner_id = str(recording.get("ownerId") or "").strip().lower()
-        matches: list[tuple[float, int, dict[str, Any], datetime, datetime]] = []
-        for artifact_index, artifact, start, end in available:
-            if artifact_index in used_artifacts:
+        matched_any = False
+        for source in ("GRAPH_CALL_RECORD", "GRAPH_CALL_RECORDING"):
+            matches: list[tuple[float, int, dict[str, Any], datetime, datetime]] = []
+            for artifact_index, artifact, start, end in available_by_source.get(source, []):
+                if artifact_index in used_artifacts.setdefault(source, set()):
+                    continue
+                organizer_id = _recording_artifact_organizer_id(artifact)
+                if recording_owner_id and organizer_id and recording_owner_id != organizer_id:
+                    continue
+                distance = min(abs((file_created - start).total_seconds()), abs((file_created - end).total_seconds()))
+                if distance <= _RECORDING_TIME_MATCH_TOLERANCE_SECONDS:
+                    matches.append((distance, artifact_index, artifact, start, end))
+            matches.sort(key=lambda value: value[0])
+            if not matches or (len(matches) > 1 and matches[1][0] - matches[0][0] < 120):
                 continue
-            organizer_id = _recording_artifact_organizer_id(artifact)
-            if recording_owner_id and organizer_id and recording_owner_id != organizer_id:
-                continue
-            distance = min(abs((file_created - start).total_seconds()), abs((file_created - end).total_seconds()))
-            if distance <= _RECORDING_TIME_MATCH_TOLERANCE_SECONDS:
-                matches.append((distance, artifact_index, artifact, start, end))
-        matches.sort(key=lambda value: value[0])
-        if not matches:
-            continue
-        if len(matches) > 1 and matches[1][0] - matches[0][0] < 120:
-            continue
 
-        distance, artifact_index, artifact, start, end = matches[0]
-        used_artifacts.add(artifact_index)
-        interval_seconds = int(round((end - start).total_seconds()))
-        source = str(artifact.get("timeSource") or "GRAPH_CALL_RECORDING")
-        recording.update(
-            {
-                "startTime": start.isoformat(),
-                "endTime": end.isoformat(),
-                "startDateLabel": _format_date_label(start.isoformat()),
-                "endDateLabel": _format_date_label(end.isoformat()),
-                "startHourLabel": _format_time_label(start.isoformat()),
-                "endHourLabel": _format_time_label(end.isoformat()),
-                "calculatedDurationSeconds": interval_seconds,
-                "calculatedDurationLabel": _format_duration_label(interval_seconds),
-                "calculatedDurationClock": _format_duration_clock(interval_seconds),
-                "recordingTimeStatus": "VERIFIED_GRAPH_INTERVAL",
-                "recordingTimeSource": source,
-                "recordingTimeMatchSeconds": int(round(distance)),
-                "recordingTimeMatchStatus": "HIGH_CONFIDENCE",
-                "meetingId": artifact.get("meetingId"),
-                "callId": artifact.get("callId") or artifact.get("id"),
-            }
-        )
-        if recording.get("durationSeconds") is None:
-            recording.update(
-                {
-                    "durationSeconds": interval_seconds,
-                    "durationLabel": _format_duration_label(interval_seconds),
-                    "durationClock": _format_duration_clock(interval_seconds),
-                    "durationHours": interval_seconds // 3600,
-                    "durationMinutes": (interval_seconds % 3600) // 60,
-                    "durationRemainingSeconds": interval_seconds % 60,
-                    "durationSource": source,
-                    "durationStatus": "VERIFIED_GRAPH_INTERVAL",
-                }
-            )
-            recording["warnings"] = [
-                warning
-                for warning in cast(list[str], recording.get("warnings") or [])
-                if not warning.startswith("Microsoft Graph no entregó la duración multimedia")
-            ]
-            recording["metadataStatus"] = "COMPLETA" if not recording["warnings"] else "INCOMPLETA"
-        enriched_count += 1
+            distance, artifact_index, artifact, start, end = matches[0]
+            used_artifacts[source].add(artifact_index)
+            interval_seconds = int(round((end - start).total_seconds()))
+            matched_any = True
+
+            if source == "GRAPH_CALL_RECORD":
+                recording.update(
+                    {
+                        "callStartTime": start.isoformat(),
+                        "callEndTime": end.isoformat(),
+                        "callDateLabel": _format_date_label(start.isoformat()),
+                        "callStartHourLabel": _format_time_label(start.isoformat()),
+                        "callEndHourLabel": _format_time_label(end.isoformat()),
+                        "callDurationSeconds": interval_seconds,
+                        "callDurationLabel": _format_duration_label(interval_seconds),
+                        "callDurationClock": _format_duration_clock(interval_seconds),
+                        "callDurationSource": source,
+                        "callId": artifact.get("callId") or artifact.get("id"),
+                    }
+                )
+            else:
+                recording.update(
+                    {
+                        "recordingStartTime": start.isoformat(),
+                        "recordingEndTime": end.isoformat(),
+                        "recordingDateLabel": _format_date_label(start.isoformat()),
+                        "recordingStartHourLabel": _format_time_label(start.isoformat()),
+                        "recordingEndHourLabel": _format_time_label(end.isoformat()),
+                        "meetingId": artifact.get("meetingId"),
+                    }
+                )
+                if recording.get("recordingDurationSeconds") is None:
+                    recording.update(
+                        {
+                            "recordingDurationSeconds": interval_seconds,
+                            "recordingDurationLabel": _format_duration_label(interval_seconds),
+                            "recordingDurationClock": _format_duration_clock(interval_seconds),
+                            "recordingDurationSource": source,
+                        }
+                    )
+
+            # Legacy interval fields remain available for existing consumers,
+            # preferring the complete call over the recorded segment.
+            if source == "GRAPH_CALL_RECORD" or recording.get("startTime") is None:
+                recording.update(
+                    {
+                        "startTime": start.isoformat(),
+                        "endTime": end.isoformat(),
+                        "startDateLabel": _format_date_label(start.isoformat()),
+                        "endDateLabel": _format_date_label(end.isoformat()),
+                        "startHourLabel": _format_time_label(start.isoformat()),
+                        "endHourLabel": _format_time_label(end.isoformat()),
+                        "calculatedDurationSeconds": interval_seconds,
+                        "calculatedDurationLabel": _format_duration_label(interval_seconds),
+                        "calculatedDurationClock": _format_duration_clock(interval_seconds),
+                        "recordingTimeSource": source,
+                        "recordingTimeMatchSeconds": int(round(distance)),
+                    }
+                )
+
+        if matched_any:
+            recording["recordingTimeStatus"] = "VERIFIED_GRAPH_INTERVAL"
+            recording["recordingTimeMatchStatus"] = "HIGH_CONFIDENCE"
+            enriched_count += 1
     return enriched_count
 
 
@@ -2169,8 +2212,12 @@ def teams_recordings(
         return [], False, warning
 
     def response_payload(items: list[dict[str, Any]], raw_count: int) -> dict[str, Any]:
-        total_seconds = sum(int(item.get("durationSeconds") or 0) for item in items)
-        known_duration_count = sum(1 for item in items if item.get("durationSeconds") is not None)
+        total_seconds = sum(int(item.get("recordingDurationSeconds") or item.get("durationSeconds") or 0) for item in items)
+        known_duration_count = sum(
+            1
+            for item in items
+            if item.get("recordingDurationSeconds") is not None or item.get("durationSeconds") is not None
+        )
         complete_count = sum(1 for item in items if item.get("metadataStatus") == "COMPLETA")
         source_counts = {
             source: sum(1 for item in items if item.get("storageSource") == source)

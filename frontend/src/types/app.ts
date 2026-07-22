@@ -1310,6 +1310,24 @@ export type TeamRecording = {
   calculatedDurationSeconds?: number
   calculatedDurationLabel?: string
   calculatedDurationClock?: string
+  callStartTime?: string
+  callEndTime?: string
+  callDateLabel?: string
+  callStartHourLabel?: string
+  callEndHourLabel?: string
+  callDurationSeconds?: number
+  callDurationLabel?: string
+  callDurationClock?: string
+  callDurationSource?: 'GRAPH_CALL_RECORD' | 'NOT_AVAILABLE' | string
+  recordingStartTime?: string
+  recordingEndTime?: string
+  recordingDateLabel?: string
+  recordingStartHourLabel?: string
+  recordingEndHourLabel?: string
+  recordingDurationSeconds?: number
+  recordingDurationLabel?: string
+  recordingDurationClock?: string
+  recordingDurationSource?: 'GRAPH_MEDIA_METADATA' | 'GRAPH_CALL_RECORDING' | 'NOT_AVAILABLE' | string
   meetingId?: string
   callId?: string
   estimatedDurationSeconds?: number
