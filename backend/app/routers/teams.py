@@ -58,7 +58,7 @@ _RECORDINGS_CACHE_TTL_SECONDS = 30
 _RECORDINGS_CACHE_MAX_TEAMS = 100
 _RECORDINGS_CACHE_LOCK = Lock()
 _RECORDINGS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_RECORDING_TIME_MATCH_TOLERANCE_SECONDS = 20 * 60
+_RECORDING_TIME_MATCH_TOLERANCE_SECONDS = 2 * 60 * 60
 _CHANNEL_MESSAGES_LIMIT = 20
 _MESSAGE_REPLIES_LIMIT = 30
 _TEAM_READY_TIMEOUT_SECONDS = 180
@@ -474,6 +474,15 @@ def _recording_item_with_hours(file_item: dict[str, Any]) -> dict[str, Any]:
                 if label:
                     return label
         return None
+
+    def actor_id(actor: dict[str, Any]) -> str | None:
+        for actor_type in ("user", "application", "device"):
+            actor_data = actor.get(actor_type)
+            if isinstance(actor_data, dict):
+                value = str(actor_data.get("id") or "").strip()
+                if value:
+                    return value
+        return None
     mime_type = str(file_facet.get("mimeType") or "").strip()
     web_url = str(file_item.get("webUrl") or "").strip()
     warnings: list[str] = []
@@ -565,7 +574,9 @@ def _recording_item_with_hours(file_item: dict[str, Any]) -> dict[str, Any]:
         "listId": sharepoint_ids.get("listId"),
         "listItemId": sharepoint_ids.get("listItemId"),
         "createdByName": actor_name(created_by),
+        "createdById": actor_id(created_by),
         "lastModifiedByName": actor_name(modified_by),
+        "lastModifiedById": actor_id(modified_by),
         "eTag": file_item.get("eTag"),
     }
 
@@ -641,6 +652,106 @@ def _recording_artifact_organizer_id(artifact: dict[str, Any]) -> str:
     return str(user.get("id") or "").strip().lower()
 
 
+def _distance_to_interval_seconds(moment: datetime, start: datetime, end: datetime) -> float:
+    if start <= moment <= end:
+        # Keep contained timestamps valid while retaining enough distance to
+        # disambiguate overlapping calls by the closest interval boundary.
+        return min((moment - start).total_seconds(), (end - moment).total_seconds()) / 100.0
+    if moment < start:
+        return (start - moment).total_seconds()
+    return (moment - end).total_seconds()
+
+
+def _recording_start_from_filename(name: Any) -> datetime | None:
+    match = re.search(
+        r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])[_-]([01]\d|2[0-3])([0-5]\d)([0-5]\d)(?!\d)",
+        str(name or ""),
+    )
+    if not match:
+        return None
+    try:
+        return datetime(*(int(value) for value in match.groups()), tzinfo=_ECUADOR_TIMEZONE)
+    except ValueError:
+        return None
+
+
+def _team_schedule_hours(display_name: Any) -> tuple[int, int, int, int] | None:
+    match = re.search(
+        r"(?<!\d)([01]?\d|2[0-3])\s*(?:h|:)\s*([0-5]\d)\s*"
+        r"(?:a|hasta|-)\s*([01]?\d|2[0-3])\s*(?:h|:)\s*([0-5]\d)(?!\d)",
+        str(display_name or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return tuple(int(value) for value in match.groups())  # type: ignore[return-value]
+
+
+def _apply_recording_time_fallbacks(recordings: list[dict[str, Any]], team_name: str) -> int:
+    schedule = _team_schedule_hours(team_name)
+    available_count = 0
+    for recording in recordings:
+        filename_start = _recording_start_from_filename(recording.get("name"))
+        recording_seconds = recording.get("recordingDurationSeconds")
+        recording_end = (
+            filename_start + timedelta(seconds=int(recording_seconds))
+            if filename_start is not None and recording_seconds is not None
+            else None
+        )
+
+        if recording.get("recordingStartTime") is None and filename_start is not None:
+            recording.update(
+                {
+                    "recordingStartTime": filename_start.isoformat(),
+                    "recordingEndTime": recording_end.isoformat() if recording_end else None,
+                    "recordingDateLabel": _format_date_label(filename_start.isoformat()),
+                    "recordingStartHourLabel": _format_time_label(filename_start.isoformat()),
+                    "recordingEndHourLabel": _format_time_label(recording_end.isoformat()) if recording_end else None,
+                    "recordingTimeSource": "TEAMS_FILENAME_TIMESTAMP",
+                    "recordingTimeStatus": "FILENAME_TIMESTAMP",
+                }
+            )
+
+        if recording.get("callStartTime") is None and filename_start is not None and schedule is not None:
+            start_hour, start_minute, end_hour, end_minute = schedule
+            call_start = filename_start.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+            call_end = filename_start.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+            if call_end <= call_start:
+                call_end += timedelta(days=1)
+            call_seconds = int((call_end - call_start).total_seconds())
+            recording.update(
+                {
+                    "callStartTime": call_start.isoformat(),
+                    "callEndTime": call_end.isoformat(),
+                    "callDateLabel": _format_date_label(call_start.isoformat()),
+                    "callStartHourLabel": _format_time_label(call_start.isoformat()),
+                    "callEndHourLabel": _format_time_label(call_end.isoformat()),
+                    "callDurationSeconds": call_seconds,
+                    "callDurationLabel": _format_duration_label(call_seconds),
+                    "callDurationClock": _format_duration_clock(call_seconds),
+                    "callDurationSource": "TEAM_SCHEDULE",
+                    "callTimeStatus": "SCHEDULED_FALLBACK",
+                }
+            )
+
+        if recording.get("startTime") is None and filename_start is not None:
+            fallback_end = recording.get("callEndTime") or (recording_end.isoformat() if recording_end else None)
+            recording.update(
+                {
+                    "startTime": recording.get("callStartTime") or filename_start.isoformat(),
+                    "endTime": fallback_end,
+                    "startDateLabel": recording.get("callDateLabel") or _format_date_label(filename_start.isoformat()),
+                    "startHourLabel": recording.get("callStartHourLabel") or _format_time_label(filename_start.isoformat()),
+                    "endHourLabel": recording.get("callEndHourLabel")
+                    or (_format_time_label(recording_end.isoformat()) if recording_end else None),
+                }
+            )
+
+        if recording.get("callStartTime") or recording.get("recordingStartTime"):
+            available_count += 1
+    return available_count
+
+
 def _enrich_recording_times(
     recordings: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
@@ -676,9 +787,12 @@ def _enrich_recording_times(
                 organizer_id = _recording_artifact_organizer_id(artifact)
                 if recording_owner_id and organizer_id and recording_owner_id != organizer_id:
                     continue
-                distance = min(abs((file_created - start).total_seconds()), abs((file_created - end).total_seconds()))
-                if distance <= _RECORDING_TIME_MATCH_TOLERANCE_SECONDS:
-                    matches.append((distance, artifact_index, artifact, start, end))
+                interval_distance = _distance_to_interval_seconds(file_created, start, end)
+                if interval_distance <= _RECORDING_TIME_MATCH_TOLERANCE_SECONDS:
+                    # DriveItem creation normally follows the beginning of the
+                    # recording, so start proximity disambiguates adjacent calls.
+                    match_score = abs((file_created - start).total_seconds())
+                    matches.append((match_score, artifact_index, artifact, start, end))
             matches.sort(key=lambda value: value[0])
             if not matches or (len(matches) > 1 and matches[1][0] - matches[0][0] < 120):
                 continue
@@ -2270,9 +2384,14 @@ def teams_recordings(
                 "?$select=id,displayName,mail,userPrincipalName",
                 20,
             ),
+            "Miembros del Team": (
+                f"https://graph.microsoft.com/v1.0/groups/{encoded_team_id}/members"
+                "?$select=id,displayName,mail,userPrincipalName",
+                500,
+            ),
         }
         indexes: dict[str, list[dict[str, Any]]] = {}
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(load_index, key, request[0], request[1])
                 for key, request in index_requests.items()
@@ -2286,6 +2405,15 @@ def teams_recordings(
         channels = indexes.get("Canales del Team", [])
         group_drives = indexes.get("Bibliotecas SharePoint del Team", [])
         owners = indexes.get("Propietarios del Team", [])
+        members = indexes.get("Miembros del Team", [])
+        try:
+            team_info = graph_get(
+                f"https://graph.microsoft.com/v1.0/groups/{encoded_team_id}?$select=id,displayName"
+            )
+            team_display_name = str(team_info.get("displayName") or "").strip()
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            team_display_name = ""
+            discovery_warnings.append(_recording_discovery_warning("Información del Team", exc))
 
         channel_folders: list[dict[str, Any]] = []
         owner_folders: list[dict[str, Any]] = []
@@ -2444,27 +2572,53 @@ def teams_recordings(
         if recording_dates:
             range_start = min(recording_dates) - timedelta(days=1)
             range_end = max(recording_dates) + timedelta(days=1)
-            range_start_text = range_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             range_end_text = range_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             time_requests: list[tuple[str, str, str]] = []
 
-            for owner in owners:
-                owner_id = str(owner.get("id") or "").strip()
-                if not owner_id:
-                    continue
-                encoded_owner_id = quote(owner_id, safe="")
-                time_requests.append(
-                    (
-                        f"Grabaciones organizadas por {owner.get('displayName') or owner_id}",
+            principals_by_id = {
+                str(principal.get("id") or "").strip().lower(): principal
+                for principal in [*members, *owners]
+                if str(principal.get("id") or "").strip()
+            }
+            organizer_ids = {
+                str(owner.get("id") or "").strip().lower()
+                for owner in owners
+                if str(owner.get("id") or "").strip()
+            }
+            for recording in recordings:
+                for field in ("ownerId", "createdById", "lastModifiedById"):
+                    candidate_id = str(recording.get(field) or "").strip().lower()
+                    if candidate_id and candidate_id in principals_by_id:
+                        organizer_ids.add(candidate_id)
+
+            # Graph limits getAllRecordings to bounded date ranges. Query only
+            # the calendar months that contain files, including one-day margins.
+            recording_months = sorted({(value.year, value.month) for value in recording_dates})
+            for organizer_id in sorted(organizer_ids):
+                principal = principals_by_id.get(organizer_id, {})
+                organizer_name = principal.get("displayName") or organizer_id
+                encoded_organizer_id = quote(organizer_id, safe="")
+                for year, month in recording_months:
+                    month_start = datetime(year, month, 1, tzinfo=timezone.utc) - timedelta(days=1)
+                    if month == 12:
+                        next_month = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                    else:
+                        next_month = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+                    month_end = next_month + timedelta(days=1)
+                    month_start_text = month_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    month_end_text = month_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    time_requests.append(
                         (
-                            f"https://graph.microsoft.com/v1.0/users/{encoded_owner_id}/onlineMeetings/"
-                            "getAllRecordings("
-                            f"meetingOrganizerUserId='{owner_id}',startDateTime={range_start_text},"
-                            f"endDateTime={range_end_text})?$top=500"
-                        ),
-                        "GRAPH_CALL_RECORDING",
+                            f"Grabaciones organizadas por {organizer_name}",
+                            (
+                                f"https://graph.microsoft.com/v1.0/users/{encoded_organizer_id}/onlineMeetings/"
+                                "getAllRecordings("
+                                f"meetingOrganizerUserId='{organizer_id}',startDateTime={month_start_text},"
+                                f"endDateTime={month_end_text})?$top=500"
+                            ),
+                            "GRAPH_CALL_RECORDING",
+                        )
                     )
-                )
 
             call_records_minimum = datetime.now(timezone.utc) - timedelta(days=30)
             if range_end >= call_records_minimum:
@@ -2511,12 +2665,10 @@ def teams_recordings(
                             "Se requiere OnlineMeetingRecording.Read.All o CallRecords.Read.All."
                         )
 
-            team_owner_ids = {
-                str(owner.get("id") or "").strip().lower()
-                for owner in owners
-                if str(owner.get("id") or "").strip()
-            }
-            verified_time_count = _enrich_recording_times(recordings, recording_artifacts, team_owner_ids)
+            team_member_ids = set(principals_by_id)
+            verified_time_count = _enrich_recording_times(recordings, recording_artifacts, team_member_ids)
+
+        verified_time_count = _apply_recording_time_fallbacks(recordings, team_display_name)
 
         payload = response_payload(recordings, len(recording_candidates))
         with _RECORDINGS_CACHE_LOCK:
