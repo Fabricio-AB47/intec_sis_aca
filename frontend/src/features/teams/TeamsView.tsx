@@ -1046,6 +1046,10 @@ export function TeamsView({
                       label: 'Duración de la grabación',
                       value: item.recordingDurationLabel || item.durationLabel || 'No disponible',
                     },
+                    {
+                      label: 'Modificado por',
+                      value: item.lastModifiedByName || 'No informado por Microsoft Graph',
+                    },
                   ]}
                 />
                 {item.webUrl ? (
