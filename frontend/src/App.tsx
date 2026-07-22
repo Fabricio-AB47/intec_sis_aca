@@ -44,6 +44,7 @@ const TitulosRegistradosView = lazyView(() => import('./features/matricula/Titul
 const TitulacionView = lazyView(() => import('./features/matricula/TitulacionView'), 'TitulacionView')
 const PortalDocenteView = lazyView(() => import('./features/portal/PortalDocenteView'), 'PortalDocenteView')
 const PortalDocentePlanificacionView = lazyView(() => import('./features/portal/PortalDocentePlanificacionView'), 'PortalDocentePlanificacionView')
+const PortalDocenteContratosView = lazyView(() => import('./features/portal/PortalDocenteContratosView'), 'PortalDocenteContratosView')
 const PortalEstudianteView = lazyView(() => import('./features/portal/PortalEstudianteView'), 'PortalEstudianteView')
 const PracticasInstitucionalesView = lazyView(() => import('./features/practicas/PracticasInstitucionalesView'), 'PracticasInstitucionalesView')
 const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
@@ -281,6 +282,8 @@ function App() {
       pageContent = <PortalDocenteView displayName={app.displayName} initialMode="compliance" />
     } else if (app.activePage === 'portal-docente-planificacion') {
       pageContent = <PortalDocentePlanificacionView displayName={app.displayName} />
+    } else if (app.activePage === 'portal-docente-contratos') {
+      pageContent = <PortalDocenteContratosView displayName={app.displayName} />
     } else if (app.activePage === 'formato-informe-docente') {
       pageContent = <TeacherComplianceFormatView displayName={app.displayName} />
     } else if (app.activePage === 'practicas-institucionales') {
@@ -351,6 +354,7 @@ function App() {
           onOpenPortalDocente={app.openPortalDocentePage}
           onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}
           onOpenPortalDocentePlanificacion={app.openPortalDocentePlanificacionPage}
+          onOpenPortalDocenteContratos={app.openPortalDocenteContratosPage}
           onOpenTeams={app.openTeamsPage}
           onOpenTeamsMatricula={app.openTeamsMatriculaPage}
           onOpenMatricula={app.openMatriculaPage}

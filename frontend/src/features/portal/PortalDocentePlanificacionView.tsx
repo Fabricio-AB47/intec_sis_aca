@@ -10,12 +10,17 @@ import type {
 
 type Props = { displayName: string }
 type Draft = Omit<PortalAcademicPlanningPayload, 'document_type' | 'codigo_periodos' | 'codigo_materia' | 'paralelo' | 'cod_anio_basica' | 'cod_jornada'>
+type PlanningDocumentType = 'pea' | 'silabo'
 
 const MISION_INTEC = 'Somos una institución de educación superior, enfocada en docencia de calidad, gestión transparente, investigación y vinculación, para formar profesionales con conducta ética y capacidad innovadora, en respuesta a las necesidades productivas del país.'
 const PLANNING_MODULES = [
   'Datos generales', 'Propósito', 'Alineamiento', 'Contenidos',
   'Metodología', 'Evaluación', 'Bibliografía', 'Firma electrónica',
 ] as const
+const PLANNING_DOCUMENTS: Array<{ value: PlanningDocumentType; label: string; description: string; format: string }> = [
+  { value: 'pea', label: 'PEA', description: 'Programa de estudios de la asignatura', format: 'Formato vertical' },
+  { value: 'silabo', label: 'Sílabo', description: 'Plan detallado de contenidos y actividades', format: 'Formato horizontal' },
+]
 
 function newTopic(week = 1): PortalAcademicPlanningTopic {
   return {
@@ -76,6 +81,7 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
   const [previewType, setPreviewType] = useState<'pea' | 'silabo' | null>(null)
   const [previewUrl, setPreviewUrl] = useState('')
   const [activeModule, setActiveModule] = useState(0)
+  const [selectedDocument, setSelectedDocument] = useState<PlanningDocumentType>('pea')
   const [signing, setSigning] = useState<'pea' | 'silabo' | null>(null)
   const [certificate, setCertificate] = useState<File | null>(null)
   const [certificatePassword, setCertificatePassword] = useState('')
@@ -91,6 +97,18 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
     (subtotal, topic) => subtotal + topic.horas_docencia + topic.horas_practica + topic.horas_autonomo, 0,
   ), 0), [draft.unidades])
   const evaluationTotal = draft.evaluacion_tareas + draft.evaluacion_individual + draft.evaluacion_colaborativo + draft.evaluacion_acumulativa
+  const moduleCompletion = useMemo(() => [
+    Boolean(selectedCourse && draft.nivel.trim() && draft.unidad_curricular.trim() && draft.modalidad.trim()),
+    Boolean(draft.descripcion.trim() && draft.objetivo_general.trim() && draft.resultados_aprendizaje.trim()),
+    Boolean(draft.mision_intec.trim() && draft.mision_escuela.trim() && draft.mision_carrera.trim()),
+    draft.unidades.some((unit) => unit.nombre.trim() && unit.temas.some((topic) => topic.tema.trim())),
+    Boolean(draft.estrategias_metodologicas.trim() && draft.recursos_didacticos.trim()),
+    evaluationTotal === 100,
+    Boolean(draft.bibliografia_basica.trim() && draft.proyecto_tema.trim()),
+    certificate !== null,
+  ], [certificate, draft, evaluationTotal, selectedCourse])
+  const completedModules = moduleCompletion.filter(Boolean).length
+  const completionPercent = Math.round((completedModules / PLANNING_MODULES.length) * 100)
 
   useEffect(() => {
     void (async () => {
@@ -273,7 +291,26 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
         <section className="planning-section planning-section--course">
           <div className="section-title">
             <div><span>Asignatura</span><h2>Materia y documento</h2></div>
-            <strong>{totalHours} horas planificadas</strong>
+            <div className="planning-course-summary">
+              <strong>{totalHours} horas planificadas</strong>
+              <span>{completedModules} de {PLANNING_MODULES.length} puntos completos</span>
+            </div>
+          </div>
+          <div className="planning-document-picker" role="radiogroup" aria-label="Documento que desea crear">
+            {PLANNING_DOCUMENTS.map((document) => (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selectedDocument === document.value}
+                className={selectedDocument === document.value ? 'planning-document-option planning-document-option--active' : 'planning-document-option'}
+                key={document.value}
+                onClick={() => setSelectedDocument(document.value)}
+              >
+                <span>{document.label}</span>
+                <strong>{document.description}</strong>
+                <small>{document.format}</small>
+              </button>
+            ))}
           </div>
           <label className="planning-course-select">
             <span>Materia asignada</span>
@@ -282,10 +319,8 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
             </select>
           </label>
           <div className="planning-actions">
-            <button type="button" className="ghost-button" onClick={() => void previewDocument('pea')} disabled={!selectedCourse || previewing !== null}>{previewing === 'pea' ? 'Preparando...' : 'Vista previa PEA'}</button>
-            <button type="button" className="ghost-button" onClick={() => void previewDocument('silabo')} disabled={!selectedCourse || previewing !== null}>{previewing === 'silabo' ? 'Preparando...' : 'Vista previa Sílabo'}</button>
-            <button type="button" className="primary-action" onClick={() => void generate('pea')} disabled={!selectedCourse || generating !== null}>{generating === 'pea' ? 'Generando...' : 'Generar PEA PDF'}</button>
-            <button type="button" className="primary-action" onClick={() => void generate('silabo')} disabled={!selectedCourse || generating !== null}>{generating === 'silabo' ? 'Generando...' : 'Generar Sílabo PDF'}</button>
+            <button type="button" className="ghost-button" onClick={() => void previewDocument(selectedDocument)} disabled={!selectedCourse || previewing !== null}>{previewing === selectedDocument ? 'Preparando...' : `Vista previa ${selectedDocument === 'pea' ? 'PEA' : 'Sílabo'}`}</button>
+            <button type="button" className="primary-action" onClick={() => void generate(selectedDocument)} disabled={!selectedCourse || generating !== null}>{generating === selectedDocument ? 'Generando...' : `Generar ${selectedDocument === 'pea' ? 'PEA' : 'Sílabo'} PDF`}</button>
           </div>
           {message ? <p className="planning-message planning-message--ok">{message}</p> : null}
           {error ? <p className="planning-message planning-message--error">{error}</p> : null}
@@ -296,14 +331,19 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
             <button
               type="button"
               key={module}
-              className={activeModule === index ? 'planning-module-button planning-module-button--active' : 'planning-module-button'}
+              className={`${activeModule === index ? 'planning-module-button planning-module-button--active' : 'planning-module-button'}${moduleCompletion[index] ? ' planning-module-button--complete' : ''}`}
               onClick={() => setActiveModule(index)}
             >
-              <span>{index + 1}</span>
-              {module}
+              <span className="planning-module-index">{index + 1}</span>
+              <span className="planning-module-copy"><strong>{module}</strong><small>{moduleCompletion[index] ? 'Completo' : 'Pendiente'}</small></span>
             </button>
           ))}
         </nav>
+
+        <div className="planning-progress" aria-label={`Avance del documento ${completionPercent}%`}>
+          <div><span>Avance de contenido</span><strong>{completionPercent}%</strong></div>
+          <progress max="100" value={completionPercent}>{completionPercent}%</progress>
+        </div>
 
         <section className="planning-section" hidden={activeModule !== 0}>
           <div className="section-title"><div><span>Datos generales</span><h2>Información académica</h2></div></div>
@@ -437,8 +477,7 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
             <span>El archivo y la contraseña se descartan al terminar cada intento.</span>
           </div>
           <div className="planning-actions">
-            <button type="button" className="primary-action" onClick={() => void signDocument('pea')} disabled={!selectedCourse || signing !== null || generating !== null}>{signing === 'pea' ? 'Firmando...' : 'Firmar PEA'}</button>
-            <button type="button" className="primary-action" onClick={() => void signDocument('silabo')} disabled={!selectedCourse || signing !== null || generating !== null}>{signing === 'silabo' ? 'Firmando...' : 'Firmar Sílabo'}</button>
+            <button type="button" className="primary-action" onClick={() => void signDocument(selectedDocument)} disabled={!selectedCourse || signing !== null || generating !== null}>{signing === selectedDocument ? 'Firmando...' : `Firmar ${selectedDocument === 'pea' ? 'PEA' : 'Sílabo'}`}</button>
           </div>
         </section>
 
@@ -446,10 +485,8 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
           <button type="button" className="ghost-button" onClick={() => setActiveModule((current) => Math.max(0, current - 1))} disabled={activeModule === 0}>Anterior</button>
           <strong>Módulo {activeModule + 1} de {PLANNING_MODULES.length}</strong>
           <button type="button" className="ghost-button" onClick={() => setActiveModule((current) => Math.min(PLANNING_MODULES.length - 1, current + 1))} disabled={activeModule === PLANNING_MODULES.length - 1}>Siguiente</button>
-          <button type="button" className="ghost-button" onClick={() => void previewDocument('pea')} disabled={!selectedCourse || previewing !== null}>Vista previa PEA</button>
-          <button type="button" className="ghost-button" onClick={() => void previewDocument('silabo')} disabled={!selectedCourse || previewing !== null}>Vista previa Sílabo</button>
-          <button type="button" className="primary-action" onClick={() => void generate('pea')} disabled={!selectedCourse || generating !== null}>Generar PEA</button>
-          <button type="button" className="primary-action" onClick={() => void generate('silabo')} disabled={!selectedCourse || generating !== null}>Generar Sílabo</button>
+          <button type="button" className="ghost-button" onClick={() => void previewDocument(selectedDocument)} disabled={!selectedCourse || previewing !== null}>Vista previa {selectedDocument === 'pea' ? 'PEA' : 'Sílabo'}</button>
+          <button type="button" className="primary-action" onClick={() => void generate(selectedDocument)} disabled={!selectedCourse || generating !== null}>Generar {selectedDocument === 'pea' ? 'PEA' : 'Sílabo'}</button>
         </footer>
       </form>
 

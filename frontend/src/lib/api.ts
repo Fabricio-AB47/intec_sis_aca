@@ -81,6 +81,7 @@ import type {
   PortalAcademicPlanningPayload,
   PortalStudentRecordResponse,
   PortalTeacherCoursesResponse,
+  PortalTeacherContractsResponse,
   PortalTeacherGradePayload,
   PortalTeacherGradeSaveResponse,
   PortalTeacherStudentsResponse,
@@ -1760,6 +1761,10 @@ export async function downloadPortalStudentSecretaryPdf(
 
 export async function fetchPortalTeacherCourses(): Promise<PortalTeacherCoursesResponse> {
   return request<PortalTeacherCoursesResponse>('/api/portal/teacher/courses')
+}
+
+export async function fetchPortalTeacherContracts(): Promise<PortalTeacherContractsResponse> {
+  return request<PortalTeacherContractsResponse>('/api/portal/teacher/contracts')
 }
 
 export async function downloadPortalAcademicPlanningPdf(

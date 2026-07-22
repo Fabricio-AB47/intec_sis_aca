@@ -21,13 +21,44 @@ from app.services.graph import graph_get, graph_get_all, graph_patch, graph_post
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 logger = logging.getLogger(__name__)
 
-_TEAMS_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_TEAMS_ROLE_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_INSTITUTIONAL_EMAIL_DOMAIN = "intec.edu.ec"
+
+
+def _institutional_email_for_user(current_user: SessionUser) -> str | None:
+    for candidate in (current_user.email, current_user.login):
+        normalized = str(candidate or "").strip().lower()
+        if normalized.count("@") != 1:
+            continue
+        _, domain = normalized.rsplit("@", 1)
+        if domain == _INSTITUTIONAL_EMAIL_DOMAIN:
+            return normalized
+    return None
+
+
+def _require_teams_access(
+    current_user: SessionUser = Depends(_TEAMS_ROLE_ACCESS),
+) -> SessionUser:
+    if _institutional_email_for_user(current_user) is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Teams requiere una cuenta institucional @intec.edu.ec autenticada",
+        )
+    return current_user
+
+
+_TEAMS_ACCESS = _require_teams_access
 _EXAMPLE_START_HOUR = "6:00 PM"
 _EXAMPLE_END_HOUR = "8:00 PM"
 _UTC_OFFSET_SUFFIX = "+00:00"
 _MEET_JOIN_URL_TOKEN = "teams.microsoft.com/l/meetup-join/"
 _CHANNEL_ACTIVITY_ACTIVE_WINDOW_MINUTES = 120
 _GRAPH_PARALLEL_WORKERS = 6
+_RECORDINGS_CACHE_TTL_SECONDS = 30
+_RECORDINGS_CACHE_MAX_TEAMS = 100
+_RECORDINGS_CACHE_LOCK = Lock()
+_RECORDINGS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_RECORDING_TIME_MATCH_TOLERANCE_SECONDS = 20 * 60
 _CHANNEL_MESSAGES_LIMIT = 20
 _MESSAGE_REPLIES_LIMIT = 30
 _TEAM_READY_TIMEOUT_SECONDS = 180
@@ -353,9 +384,30 @@ def _format_duration_label(total_seconds: int | None) -> str | None:
         return None
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    if hours > 0:
-        return f"{hours:02}:{minutes:02}:{seconds:02}"
-    return f"{minutes:02}:{seconds:02}"
+    return f"{hours:02} h {minutes:02} min {seconds:02} s"
+
+
+def _format_duration_clock(total_seconds: int | None) -> str | None:
+    if total_seconds is None or total_seconds < 0:
+        return None
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+
+def _format_file_size(size_bytes: int | None) -> str | None:
+    if size_bytes is None or size_bytes < 0:
+        return None
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size_bytes)
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if value < 1024 or candidate == units[-1]:
+            break
+        value /= 1024
+    decimals = 0 if unit == "B" else 2
+    return f"{value:.{decimals}f} {unit}"
 
 
 def _duration_seconds_from_item(file_item: dict[str, Any]) -> int | None:
@@ -376,38 +428,127 @@ def _duration_seconds_from_item(file_item: dict[str, Any]) -> int | None:
     except (TypeError, ValueError):
         return None
 
-    # Some payloads expose milliseconds; treat very large values as ms.
-    if duration_number > 10_000:
-        duration_number = duration_number / 1000.0
+    # Microsoft Graph's video/audio facets expose duration in milliseconds.
+    duration_number = duration_number / 1000.0
 
     duration_int = int(round(duration_number))
     return duration_int if duration_int >= 0 else None
 
 
 def _recording_item_with_hours(file_item: dict[str, Any]) -> dict[str, Any]:
-    start_time = file_item.get("createdDateTime") or file_item.get("lastModifiedDateTime")
-    end_time = file_item.get("lastModifiedDateTime")
-
+    uploaded_at = file_item.get("createdDateTime")
+    modified_at = file_item.get("lastModifiedDateTime")
     duration_seconds = _duration_seconds_from_item(file_item)
-    start_dt = _parse_graph_datetime(start_time)
-    if duration_seconds is not None and start_dt:
-        end_time = (start_dt + timedelta(seconds=duration_seconds)).isoformat()
+    size_value = file_item.get("size")
+    try:
+        size_bytes = int(size_value) if size_value is not None else None
+    except (TypeError, ValueError):
+        size_bytes = None
+
+    name = str(file_item.get("name") or "").strip()
+    extension_match = re.search(r"\.([a-z0-9]+)$", name.lower())
+    extension = extension_match.group(1).upper() if extension_match else ""
+    file_facet = cast(dict[str, Any], file_item.get("file")) if isinstance(file_item.get("file"), dict) else {}
+    parent_reference = (
+        cast(dict[str, Any], file_item.get("parentReference"))
+        if isinstance(file_item.get("parentReference"), dict)
+        else {}
+    )
+    sharepoint_ids = (
+        cast(dict[str, Any], file_item.get("sharepointIds"))
+        if isinstance(file_item.get("sharepointIds"), dict)
+        else {}
+    )
+    created_by = cast(dict[str, Any], file_item.get("createdBy")) if isinstance(file_item.get("createdBy"), dict) else {}
+    modified_by = (
+        cast(dict[str, Any], file_item.get("lastModifiedBy"))
+        if isinstance(file_item.get("lastModifiedBy"), dict)
+        else {}
+    )
+
+    def actor_name(actor: dict[str, Any]) -> str | None:
+        for actor_type in ("user", "application", "device"):
+            actor_data = actor.get(actor_type)
+            if isinstance(actor_data, dict):
+                label = str(actor_data.get("displayName") or actor_data.get("email") or actor_data.get("id") or "").strip()
+                if label:
+                    return label
+        return None
+    mime_type = str(file_facet.get("mimeType") or "").strip()
+    web_url = str(file_item.get("webUrl") or "").strip()
+    warnings: list[str] = []
+    if duration_seconds is None:
+        warnings.append(
+            "Microsoft Graph no entregó la duración multimedia; no se calcula usando las fechas del archivo"
+        )
+    if size_bytes is None or size_bytes <= 0:
+        warnings.append("El archivo no informa un tamaño válido")
+    if not web_url.lower().startswith(("https://", "http://")):
+        warnings.append("El archivo no dispone de un enlace web válido")
 
     return {
         "id": file_item.get("id"),
-        "name": file_item.get("name"),
-        "webUrl": file_item.get("webUrl"),
-        "startTime": start_time,
-        "endTime": end_time,
-        "startDateLabel": _format_date_label(start_time),
-        "endDateLabel": _format_date_label(end_time),
-        "startHourLabel": _format_time_label(start_time),
-        "endHourLabel": _format_time_label(end_time),
+        "name": name,
+        "webUrl": web_url if web_url.lower().startswith(("https://", "http://")) else None,
+        # DriveItem only proves when the file was created and modified. These
+        # values are not the start and end timestamps of the Teams meeting.
+        "startTime": None,
+        "endTime": None,
+        "startDateLabel": None,
+        "endDateLabel": None,
+        "startHourLabel": None,
+        "endHourLabel": None,
+        "uploadedAt": uploaded_at,
+        "uploadedDateLabel": _format_date_label(uploaded_at),
+        "uploadedHourLabel": _format_time_label(uploaded_at),
+        "fileCreatedAt": uploaded_at,
+        "fileCreatedDateLabel": _format_date_label(uploaded_at),
+        "fileCreatedHourLabel": _format_time_label(uploaded_at),
+        "modifiedAt": modified_at,
+        "modifiedDateTimeLabel": _format_datetime_label(modified_at),
         "durationSeconds": duration_seconds,
         "durationLabel": _format_duration_label(duration_seconds),
-        "lastModifiedDateTime": file_item.get("lastModifiedDateTime"),
-        "size": file_item.get("size"),
+        "durationClock": _format_duration_clock(duration_seconds),
+        "durationHours": duration_seconds // 3600 if duration_seconds is not None else None,
+        "durationMinutes": (duration_seconds % 3600) // 60 if duration_seconds is not None else None,
+        "durationRemainingSeconds": duration_seconds % 60 if duration_seconds is not None else None,
+        "durationSource": "GRAPH_MEDIA_METADATA" if duration_seconds is not None else "NOT_AVAILABLE",
+        "durationStatus": "VERIFIED_GRAPH_MEDIA" if duration_seconds is not None else "NOT_AVAILABLE",
+        "timestampSource": "DRIVE_ITEM_FILE_LIFECYCLE",
+        "recordingTimeStatus": "NOT_PROVIDED_BY_DRIVE_ITEM",
+        "estimatedDurationSeconds": None,
+        "estimatedDurationLabel": None,
+        "estimatedDurationClock": None,
+        "estimatedDurationSource": "NOT_AVAILABLE",
+        "durationDifferenceSeconds": None,
+        "durationDifferenceLabel": None,
+        "durationsConsistent": None,
+        "lastModifiedDateTime": modified_at,
+        "size": size_bytes,
+        "sizeBytes": size_bytes,
+        "sizeLabel": _format_file_size(size_bytes),
+        "fileExtension": extension,
+        "mimeType": mime_type,
+        "metadataStatus": "COMPLETA" if not warnings else "INCOMPLETA",
+        "warnings": warnings,
         "timeZone": _ECUADOR_TIMEZONE_NAME,
+        "storageSource": file_item.get("storageSource"),
+        "sourceLabel": file_item.get("sourceLabel"),
+        "driveId": file_item.get("driveId") or parent_reference.get("driveId"),
+        "driveName": file_item.get("driveName"),
+        "driveType": file_item.get("driveType"),
+        "driveWebUrl": file_item.get("driveWebUrl"),
+        "channelId": file_item.get("channelId"),
+        "channelName": file_item.get("channelName"),
+        "ownerId": file_item.get("ownerId"),
+        "ownerName": file_item.get("ownerName"),
+        "parentPath": file_item.get("parentPath") or parent_reference.get("path"),
+        "siteId": file_item.get("siteId") or parent_reference.get("siteId") or sharepoint_ids.get("siteId"),
+        "listId": sharepoint_ids.get("listId"),
+        "listItemId": sharepoint_ids.get("listItemId"),
+        "createdByName": actor_name(created_by),
+        "lastModifiedByName": actor_name(modified_by),
+        "eTag": file_item.get("eTag"),
     }
 
 
@@ -445,13 +586,14 @@ def _dedupe_recording_items(file_items: list[dict[str, Any]]) -> list[dict[str, 
             continue
 
         item = _recording_item_with_hours(file_item)
-        name_key = re.sub(r"\.[a-z0-9]+$", "", str(item.get("name") or "").strip().lower())
-        key = "|".join(
+        stable_id = str(item.get("id") or "").strip()
+        drive_id = str(item.get("driveId") or "").strip()
+        key = f"{drive_id}|{stable_id}" if drive_id and stable_id else "|".join(
             [
-                name_key,
-                str(item.get("startDateLabel") or ""),
-                str(item.get("startHourLabel") or ""),
-                str(item.get("durationLabel") or ""),
+                str(item.get("webUrl") or "").strip().lower(),
+                str(item.get("name") or "").strip().lower(),
+                str(item.get("uploadedAt") or ""),
+                str(item.get("sizeBytes") or ""),
             ]
         )
         if key in seen:
@@ -461,6 +603,122 @@ def _dedupe_recording_items(file_items: list[dict[str, Any]]) -> list[dict[str, 
 
     recordings.sort(key=lambda item: str(item.get("startTime") or item.get("lastModifiedDateTime") or ""), reverse=True)
     return recordings
+
+
+def _recording_artifact_interval(artifact: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    start = _parse_graph_datetime(artifact.get("startDateTime") or artifact.get("createdDateTime"))
+    end = _parse_graph_datetime(artifact.get("endDateTime"))
+    if not start or not end or end <= start:
+        return None
+    if (end - start).total_seconds() > 12 * 3600:
+        return None
+    return start, end
+
+
+def _recording_artifact_organizer_id(artifact: dict[str, Any]) -> str:
+    organizer = artifact.get("meetingOrganizer") or artifact.get("organizer")
+    if not isinstance(organizer, dict):
+        return ""
+    user = cast(dict[str, Any], organizer.get("user")) if isinstance(organizer.get("user"), dict) else {}
+    return str(user.get("id") or "").strip().lower()
+
+
+def _enrich_recording_times(
+    recordings: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    team_owner_ids: set[str],
+) -> int:
+    available: list[tuple[int, dict[str, Any], datetime, datetime]] = []
+    for index, artifact in enumerate(artifacts):
+        interval = _recording_artifact_interval(artifact)
+        if interval is None:
+            continue
+        organizer_id = _recording_artifact_organizer_id(artifact)
+        if team_owner_ids and organizer_id and organizer_id not in team_owner_ids:
+            continue
+        available.append((index, artifact, interval[0], interval[1]))
+
+    used_artifacts: set[int] = set()
+    enriched_count = 0
+    for recording in recordings:
+        file_created = _parse_graph_datetime(recording.get("fileCreatedAt") or recording.get("uploadedAt"))
+        if file_created is None:
+            continue
+        recording_owner_id = str(recording.get("ownerId") or "").strip().lower()
+        matches: list[tuple[float, int, dict[str, Any], datetime, datetime]] = []
+        for artifact_index, artifact, start, end in available:
+            if artifact_index in used_artifacts:
+                continue
+            organizer_id = _recording_artifact_organizer_id(artifact)
+            if recording_owner_id and organizer_id and recording_owner_id != organizer_id:
+                continue
+            distance = min(abs((file_created - start).total_seconds()), abs((file_created - end).total_seconds()))
+            if distance <= _RECORDING_TIME_MATCH_TOLERANCE_SECONDS:
+                matches.append((distance, artifact_index, artifact, start, end))
+        matches.sort(key=lambda value: value[0])
+        if not matches:
+            continue
+        if len(matches) > 1 and matches[1][0] - matches[0][0] < 120:
+            continue
+
+        distance, artifact_index, artifact, start, end = matches[0]
+        used_artifacts.add(artifact_index)
+        interval_seconds = int(round((end - start).total_seconds()))
+        source = str(artifact.get("timeSource") or "GRAPH_CALL_RECORDING")
+        recording.update(
+            {
+                "startTime": start.isoformat(),
+                "endTime": end.isoformat(),
+                "startDateLabel": _format_date_label(start.isoformat()),
+                "endDateLabel": _format_date_label(end.isoformat()),
+                "startHourLabel": _format_time_label(start.isoformat()),
+                "endHourLabel": _format_time_label(end.isoformat()),
+                "calculatedDurationSeconds": interval_seconds,
+                "calculatedDurationLabel": _format_duration_label(interval_seconds),
+                "calculatedDurationClock": _format_duration_clock(interval_seconds),
+                "recordingTimeStatus": "VERIFIED_GRAPH_INTERVAL",
+                "recordingTimeSource": source,
+                "recordingTimeMatchSeconds": int(round(distance)),
+                "recordingTimeMatchStatus": "HIGH_CONFIDENCE",
+                "meetingId": artifact.get("meetingId"),
+                "callId": artifact.get("callId") or artifact.get("id"),
+            }
+        )
+        if recording.get("durationSeconds") is None:
+            recording.update(
+                {
+                    "durationSeconds": interval_seconds,
+                    "durationLabel": _format_duration_label(interval_seconds),
+                    "durationClock": _format_duration_clock(interval_seconds),
+                    "durationHours": interval_seconds // 3600,
+                    "durationMinutes": (interval_seconds % 3600) // 60,
+                    "durationRemainingSeconds": interval_seconds % 60,
+                    "durationSource": source,
+                    "durationStatus": "VERIFIED_GRAPH_INTERVAL",
+                }
+            )
+            recording["warnings"] = [
+                warning
+                for warning in cast(list[str], recording.get("warnings") or [])
+                if not warning.startswith("Microsoft Graph no entregó la duración multimedia")
+            ]
+            recording["metadataStatus"] = "COMPLETA" if not recording["warnings"] else "INCOMPLETA"
+        enriched_count += 1
+    return enriched_count
+
+
+def _recording_discovery_warning(source_label: str, exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            reason = "Microsoft Graph no concedió acceso"
+        elif status_code == 404:
+            reason = "la ubicación no existe o todavía no fue creada"
+        else:
+            reason = f"Microsoft Graph respondió HTTP {status_code}"
+    else:
+        reason = str(exc).strip() or exc.__class__.__name__
+    return f"{source_label}: {reason}."
 
 
 def _is_access_denied_error(exc: httpx.HTTPStatusError) -> bool:
@@ -1770,57 +2028,470 @@ def teams_recordings(
     current_user: Annotated[SessionUser, Depends(_TEAMS_ACCESS)],
 ) -> dict[str, Any]:
     del current_user
-    url = f"https://graph.microsoft.com/v1.0/groups/{team_id}/drive/root/search(q='recording')"
+    started_at = time.perf_counter()
+    encoded_team_id = _team_id_url_value(team_id)
+    cache_key = encoded_team_id.lower()
 
-    try:
-        payload = graph_get_all(url)
-        files = _graph_value_items(payload)
-        items = _dedupe_recording_items(files)
+    with _RECORDINGS_CACHE_LOCK:
+        cached_entry = _RECORDINGS_CACHE.get(cache_key)
+        if cached_entry and time.monotonic() - cached_entry[0] < _RECORDINGS_CACHE_TTL_SECONDS:
+            cached_payload = cached_entry[1]
+            cached_discovery = cast(dict[str, Any], cached_payload.get("discovery") or {})
+            return {
+                **cached_payload,
+                "discovery": {
+                    **cached_discovery,
+                    "cacheHit": True,
+                    "queryElapsedMs": int(round((time.perf_counter() - started_at) * 1000)),
+                    "cacheTtlSeconds": _RECORDINGS_CACHE_TTL_SECONDS,
+                },
+            }
+
+    select_fields = (
+        "id,name,webUrl,createdDateTime,lastModifiedDateTime,size,file,video,audio,eTag,"
+        "parentReference,sharepointIds,createdBy,lastModifiedBy"
+    )
+    recording_candidates: list[dict[str, Any]] = []
+    discovery_warnings: list[str] = []
+    sources_succeeded = 0
+    sources_failed = 0
+    time_sources_scanned = 0
+    time_sources_succeeded = 0
+    time_sources_failed = 0
+    verified_time_count = 0
+
+    def load_index(index_key: str, url: str, max_items: int) -> tuple[str, list[dict[str, Any]], str | None]:
+        try:
+            return index_key, _graph_value_items(graph_get_all(url, max_items=max_items)), None
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            return index_key, [], _recording_discovery_warning(index_key, exc)
+
+    def resolve_channel_folder(channel: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        channel_id = str(channel.get("id") or "").strip()
+        channel_name = str(channel.get("displayName") or "Canal sin nombre").strip()
+        if not channel_id:
+            return None, None
+        try:
+            folder = graph_get(
+                f"https://graph.microsoft.com/v1.0/teams/{encoded_team_id}/channels/"
+                f"{quote(channel_id, safe='')}/filesFolder?$select=id,name,webUrl,parentReference"
+            )
+            parent_reference = (
+                cast(dict[str, Any], folder.get("parentReference"))
+                if isinstance(folder.get("parentReference"), dict)
+                else {}
+            )
+            drive_id = str(parent_reference.get("driveId") or "").strip()
+            folder_id = str(folder.get("id") or "").strip()
+            if not drive_id or not folder_id:
+                raise RuntimeError("Graph no devolvió driveId y folderId para el canal")
+            return {
+                "driveId": drive_id,
+                "folderId": folder_id,
+                "folderName": str(folder.get("name") or "Documentos"),
+                "folderWebUrl": folder.get("webUrl"),
+                "parentPath": parent_reference.get("path"),
+                "channelId": channel_id,
+                "channelName": channel_name,
+            }, None
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            return None, _recording_discovery_warning(f"SharePoint del canal {channel_name}", exc)
+
+    def resolve_owner_folder(owner: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        owner_id = str(owner.get("id") or "").strip()
+        owner_name = str(
+            owner.get("displayName") or owner.get("mail") or owner.get("userPrincipalName") or "Propietario"
+        ).strip()
+        if not owner_id:
+            return None, None
+        try:
+            folder = graph_get(
+                f"https://graph.microsoft.com/v1.0/users/{quote(owner_id, safe='')}/drive/root:/Recordings"
+                "?$select=id,name,webUrl,parentReference"
+            )
+            parent_reference = (
+                cast(dict[str, Any], folder.get("parentReference"))
+                if isinstance(folder.get("parentReference"), dict)
+                else {}
+            )
+            drive_id = str(parent_reference.get("driveId") or "").strip()
+            folder_id = str(folder.get("id") or "").strip()
+            if not drive_id or not folder_id:
+                raise RuntimeError("Graph no devolvió la carpeta Recordings del propietario")
+            return {
+                "driveId": drive_id,
+                "folderId": folder_id,
+                "folderWebUrl": folder.get("webUrl"),
+                "parentPath": parent_reference.get("path"),
+                "ownerId": owner_id,
+                "ownerName": owner_name,
+            }, None
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            return None, _recording_discovery_warning(f"OneDrive de {owner_name}", exc)
+
+    def scan_location(location: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, str | None]:
+        local_candidates: list[dict[str, Any]] = []
+        location_succeeded = False
+        location_errors: list[Exception] = []
+        metadata = cast(dict[str, Any], location["metadata"])
+        recordings_children_url = str(location.get("recordingsChildrenUrl") or "").strip()
+        if recordings_children_url:
+            try:
+                children_payload = graph_get_all(recordings_children_url, max_items=500)
+                for file_item in _graph_value_items(children_payload):
+                    local_candidates.append({**file_item, **metadata})
+                location_succeeded = True
+            except (httpx.HTTPStatusError, RuntimeError) as exc:
+                location_errors.append(exc)
+
+        if location_succeeded and location.get("skipSearchWhenChildrenSucceeds"):
+            return local_candidates, True, None
+        if not location_succeeded and location.get("skipSearchWhenChildrenFails"):
+            return [], True, None
+
+        for term in ("recording", "grabacion"):
+            search_url = f"{location['searchBaseUrl']}/search(q='{term}')?$select={select_fields}"
+            try:
+                search_payload = graph_get_all(search_url, max_items=500)
+                for file_item in _graph_value_items(search_payload):
+                    local_candidates.append({**file_item, **metadata})
+                location_succeeded = True
+            except (httpx.HTTPStatusError, RuntimeError) as exc:
+                location_errors.append(exc)
+
+        if location_succeeded:
+            return local_candidates, True, None
+        warning = (
+            _recording_discovery_warning(str(location["sourceLabel"]), location_errors[0])
+            if location_errors
+            else f"{location['sourceLabel']}: no fue posible consultar la ubicación."
+        )
+        return [], False, warning
+
+    def response_payload(items: list[dict[str, Any]], raw_count: int) -> dict[str, Any]:
+        total_seconds = sum(int(item.get("durationSeconds") or 0) for item in items)
+        known_duration_count = sum(1 for item in items if item.get("durationSeconds") is not None)
+        complete_count = sum(1 for item in items if item.get("metadataStatus") == "COMPLETA")
+        source_counts = {
+            source: sum(1 for item in items if item.get("storageSource") == source)
+            for source in ("TEAM_SHAREPOINT", "CHANNEL_SHAREPOINT", "OWNER_ONEDRIVE")
+        }
         return {
             "value": items,
             "count": len(items),
-            "raw_count": len(files),
+            "raw_count": raw_count,
             "timeZone": _ECUADOR_TIMEZONE_NAME,
-            "example": {
-                "startHourLabel": _EXAMPLE_START_HOUR,
-                "endHourLabel": _EXAMPLE_END_HOUR,
-                "text": "Ejemplo en hora de Ecuador: inicio 6:00 PM y fin 8:00 PM",
+            "summary": {
+                "totalDurationSeconds": total_seconds,
+                "totalDurationLabel": _format_duration_label(total_seconds),
+                "totalDurationClock": _format_duration_clock(total_seconds),
+                "knownDurationCount": known_duration_count,
+                "unknownDurationCount": len(items) - known_duration_count,
+                "completeMetadataCount": complete_count,
+                "incompleteMetadataCount": len(items) - complete_count,
+            },
+            "discovery": {
+                "sourcesScanned": len(locations),
+                "sourcesSucceeded": sources_succeeded,
+                "sourcesFailed": sources_failed,
+                "sourceCounts": source_counts,
+                "warnings": discovery_warnings,
+                "cacheHit": False,
+                "queryElapsedMs": int(round((time.perf_counter() - started_at) * 1000)),
+                "cacheTtlSeconds": _RECORDINGS_CACHE_TTL_SECONDS,
+                "timeSourcesScanned": time_sources_scanned,
+                "timeSourcesSucceeded": time_sources_succeeded,
+                "timeSourcesFailed": time_sources_failed,
+                "verifiedTimeCount": verified_time_count,
             },
         }
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 400:
-            fallback_url = (
-                f"https://graph.microsoft.com/v1.0/groups/{team_id}/drive/root/children"
-            )
-            try:
-                fallback_payload = graph_get_all(fallback_url)
-                fallback_items = _graph_value_items(fallback_payload)
-                recording_candidates = [
-                    file_item
-                    for file_item in fallback_items
-                    if str(file_item.get("name", "")).strip().lower().find("record") >= 0
-                    or str(file_item.get("name", "")).strip().lower().find("grab") >= 0
-                ]
-                recordings = _dedupe_recording_items(recording_candidates)
-                return {
-                    "value": recordings,
-                    "count": len(recordings),
-                    "raw_count": len(fallback_items),
-                    "timeZone": _ECUADOR_TIMEZONE_NAME,
-                    "example": {
-                        "startHourLabel": _EXAMPLE_START_HOUR,
-                        "endHourLabel": _EXAMPLE_END_HOUR,
-                        "text": "Ejemplo en hora de Ecuador: inicio 6:00 PM y fin 8:00 PM",
-                    },
-                }
-            except httpx.HTTPStatusError as fallback_exc:
-                _raise_graph_http_exception(fallback_exc)
-            except RuntimeError as fallback_exc:
-                raise HTTPException(status_code=500, detail=str(fallback_exc)) from fallback_exc
 
-        _raise_graph_http_exception(exc)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        index_requests = {
+            "Canales del Team": (
+                f"https://graph.microsoft.com/v1.0/teams/{encoded_team_id}/channels"
+                "?$select=id,displayName,membershipType",
+                100,
+            ),
+            "Bibliotecas SharePoint del Team": (
+                f"https://graph.microsoft.com/v1.0/groups/{encoded_team_id}/drives"
+                "?$select=id,name,driveType,webUrl",
+                25,
+            ),
+            "Propietarios del Team": (
+                f"https://graph.microsoft.com/v1.0/groups/{encoded_team_id}/owners"
+                "?$select=id,displayName,mail,userPrincipalName",
+                20,
+            ),
+        }
+        indexes: dict[str, list[dict[str, Any]]] = {}
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(load_index, key, request[0], request[1])
+                for key, request in index_requests.items()
+            ]
+            for future in as_completed(futures):
+                key, items, warning = future.result()
+                indexes[key] = items
+                if warning:
+                    discovery_warnings.append(warning)
+
+        channels = indexes.get("Canales del Team", [])
+        group_drives = indexes.get("Bibliotecas SharePoint del Team", [])
+        owners = indexes.get("Propietarios del Team", [])
+
+        channel_folders: list[dict[str, Any]] = []
+        owner_folders: list[dict[str, Any]] = []
+        resolution_jobs = len(channels) + len(owners)
+        if resolution_jobs:
+            with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, resolution_jobs)) as executor:
+                channel_futures = [executor.submit(resolve_channel_folder, channel) for channel in channels]
+                owner_futures = [executor.submit(resolve_owner_folder, owner) for owner in owners]
+                for future in as_completed(channel_futures + owner_futures):
+                    resolved, warning = future.result()
+                    if warning:
+                        discovery_warnings.append(warning)
+                    elif resolved and "channelId" in resolved:
+                        channel_folders.append(resolved)
+                    elif resolved:
+                        owner_folders.append(resolved)
+
+        locations_by_key: dict[str, dict[str, Any]] = {}
+        group_drive_ids = {str(drive.get("id") or "").strip() for drive in group_drives}
+
+        for drive in group_drives:
+            drive_id = str(drive.get("id") or "").strip()
+            if not drive_id:
+                continue
+            encoded_drive_id = quote(drive_id, safe="")
+            drive_name = str(drive.get("name") or "Documentos").strip()
+            locations_by_key[f"team-drive:{drive_id}"] = {
+                "sourceLabel": f"SharePoint del Team ({drive_name})",
+                "metadata": {
+                    "storageSource": "TEAM_SHAREPOINT",
+                    "sourceLabel": "SharePoint del equipo",
+                    "driveId": drive_id,
+                    "driveName": drive_name,
+                    "driveType": drive.get("driveType"),
+                    "driveWebUrl": drive.get("webUrl"),
+                },
+                "searchBaseUrl": f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/root",
+            }
+
+        # Enumerate each channel's Recordings folder explicitly. A generic file
+        # name such as "Clase 1.mp4" isn't returned reliably by a text search.
+        for folder in channel_folders:
+            drive_id = str(folder["driveId"])
+            folder_id = str(folder["folderId"])
+            encoded_drive_id = quote(drive_id, safe="")
+            encoded_folder_id = quote(folder_id, safe="")
+            channel_name = str(folder["channelName"])
+            is_standard_channel = drive_id in group_drive_ids
+            locations_by_key[f"channel-recordings:{drive_id}:{folder_id}"] = {
+                "sourceLabel": f"SharePoint del canal {channel_name}",
+                "metadata": {
+                    "storageSource": "CHANNEL_SHAREPOINT",
+                    "sourceLabel": f"SharePoint del canal {channel_name}",
+                    "driveId": drive_id,
+                    "driveName": folder["folderName"],
+                    "driveType": "documentLibrary",
+                    "driveWebUrl": folder.get("folderWebUrl"),
+                    "channelId": folder["channelId"],
+                    "channelName": channel_name,
+                    "parentPath": folder.get("parentPath"),
+                },
+                "searchBaseUrl": (
+                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/{encoded_folder_id}"
+                ),
+                "recordingsChildrenUrl": (
+                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/"
+                    f"{encoded_folder_id}:/Recordings:/children?$select={select_fields}"
+                ),
+                "skipSearchWhenChildrenSucceeds": True,
+                "skipSearchWhenChildrenFails": is_standard_channel,
+            }
+
+        for folder in owner_folders:
+            drive_id = str(folder["driveId"])
+            folder_id = str(folder["folderId"])
+            encoded_drive_id = quote(drive_id, safe="")
+            encoded_folder_id = quote(folder_id, safe="")
+            owner_name = str(folder["ownerName"])
+            locations_by_key[f"owner:{drive_id}:{folder_id}"] = {
+                "sourceLabel": f"OneDrive de {owner_name}",
+                "metadata": {
+                    "storageSource": "OWNER_ONEDRIVE",
+                    "sourceLabel": f"OneDrive de {owner_name}",
+                    "driveId": drive_id,
+                    "driveName": "Recordings",
+                    "driveType": "business",
+                    "driveWebUrl": folder.get("folderWebUrl"),
+                    "ownerId": folder["ownerId"],
+                    "ownerName": owner_name,
+                    "parentPath": folder.get("parentPath"),
+                },
+                "searchBaseUrl": (
+                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/{encoded_folder_id}"
+                ),
+                "recordingsChildrenUrl": (
+                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/"
+                    f"{encoded_folder_id}/children?$select={select_fields}"
+                ),
+                "skipSearchWhenChildrenSucceeds": True,
+            }
+
+        locations = list(locations_by_key.values())
+        if locations:
+            with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, len(locations))) as executor:
+                futures = [executor.submit(scan_location, location) for location in locations]
+                for future in as_completed(futures):
+                    candidates, succeeded, warning = future.result()
+                    recording_candidates.extend(candidates)
+                    if succeeded:
+                        sources_succeeded += 1
+                    else:
+                        sources_failed += 1
+                    if warning:
+                        discovery_warnings.append(warning)
+
+        channel_paths_by_drive: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for folder in channel_folders:
+            drive_id = str(folder.get("driveId") or "")
+            parent_path = str(folder.get("parentPath") or "").rstrip("/")
+            folder_name = str(folder.get("folderName") or "").strip("/")
+            if drive_id and folder_name:
+                full_path = f"{parent_path}/{folder_name}".lower()
+                channel_paths_by_drive.setdefault(drive_id, []).append((full_path, folder))
+
+        # A single scan covers all standard channels in the Team library. Restore
+        # the channel identity from each item's parent path without another request.
+        for candidate in recording_candidates:
+            parent_reference = (
+                cast(dict[str, Any], candidate.get("parentReference"))
+                if isinstance(candidate.get("parentReference"), dict)
+                else {}
+            )
+            drive_id = str(candidate.get("driveId") or parent_reference.get("driveId") or "")
+            item_path = str(parent_reference.get("path") or "").lower()
+            for channel_path, folder in channel_paths_by_drive.get(drive_id, []):
+                if item_path.startswith(channel_path):
+                    channel_name = str(folder.get("channelName") or "Canal")
+                    candidate.update(
+                        {
+                            "storageSource": "CHANNEL_SHAREPOINT",
+                            "sourceLabel": f"SharePoint del canal {channel_name}",
+                            "channelId": folder.get("channelId"),
+                            "channelName": channel_name,
+                        }
+                    )
+                    break
+
+        recordings = _dedupe_recording_items(recording_candidates)
+
+        recording_dates = [
+            parsed
+            for item in recordings
+            if (parsed := _parse_graph_datetime(item.get("fileCreatedAt") or item.get("uploadedAt"))) is not None
+        ]
+        recording_artifacts: list[dict[str, Any]] = []
+        if recording_dates:
+            range_start = min(recording_dates) - timedelta(days=1)
+            range_end = max(recording_dates) + timedelta(days=1)
+            range_start_text = range_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            range_end_text = range_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            time_requests: list[tuple[str, str, str]] = []
+
+            for owner in owners:
+                owner_id = str(owner.get("id") or "").strip()
+                if not owner_id:
+                    continue
+                encoded_owner_id = quote(owner_id, safe="")
+                time_requests.append(
+                    (
+                        f"Grabaciones organizadas por {owner.get('displayName') or owner_id}",
+                        (
+                            f"https://graph.microsoft.com/v1.0/users/{encoded_owner_id}/onlineMeetings/"
+                            "getAllRecordings("
+                            f"meetingOrganizerUserId='{owner_id}',startDateTime={range_start_text},"
+                            f"endDateTime={range_end_text})?$top=500"
+                        ),
+                        "GRAPH_CALL_RECORDING",
+                    )
+                )
+
+            call_records_minimum = datetime.now(timezone.utc) - timedelta(days=30)
+            if range_end >= call_records_minimum:
+                call_range_start = max(range_start, call_records_minimum)
+                call_filter = (
+                    f"startDateTime ge {call_range_start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                    f"and startDateTime lt {range_end_text}"
+                )
+                time_requests.append(
+                    (
+                        "Registros de llamadas recientes",
+                        (
+                            "https://graph.microsoft.com/v1.0/communications/callRecords"
+                            f"?$filter={quote(call_filter, safe=':.-TZ')}"
+                        ),
+                        "GRAPH_CALL_RECORD",
+                    )
+                )
+
+            def load_time_source(request: tuple[str, str, str]) -> tuple[list[dict[str, Any]], str | None]:
+                source_label, url, source_code = request
+                try:
+                    values = _graph_value_items(graph_get_all(url, max_items=500))
+                    return [{**value, "timeSource": source_code} for value in values], None
+                except (httpx.HTTPStatusError, RuntimeError) as exc:
+                    return [], _recording_discovery_warning(source_label, exc)
+
+            time_sources_scanned = len(time_requests)
+            if time_requests:
+                with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, len(time_requests))) as executor:
+                    futures = [executor.submit(load_time_source, request) for request in time_requests]
+                    time_failures: list[str] = []
+                    for future in as_completed(futures):
+                        values, warning = future.result()
+                        if warning:
+                            time_sources_failed += 1
+                            time_failures.append(warning)
+                        else:
+                            time_sources_succeeded += 1
+                            recording_artifacts.extend(values)
+                    if time_failures and not recording_artifacts:
+                        discovery_warnings.append(
+                            "Microsoft Graph no permitió consultar los horarios reales de las grabaciones. "
+                            "Se requiere OnlineMeetingRecording.Read.All o CallRecords.Read.All."
+                        )
+
+            team_owner_ids = {
+                str(owner.get("id") or "").strip().lower()
+                for owner in owners
+                if str(owner.get("id") or "").strip()
+            }
+            verified_time_count = _enrich_recording_times(recordings, recording_artifacts, team_owner_ids)
+
+        payload = response_payload(recordings, len(recording_candidates))
+        with _RECORDINGS_CACHE_LOCK:
+            now = time.monotonic()
+            expired_keys = [
+                key
+                for key, (created_at, _) in _RECORDINGS_CACHE.items()
+                if now - created_at >= _RECORDINGS_CACHE_TTL_SECONDS
+            ]
+            for key in expired_keys:
+                _RECORDINGS_CACHE.pop(key, None)
+            if len(_RECORDINGS_CACHE) >= _RECORDINGS_CACHE_MAX_TEAMS:
+                oldest_key = min(_RECORDINGS_CACHE, key=lambda key: _RECORDINGS_CACHE[key][0])
+                _RECORDINGS_CACHE.pop(oldest_key, None)
+            _RECORDINGS_CACHE[cache_key] = (now, payload)
+        return payload
+    except Exception as exc:
+        if isinstance(exc, httpx.HTTPStatusError):
+            _raise_graph_http_exception(exc)
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise
 
 
 @router.get("/{team_id}/status", responses={500: {"description": "Error interno del servidor"}})

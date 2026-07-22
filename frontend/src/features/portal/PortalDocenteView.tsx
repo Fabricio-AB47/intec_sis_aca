@@ -1122,6 +1122,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               El documento se genera con el formato configurado por administración y toma docente, materia,
               carrera, periodo, paralelo, estudiantes y notas desde el sistema.
             </p>
+            <ol className="portal-compliance-steps" aria-label="Puntos del informe docente">
+              <li><span>1</span><div><strong>Datos del informe</strong><small>Materia, periodos y fechas</small></div></li>
+              <li><span>2</span><div><strong>Evidencias</strong><small>PEA, aula, TEAMS, asistencia y notas</small></div></li>
+              <li><span>3</span><div><strong>Estudiantes</strong><small>Selección para el anexo de calificaciones</small></div></li>
+              <li><span>4</span><div><strong>Firma electrónica</strong><small>Certificado temporal del docente</small></div></li>
+            </ol>
             <div className="portal-compliance-panel portal-compliance-panel--launcher">
               <label className="portal-compliance-course-select">
                 <span>Materia del informe</span>
@@ -1232,9 +1238,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <strong>{evidencePayload(complianceEvidenceFiles).length} archivo(s)</strong>
               </div>
               <div className="portal-compliance-evidence-grid">
-                {COMPLIANCE_EVIDENCE_OPTIONS.map((option) => (
-                  <label key={option.key}>
-                    <span>{option.label}{option.key === 'notas' ? ' *' : ''}</span>
+                {COMPLIANCE_EVIDENCE_OPTIONS.map((option, optionIndex) => (
+                  <label className="portal-compliance-evidence-item" key={option.key}>
+                    <span className="portal-compliance-evidence-title"><b>{optionIndex + 1}</b>{option.label}{option.key === 'notas' ? ' *' : ''}</span>
                     <input
                       type="file"
                       accept="image/*"

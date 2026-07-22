@@ -69,6 +69,7 @@ export type Page =
   | 'portal-docente'
   | 'portal-docente-informe'
   | 'portal-docente-planificacion'
+  | 'portal-docente-contratos'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
 
@@ -1295,9 +1296,99 @@ export type TeamRecording = {
   endHourLabel?: string
   durationSeconds?: number
   durationLabel?: string
+  durationClock?: string
+  durationHours?: number
+  durationMinutes?: number
+  durationRemainingSeconds?: number
+  durationSource?: 'GRAPH_MEDIA_METADATA' | 'NOT_AVAILABLE' | string
+  durationStatus?: 'VERIFIED_GRAPH_MEDIA' | 'NOT_AVAILABLE' | string
+  timestampSource?: 'DRIVE_ITEM_FILE_LIFECYCLE' | string
+  recordingTimeStatus?: 'NOT_PROVIDED_BY_DRIVE_ITEM' | string
+  recordingTimeSource?: 'GRAPH_CALL_RECORDING' | 'GRAPH_CALL_RECORD' | string
+  recordingTimeMatchSeconds?: number
+  recordingTimeMatchStatus?: 'HIGH_CONFIDENCE' | string
+  calculatedDurationSeconds?: number
+  calculatedDurationLabel?: string
+  calculatedDurationClock?: string
+  meetingId?: string
+  callId?: string
+  estimatedDurationSeconds?: number
+  estimatedDurationLabel?: string
+  estimatedDurationClock?: string
+  estimatedDurationSource?: 'START_END_INTERVAL' | 'NOT_AVAILABLE' | string
+  durationDifferenceSeconds?: number
+  durationDifferenceLabel?: string
+  durationsConsistent?: boolean | null
+  uploadedAt?: string
+  uploadedDateLabel?: string
+  uploadedHourLabel?: string
+  fileCreatedAt?: string
+  fileCreatedDateLabel?: string
+  fileCreatedHourLabel?: string
+  modifiedAt?: string
+  modifiedDateTimeLabel?: string
   lastModifiedDateTime?: string
   size?: number
+  sizeBytes?: number
+  sizeLabel?: string
+  fileExtension?: string
+  mimeType?: string
+  metadataStatus?: 'COMPLETA' | 'INCOMPLETA' | string
+  warnings?: string[]
   timeZone?: string
+  storageSource?: 'TEAM_SHAREPOINT' | 'CHANNEL_SHAREPOINT' | 'OWNER_ONEDRIVE' | string
+  sourceLabel?: string
+  driveId?: string
+  driveName?: string
+  driveType?: string
+  driveWebUrl?: string
+  channelId?: string
+  channelName?: string
+  ownerId?: string
+  ownerName?: string
+  parentPath?: string
+  siteId?: string
+  listId?: string
+  listItemId?: string
+  createdByName?: string
+  lastModifiedByName?: string
+  eTag?: string
+}
+
+export type TeamRecordingSummary = {
+  totalDurationSeconds?: number
+  totalDurationLabel?: string
+  totalDurationClock?: string
+  knownDurationCount?: number
+  unknownDurationCount?: number
+  totalEstimatedDurationSeconds?: number
+  totalEstimatedDurationLabel?: string
+  totalEstimatedDurationClock?: string
+  completeMetadataCount?: number
+  incompleteMetadataCount?: number
+  comparedDurationCount?: number
+  consistentDurationCount?: number
+  differentDurationCount?: number
+}
+
+export type TeamRecordingDiscovery = {
+  sourcesScanned?: number
+  sourcesSucceeded?: number
+  sourcesFailed?: number
+  sourceCounts?: {
+    TEAM_SHAREPOINT?: number
+    CHANNEL_SHAREPOINT?: number
+    OWNER_ONEDRIVE?: number
+    [key: string]: number | undefined
+  }
+  warnings?: string[]
+  cacheHit?: boolean
+  queryElapsedMs?: number
+  cacheTtlSeconds?: number
+  timeSourcesScanned?: number
+  timeSourcesSucceeded?: number
+  timeSourcesFailed?: number
+  verifiedTimeCount?: number
 }
 
 export type TeamAttendance = {
@@ -1426,6 +1517,8 @@ export type TeamCollectionResponse<T> = {
   count?: number
   note?: string
   detail?: string
+  summary?: TeamRecordingSummary
+  discovery?: TeamRecordingDiscovery
 }
 
 export type MatriculaSummaryResponse = {
@@ -3106,6 +3199,56 @@ export type PortalTeacherCourse = {
 export type PortalTeacherCoursesResponse = {
   total?: number
   items?: PortalTeacherCourse[]
+  detail?: string
+}
+
+export type PortalTeacherContractClass = {
+  clase_id: number
+  codigo_carrera?: string
+  nombre_carrera?: string
+  codigo_materia?: string
+  nombre_materia?: string
+  codigo_periodo?: string
+  paralelo?: string
+  jornada?: string
+  horas_planificadas?: number
+  horas_ejecutadas?: number
+  valor_hora?: number
+  valor_total_planificado?: number
+  estado?: string
+  observacion?: string
+}
+
+export type PortalTeacherContract = {
+  contrato_id: number
+  numero_contrato?: string
+  tipo_codigo?: string
+  tipo_nombre?: string
+  estado_codigo?: string
+  estado_nombre?: string
+  codigo_periodo?: string
+  fecha_inicio?: string
+  fecha_fin?: string
+  valor_hora_clase?: number
+  valor_mensual?: number | null
+  valor_total_contrato?: number | null
+  responsable_contratacion?: string
+  observacion?: string
+  ruta_contrato_firmado?: string
+  clases: PortalTeacherContractClass[]
+}
+
+export type PortalTeacherContractsResponse = {
+  teacher?: {
+    docente_id?: number
+    cedula?: string
+    nombre?: string
+    correo?: string
+    tipo_docente?: string
+    relacion_laboral?: string
+    tiempo_dedicacion?: string
+  }
+  contracts: PortalTeacherContract[]
   detail?: string
 }
 

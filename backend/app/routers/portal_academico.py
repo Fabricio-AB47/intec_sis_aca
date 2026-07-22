@@ -40,7 +40,7 @@ from reportlab.platypus import Flowable, Image as PdfImage, Indenter, PageBreak,
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
-from app.services.db import get_connection
+from app.services.db import get_connection, get_finance_connection
 
 router = APIRouter(prefix="/api/portal", tags=["portal-academico"])
 logger = logging.getLogger(__name__)
@@ -1951,6 +1951,162 @@ def teacher_profile(
         }
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando perfil docente: {exc}") from exc
+
+
+def _contract_value(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+@router.get("/teacher/contracts")
+def teacher_contracts(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+) -> dict[str, Any]:
+    cedula = _clean(current_user.cedula)
+    if not cedula:
+        cedula = _clean(teacher_profile(current_user).get("teacher", {}).get("cedula"))
+    if not cedula:
+        raise HTTPException(status_code=403, detail="La sesión no tiene una identificación docente vinculada")
+
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (1)
+                    DocenteId AS docente_id,
+                    NumeroIdentificacion AS cedula,
+                    NombreCompleto AS nombre,
+                    Correo AS correo,
+                    TipoDocente AS tipo_docente,
+                    RelacionLaboral AS relacion_laboral,
+                    TiempoDedicacion AS tiempo_dedicacion
+                FROM core.Docente
+                WHERE LTRIM(RTRIM(NumeroIdentificacion)) = ?
+                ORDER BY FechaSincronizacion DESC
+                """,
+                cedula,
+            )
+            teacher_row = cursor.fetchone()
+            if not teacher_row:
+                return {
+                    "teacher": {
+                        "cedula": cedula,
+                        "nombre": current_user.nombres or current_user.login,
+                    },
+                    "contracts": [],
+                    "detail": "El docente aún no tiene información sincronizada en la base financiera.",
+                }
+
+            cursor.execute(
+                """
+                SELECT
+                    c.ContratoDocenteId AS contrato_id,
+                    c.NumeroContrato AS numero_contrato,
+                    tc.Codigo AS tipo_codigo,
+                    tc.Nombre AS tipo_nombre,
+                    ec.Codigo AS estado_codigo,
+                    ec.Nombre AS estado_nombre,
+                    c.CodigoPeriodo AS codigo_periodo,
+                    c.FechaInicio AS fecha_inicio,
+                    c.FechaFin AS fecha_fin,
+                    c.ValorHoraClase AS valor_hora_clase,
+                    c.ValorMensual AS valor_mensual,
+                    c.ValorTotalContrato AS valor_total_contrato,
+                    c.ResponsableContratacion AS responsable_contratacion,
+                    c.Observacion AS observacion,
+                    c.RutaContratoFirmado AS ruta_contrato_firmado,
+                    cc.ContratoClaseId AS clase_id,
+                    cc.CodigoCarrera AS codigo_carrera,
+                    cc.NombreCarrera AS nombre_carrera,
+                    cc.CodigoMateria AS codigo_materia,
+                    cc.NombreMateria AS nombre_materia,
+                    cc.CodigoPeriodo AS clase_periodo,
+                    cc.Paralelo AS paralelo,
+                    cc.Jornada AS jornada,
+                    cc.HorasPlanificadas AS horas_planificadas,
+                    cc.HorasEjecutadas AS horas_ejecutadas,
+                    cc.ValorHora AS clase_valor_hora,
+                    cc.ValorTotalPlanificado AS valor_total_planificado,
+                    cc.EstadoClaseCodigo AS estado_clase,
+                    cc.Observacion AS clase_observacion
+                FROM rrhh.ContratoDocente c
+                INNER JOIN cat.TipoContratoDocente tc
+                    ON tc.TipoContratoDocenteId = c.TipoContratoDocenteId
+                INNER JOIN cat.EstadoContratoDocente ec
+                    ON ec.EstadoContratoDocenteId = c.EstadoContratoDocenteId
+                LEFT JOIN rrhh.ContratoDocenteClase cc
+                    ON cc.ContratoDocenteId = c.ContratoDocenteId
+                WHERE c.DocenteId = ?
+                ORDER BY c.FechaInicio DESC, c.ContratoDocenteId DESC, cc.NombreMateria
+                """,
+                teacher_row.docente_id,
+            )
+            rows = cursor.fetchall()
+
+        contracts_by_id: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            contract_id = int(row.contrato_id)
+            contract = contracts_by_id.get(contract_id)
+            if contract is None:
+                contract = {
+                    "contrato_id": contract_id,
+                    "numero_contrato": _clean(row.numero_contrato),
+                    "tipo_codigo": _clean(row.tipo_codigo),
+                    "tipo_nombre": _clean(row.tipo_nombre),
+                    "estado_codigo": _clean(row.estado_codigo),
+                    "estado_nombre": _clean(row.estado_nombre),
+                    "codigo_periodo": _clean(row.codigo_periodo),
+                    "fecha_inicio": _contract_value(row.fecha_inicio),
+                    "fecha_fin": _contract_value(row.fecha_fin),
+                    "valor_hora_clase": _contract_value(row.valor_hora_clase),
+                    "valor_mensual": _contract_value(row.valor_mensual),
+                    "valor_total_contrato": _contract_value(row.valor_total_contrato),
+                    "responsable_contratacion": _clean(row.responsable_contratacion),
+                    "observacion": _clean(row.observacion),
+                    "ruta_contrato_firmado": _clean(row.ruta_contrato_firmado),
+                    "clases": [],
+                }
+                contracts_by_id[contract_id] = contract
+            if row.clase_id is not None:
+                contract["clases"].append({
+                    "clase_id": int(row.clase_id),
+                    "codigo_carrera": _clean(row.codigo_carrera),
+                    "nombre_carrera": _clean(row.nombre_carrera),
+                    "codigo_materia": _clean(row.codigo_materia),
+                    "nombre_materia": _clean(row.nombre_materia),
+                    "codigo_periodo": _clean(row.clase_periodo),
+                    "paralelo": _clean(row.paralelo),
+                    "jornada": _clean(row.jornada),
+                    "horas_planificadas": _contract_value(row.horas_planificadas),
+                    "horas_ejecutadas": _contract_value(row.horas_ejecutadas),
+                    "valor_hora": _contract_value(row.clase_valor_hora),
+                    "valor_total_planificado": _contract_value(row.valor_total_planificado),
+                    "estado": _clean(row.estado_clase),
+                    "observacion": _clean(row.clase_observacion),
+                })
+
+        return {
+            "teacher": {
+                "docente_id": int(teacher_row.docente_id),
+                "cedula": _clean(teacher_row.cedula),
+                "nombre": _clean(teacher_row.nombre),
+                "correo": _clean(teacher_row.correo),
+                "tipo_docente": _clean(teacher_row.tipo_docente),
+                "relacion_laboral": _clean(teacher_row.relacion_laboral),
+                "tiempo_dedicacion": _clean(teacher_row.tiempo_dedicacion),
+            },
+            "contracts": list(contracts_by_id.values()),
+        }
+    except pyodbc.Error as exc:
+        logger.exception("No se pudieron consultar los contratos del docente")
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo consultar la información contractual en este momento.",
+        ) from exc
 
 
 @router.get("/teacher/courses")

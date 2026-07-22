@@ -42,6 +42,7 @@ function isPage(value: string): value is Page {
     value === 'portal-docente' ||
     value === 'portal-docente-informe' ||
     value === 'portal-docente-planificacion' ||
+    value === 'portal-docente-contratos' ||
     value === 'formato-informe-docente' ||
     value === 'matricula-excel-certificados' ||
     value === 'practicas-institucionales'

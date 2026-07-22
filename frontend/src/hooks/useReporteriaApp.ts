@@ -143,7 +143,7 @@ function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   if (normalizedRole === 'ESTUDIANTE') {
     return page === 'portal-estudiante' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
   }
-  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (normalizedRole === 'SECRETARIA') return SECRETARIA_ALLOWED_PAGES.has(page)
   if (DASHBOARD_ONLY_ROLES.has(normalizedRole || '')) return page === 'dashboard'
@@ -152,7 +152,7 @@ function pageAllowedForRole(role: string | undefined, page: Page): boolean {
   if (page === 'credenciales') return normalizedRole === 'ADMINISTRADOR'
   if (page === 'correos-masivos') return MASS_EMAIL_ALLOWED_ROLES.has(normalizedRole || '')
   if (page === 'carnet-institucional') return Boolean(normalizedRole)
-  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe' && page !== 'portal-docente-planificacion'
+  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe' && page !== 'portal-docente-planificacion' && page !== 'portal-docente-contratos'
   return page === 'dashboard'
 }
 
@@ -385,7 +385,7 @@ export function useReporteriaApp() {
       return
     }
     if (session.rol === 'DOCENTE') {
-      if (activePage !== 'portal-docente' && activePage !== 'portal-docente-informe' && activePage !== 'portal-docente-planificacion' && activePage !== 'carnet-institucional') {
+      if (activePage !== 'portal-docente' && activePage !== 'portal-docente-informe' && activePage !== 'portal-docente-planificacion' && activePage !== 'portal-docente-contratos' && activePage !== 'carnet-institucional') {
         setActivePage('portal-docente')
       }
       return
@@ -1003,6 +1003,9 @@ export function useReporteriaApp() {
   const openPortalDocentePlanificacionPage = () => {
     setActivePage('portal-docente-planificacion')
   }
+  const openPortalDocenteContratosPage = () => {
+    setActivePage('portal-docente-contratos')
+  }
   const openTeacherEvaluationPage = () => {
     setActivePage('evaluacion-docente')
   }
@@ -1220,6 +1223,7 @@ export function useReporteriaApp() {
     openPortalDocentePage,
     openPortalDocenteInformePage,
     openPortalDocentePlanificacionPage,
+    openPortalDocenteContratosPage,
     openTeacherEvaluationPage,
     openTeacherEvaluationAdminPage,
     openTeacherEvaluationProgressPage,

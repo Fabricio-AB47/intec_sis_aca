@@ -16,6 +16,7 @@ type StudentLayoutProps = {
   onOpenPortalDocente: () => void
   onOpenPortalDocenteInforme: () => void
   onOpenPortalDocentePlanificacion: () => void
+  onOpenPortalDocenteContratos: () => void
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
   onOpenMatricula: () => void
@@ -193,11 +194,12 @@ function navItemAllowedForRole(role: string, item: NavItem) {
     item.page === 'portal-docente'
     || item.page === 'portal-docente-informe'
     || item.page === 'portal-docente-planificacion'
+    || item.page === 'portal-docente-contratos'
   )
   const allowedByCustomConfig = isTeacherCorePage || !item.page || item.page === 'asignacion-pantallas' || !customPages || customPages.has(item.page)
   if (!allowedByCustomConfig) return false
   if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
-  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
     if (item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
@@ -219,7 +221,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
     if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
     return true
   }
-  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion'
+  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion' && item.page !== 'portal-docente-contratos'
   return item.page === 'dashboard'
 }
 
@@ -469,6 +471,7 @@ export function StudentLayout({
   onOpenPortalDocente,
   onOpenPortalDocenteInforme,
   onOpenPortalDocentePlanificacion,
+  onOpenPortalDocenteContratos,
   onOpenTeams,
   onOpenTeamsMatricula,
   onOpenMatriculaAcad,
@@ -2073,6 +2076,12 @@ export function StudentLayout({
           description: 'Planificación por unidades, temas, horas, evaluación y bibliografía.',
           page: 'portal-docente-planificacion',
           action: onOpenPortalDocentePlanificacion,
+        },
+        {
+          label: 'Contrato docente',
+          description: 'Consultar vigencia, condiciones y materias contratadas.',
+          page: 'portal-docente-contratos',
+          action: onOpenPortalDocenteContratos,
         },
         {
           label: 'Carnet institucional',
