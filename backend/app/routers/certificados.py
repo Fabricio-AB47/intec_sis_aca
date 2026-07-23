@@ -83,6 +83,11 @@ def _is_mintel_scholarship(value: Any) -> bool:
     return "MINTEL" in _text_key(value)
 
 
+def _is_intec_scholarship(value: Any) -> bool:
+    key = _text_key(value)
+    return not _is_mintel_scholarship(value) and (key == "INTEC" or key.startswith("BECA INTEC"))
+
+
 def _date_text(value: Any) -> str:
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -159,8 +164,13 @@ def _legacy_certificate_scholarship(cursor: Any, codigo_estud: str) -> dict[str,
 
     matricula_base = 75.0
     arancel_base = 725.0 if _is_mintel_scholarship(tipo_beca) else 750.0
-    matricula_financiada = round(matricula_base * (porcentaje_beca / 100), 2)
+    matricula_financiada = (
+        0.0
+        if _is_intec_scholarship(tipo_beca)
+        else round(matricula_base * (porcentaje_beca / 100), 2)
+    )
     arancel_financiado = round(arancel_base * (porcentaje_beca / 100), 2)
+    total_financiado = round(matricula_financiada + arancel_financiado, 2)
 
     return {
         "tipo_beca": tipo_beca,
@@ -170,7 +180,8 @@ def _legacy_certificate_scholarship(cursor: Any, codigo_estud: str) -> dict[str,
         "arancel_base": arancel_base,
         "matricula_financiada": matricula_financiada,
         "arancel_financiado": arancel_financiado,
-        "total_financiado": round(matricula_financiada + arancel_financiado, 2),
+        "total_financiado": total_financiado,
+        "total_a_pagar": round(matricula_base + arancel_base - total_financiado, 2),
     }
 
 
@@ -185,14 +196,20 @@ def _certificate_costs_for_career(scholarship: dict[str, Any], carrera: Any) -> 
         arancel_base = _number(scholarship.get("arancel_base")) or 0.0
     if _is_mintel_scholarship(tipo_beca):
         porcentaje_beca = 100.0
-    matricula_financiada = round(matricula_base * (porcentaje_beca / 100), 2)
+    matricula_financiada = (
+        0.0
+        if _is_intec_scholarship(tipo_beca)
+        else round(matricula_base * (porcentaje_beca / 100), 2)
+    )
     arancel_financiado = round(arancel_base * (porcentaje_beca / 100), 2)
+    total_financiado = round(matricula_financiada + arancel_financiado, 2)
     return {
         "matricula_base": matricula_base,
         "arancel_base": arancel_base,
         "matricula_financiada": matricula_financiada,
         "arancel_financiado": arancel_financiado,
-        "total_financiado": round(matricula_financiada + arancel_financiado, 2),
+        "total_financiado": total_financiado,
+        "total_a_pagar": round(matricula_base + arancel_base - total_financiado, 2),
     }
 
 
@@ -867,9 +884,9 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
                 "Times-Roman",
             ),
             (context["nombre"], "Times-Bold"),
-            (" , titular de la Cédula No. ", "Times-Roman"),
+            (", titular de la Cédula No. ", "Times-Roman"),
             (context["cedula"], "Times-Bold"),
-            (", se encuentra matrículado(a).", "Times-Roman"),
+            (", se encuentra matriculado(a).", "Times-Roman"),
         ],
         left,
         body_y,
@@ -917,18 +934,19 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
     )
 
     if _percentage(context.get("porcentaje_beca")) > 0 or (_number(context.get("total_financiado")) or 0.0) > 0:
-        cost_y = _draw_rich_wrapped(
-            canv,
-            [
-                ("Costo Matrícula Financiada (por periodo académico):", "Times-Bold"),
-                (f"${context['matricula_financiada']:.2f}", "Times-Roman"),
-            ],
-            left,
-            cost_y,
-            max_width,
-            8.8,
-            10.2,
-        )
+        if (_number(context.get("matricula_financiada")) or 0.0) > 0:
+            cost_y = _draw_rich_wrapped(
+                canv,
+                [
+                    ("Costo Matrícula Financiada (por periodo académico):", "Times-Bold"),
+                    (f"${context['matricula_financiada']:.2f}", "Times-Roman"),
+                ],
+                left,
+                cost_y,
+                max_width,
+                8.8,
+                10.2,
+            )
         cost_y = _draw_rich_wrapped(
             canv,
             [
@@ -944,8 +962,8 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
         cost_y = _draw_rich_wrapped(
             canv,
             [
-                ("Total Financiado (por periodo académico):", "Times-Bold"),
-                (f"${context['total_financiado']:.2f}", "Times-Roman"),
+                ("Total a Pagar por el Estudiante (por periodo académico):", "Times-Bold"),
+                (f"${context['total_a_pagar']:.2f}", "Times-Roman"),
             ],
             left,
             cost_y,
@@ -1186,6 +1204,7 @@ def _matricula_excel_context(row: dict[str, Any], period: dict[str, Any]) -> dic
         "matricula_financiada": 0,
         "arancel_financiado": 0,
         "total_financiado": 0,
+        "total_a_pagar": round(row["matricula_base"] + row["arancel_base"], 2),
     }
 
 
@@ -1391,6 +1410,7 @@ def _fetch_certificate_context(
         "matricula_financiada": certificate_costs["matricula_financiada"],
         "arancel_financiado": certificate_costs["arancel_financiado"],
         "total_financiado": certificate_costs["total_financiado"],
+        "total_a_pagar": certificate_costs["total_a_pagar"],
     }
 
 
@@ -2200,6 +2220,7 @@ def _certificate_excel_row(
         "Costo matrícula financiada": (context or {}).get("matricula_financiada"),
         "Costo arancel financiado": (context or {}).get("arancel_financiado"),
         "Total financiado": (context or {}).get("total_financiado"),
+        "Total a pagar por el estudiante": (context or {}).get("total_a_pagar"),
         "Reprobadas": len(reprobadas or []),
         "Detalle reprobadas": _reprobadas_text(reprobadas or []),
         "Archivo sugerido": _certificate_excel_filename(code, certificate_type, generation_period, context),
@@ -2242,6 +2263,7 @@ def _build_certificates_workbook(rows: list[dict[str, Any]], payload: Certificat
         "Costo matrícula financiada",
         "Costo arancel financiado",
         "Total financiado",
+        "Total a pagar por el estudiante",
         "Reprobadas",
         "Detalle reprobadas",
         "Archivo sugerido",

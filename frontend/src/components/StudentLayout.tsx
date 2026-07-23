@@ -12,6 +12,7 @@ type StudentLayoutProps = {
   displayName?: string
   cedula?: string
   onOpenDashboard: () => void
+  onOpenSistemaAcademico: () => void
   onOpenPortalEstudiante: (section?: PortalStudentSection) => void
   onOpenPortalDocente: () => void
   onOpenPortalDocenteInforme: () => void
@@ -102,15 +103,18 @@ const administratorRoles = new Set(['1', 'ADMINISTRADOR', 'ADMINISTRACION', 'ADM
 const academicRoles = new Set(['ACADEMICO', 'BIENESTAR'])
 const dashboardOnlyRoles = new Set(['RECTOR', 'VICERRECTOR'])
 const technicalGlobalRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE'])
-const financialPages = new Set<Page>(['dashboard', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'sisacademico-v1', 'reporteria-integral', 'carnet-institucional'])
+const financialPages = new Set<Page>(['dashboard', 'sistema-academico', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'sisacademico-v1', 'reporteria-integral', 'carnet-institucional'])
 const academicPages = new Set<Page>([
   'dashboard',
+  'sistema-academico',
+  'preinscripcion',
   'matricula',
   'matricula-acad',
   'matricula-docente',
   'estado-docente',
   'actualizar-datos-estudiante',
   'reportes-individuales',
+  'reporteria-integral',
   'gestion-sisacademico',
   'sisacademico-v1',
   'periodo-academico',
@@ -159,9 +163,9 @@ const academicSisSections = new Set([
 const financialSisSections = new Set(['cabecera_matricula', 'pagos_matricula', 'datos_factura'])
 const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente', 'genero_docentes'])
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
-const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
+const admissionsPages = new Set<Page>(['dashboard', 'sistema-academico', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'])
+const secretaryPages = new Set<Page>(['sistema-academico', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -196,7 +200,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
     || item.page === 'portal-docente-planificacion'
     || item.page === 'portal-docente-contratos'
   )
-  const allowedByCustomConfig = isTeacherCorePage || !item.page || item.page === 'asignacion-pantallas' || !customPages || customPages.has(item.page)
+  const allowedByCustomConfig = isTeacherCorePage || !item.page || item.page === 'asignacion-pantallas' || item.page === 'sistema-academico' || !customPages || customPages.has(item.page)
   if (!allowedByCustomConfig) return false
   if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
   if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional'
@@ -467,6 +471,7 @@ export function StudentLayout({
   displayName = '',
   cedula = '',
   onOpenDashboard,
+  onOpenSistemaAcademico,
   onOpenPortalEstudiante,
   onOpenPortalDocente,
   onOpenPortalDocenteInforme,
@@ -644,6 +649,13 @@ export function StudentLayout({
   ]
 
   const academicLifecycleItems: NavItem[] = [
+    {
+      label: 'Sistema académico',
+      description: 'Centro operativo del ciclo completo del estudiante.',
+      page: 'sistema-academico',
+      category: 'Vista general',
+      action: onOpenSistemaAcademico,
+    },
     {
       label: '1. Inscripción y admisión',
       description: 'Registrar aspirante, revisar datos de factura y documentos de ingreso.',
@@ -882,7 +894,7 @@ export function StudentLayout({
     {
       key: 'titulacion',
       title: 'Titulación',
-      summary: 'SENESCYT e INTEC',
+      summary: 'Titulación',
       items: [
         {
           label: 'Verificación y modalidad',
@@ -909,7 +921,7 @@ export function StudentLayout({
           action: () => onOpenTitulosRegistrados('senescyt'),
         },
         {
-          label: 'Títulos INTEC',
+          label: 'Titulación',
           description: 'Carpetas y documentos institucionales INTEC.',
           page: 'titulos-registrados',
           action: () => onOpenTitulosRegistrados('intec'),
@@ -1440,6 +1452,12 @@ export function StudentLayout({
       summary: 'Ventas personales',
       items: [
         {
+          label: 'Sistema académico',
+          description: 'Ciclo institucional y accesos habilitados para admisiones.',
+          page: 'sistema-academico',
+          action: onOpenSistemaAcademico,
+        },
+        {
           label: 'Dashboard',
           description: 'Inscripciones y estados de tus ventas.',
           page: 'dashboard',
@@ -1883,6 +1901,7 @@ export function StudentLayout({
       title: 'Inicio',
       summary: 'Indicadores financieros',
       items: [
+        { label: 'Sistema académico', description: 'Ciclo institucional y operación financiera.', page: 'sistema-academico', action: onOpenSistemaAcademico },
         { label: 'Dashboard', description: 'Indicadores principales del sistema.', page: 'dashboard', action: onOpenDashboard },
       ],
     },
@@ -1919,6 +1938,14 @@ export function StudentLayout({
   ]
 
   const secretaryMenuGroups: NavGroup[] = [
+    {
+      key: 'inicio',
+      title: 'Inicio',
+      summary: 'Ciclo institucional',
+      items: [
+        { label: 'Sistema académico', description: 'Prácticas, egreso y titulación.', page: 'sistema-academico', action: onOpenSistemaAcademico },
+      ],
+    },
     {
       key: 'vinculacion',
       title: 'Prácticas institucionales',
@@ -1961,7 +1988,7 @@ export function StudentLayout({
     {
       key: 'titulacion',
       title: 'Titulación',
-      summary: 'SENESCYT e INTEC',
+      summary: 'Titulación',
       items: [
         {
           label: 'Verificación y modalidad',
@@ -1988,7 +2015,7 @@ export function StudentLayout({
           action: () => onOpenTitulosRegistrados('senescyt'),
         },
         {
-          label: 'Títulos INTEC',
+          label: 'Titulación',
           description: 'Consultar carpetas y documentos institucionales INTEC.',
           page: 'titulos-registrados',
           action: () => onOpenTitulosRegistrados('intec'),

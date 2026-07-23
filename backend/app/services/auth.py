@@ -94,7 +94,7 @@ def _password_matches(candidate: str, *stored_values: Any) -> bool:
 
 def _authenticate_administrative_user(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
-    SELECT TOP (1)
+    SELECT TOP (50)
         [login],
         [password],
         [nombres],
@@ -127,16 +127,33 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, (login_or_email, login_or_email, login_or_email, login_or_email))
-        row = cursor.fetchone()
+        rows = cursor.fetchall()
 
-    if not row:
+    if not rows:
         return None
 
-    if password is not None and not verify_password(password, row.password):
+    authenticated_rows = [
+        row for row in rows if password is None or verify_password(password, row.password)
+    ]
+    if not authenticated_rows:
         return None
 
-    if not _is_active(row.estado):
+    active_rows = [row for row in authenticated_rows if _is_active(row.estado)]
+    if not active_rows:
         raise PermissionError("El usuario no esta activo")
+
+    row = next(
+        (
+            candidate
+            for candidate in active_rows
+            if _normalize_role(candidate.tp_us)
+            or _normalize_role(candidate.tipousuario)
+            or _normalize_role(candidate.detalle_tipo_us)
+        ),
+        None,
+    )
+    if row is None:
+        raise PermissionError("Usuario sin rol valido")
 
     role = _normalize_role(row.tp_us) or _normalize_role(row.tipousuario) or _normalize_role(row.detalle_tipo_us)
     if not role:
@@ -157,7 +174,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
 
 def _authenticate_student(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
-    SELECT TOP (1)
+    SELECT TOP (100)
         TRY_CONVERT(int, de.codigo_estud) AS codigo_estud,
         TRY_CONVERT(nvarchar(100), de.Cedula_Est) AS Cedula_Est,
         TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre) AS Apellidos_nombre,
@@ -207,13 +224,23 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
                 login_or_email,
             ),
         )
-        row = cursor.fetchone()
+        rows = cursor.fetchall()
 
-    if not row:
+    if not rows:
         return None
 
-    if password is not None and not _password_matches(password, row.CorreoPassword, row.clave, row.usuario_password):
+    authenticated_rows = [
+        row
+        for row in rows
+        if password is None or _password_matches(password, row.CorreoPassword, row.clave, row.usuario_password)
+    ]
+    if not authenticated_rows:
         return None
+
+    active_rows = [row for row in authenticated_rows if _is_active(row.Estado)]
+    if not active_rows:
+        raise PermissionError("El usuario estudiante no esta activo")
+    row = active_rows[0]
 
     return SessionUser(
         login=_clean(row.CorreoIntec) or _clean(row.correointec) or _clean(row.usuario_login) or login_or_email,
@@ -228,7 +255,7 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
 
 def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionUser | None:
     query = """
-    SELECT TOP (1)
+    SELECT TOP (50)
         TRY_CONVERT(int, d.codigo_doc) AS codigo_doc,
         TRY_CONVERT(nvarchar(100), d.cedula_doc) AS cedula_doc,
         TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) AS apellidos_nombre,
@@ -273,16 +300,21 @@ def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionU
                 login_or_email,
             ),
         )
-        row = cursor.fetchone()
+        rows = cursor.fetchall()
 
-    if not row:
+    if not rows:
         return None
 
-    if password is not None and not verify_password(password, row.password):
+    authenticated_rows = [
+        row for row in rows if password is None or verify_password(password, row.password)
+    ]
+    if not authenticated_rows:
         return None
 
-    if not _is_active(row.Estado):
+    active_rows = [row for row in authenticated_rows if _is_active(row.Estado)]
+    if not active_rows:
         raise PermissionError("El usuario docente no esta activo")
+    row = active_rows[0]
 
     return SessionUser(
         login=_clean(row.login) or login_or_email,
@@ -337,7 +369,7 @@ def authenticate_user(login: str, password: str) -> dict[str, Any]:
 
             for resolver in resolvers:
                 try:
-                    user = resolver(identifier, None)
+                    user = resolver(identifier, password)
                 except PermissionError as exc:
                     permission_errors.append(exc)
                     continue

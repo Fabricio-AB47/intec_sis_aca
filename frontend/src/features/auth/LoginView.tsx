@@ -35,7 +35,7 @@ export function LoginView({
           <input
             value={login}
             onChange={(event) => onLoginChange(event.target.value)}
-            placeholder="usuario o usuario@intec.edu.ec"
+            placeholder="Usuario o correo institucional"
             autoComplete="username"
             required
           />

@@ -139,6 +139,13 @@ def _is_mintel_scholarship(value: Any) -> bool:
     return "MINTEL" in _clean(value).upper()
 
 
+def _is_intec_scholarship(value: Any) -> bool:
+    normalized = re.sub(r"[^A-Z0-9]+", " ", _clean(value).upper()).strip()
+    return not _is_mintel_scholarship(value) and (
+        normalized == "INTEC" or normalized.startswith("BECA INTEC")
+    )
+
+
 def _scholarship_code(value: Any) -> str:
     normalized = re.sub(r"[^A-Z0-9]+", "_", _clean(value).upper()).strip("_")
     return normalized[:50] or "BECA"
@@ -431,7 +438,8 @@ def _payment_plan(
     semester_count = int(costs["semestres"])
     total = float(costs["total"])
     _, porcentaje_beca, _ = _normalized_scholarship(payload.tipo_beca, payload.porcentaje_beca)
-    beca_valor = round(total * porcentaje_beca / 100, 2)
+    scholarship_base = float(costs["valor_academico"]) if _is_intec_scholarship(payload.tipo_beca) else total
+    beca_valor = round(scholarship_base * porcentaje_beca / 100, 2)
     descuento = max(float(payload.descuento or 0), 0)
     saldo = max(total - beca_valor - descuento, 0)
     num_cuotas = max(int(payload.num_cuotas or 1), 1)
@@ -446,6 +454,7 @@ def _payment_plan(
         "alcance": "Todos los semestres" if _clean(payload.semestres_convenio).upper() in {"TODOS", "TODO", "ALL"} else f"{semester_count} semestre(s)",
         "porcentaje_beca": round(porcentaje_beca, 2),
         "beca_valor": beca_valor,
+        "beca_aplica_solo_arancel": _is_intec_scholarship(payload.tipo_beca),
         "descuento": round(descuento, 2),
         "saldo": round(saldo, 2),
         "num_cuotas": num_cuotas,

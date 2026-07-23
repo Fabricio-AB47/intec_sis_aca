@@ -29,6 +29,7 @@ export type UserSession = UserProfile & {
 
 export type Page =
   | 'dashboard'
+  | 'sistema-academico'
   | 'teams'
   | 'teams-matricula'
   | 'matricula'
@@ -2508,6 +2509,40 @@ export type PreinscriptionCreateResponse = {
     detail?: string
   }
   detail?: string
+}
+
+export type AcademicSystemDatabaseStatus = {
+  key: string
+  name: string
+  role: string
+  domains: string[]
+  relation: string
+  primary: boolean
+  kind: 'database' | 'contract' | string
+  configured: boolean
+  available: boolean
+  status: 'ONLINE' | 'PARTIAL' | 'OFFLINE' | 'NOT_CONFIGURED' | string
+}
+
+export type AcademicSystemDomainStatus = {
+  key: string
+  status: 'READY' | 'PARTIAL' | 'UNAVAILABLE' | string
+  source_keys: string[]
+  available_sources: number
+  total_sources: number
+}
+
+export type AcademicSystemIntegrationResponse = {
+  generated_at: string
+  primary_database: string
+  databases: AcademicSystemDatabaseStatus[]
+  domains: AcademicSystemDomainStatus[]
+  summary: {
+    total: number
+    configured: number
+    available: number
+    degraded: number
+  }
 }
 
 export type PreinscriptionScholarshipStatus = {

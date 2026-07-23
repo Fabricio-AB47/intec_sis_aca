@@ -5,6 +5,7 @@ const PAGE_STORAGE_KEY = 'reporteria.active-page'
 function isPage(value: string): value is Page {
   return (
     value === 'dashboard' ||
+    value === 'sistema-academico' ||
     value === 'teams' ||
     value === 'teams-matricula' ||
     value === 'matricula' ||

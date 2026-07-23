@@ -26,6 +26,7 @@ const roleOptions: Array<{ value: Role; label: string; description: string }> = 
 
 const screens: ScreenOption[] = [
   { page: 'dashboard', label: 'Dashboard', description: 'Indicadores generales.', group: 'Inicio' },
+  { page: 'sistema-academico', label: 'Sistema académico', description: 'Ciclo institucional integrado.', group: 'Inicio' },
   { page: 'preinscripcion', label: 'Preinscripción', description: 'Registro de aspirantes y documentos.', group: 'Admisión' },
   { page: 'actualizar-datos-estudiante', label: 'Actualizar datos', description: 'Datos de estudiantes y docentes.', group: 'Personas' },
   { page: 'matricula-acad', label: 'Matrícula académica', description: 'Cabecera, materias y control académico.', group: 'Matrícula' },
@@ -60,6 +61,7 @@ const defaultAccess: Partial<Record<Role, Page[]>> = {
   SOPORTE: screens.map((screen) => screen.page).filter((page) => page !== 'portal-estudiante' && page !== 'portal-docente'),
   ACADEMICO: [
     'dashboard',
+    'sistema-academico',
     'matricula-acad',
     'matricula-docente',
     'actualizar-datos-estudiante',
@@ -73,9 +75,9 @@ const defaultAccess: Partial<Record<Role, Page[]>> = {
     'titulacion-proceso',
     'titulacion-responsables',
   ],
-  ADMISIONES: ['dashboard', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'],
-  FINANCIERO: ['dashboard', 'preinscripcion', 'gestion-sisacademico', 'ingreso-ventas' as Page, 'reporteria-integral'],
-  SECRETARIA: ['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'],
+  ADMISIONES: ['dashboard', 'sistema-academico', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'],
+  FINANCIERO: ['dashboard', 'sistema-academico', 'preinscripcion', 'gestion-sisacademico', 'ingreso-ventas' as Page, 'reporteria-integral'],
+  SECRETARIA: ['sistema-academico', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'],
   DOCENTE: ['portal-docente', 'portal-docente-informe', 'portal-docente-planificacion', 'portal-docente-contratos', 'carnet-institucional'],
   ESTUDIANTE: ['portal-estudiante', 'evaluacion-docente', 'practicas-institucionales', 'carnet-institucional'],
   RECTOR: ['dashboard'],

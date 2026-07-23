@@ -19,6 +19,7 @@ const TeacherComplianceFormatView = lazyView(() => import('./features/admin/Teac
 const CruceDatosView = lazyView(() => import('./features/cruce/CruceDatosView'), 'CruceDatosView')
 const ExcelValidationView = lazyView(() => import('./features/cruce/ExcelValidationView'), 'ExcelValidationView')
 const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'), 'DashboardView')
+const SistemaAcademicoView = lazyView(() => import('./features/academico/SistemaAcademicoView'), 'SistemaAcademicoView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
 const ActualizarDatosEstudianteView = lazyView(() => import('./features/matricula/ActualizarDatosEstudianteView'), 'ActualizarDatosEstudianteView')
 const CertificateRenamerView = lazyView(() => import('./features/matricula/CertificateRenamerView'), 'CertificateRenamerView')
@@ -98,6 +99,24 @@ function App() {
           error={app.dashboardMatriculaError}
           data={app.dashboardMatricula}
           role={app.session.rol}
+        />
+      )
+    } else if (app.activePage === 'sistema-academico') {
+      pageContent = (
+        <SistemaAcademicoView
+          displayName={app.displayName}
+          role={app.session.rol}
+          data={app.dashboardMatricula}
+          error={app.dashboardMatriculaError}
+          onOpenAdmissions={() => app.openPreinscripcionStage('registro')}
+          onOpenFinance={() => app.openGestionSisAcademicoPage('cabecera_matricula')}
+          onOpenEnrollment={() => app.openPreinscripcionStage('materias')}
+          onOpenRecords={() => app.openGestionSisAcademicoPage('matricula_materias')}
+          onOpenFaculty={app.openMatriculaDocentePage}
+          onOpenPractices={app.openPracticasInstitucionalesPage}
+          onOpenGraduation={app.openTitulacionPage}
+          onOpenReports={app.openReporteriaIntegralPage}
+          onOpenCatalogs={() => app.openGestionSisAcademicoPage('periodos')}
         />
       )
     } else if (app.activePage === 'matricula') {
@@ -350,6 +369,7 @@ function App() {
           displayName={app.displayName}
           cedula={app.session.cedula || ''}
           onOpenDashboard={app.openDashboard}
+          onOpenSistemaAcademico={app.openSistemaAcademicoPage}
           onOpenPortalEstudiante={app.openPortalEstudiantePage}
           onOpenPortalDocente={app.openPortalDocentePage}
           onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}

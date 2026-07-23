@@ -353,7 +353,8 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
             <strong>Formatos disponibles:</strong>
             <span>
               matrícula descarga un solo PDF con los certificados seleccionados. Gastronomía usa matrícula $100.00 y arancel
-              $1000.00; las demás carreras conservan sus valores configurados.
+              $1000.00; las demás carreras conservan sus valores configurados. La Beca INTEC se aplica únicamente al arancel
+              y no descuenta el valor de matrícula.
             </span>
           </div>
 

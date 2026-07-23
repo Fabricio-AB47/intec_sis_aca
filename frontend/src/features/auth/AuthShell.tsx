@@ -20,18 +20,12 @@ export function AuthShell({ title, subtitle, children }: Readonly<AuthShellProps
         <div className="auth-frame">
           <div className="auth-layout">
             <section className="showcase-panel">
-              <div className="brand-row">
-                <div className="brand-logo">IN</div>
-                <div>
-                  <strong>INTEC</strong>
-                  <span className="eyebrow">REPORTERIA</span>
-                </div>
-              </div>
-
               <div className="showcase-copy">
+                <span className="eyebrow">REPORTERIA</span>
                 <h1>
-                  Acceso al <span>sistema</span>
+                  Gestión <span>académica</span>
                 </h1>
+                <p>Servicios para estudiantes, docentes y personal administrativo.</p>
               </div>
             </section>
 

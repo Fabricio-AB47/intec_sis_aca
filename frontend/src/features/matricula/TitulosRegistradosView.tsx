@@ -47,7 +47,7 @@ function getModuleCopy(tipo: TituloRegistradoTipo | '') {
   }
   if (tipo === 'intec') {
     return {
-      title: 'Títulos INTEC',
+      title: 'Titulación',
       description: 'Registro documental independiente en OneDrive: TITULACION GESTION DOCUMENTAL / TITULOS INTEC.',
       folderHint: 'OneDrive: TITULOS INTEC',
       folderLabel: 'Carpeta INTEC destino',

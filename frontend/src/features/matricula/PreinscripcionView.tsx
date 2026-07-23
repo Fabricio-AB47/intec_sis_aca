@@ -66,55 +66,14 @@ const documentFilters: Array<{ value: DocumentFilter; label: string }> = [
   { value: 'SIN_CABECERA', label: 'Sin pago' },
 ]
 
-type IntegratedPreinscriptionService = {
-  key: 'datos' | 'carnet' | 'finanzas' | 'homologacion' | 'paso-1' | 'paso-2'
-  title: string
-  description: string
-  requirement: string
+type AdmissionJourneyStep = {
+  key: string
+  label: string
   stage: PreinscriptionStage
-  actionLabel: string
-  tables: string[]
-  ready?: boolean
+  complete: boolean
+  disabled: boolean
+  matches: PreinscriptionStage[]
 }
-
-const integratedPreinscriptionServices: IntegratedPreinscriptionService[] = [
-  {
-    key: 'datos',
-    title: 'Datos y curriculum',
-    description: 'Actualizacion de datos, historial, hoja de vida y soportes del estudiante.',
-    requirement: 'Requiere estudiante creado',
-    stage: 'inscritos',
-    actionLabel: 'Ver estudiante',
-    tables: ['ESTUDIANTE_ACTUALIZACION_DATOS', 'ESTUDIANTE_CURRICULUM', 'ESTUDIANTE_CV_ITEM'],
-  },
-  {
-    key: 'carnet',
-    title: 'Carnetizacion',
-    description: 'Foto, validacion administrativa, solicitud y emision del carnet institucional.',
-    requirement: 'Requiere documentos base',
-    stage: 'documentos',
-    actionLabel: 'Gestionar documentos',
-    tables: ['ESTUDIANTE_IMAGEN', 'ESTUDIANTE_FOTO_CARNET_SOLICITUD', 'CARNET_SOLICITUD', 'CARNET_ESTUDIANTE'],
-  },
-  {
-    key: 'finanzas',
-    title: 'Finanzas y estado de cuenta',
-    description: 'Rubros, obligaciones, pagos, comprobantes y saldos por estudiante.',
-    requirement: 'Requiere pago/convenio',
-    stage: 'cabecera',
-    actionLabel: 'Cabecera matricula',
-    tables: ['FIN_RUBRO', 'FIN_OBLIGACION', 'FIN_PAGO', 'FIN_PAGO_APLICACION'],
-  },
-  {
-    key: 'homologacion',
-    title: 'Matricula inicial',
-    description: 'Matricula de materias del primer nivel para cerrar el proceso de admisiones.',
-    requirement: 'Requiere estudiante creado',
-    stage: 'materias',
-    actionLabel: 'Matricular primer nivel',
-    tables: ['CARRERAXESTUD', 'MATERIASXESTUD', 'MATERIA', 'PENSUM'],
-  },
-]
 
 const academicEnrollmentRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE', 'ACADEMICO', 'BIENESTAR', 'ADMISIONES'])
 const scholarshipApprovalRoles = new Set(['ADMINISTRADOR', 'BIENESTAR'])
@@ -167,6 +126,17 @@ function isNoScholarship(value?: string): boolean {
 
 function isMintelScholarship(value?: string): boolean {
   return String(value || '').trim().toUpperCase().includes('MINTEL')
+}
+
+function isIntecScholarship(value?: string): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+  return !isMintelScholarship(value) && (normalized === 'INTEC' || normalized.startsWith('BECA INTEC'))
 }
 
 function formatMoney(value: number): string {
@@ -354,52 +324,63 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
   const convenioUrl = selectedItem?.documentos?.urlconvenio || ''
   const selectedEnrollmentCareer = selectedItem?.codcarrera || selectedItem?.cabecera?.cod_anio_basica || ''
   const selectedEnrollmentPeriod = selectedItem?.codperiodo || selectedItem?.cabecera?.codigo_periodo || ''
-  const integratedServices = useMemo(
-    () =>
-      integratedPreinscriptionServices
-        .filter((service) => service.stage !== 'materias' || canManageAcademicEnrollment)
-        .map((service) => {
-        const ready =
-          service.key === 'finanzas'
-            ? hasCabecera
-            : service.key === 'carnet'
-              ? Boolean(selectedStudentCode && photoStatus?.estado === 'APROBADA')
-              : Boolean(selectedStudentCode)
-        return { ...service, ready }
-      }),
-    [canManageAcademicEnrollment, hasCabecera, photoStatus?.estado, selectedStudentCode],
-  )
-  const admissionProcessServices = useMemo<IntegratedPreinscriptionService[]>(
-    () => [
+  const requiredDocumentCount = selectedItem?.documentos?.total_requeridos ?? 3
+  const uploadedDocumentCount = selectedItem?.documentos?.total_cargados ?? 0
+  const documentsComplete = Boolean(selectedItem && uploadedDocumentCount >= requiredDocumentCount)
+  const admissionJourney = useMemo<AdmissionJourneyStep[]>(() => {
+    const hasStudent = Boolean(selectedItem)
+    const steps: AdmissionJourneyStep[] = [
       {
-        key: 'paso-1',
-        title: 'Paso 1: Inscribir',
-        description: selectedItem
-          ? 'Estudiante seleccionado para continuar con la matricula.'
-          : 'Registra al estudiante o seleccionalo desde inscritos.',
-        requirement: selectedItem ? 'Estudiante seleccionado' : 'Requiere registrar o seleccionar estudiante',
-        stage: selectedItem ? 'inscritos' : 'registro',
-        actionLabel: selectedItem ? 'Ver inscritos' : 'Registrar inscripcion',
-        tables: ['PREINSCRIPCION'],
-        ready: Boolean(selectedItem),
+        key: 'aspirante',
+        label: 'Aspirante',
+        stage: 'registro',
+        complete: hasStudent,
+        disabled: false,
+        matches: ['registro', 'inscritos'],
+      },
+    ]
+    if (!isAdmissionsRole) {
+      steps.push({
+        key: 'seguimiento',
+        label: 'Seguimiento',
+        stage: 'seguimiento',
+        complete: Boolean(selectedItem?.proceso_finalizado || selectedItem?.control_ingreso),
+        disabled: !hasStudent,
+        matches: ['seguimiento'],
+      })
+    }
+    steps.push(
+      {
+        key: 'financiamiento',
+        label: 'Beca y convenio',
+        stage: 'cabecera',
+        complete: hasCabecera,
+        disabled: !hasStudent || scholarshipNeedsApproval,
+        matches: ['cabecera'],
       },
       {
-        key: 'paso-2',
-        title: 'Paso 2: Matricular, generar convenio y subir documentacion',
-        description: 'Genera la cabecera de matricula, emite el convenio de pago y carga cedula, titulo, deposito, convenio y foto de carnet.',
-        requirement: hasCabecera ? 'Matricula/convenio registrados' : 'Requiere estudiante inscrito del paso 1',
+        key: 'documentos',
+        label: 'Documentos',
         stage: 'documentos',
-        actionLabel: 'Matricular y documentar',
-        tables: ['CABECERA_MATRICULA', 'DATOS_FACTURA', 'PREINSCRIPCION_DOCUMENTOS', 'ESTUDIANTE_IMAGEN'],
-        ready: selectedItem
-          ? (selectedItem.documentos?.total_cargados ?? 0) >= (selectedItem.documentos?.total_requeridos ?? 3)
-          : false,
+        complete: documentsComplete,
+        disabled: !hasStudent || !hasCabecera || scholarshipNeedsApproval,
+        matches: ['documentos'],
       },
-    ],
-    [hasCabecera, selectedItem],
-  )
-  const displayedIntegratedServices = isAdmissionsRole ? admissionProcessServices : integratedServices
-  const integratedReadyCount = displayedIntegratedServices.filter((service) => service.ready).length
+    )
+    if (canManageAcademicEnrollment) {
+      steps.push({
+        key: 'matricula',
+        label: 'Matrícula académica',
+        stage: 'materias',
+        complete: Boolean(selectedItem?.proceso_finalizado),
+        disabled: !hasStudent || !hasCabecera || !documentsComplete || scholarshipNeedsApproval,
+        matches: ['materias'],
+      })
+    }
+    return steps
+  }, [canManageAcademicEnrollment, documentsComplete, hasCabecera, isAdmissionsRole, scholarshipNeedsApproval, selectedItem])
+  const completedJourneySteps = admissionJourney.filter((step) => step.complete).length
+  const journeyProgress = Math.round((completedJourneySteps / Math.max(admissionJourney.length, 1)) * 100)
 
   const loadEnrollmentDataEffect = useEffectEvent(loadEnrollmentData)
   const loadCarnetPhotoStatusEffect = useEffectEvent(loadCarnetPhotoStatus)
@@ -475,7 +456,9 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
     const enrollmentTotal = enrollmentCost * selectedSemesters
     const total = academicTotal + enrollmentTotal
     const porcentajeBeca = Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100)
-    const beca = Number((total * porcentajeBeca / 100).toFixed(2))
+    const scholarshipAppliesOnlyToTuition = isIntecScholarship(cabeceraValues.tipo_beca)
+    const scholarshipBase = scholarshipAppliesOnlyToTuition ? academicTotal : total
+    const beca = Number((scholarshipBase * porcentajeBeca / 100).toFixed(2))
     const descuento = Math.max(toNumber(cabeceraValues.descuento), 0)
     const saldo = Math.max(Number((total - beca - descuento).toFixed(2)), 0)
     const cuotas = Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1)
@@ -494,6 +477,7 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
       enrollmentCost,
       enrollmentTotal,
       subjectCount: subjectsPerSemester * selectedSemesters,
+      scholarshipAppliesOnlyToTuition,
     }
   }, [cabeceraValues, isGastronomyCareer, selectedSemesterCount])
   const scholarshipOptions = catalog?.becas || []
@@ -1700,97 +1684,71 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         </div>
       </header>
 
-      {selectedItem && !isScholarshipAdminStage ? (
-        <section className="preinscripcion-current">
-          <div>
-            <span>Estudiante seleccionado</span>
-            <strong>{selectedItem.apellidos_nombre || selectedItem.cedula || 'Sin nombre'}</strong>
+      {!isScholarshipAdminStage ? (
+        <section className="preinscripcion-journey" aria-label="Proceso de inscripción">
+          <div className="preinscripcion-journey__heading">
+            <div>
+              <span>Proceso de admisión</span>
+              <h2>{selectedStudentName || 'Nuevo aspirante'}</h2>
+              <small>{selectedStudentCedula || 'Sin estudiante seleccionado'}</small>
+            </div>
+            <div className="preinscripcion-journey__progress" aria-label={`${journeyProgress}% completado`}>
+              <strong>{journeyProgress}%</strong>
+              <span>{completedJourneySteps} de {admissionJourney.length} etapas</span>
+              <div><i style={{ width: `${journeyProgress}%` }} /></div>
+            </div>
           </div>
-          <div>
-            <span>Cabecera matricula</span>
-            <strong>{hasCabecera ? 'Vinculada' : 'Pendiente'}</strong>
-          </div>
-          <div>
-            <span>Documentos</span>
-            <strong>{documentStatus(selectedItem)}</strong>
-          </div>
-          <button type="button" className="ghost-button" onClick={() => setStudentScreenOpen(true)}>
-            Ficha completa
-          </button>
-          {!isAdmissionsRole ? (
-            <button
-              type="button"
-              className="danger-action"
-              onClick={() => void revertSelectedProcess()}
-              disabled={revertLoading}
-            >
-              {revertLoading ? 'Revirtiendo...' : 'Revertir proceso'}
+
+          <nav className="preinscripcion-journey__steps" aria-label="Etapas de inscripción">
+            {admissionJourney.map((step, index) => {
+              const isActive = step.matches.includes(activeStage)
+              const state = step.complete ? 'Completado' : step.disabled ? 'Bloqueado' : isActive ? 'En curso' : 'Pendiente'
+              return (
+                <button
+                  key={step.key}
+                  type="button"
+                  className={`preinscripcion-journey__step${isActive ? ' is-active' : ''}${step.complete ? ' is-complete' : ''}`}
+                  onClick={() => void openPreinscriptionStage(step.stage)}
+                  disabled={step.disabled}
+                  aria-current={isActive ? 'step' : undefined}
+                >
+                  <b>{step.complete ? '✓' : index + 1}</b>
+                  <span>
+                    <strong>{step.label}</strong>
+                    <small>{state}</small>
+                  </span>
+                </button>
+              )
+            })}
+          </nav>
+
+          <div className="preinscripcion-journey__actions">
+            <div>
+              <span>Convenio <strong>{hasCabecera ? 'Listo' : 'Pendiente'}</strong></span>
+              <span>Documentos <strong>{selectedItem ? documentStatus(selectedItem) : `0/${requiredDocumentCount}`}</strong></span>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => void openPreinscriptionStage('inscritos')}>
+              {selectedItem ? 'Cambiar estudiante' : 'Buscar aspirante'}
             </button>
-          ) : null}
+            {selectedItem ? (
+              <button type="button" className="ghost-button" onClick={() => setStudentScreenOpen(true)}>
+                Ver ficha
+              </button>
+            ) : null}
+            {selectedItem && !isAdmissionsRole ? (
+              <button
+                type="button"
+                className="danger-action"
+                onClick={() => void revertSelectedProcess()}
+                disabled={revertLoading}
+              >
+                {revertLoading ? 'Revirtiendo...' : 'Revertir proceso'}
+              </button>
+            ) : null}
+          </div>
         </section>
       ) : null}
       {revertError ? <p className="form-error">{revertError}</p> : null}
-
-      {!isScholarshipAdminStage ? (
-      <section className="preinscripcion-integrated">
-        <div className="preinscripcion-integrated__head">
-          <div>
-            <span>Proceso regular</span>
-            <h2>{isAdmissionsRole ? 'Paso 1 inscribir, paso 2 matricular y documentar' : 'Inscripcion, cabecera, documentos y primer nivel'}</h2>
-          </div>
-          <strong>
-            {integratedReadyCount} de {displayedIntegratedServices.length} {isAdmissionsRole ? 'paso(s) completado(s)' : 'modulo(s) disponibles'}
-          </strong>
-        </div>
-        <div className="preinscripcion-integrated__summary">
-          <div>
-            <span>Estudiante</span>
-            <strong>{selectedStudentName || 'Seleccione un estudiante'}</strong>
-          </div>
-          <div>
-            <span>Cedula</span>
-            <strong>{selectedStudentCedula || '-'}</strong>
-          </div>
-          <div>
-            <span>Documentos</span>
-            <strong>{selectedItem ? documentStatus(selectedItem) : '-'}</strong>
-          </div>
-          <div>
-            <span>Cabecera matricula</span>
-            <strong>{hasCabecera ? 'Vinculado' : 'Pendiente'}</strong>
-          </div>
-        </div>
-        <div className="preinscripcion-integrated__grid">
-          {displayedIntegratedServices.map((service) => (
-            <article
-              key={service.key}
-              className={`preinscripcion-integrated__card ${
-                service.ready ? 'preinscripcion-integrated__card--ready' : 'preinscripcion-integrated__card--pending'
-              }`}
-            >
-              <div className="preinscripcion-integrated__card-head">
-                <span>{service.ready ? 'Disponible' : 'Pendiente'}</span>
-                <strong>{service.title}</strong>
-              </div>
-              <p>{service.description}</p>
-              <small>{service.requirement}</small>
-              <div className="preinscripcion-integrated__tables">
-                {service.tables.map((table) => (
-                  <em key={table}>{table}</em>
-                ))}
-              </div>
-              <button
-                type="button"
-                className="ghost-button preinscripcion-integrated__button"
-                onClick={() => void openPreinscriptionStage(service.stage)}
-              >
-                {service.actionLabel}
-              </button>
-            </article>
-          ))}
-        </div>
-      </section>
-      ) : null}
 
       {activeStage === 'registro' ? (
       <section className="student-grid student-grid--content preinscripcion-grid">
@@ -1935,6 +1893,9 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
               <small>
                 {paymentPlanPreview.subjectCount} materias: {formatMoney(paymentPlanPreview.academicTotal)} + matrícula {formatMoney(paymentPlanPreview.enrollmentTotal)}.
               </small>
+              {paymentPlanPreview.scholarshipAppliesOnlyToTuition ? (
+                <small>La Beca INTEC se aplica únicamente al arancel; la matrícula se paga completa.</small>
+              ) : null}
             </div>
             {renderPaymentScopeSelector()}
             {renderScholarshipSelector()}

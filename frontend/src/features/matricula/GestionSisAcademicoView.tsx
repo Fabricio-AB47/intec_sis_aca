@@ -1820,7 +1820,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                                 className="reporteria-row-action"
                                 onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
                               >
-                                Abrir
+                                Actualizar
                               </button>
                             )}
                           </td>

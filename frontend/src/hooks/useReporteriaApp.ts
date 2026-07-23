@@ -42,18 +42,22 @@ import { useInactivityLogout } from './useInactivityLogout'
 const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000
 const ADMISSIONS_ALLOWED_PAGES: Page[] = [
   'dashboard',
+  'sistema-academico',
   'preinscripcion',
   'gestion-sisacademico',
   'sisacademico-v1',
 ]
 const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'dashboard',
+  'sistema-academico',
+  'preinscripcion',
   'matricula',
   'matricula-acad',
   'matricula-docente',
   'estado-docente',
   'actualizar-datos-estudiante',
   'reportes-individuales',
+  'reporteria-integral',
   'gestion-sisacademico',
   'sisacademico-v1',
   'asignacion-pantallas',
@@ -75,6 +79,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
 ])
 const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'dashboard',
+  'sistema-academico',
   'preinscripcion',
   'ingreso-ventas',
   'gestion-sisacademico',
@@ -83,6 +88,7 @@ const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'carnet-institucional',
 ])
 const SECRETARIA_ALLOWED_PAGES = new Set<Page>([
+  'sistema-academico',
   'practicas-institucionales',
   'fecha-grado',
   'senescyt-estudiantes',
@@ -1000,6 +1006,12 @@ export function useReporteriaApp() {
   const openPortalDocenteInformePage = () => {
     setActivePage('portal-docente-informe')
   }
+  const openSistemaAcademicoPage = () => {
+    setActivePage('sistema-academico')
+    if (!dashboardMatricula && !dashboardMatriculaLoading) {
+      void loadDashboardMatricula()
+    }
+  }
   const openPortalDocentePlanificacionPage = () => {
     setActivePage('portal-docente-planificacion')
   }
@@ -1218,6 +1230,7 @@ export function useReporteriaApp() {
     onSubmit,
     selectAccessProfile,
     openDashboard,
+    openSistemaAcademicoPage,
     openPortalEstudiantePage,
     setPortalStudentSection,
     openPortalDocentePage,

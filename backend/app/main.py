@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.routers.academic_enrollment import router as academic_enrollment_router
+from app.routers.academic_system import router as academic_system_router
 from app.routers.age_ranges import router as age_ranges_router
 from app.routers.auth import router as auth_router
 from app.routers.carnet import router as carnet_router
@@ -55,6 +56,7 @@ app.include_router(excel_validator_router)
 app.include_router(students_router)
 app.include_router(age_ranges_router)
 app.include_router(academic_enrollment_router)
+app.include_router(academic_system_router)
 app.include_router(preinscription_router)
 app.include_router(senescyt_router)
 app.include_router(legacy_reports_router)

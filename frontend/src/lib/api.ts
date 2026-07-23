@@ -47,6 +47,7 @@ import type {
   CredentialListResponse,
   AdmissionsDashboardStudentsResponse,
   ActaGradoPayload,
+  AcademicSystemIntegrationResponse,
   DashboardMatriculaResponse,
   DashboardMatriculaTrendStudentsResponse,
   ExcelSqlCrossResponse,
@@ -566,6 +567,10 @@ export async function fetchMatriculaSummary(): Promise<MatriculaSummaryResponse>
 
 export async function fetchDashboardMatricula(): Promise<DashboardMatriculaResponse> {
   return request<DashboardMatriculaResponse>('/api/students/dashboard-matricula', { cache: 'no-store' })
+}
+
+export async function fetchAcademicSystemIntegrationStatus(): Promise<AcademicSystemIntegrationResponse> {
+  return request<AcademicSystemIntegrationResponse>('/api/academic-system/integration-status', { cache: 'no-store' })
 }
 
 export async function fetchDashboardMatriculaTrendStudents(
