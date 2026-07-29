@@ -12,6 +12,7 @@ const lazyView = <T,>(loader: () => Promise<T>, name: keyof T) =>
   lazy(async () => ({ default: (await loader())[name] as ComponentType<Record<string, unknown>> }))
 
 const AsignacionPantallasView = lazyView(() => import('./features/admin/AsignacionPantallasView'), 'AsignacionPantallasView')
+const NotasPorAsignaturaView = lazyView(() => import('./features/admin/NotasPorAsignaturaView'), 'NotasPorAsignaturaView')
 const CarnetInstitucionalView = lazyView(() => import('./features/admin/CarnetInstitucionalView'), 'CarnetInstitucionalView')
 const CredentialGeneratorView = lazyView(() => import('./features/admin/CredentialGeneratorView'), 'CredentialGeneratorView')
 const MassEmailView = lazyView(() => import('./features/admin/MassEmailView'), 'MassEmailView')
@@ -82,6 +83,23 @@ function App() {
         onSelect={(role) => {
           void app.selectAccessProfile(role)
         }}
+        onLogout={() => {
+          void app.logout()
+        }}
+      />
+    )
+  }
+
+  if (app.session && (app.screenAccessLoading || app.screenAccessPages === null)) {
+    return <SessionStatusView message="Cargando navegacion autorizada..." />
+  }
+
+  if (app.session && app.screenAccessPages?.length === 0) {
+    return (
+      <SessionStatusView
+        message="No se pudo habilitar la navegacion"
+        detail={app.screenAccessError || 'El tipo de usuario no tiene pantallas activas asignadas.'}
+        onRetry={app.refreshScreenAccess}
         onLogout={() => {
           void app.logout()
         }}
@@ -170,9 +188,11 @@ function App() {
         />
       )
     } else if (app.activePage === 'reporteria-integral') {
-      pageContent = <ReporteriaIntegralView displayName={app.displayName} initialReportKey={app.legacyReportKey} />
+      pageContent = <ReporteriaIntegralView displayName={app.displayName} role={app.session.rol} initialReportKey={app.legacyReportKey} />
     } else if (app.activePage === 'reportes-individuales') {
-      pageContent = <ReportesIndividualesView displayName={app.displayName} initialReportKey={app.legacyReportKey} />
+      pageContent = <ReportesIndividualesView displayName={app.displayName} role={app.session.rol} initialReportKey={app.legacyReportKey} />
+    } else if (app.activePage === 'admin-notas-asignatura') {
+      pageContent = <NotasPorAsignaturaView displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'sisacademico-v1') {
       pageContent = (
         <SisAcademicoV1CloneView
@@ -366,6 +386,7 @@ function App() {
           activePortalStudentSection={app.portalStudentSection}
           activePreinscriptionStage={app.preinscriptionActiveStage}
           role={app.session.rol}
+          screenAccessPages={app.screenAccessPages}
           displayName={app.displayName}
           cedula={app.session.cedula || ''}
           onOpenDashboard={app.openDashboard}
@@ -387,6 +408,7 @@ function App() {
           onOpenReporteriaCarreras={app.openReporteriaCarrerasPage}
           onOpenReporteriaIntegral={app.openReporteriaIntegralPage}
           onOpenReportesIndividuales={app.openReportesIndividualesPage}
+          onOpenAdminNotasAsignatura={app.openAdminNotasAsignaturaPage}
           onOpenGestionSisAcademico={app.openGestionSisAcademicoPage}
           onOpenSisAcademicoV1={app.openSisAcademicoV1Page}
           onOpenAsignacionPantallas={app.openAsignacionPantallasPage}

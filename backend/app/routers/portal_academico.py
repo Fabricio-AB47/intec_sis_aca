@@ -18,7 +18,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 from openpyxl import Workbook
 from PIL import Image as PILImage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import pyodbc
 from asn1crypto import pkcs12 as asn1_pkcs12
 from cryptography import x509 as crypto_x509
@@ -41,6 +41,7 @@ from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
 from app.services.db import get_connection, get_finance_connection
+from app.services.grade_calculation import calculate_regular_grade_with_recovery
 
 router = APIRouter(prefix="/api/portal", tags=["portal-academico"])
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 _STUDENT_ACCESS = require_roles("ESTUDIANTE")
 _TEACHER_ACCESS = require_roles("DOCENTE")
 _PORTAL_ADMIN_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_GRADES_ADMIN_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "BIENESTAR")
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 _REPORT_TEMPLATE_PATH = _PROJECT_ROOT / "frontend" / "doc" / "Plantilla word (1) - copia (1).docx"
@@ -87,6 +89,18 @@ class TeacherGradePayload(BaseModel):
     recuperacion: float | None = Field(default=None, ge=0, le=10)
     promedio_final: float | None = Field(default=None, ge=0, le=10)
     caprueba: str | None = Field(default=None, max_length=10)
+
+
+class AdminGradeCourseSelectionPayload(BaseModel):
+    codigo_periodo: int
+    cod_anio_basica: int
+    codigo_materia: str = Field(min_length=1, max_length=100)
+    paralelo: str = Field(min_length=1, max_length=10)
+    cod_jornada: int | None = None
+
+
+class AdminGradeCourseBatchPayload(BaseModel):
+    courses: list[AdminGradeCourseSelectionPayload] = Field(min_length=1, max_length=3)
 
 
 class AcademicPlanningTopicPayload(BaseModel):
@@ -190,6 +204,45 @@ class TeacherComplianceReportFormat(BaseModel):
     closing: str = Field(default="Saludos cordiales,", max_length=300)
     signature_label: str = Field(default="Firma electrónica", max_length=120)
     signature_role: str = Field(default="DOCENTE", max_length=120)
+
+
+class TeacherTeamsRecordingEvidence(BaseModel):
+    team_id: str = Field(default="", max_length=100)
+    team_name: str = Field(default="", max_length=300)
+    recording_id: str = Field(default="", max_length=300)
+    name: str = Field(min_length=1, max_length=300)
+    date: str = Field(default="No disponible", max_length=60)
+    start_hour: str = Field(default="No disponible", max_length=40)
+    end_hour: str = Field(default="No disponible", max_length=40)
+    call_duration: str = Field(default="No disponible", max_length=80)
+    recording_duration: str = Field(default="No disponible", max_length=80)
+    modified_by: str = Field(default="No disponible", max_length=200)
+    web_url: str = Field(default="", max_length=2000)
+    source: Literal["Microsoft Graph"] = "Microsoft Graph"
+
+
+def _parse_teacher_teams_recordings(raw_payload: str) -> list[dict[str, Any]]:
+    if not raw_payload.strip():
+        return []
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="La evidencia de Teams no contiene JSON válido") from exc
+    if not isinstance(decoded, list):
+        raise HTTPException(status_code=400, detail="La evidencia de Teams debe ser una lista")
+    if len(decoded) > 50:
+        raise HTTPException(status_code=400, detail="Solo se pueden anexar hasta 50 grabaciones de Teams")
+
+    parsed: list[dict[str, Any]] = []
+    try:
+        for item in decoded:
+            recording = TeacherTeamsRecordingEvidence.model_validate(item).model_dump()
+            web_url = str(recording.get("web_url") or "").strip()
+            recording["web_url"] = web_url if web_url.lower().startswith("https://") else ""
+            parsed.append(recording)
+    except (ValidationError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="La evidencia de Teams contiene campos inválidos") from exc
+    return parsed
 
 
 _GRADE_COLUMN_MAP = {
@@ -310,13 +363,23 @@ def _number(value: Any) -> float | None:
         return None
 
 
+_PASSING_GRADE = 7.0
+
+
+def _grade_result(value: Any) -> str:
+    final_grade = _number(value)
+    if final_grade is None:
+        return "PENDIENTE"
+    return "APROBADO" if final_grade >= _PASSING_GRADE else "REPROBADO"
+
+
 def _weighted_regular_partial(tareas: Any, proyectos: Any, examen: Any) -> float | None:
     tareas_value = _number(tareas)
     proyectos_value = _number(proyectos)
     examen_value = _number(examen)
     if tareas_value is None or proyectos_value is None or examen_value is None:
         return None
-    return round((tareas_value * 0.30) + (proyectos_value * 0.40) + (examen_value * 0.30), 2)
+    return round((tareas_value * 0.30) + (proyectos_value * 0.30) + (examen_value * 0.40), 2)
 
 
 def _weighted_homologation_final(teoria: Any, practica: Any) -> float | None:
@@ -406,7 +469,7 @@ def _safe_filename(value: Any) -> str:
 def _grade_status(final: Any, fallback: Any = "") -> str:
     value = _number(final)
     if value is not None:
-        return "Aprobada" if value >= 7 else "Reprobada"
+        return "Aprobada" if value >= _PASSING_GRADE else "Reprobada"
     fallback_text = _clean(fallback)
     return fallback_text or "Pendiente"
 
@@ -777,16 +840,15 @@ def _record_item(row: Any) -> dict[str, Any]:
         getattr(row, "tipo_matricula", ""),
         getattr(row, "detalle_periodo", ""),
     )
-    nota_final = (
-        _number(getattr(row, "promedio_final_raw", None))
-        if es_homologacion
-        else _number(getattr(row, "nota_final", None))
-    )
-    nota_aprobar = 7.0
+    nota_final = _number(getattr(row, "nota_final", None))
     if nota_final is None:
+        nota_final = _number(getattr(row, "promedio_final_raw", None))
+    nota_aprobar = _PASSING_GRADE
+    estado_nota = _grade_result(nota_final)
+    if estado_nota == "PENDIENTE":
         estado = "En curso"
         aprobada = False
-    elif nota_final >= nota_aprobar:
+    elif estado_nota == "APROBADO":
         estado = "Aprobada"
         aprobada = True
     else:
@@ -835,6 +897,7 @@ def _record_item(row: Any) -> dict[str, Any]:
         "promedio_final": nota_final,
         "nota_aprobar": nota_aprobar,
         "aprobada": aprobada,
+        "estado_nota": estado_nota,
         "estado_academico": estado,
         "observaciones": _clean(getattr(row, "observaciones", "")),
         "seguimiento": _clean(getattr(row, "seguimiento", "")),
@@ -1824,10 +1887,11 @@ def _course_item(row: Any) -> dict[str, Any]:
 
 
 def _group_teacher_courses(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    period_groups: dict[tuple[str, str, str, str, bool], dict[str, Any]] = {}
+    period_groups: dict[tuple[str, str, str, str, str, bool], dict[str, Any]] = {}
     for item in items:
         common_code = _clean(item.get("cod_materia") or item.get("codigo_materia"))
         key = (
+            _clean(item.get("cod_anio_basica")),
             common_code,
             _clean(item.get("codigo_periodo")),
             _clean(item.get("paralelo")).upper(),
@@ -1868,12 +1932,13 @@ def _group_teacher_courses(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized_items.append(bucket)
 
     grouped: list[dict[str, Any]] = []
-    regular_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    regular_groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for item in normalized_items:
         if item.get("es_homologacion"):
             grouped.append(item)
             continue
         key = (
+            _clean(item.get("cod_anio_basica")),
             _clean(item.get("cod_materia") or item.get("codigo_materia")),
             _clean(item.get("nombre_materia")),
             _clean(item.get("paralelo")).upper(),
@@ -2158,6 +2223,7 @@ def teacher_courses(
                       ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                      AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                     WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                      AND TRY_CONVERT(int, cxe.cod_anio_Basica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
                           UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
                       AND UPPER(LTRIM(RTRIM(COALESCE(
@@ -2252,6 +2318,8 @@ def teacher_course_students(
         raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
     if not subject_filter:
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
+    if cod_anio_basica is None:
+        raise HTTPException(status_code=400, detail="Debe seleccionar la carrera del curso")
     if len(period_codes) > 2:
         raise HTTPException(status_code=400, detail="Solo se pueden consultar hasta 2 periodos regulares unidos")
     period_placeholders = ", ".join("?" for _ in period_codes)
@@ -2429,6 +2497,412 @@ def teacher_course_students(
         return {"total": len(rows), "items": [_teacher_student_item(row) for row in rows]}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando estudiantes del curso: {exc}") from exc
+
+
+def _admin_grade_completion(item: dict[str, Any]) -> str:
+    if item.get("promedio_final") is not None:
+        return "COMPLETA"
+
+    if item.get("es_homologacion"):
+        grade_fields = ("teoria_homo", "practica_homo")
+    else:
+        grade_fields = (
+            "p1_tareas",
+            "p1_proyectos",
+            "p1_examen",
+            "prom_p1",
+            "p2_tareas",
+            "p2_proyectos",
+            "p2_examen",
+            "prom_p2",
+            "p3_tareas",
+            "p3_proyectos",
+            "p3_examen",
+            "prom_p3",
+            "recuperacion",
+        )
+    return "EN_PROCESO" if any(item.get(field) is not None for field in grade_fields) else "SIN_CALIFICAR"
+
+
+def _courses_with_enrolled_students(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if (_int(item.get("total_estudiantes")) or 0) > 0]
+
+
+def _admin_grade_course_key(item: dict[str, Any] | AdminGradeCourseSelectionPayload) -> tuple[str, str, str, str, str]:
+    source = item.model_dump() if isinstance(item, AdminGradeCourseSelectionPayload) else item
+    return (
+        _clean(source.get("codigo_periodo")),
+        _clean(source.get("cod_anio_basica")),
+        _clean(source.get("cod_materia") or source.get("codigo_materia")).upper(),
+        _clean(source.get("paralelo")).upper(),
+        _clean(source.get("cod_jornada")),
+    )
+
+
+def _admin_grade_period_type(item: dict[str, Any]) -> Literal["R", "H"]:
+    return "H" if item.get("es_homologacion") or _is_homologation_type(
+        item.get("tipo_periodo"),
+        item.get("detalle_periodo"),
+    ) else "R"
+
+
+def _resolve_admin_grade_course_selections(
+    available_courses: list[dict[str, Any]],
+    selections: list[AdminGradeCourseSelectionPayload],
+) -> list[dict[str, Any]]:
+    if not selections:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+    if len(selections) > 3:
+        raise HTTPException(status_code=400, detail="Solo se pueden seleccionar hasta 3 periodos")
+
+    requested_period_codes = [_clean(selection.codigo_periodo) for selection in selections]
+    if len(set(requested_period_codes)) != len(requested_period_codes):
+        raise HTTPException(
+            status_code=400,
+            detail="Cada selección debe corresponder a un periodo diferente",
+        )
+
+    requested_keys = [_admin_grade_course_key(selection) for selection in selections]
+    if len(set(requested_keys)) != len(requested_keys):
+        raise HTTPException(status_code=400, detail="No se puede seleccionar el mismo periodo y curso más de una vez")
+
+    available_by_key = {_admin_grade_course_key(course): course for course in available_courses}
+    requested_courses: list[dict[str, Any]] = []
+    for key in requested_keys:
+        course = available_by_key.get(key)
+        if course is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Uno de los periodos no corresponde a una asignación activa del docente con estudiantes",
+            )
+        requested_courses.append(course)
+
+    subject_codes = {
+        _clean(course.get("cod_materia") or course.get("codigo_materia")).upper()
+        for course in requested_courses
+    }
+    if len(subject_codes) != 1:
+        raise HTTPException(status_code=400, detail="Los periodos deben pertenecer a una sola asignatura")
+
+    period_types = {_admin_grade_period_type(course) for course in requested_courses}
+    if len(period_types) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pueden mezclar periodos regulares y de homologación en la misma consulta",
+        )
+
+    selected_subject = next(iter(subject_codes))
+    selected_type = next(iter(period_types))
+    selected_courses: list[dict[str, Any]] = []
+    selected_keys: set[tuple[str, str, str, str, str]] = set()
+    for period_code in requested_period_codes:
+        for course in available_courses:
+            if _clean(course.get("codigo_periodo")) != period_code:
+                continue
+            if _clean(course.get("cod_materia") or course.get("codigo_materia")).upper() != selected_subject:
+                continue
+            if _admin_grade_period_type(course) != selected_type:
+                continue
+            key = _admin_grade_course_key(course)
+            if key in selected_keys:
+                continue
+            selected_keys.add(key)
+            selected_courses.append(course)
+
+    if not selected_courses:
+        raise HTTPException(status_code=400, detail="Los periodos seleccionados no tienen cursos disponibles")
+    return selected_courses
+
+
+def _admin_grade_students_response(source_items: list[dict[str, Any]]) -> dict[str, Any]:
+    items = []
+    summary = {"completas": 0, "en_proceso": 0, "sin_calificar": 0, "aprobados": 0, "reprobados": 0}
+    for source_item in source_items:
+        item = dict(source_item)
+        completion = _admin_grade_completion(item)
+        item["estado_registro"] = completion
+        if completion == "COMPLETA":
+            summary["completas"] += 1
+        elif completion == "EN_PROCESO":
+            summary["en_proceso"] += 1
+        else:
+            summary["sin_calificar"] += 1
+        if item.get("estado_nota") == "APROBADO":
+            summary["aprobados"] += 1
+        elif item.get("estado_nota") == "REPROBADO":
+            summary["reprobados"] += 1
+        items.append(item)
+    return {"total": len(items), "items": items, "summary": summary}
+
+
+@router.get("/admin/grades/teachers")
+def admin_grade_teachers(
+    current_user: Annotated[SessionUser, Depends(_GRADES_ADMIN_ACCESS)],
+    buscar: Annotated[str, Query(max_length=150)] = "",
+    estado: Annotated[str, Query(max_length=30)] = "",
+    limit: Annotated[int, Query(ge=1, le=2000)] = 1000,
+) -> dict[str, Any]:
+    del current_user
+    cleaned_search = buscar.strip()
+    cleaned_state = estado.strip().upper()
+    like = f"%{cleaned_search}%"
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT TOP ({limit})
+                    TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))) AS cedula,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))) AS docente,
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))), N''),
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correop))), N''),
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), usuario_docente.login))), N'')
+                    ) AS correo,
+                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), usuario_docente.Estado))) AS estado,
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), est.ESTADO))), N''),
+                        CASE
+                            WHEN usuario_docente.Codigo_Usuario IS NULL THEN N'Sin usuario vinculado'
+                            ELSE LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), usuario_docente.Estado)))
+                        END
+                    ) AS estado_nombre,
+                    asignaciones.total_asignaciones,
+                    asignaciones.total_asignaturas,
+                    asignaciones.total_periodos
+                FROM dbo.DATOSDOCENTE d
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        u.Codigo_Usuario,
+                        u.login,
+                        u.Estado
+                    FROM dbo.USUARIOS u
+                    WHERE TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                       OR (
+                            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))), N'') IS NOT NULL
+                        AND LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), u.cedula))) =
+                            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc)))
+                       )
+                    ORDER BY
+                        CASE WHEN COALESCE(TRY_CONVERT(int, u.tipo_usuario), 2) <> 1 THEN 0 ELSE 1 END,
+                        CASE WHEN TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc) THEN 0 ELSE 1 END,
+                        TRY_CONVERT(int, u.Codigo_Usuario)
+                ) usuario_docente
+                LEFT JOIN dbo.ESTADO est
+                  ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), est.IDESTADO)))) =
+                     UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), usuario_docente.Estado))))
+                OUTER APPLY (
+                    SELECT
+                        COUNT(*) AS total_asignaciones,
+                        COUNT(DISTINCT CONCAT(
+                            TRY_CONVERT(nvarchar(50), cxd.cod_Anio_Basica), N'|',
+                            TRY_CONVERT(nvarchar(50), cxd.codigo_materia)
+                        )) AS total_asignaturas,
+                        COUNT(DISTINCT TRY_CONVERT(nvarchar(50), cxd.codigo_periodo)) AS total_periodos
+                    FROM dbo.CARRERAXDOCENTE cxd
+                    WHERE TRY_CONVERT(int, cxd.codigo_doc) = TRY_CONVERT(int, d.codigo_doc)
+                ) asignaciones
+                WHERE asignaciones.total_asignaciones > 0
+                  AND (
+                        ? = N''
+                     OR TRY_CONVERT(nvarchar(50), d.codigo_doc) LIKE ?
+                     OR TRY_CONVERT(nvarchar(100), d.cedula_doc) LIKE ?
+                     OR TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) LIKE ?
+                     OR TRY_CONVERT(nvarchar(255), d.correo) LIKE ?
+                     OR TRY_CONVERT(nvarchar(255), d.correop) LIKE ?
+                     OR TRY_CONVERT(nvarchar(255), usuario_docente.login) LIKE ?
+                  )
+                  AND (
+                        ? = N''
+                     OR (? = N'SIN_USUARIO' AND usuario_docente.Codigo_Usuario IS NULL)
+                     OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), usuario_docente.Estado)))) = ?
+                  )
+                ORDER BY LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre)))
+                """,
+                cleaned_search,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                cleaned_state,
+                cleaned_state,
+                cleaned_state,
+            )
+            rows = cursor.fetchall()
+        items = [
+            {
+                "codigo_doc": _clean(row.codigo_doc),
+                "cedula": _clean(row.cedula),
+                "docente": _clean(row.docente),
+                "correo": _clean(row.correo),
+                "estado": _clean(row.estado),
+                "estado_nombre": _clean(row.estado_nombre),
+                "total_asignaciones": _int(row.total_asignaciones) or 0,
+                "total_asignaturas": _int(row.total_asignaturas) or 0,
+                "total_periodos": _int(row.total_periodos) or 0,
+            }
+            for row in rows
+        ]
+        return {"total": len(items), "items": items}
+    except pyodbc.Error as exc:
+        logger.exception("No se pudieron consultar los docentes para calificaciones")
+        raise HTTPException(status_code=500, detail="No se pudo consultar el listado de docentes") from exc
+
+
+@router.get("/admin/grades/teachers/{codigo_doc}/courses")
+def admin_grade_teacher_courses(
+    codigo_doc: int,
+    current_user: Annotated[SessionUser, Depends(_GRADES_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (3000)
+                    TRY_CONVERT(varchar(50), cxd.codigo_doc) AS codigo_doc,
+                    TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica) AS cod_anio_basica,
+                    TRY_CONVERT(nvarchar(4000), c.Nombre_Basica) AS nombre_carrera,
+                    TRY_CONVERT(varchar(50), cxd.codigo_materia) AS codigo_materia,
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), p.cod_materia))), N''),
+                        TRY_CONVERT(nvarchar(100), p.codigo_materia),
+                        TRY_CONVERT(nvarchar(100), cxd.codigo_materia)
+                    ) AS cod_materia,
+                    TRY_CONVERT(nvarchar(4000), p.Nomb_Materia) AS nombre_materia,
+                    TRY_CONVERT(varchar(50), cxd.codigo_periodo) AS codigo_periodo,
+                    TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo) AS detalle_periodo,
+                    TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
+                    COALESCE(TRY_CONVERT(int, pe.Orden), TRY_CONVERT(int, pe.cod_periodo)) AS periodo_orden,
+                    TRY_CONVERT(nvarchar(50), cxd.Paralelo) AS paralelo,
+                    TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
+                    TRY_CONVERT(nvarchar(255), j.DetalleJ) AS jornada,
+                    TRY_CONVERT(int, p.Semestre) AS semestre,
+                    TRY_CONVERT(nvarchar(255), p.Unidad_Organiza) AS unidad_curricular,
+                    TRY_CONVERT(int, cxd.estadoMoodleDoc) AS estado_moodle_doc,
+                    stats.total_estudiantes
+                FROM dbo.CARRERAXDOCENTE cxd
+                LEFT JOIN dbo.CARRERAS c
+                  ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                LEFT JOIN dbo.PERIODO pe
+                  ON TRY_CONVERT(int, pe.cod_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                LEFT JOIN dbo.PENSUM p
+                  ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                 AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
+                LEFT JOIN dbo.JORNADA j
+                  ON TRY_CONVERT(int, j.NumJ) = TRY_CONVERT(int, cxd.Cod_Jornada)
+                OUTER APPLY (
+                    SELECT COUNT(DISTINCT TRY_CONVERT(int, cxe.codigo_estud)) AS total_estudiantes
+                    FROM dbo.CARRERAXESTUD cxe
+                    LEFT JOIN dbo.PENSUM pxe
+                      ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                     AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                    WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                      AND TRY_CONVERT(int, cxe.cod_anio_Basica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                      AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
+                          UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
+                      AND UPPER(LTRIM(RTRIM(COALESCE(
+                            NULLIF(TRY_CONVERT(nvarchar(100), pxe.cod_materia), N''),
+                            TRY_CONVERT(nvarchar(100), pxe.codigo_materia),
+                            TRY_CONVERT(nvarchar(100), cxe.codigo_materia),
+                            N''
+                      )))) = UPPER(LTRIM(RTRIM(COALESCE(
+                            NULLIF(TRY_CONVERT(nvarchar(100), p.cod_materia), N''),
+                            TRY_CONVERT(nvarchar(100), p.codigo_materia),
+                            TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
+                            N''
+                      ))))
+                ) stats
+                WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
+                ORDER BY
+                    COALESCE(TRY_CONVERT(int, pe.Orden), TRY_CONVERT(int, pe.cod_periodo)) DESC,
+                    TRY_CONVERT(nvarchar(4000), c.Nombre_Basica),
+                    TRY_CONVERT(nvarchar(4000), p.Nomb_Materia),
+                    TRY_CONVERT(nvarchar(50), cxd.Paralelo)
+                """,
+                codigo_doc,
+            )
+            raw_items = [_course_item(row) for row in cursor.fetchall()]
+
+        courses_by_key: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+        for item in raw_items:
+            key = (
+                _clean(item.get("cod_anio_basica")),
+                _clean(item.get("cod_materia") or item.get("codigo_materia")).upper(),
+                _clean(item.get("codigo_periodo")),
+                _clean(item.get("paralelo")).upper(),
+                _clean(item.get("cod_jornada")),
+            )
+            current = courses_by_key.get(key)
+            if current is None or (_int(item.get("total_estudiantes")) or 0) > (_int(current.get("total_estudiantes")) or 0):
+                courses_by_key[key] = item
+        items = _courses_with_enrolled_students(list(courses_by_key.values()))
+        return {"total": len(items), "items": items}
+    except pyodbc.Error as exc:
+        logger.exception("No se pudieron consultar las asignaturas del docente %s", codigo_doc)
+        raise HTTPException(status_code=500, detail="No se pudieron consultar las asignaturas del docente") from exc
+
+
+@router.get("/admin/grades/teachers/{codigo_doc}/students")
+def admin_grade_teacher_students(
+    codigo_doc: int,
+    current_user: Annotated[SessionUser, Depends(_GRADES_ADMIN_ACCESS)],
+    codigo_periodo: Annotated[list[int], Query()],
+    codigo_materia: Annotated[str, Query()],
+    paralelo: Annotated[str, Query(min_length=1)],
+    cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
+) -> dict[str, Any]:
+    teacher_session = current_user.model_copy(update={"codigo_doc": codigo_doc})
+    payload = teacher_course_students(
+        current_user=teacher_session,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
+    )
+    return _admin_grade_students_response(payload.get("items") or [])
+
+
+@router.post("/admin/grades/teachers/{codigo_doc}/students")
+def admin_grade_teacher_students_batch(
+    codigo_doc: int,
+    payload: AdminGradeCourseBatchPayload,
+    current_user: Annotated[SessionUser, Depends(_GRADES_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    available_payload = admin_grade_teacher_courses(codigo_doc=codigo_doc, current_user=current_user)
+    selected_courses = _resolve_admin_grade_course_selections(
+        available_payload.get("items") or [],
+        payload.courses,
+    )
+    teacher_session = current_user.model_copy(update={"codigo_doc": codigo_doc})
+    source_items: list[dict[str, Any]] = []
+    for course in selected_courses:
+        period_code = _int(course.get("codigo_periodo"))
+        career_code = _int(course.get("cod_anio_basica"))
+        if period_code is None or career_code is None:
+            raise HTTPException(status_code=400, detail="La asignación seleccionada no tiene periodo o carrera válidos")
+        course_payload = teacher_course_students(
+            current_user=teacher_session,
+            codigo_periodo=[period_code],
+            codigo_materia=_clean(course.get("cod_materia") or course.get("codigo_materia")),
+            paralelo=_clean(course.get("paralelo")),
+            cod_anio_basica=career_code,
+            cod_jornada=_int(course.get("cod_jornada")),
+        )
+        source_items.extend(course_payload.get("items") or [])
+
+    response = _admin_grade_students_response(source_items)
+    response["periodos_seleccionados"] = len({
+        _clean(course.get("codigo_periodo")) for course in selected_courses
+    })
+    response["tipo_seleccion"] = _admin_grade_period_type(selected_courses[0])
+    return response
 
 
 def _legacy_grade_text(value: Any) -> str:
@@ -2770,16 +3244,16 @@ def _teacher_notes_report_pdf(
             "",
             "",
             "Tareas 30%",
-            "Proy. 40%",
-            "Examen 30%",
+            "Proy. 30%",
+            "Examen 40%",
             "Prom.",
             "Tareas 30%",
-            "Proy. 40%",
-            "Examen 30%",
+            "Proy. 30%",
+            "Examen 40%",
             "Prom.",
             "Tareas 30%",
-            "Proy. 40%",
-            "Examen 30%",
+            "Proy. 30%",
+            "Examen 40%",
             "Prom.",
             "",
             "",
@@ -3101,11 +3575,7 @@ def _student_secretaria_notes_pdf(
         return f"{number:.2f}".replace(".", ",")
 
     def final_status(item: dict[str, Any]) -> str:
-        final = _number(item.get("promedio_final"))
-        if final is None:
-            return "PENDIENTE"
-        minimum = _number(item.get("nota_aprobar")) or 7
-        return "APROBADO" if final >= minimum else "REPROBADO"
+        return _grade_result(item.get("promedio_final"))
 
     def row_values(item: dict[str, Any]) -> list[str]:
         is_homo = _is_homologation_type(
@@ -3331,257 +3801,333 @@ def _student_grade_report_pdf(
     students: list[dict[str, Any]],
     include_teacher: bool = True,
 ) -> bytes:
-    rows = _student_grade_report_rows(students)
-    if not rows:
-        rows = students
-
-    red = colors.HexColor("#931913")
-    dark = colors.HexColor("#111111")
-    soft = colors.HexColor("#F4F8FA")
-    border = colors.HexColor("#9DA8B0")
-    gray = colors.HexColor("#555555")
+    # La consulta ya esta limitada a una asignacion exacta. El PDF replica el
+    # formato historico de Secretaria sin ampliar el historial del estudiante.
+    rows = list(students)
+    table_width = 539.0
+    grid_color = colors.HexColor("#777777")
+    text_color = colors.black
 
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="SecretaryTitle", parent=styles["Title"], fontSize=14, leading=16, alignment=TA_CENTER, textColor=dark))
-    styles.add(ParagraphStyle(name="SecretaryMeta", parent=styles["BodyText"], fontSize=8.6, leading=10.2, textColor=dark))
-    styles.add(ParagraphStyle(name="SecretaryMetaRight", parent=styles["SecretaryMeta"], alignment=TA_RIGHT))
-    styles.add(ParagraphStyle(name="SecretaryCell", parent=styles["BodyText"], fontSize=6.0, leading=6.8, textColor=dark))
-    styles.add(ParagraphStyle(name="SecretaryCellBold", parent=styles["SecretaryCell"], fontName="Helvetica-Bold", alignment=TA_CENTER))
-    styles.add(ParagraphStyle(name="SecretaryTiny", parent=styles["BodyText"], fontSize=6.4, leading=7.8, textColor=gray))
-
-    def status(value: Any, minimum: Any = 7) -> str:
-        number = _number(value)
-        min_value = _number(minimum) or 7
-        if number is None:
-            return "PENDIENTE"
-        return "APROBADO" if number >= min_value else "REPROBADO"
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyInstitution",
+            parent=styles["BodyText"],
+            fontName="Times-Bold",
+            fontSize=9.4,
+            leading=10.2,
+            alignment=TA_CENTER,
+            textColor=text_color,
+            spaceAfter=1.0,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyTitle",
+            parent=styles["BodyText"],
+            fontName="Times-Bold",
+            fontSize=9.6,
+            leading=10.5,
+            alignment=TA_CENTER,
+            textColor=text_color,
+            spaceAfter=1.0,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyMeta",
+            parent=styles["BodyText"],
+            fontName="Times-Roman",
+            fontSize=8.2,
+            leading=9.4,
+            alignment=TA_CENTER,
+            textColor=text_color,
+            spaceAfter=0.5,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyHeader",
+            parent=styles["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=5.05,
+            leading=5.45,
+            alignment=TA_CENTER,
+            textColor=text_color,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyCell",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=5.0,
+            leading=5.6,
+            textColor=text_color,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacyCellCenter",
+            parent=styles["SecretaryLegacyCell"],
+            alignment=TA_CENTER,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacySummary",
+            parent=styles["BodyText"],
+            fontName="Times-BoldItalic",
+            fontSize=9.2,
+            leading=10.2,
+            alignment=TA_RIGHT,
+            textColor=text_color,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SecretaryLegacySignature",
+            parent=styles["BodyText"],
+            fontName="Times-Italic",
+            fontSize=8.8,
+            leading=10.4,
+            alignment=TA_CENTER,
+            textColor=text_color,
+        )
+    )
 
     def grade(value: Any) -> str:
         number = _number(value)
+        return "-" if number is None else f"{number:.2f}".replace(".", ",")
+
+    def compact_number(value: Any) -> str:
+        number = _number(value)
         if number is None:
             return "-"
-        return f"{number:.2f}"
+        if number.is_integer():
+            return str(int(number))
+        return f"{number:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        key = "|".join([_clean(row.get("codigo_estud")), _clean(row.get("codigo_periodo")), _clean(row.get("cod_anio_basica"))])
-        grouped.setdefault(key, []).append(row)
-
-    story: list[Any] = []
-    if not grouped:
-        logo = _template_logo(3.1 * cm)
-        header = Table(
-            [
-                [
-                    logo,
-                    [
-                        Paragraph("INSTITUTO SUPERIOR TECNOLÓGICO INTEC", styles["SecretaryTitle"]),
-                        Paragraph("Reporte de notas", styles["SecretaryMeta"]),
-                    ],
-                    Paragraph(datetime.now().strftime("%d/%m/%Y, %H:%M"), styles["SecretaryMetaRight"]),
-                ]
-            ],
-            colWidths=[3.5 * cm, 10.5 * cm, 4.5 * cm],
+    def partial_average(item: dict[str, Any], partial: int) -> float | None:
+        stored = _number(item.get(f"prom_p{partial}"))
+        if stored is not None:
+            return stored
+        return _weighted_regular_partial(
+            item.get(f"p{partial}_tareas"),
+            item.get(f"p{partial}_proyectos"),
+            item.get(f"p{partial}_examen"),
         )
-        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -1), 1.1, red)]))
-        story.extend(
+
+    def regular_average(item: dict[str, Any]) -> float | None:
+        stored = _number(item.get("promedio"))
+        if stored is not None:
+            return stored
+        partials = [partial_average(item, partial) for partial in (1, 2, 3)]
+        if any(value is None for value in partials):
+            return None
+        return round(sum(value for value in partials if value is not None) / 3, 2)
+
+    def final_average(item: dict[str, Any]) -> float | None:
+        stored = _number(item.get("promedio_final"))
+        return stored if stored is not None else regular_average(item)
+
+    def cell(value: Any, *, centered: bool = False) -> Paragraph:
+        style = styles["SecretaryLegacyCellCenter"] if centered else styles["SecretaryLegacyCell"]
+        return Paragraph(_pdf_text(value), style)
+
+    period_label = _clean(meta.get("detalle_periodo")) or "-"
+    subject_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("codigo_materia")) or "-"
+    teacher_label = _pdf_text(teacher.get("docente")) if include_teacher else "-"
+    jornada_label = _clean(meta.get("cod_jornada")) or _clean(meta.get("jornada")) or "-"
+    is_homologation = bool(meta.get("es_homologacion")) or any(item.get("es_homologacion") for item in rows)
+
+    logo = _SvgLogo(_LOGO_PATH, 2.75 * cm)
+    logo.hAlign = "CENTER"
+    story: list[Any] = [
+        logo,
+        Spacer(1, 0.35 * cm),
+        Paragraph(
+            "INSTITUTO SUPERIOR TECNOLÓGICO DE TÉCNICAS EMPRESARIALES Y DEL CONOCIMIENTO",
+            styles["SecretaryLegacyInstitution"],
+        ),
+        Paragraph("Reporte de notas", styles["SecretaryLegacyTitle"]),
+        Paragraph(f"<b>Periodo:</b>&nbsp;&nbsp;{_pdf_text(period_label)}", styles["SecretaryLegacyTitle"]),
+        Paragraph(
+            f"<b>Paralelo:</b>&nbsp;&nbsp;{_pdf_text(meta.get('paralelo'))}"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Jornada:</b>&nbsp;&nbsp;{_pdf_text(jornada_label)}",
+            styles["SecretaryLegacyMeta"],
+        ),
+        Paragraph(
+            f"<b>Docente:</b>&nbsp;&nbsp;{teacher_label}"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Asignatura:</b>&nbsp;{_pdf_text(subject_name)}"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Semestre:</b>&nbsp;&nbsp;{_pdf_text(meta.get('semestre'))}"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Horas:</b>&nbsp;&nbsp;{compact_number(meta.get('horas'))}",
+            styles["SecretaryLegacyMeta"],
+        ),
+        Spacer(1, 0.18 * cm),
+    ]
+
+    if is_homologation:
+        headers = [
+            "No.",
+            "CARRERA",
+            "CEDULA",
+            "APELLIDOS Y NOMBRES",
+            "TEORÍA 40%",
+            "PRÁCTICA 60%",
+            "PROMEDIO FINAL",
+        ]
+        col_widths = [18, 78, 62, 205, 55, 55, 66]
+        table_data: list[list[Any]] = [
+            [Paragraph(escape(label), styles["SecretaryLegacyHeader"]) for label in headers]
+        ]
+        for index, item in enumerate(rows, start=1):
+            table_data.append(
+                [
+                    cell(index, centered=True),
+                    cell(item.get("nombre_carrera")),
+                    cell(item.get("cedula"), centered=True),
+                    cell(item.get("nombre_estudiante")),
+                    cell(grade(item.get("teoria_homo")), centered=True),
+                    cell(grade(item.get("practica_homo")), centered=True),
+                    cell(grade(final_average(item)), centered=True),
+                ]
+            )
+    else:
+        headers = [
+            "No.",
+            "CARRERA",
+            "CEDULA",
+            "APELLIDOS Y NOMBRES",
+            "NOTA<br/>1 P1<br/>30%",
+            "NOTA<br/>2 P1<br/>30%",
+            "NOTA<br/>3 P1<br/>40%",
+            "Promedio<br/>Parcial 1",
+            "NOTA<br/>1 P2<br/>30%",
+            "NOTA<br/>2 P2<br/>30%",
+            "NOTA<br/>3 P2<br/>40%",
+            "Promedio<br/>Parcial 2",
+            "NOTA<br/>1 P3<br/>30%",
+            "NOTA<br/>2 P3<br/>30%",
+            "NOTA<br/>3 P3<br/>40%",
+            "Promedio<br/>Parcial 3",
+            "Promedio",
+            "Recuperación",
+            "Promedio<br/>Final",
+        ]
+        col_widths = [11, 31, 35, 121, *([17.5, 17.5, 17.5, 28.5] * 3), 29, 40, 29]
+        table_data = [[Paragraph(label, styles["SecretaryLegacyHeader"]) for label in headers]]
+        for index, item in enumerate(rows, start=1):
+            table_data.append(
+                [
+                    cell(index, centered=True),
+                    cell(item.get("nombre_carrera")),
+                    cell(item.get("cedula"), centered=True),
+                    cell(item.get("nombre_estudiante")),
+                    cell(grade(item.get("p1_tareas")), centered=True),
+                    cell(grade(item.get("p1_proyectos")), centered=True),
+                    cell(grade(item.get("p1_examen")), centered=True),
+                    cell(grade(partial_average(item, 1)), centered=True),
+                    cell(grade(item.get("p2_tareas")), centered=True),
+                    cell(grade(item.get("p2_proyectos")), centered=True),
+                    cell(grade(item.get("p2_examen")), centered=True),
+                    cell(grade(partial_average(item, 2)), centered=True),
+                    cell(grade(item.get("p3_tareas")), centered=True),
+                    cell(grade(item.get("p3_proyectos")), centered=True),
+                    cell(grade(item.get("p3_examen")), centered=True),
+                    cell(grade(partial_average(item, 3)), centered=True),
+                    cell(grade(regular_average(item)), centered=True),
+                    cell(grade(item.get("recuperacion")), centered=True),
+                    cell(grade(final_average(item)), centered=True),
+                ]
+            )
+
+    if not rows:
+        table_data.append(
+            [Paragraph("Sin estudiantes matriculados para los filtros seleccionados.", styles["SecretaryLegacyCell"])]
+            + [""] * (len(col_widths) - 1)
+        )
+
+    row_heights = [27] + ([25.5] * max(len(table_data) - 1, 1))
+    grades_table = Table(table_data, colWidths=col_widths, rowHeights=row_heights, repeatRows=1)
+    table_commands: list[tuple[Any, ...]] = [
+        ("GRID", (0, 0), (-1, -1), 0.45, grid_color),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (1, 1), (3, -1), "LEFT"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1.1),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1.1),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+    ]
+    if not rows:
+        table_commands.append(("SPAN", (0, 1), (-1, 1)))
+    grades_table.setStyle(TableStyle(table_commands))
+    story.append(grades_table)
+
+    finals = [final_average(item) for item in rows]
+    completed_finals = [value for value in finals if value is not None]
+    course_average = round(sum(completed_finals) / len(completed_finals), 2) if completed_finals else None
+    summary = Table(
+        [["", Paragraph("Promedio:", styles["SecretaryLegacySummary"]), Paragraph(grade(course_average), styles["SecretaryLegacyMeta"]) ]],
+        colWidths=[313, 85, 141],
+    )
+    summary.setStyle(
+        TableStyle(
             [
-                header,
-                Spacer(1, 0.35 * cm),
-                Paragraph("No existen estudiantes o calificaciones para generar el reporte con los filtros seleccionados.", styles["SecretaryMeta"]),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]
         )
+    )
+    story.extend([summary, Spacer(1, 1.15 * cm)])
 
-    for group_index, group_rows in enumerate(grouped.values()):
-        first = group_rows[0]
-        if group_index:
-            story.append(PageBreak())
-
-        logo = _template_logo(3.1 * cm)
-        header = Table(
+    signatures = Table(
+        [
             [
-                [
-                    logo,
-                    [
-                        Paragraph("INSTITUTO SUPERIOR TECNOLÓGICO INTEC", styles["SecretaryTitle"]),
-                        Paragraph("Reporte de notas", styles["SecretaryMeta"]),
-                    ],
-                    Paragraph(datetime.now().strftime("%d/%m/%Y, %H:%M"), styles["SecretaryMetaRight"]),
-                ]
+                Paragraph("Secretaría Académica INTEC", styles["SecretaryLegacySignature"]),
+                Paragraph("Firma del docente", styles["SecretaryLegacySignature"]),
+                Paragraph("Coordinación Académica", styles["SecretaryLegacySignature"]),
             ],
-            colWidths=[3.5 * cm, 10.5 * cm, 4.5 * cm],
-        )
-        header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -1), 1.1, red)]))
-        story.extend([header, Spacer(1, 0.18 * cm)])
-
-        meta_table = Table(
             [
-                [
-                    Paragraph(f"<b>Carrera:</b> {_pdf_text(first.get('nombre_carrera'))}", styles["SecretaryMeta"]),
-                    Paragraph(f"<b>Estudiante:</b> {_pdf_text(first.get('nombre_estudiante'))}", styles["SecretaryMeta"]),
-                    Paragraph(f"<b>Cédula:</b> {_pdf_text(first.get('cedula'))}", styles["SecretaryMeta"]),
-                ],
-                [
-                    Paragraph(f"<b>Período:</b> {_pdf_text(first.get('detalle_periodo') or first.get('codigo_periodo'))}", styles["SecretaryMeta"]),
-                    Paragraph(f"<b>Modalidad:</b> En línea", styles["SecretaryMeta"]),
-                    Paragraph(
-                        f"<b>Docente:</b> {_pdf_text(teacher.get('docente'))}"
-                        if include_teacher
-                        else f"<b>Código:</b> {_pdf_text(first.get('codigo_estud'))}",
-                        styles["SecretaryMeta"],
-                    ),
-                ],
+                "",
+                Paragraph(f"CI: {_pdf_text(teacher.get('cedula'))}", styles["SecretaryLegacySignature"]),
+                "",
             ],
-            colWidths=[6.1 * cm, 7.2 * cm, 5.2 * cm],
-        )
-        meta_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), soft),
-                    ("BOX", (0, 0), (-1, -1), 0.35, border),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.2, border),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ]
-            )
-        )
-        story.extend([meta_table, Spacer(1, 0.18 * cm)])
-
-        header_1 = [
-            "Asignatura",
-            "Parcial 1", "", "", "",
-            "Parcial 2", "", "", "",
-            "Parcial 3", "", "", "",
-            "Promedio final",
-            "Recup.",
-            "Estado",
-            "Créditos",
-        ]
-        header_2 = [
-            "",
-            "N1", "N2", "N3", "PROM",
-            "N1", "N2", "N3", "PROM",
-            "N1", "N2", "N3", "PROM",
-            "", "", "", "",
-        ]
-        table_rows = [
-            [Paragraph(f"<b>{escape(item)}</b>", styles["SecretaryCellBold"]) for item in header_1],
-            [Paragraph(f"<b>{escape(item)}</b>", styles["SecretaryCellBold"]) for item in header_2],
-        ]
-        for item in group_rows:
-            table_rows.append(
-                [
-                    Paragraph(_pdf_text(item.get("nombre_materia")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p1_tareas")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p1_proyectos")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p1_examen")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("prom_p1")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p2_tareas")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p2_proyectos")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p2_examen")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("prom_p2")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p3_tareas")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p3_proyectos")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("p3_examen")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("prom_p3")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("promedio_final")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("recuperacion")), styles["SecretaryCell"]),
-                    Paragraph(status(item.get("promedio_final"), item.get("nota_aprobar")), styles["SecretaryCell"]),
-                    Paragraph(grade(item.get("creditos")), styles["SecretaryCell"]),
-                ]
-            )
-
-        col_widths = [4.0 * cm] + [0.82 * cm] * 12 + [1.18 * cm, 0.95 * cm, 1.32 * cm, 0.95 * cm]
-        grades_table = Table(table_rows, colWidths=col_widths, repeatRows=2)
-        grades_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), red),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#E8EEF1")),
-                    ("SPAN", (0, 0), (0, 1)),
-                    ("SPAN", (1, 0), (4, 0)),
-                    ("SPAN", (5, 0), (8, 0)),
-                    ("SPAN", (9, 0), (12, 0)),
-                    ("SPAN", (13, 0), (13, 1)),
-                    ("SPAN", (14, 0), (14, 1)),
-                    ("SPAN", (15, 0), (15, 1)),
-                    ("SPAN", (16, 0), (16, 1)),
-                    ("GRID", (0, 0), (-1, -1), 0.25, border),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-                    ("ALIGN", (0, 2), (0, -1), "LEFT"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 2.2),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 2.2),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ]
-            )
-        )
-        story.append(grades_table)
-
-        finals = [_number(item.get("promedio_final")) for item in group_rows if _number(item.get("promedio_final")) is not None]
-        credits = [_number(item.get("creditos")) for item in group_rows if _number(item.get("creditos")) is not None]
-        average = sum(finals) / len(finals) if finals else None
-        failed = sum(1 for item in group_rows if status(item.get("promedio_final"), item.get("nota_aprobar")) == "REPROBADO")
-        story.extend(
+        ],
+        colWidths=[4.8 * cm] * 3,
+    )
+    signatures.hAlign = "CENTER"
+    signatures.setStyle(
+        TableStyle(
             [
-                Spacer(1, 0.16 * cm),
-                Table(
-                    [
-                        [
-                            Paragraph(f"<b>Promedio:</b> {grade(average)}", styles["SecretaryMeta"]),
-                            Paragraph(f"<b>Total créditos:</b> {grade(sum(credits) if credits else None)}", styles["SecretaryMeta"]),
-                            Paragraph(f"<b>Reprobadas:</b> {failed}", styles["SecretaryMeta"]),
-                        ]
-                    ],
-                    colWidths=[6.1 * cm, 6.1 * cm, 6.3 * cm],
-                    style=TableStyle(
-                        [
-                            ("BACKGROUND", (0, 0), (-1, -1), soft),
-                            ("BOX", (0, 0), (-1, -1), 0.35, border),
-                            ("INNERGRID", (0, 0), (-1, -1), 0.2, border),
-                            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                            ("TOPPADDING", (0, 0), (-1, -1), 4),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                        ]
-                    ),
-                ),
-                Spacer(1, 0.55 * cm),
-                Paragraph("____________________________", styles["SecretaryMetaRight"]),
-                Paragraph("Vicerrectora General Académico", styles["SecretaryMetaRight"]),
-                Paragraph("María Verónica Cevallos Calderón", styles["SecretaryMetaRight"]),
-                Spacer(1, 0.22 * cm),
-                Paragraph(
-                    "NOTA: Información basada en los soportes de los archivos y registros académicos que reposan en el Departamento de Secretaría General; cualquier alteración al texto del presente documento, como enmendadura, tachado, borrón o repisado, lo invalida.",
-                    styles["SecretaryTiny"],
-                ),
-                Paragraph("* Este documento tiene validez si tiene firma y sello del Instituto INTEC.", styles["SecretaryTiny"]),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
             ]
         )
-
-    def draw_page(canvas: Any, _doc: Any) -> None:
-        width, height = letter
-        canvas.saveState()
-        canvas.setFont("Helvetica", 6.5)
-        canvas.setFillColor(gray)
-        canvas.drawString(0.7 * cm, 0.45 * cm, "INTEC")
-        canvas.drawRightString(width - 0.7 * cm, 0.45 * cm, f"Página {canvas.getPageNumber()}")
-        canvas.restoreState()
+    )
+    story.append(signatures)
 
     output = BytesIO()
+    page_margin = (letter[0] - table_width) / 2
     SimpleDocTemplate(
         output,
         pagesize=letter,
-        rightMargin=0.62 * cm,
-        leftMargin=0.62 * cm,
-        topMargin=0.62 * cm,
-        bottomMargin=0.7 * cm,
-        title="Reporte de Notas Secretaria",
-    ).build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+        rightMargin=page_margin,
+        leftMargin=page_margin,
+        topMargin=0.55 * cm,
+        bottomMargin=0.55 * cm,
+        title="Notas Por Docente",
+        author="Instituto Superior Tecnológico INTEC",
+    ).build(story)
     output.seek(0)
     return output.getvalue()
 
@@ -3665,7 +4211,7 @@ def _teacher_compliance_model_pdf(
         canvas.drawCentredString(x + 97, y + 21, "Informe de finalización de asignatura")
         canvas.drawCentredString(x + 97, y + 8, "para pago")
         canvas.setFont("Times-Roman", 14)
-        canvas.drawCentredString(x + 258, y + 15, f"Página {page_num} de 4")
+        canvas.drawCentredString(x + 258, y + 15, f"Página {page_num} de {total_pages}")
 
     def draw_watermark() -> None:
         canvas.saveState()
@@ -3816,6 +4362,77 @@ def _teacher_compliance_model_pdf(
             y_after -= 10
         return y_after
 
+    def draw_teams_recordings_table(recordings: list[dict[str, Any]], x: float, y: float, max_w: float) -> float:
+        row_h = 17
+        headers = ["Fecha", "Grabación", "Inicio", "Fin", "Llamada", "Archivo", "Modificado por"]
+        col_widths = [52, 116, 42, 42, 58, 58, 97]
+        scale = min(1.0, max_w / sum(col_widths))
+        col_widths = [value * scale for value in col_widths]
+        table_w = sum(col_widths)
+        table_h = (len(recordings) + 1) * row_h
+
+        def fitted_text(value: Any, width_value: float, bold: bool = False) -> str:
+            text = _clean(value) or "-"
+            font_name = "Times-Bold" if bold else "Times-Roman"
+            while canvas.stringWidth(text, font_name, 6.4) > width_value - 6 and len(text) > 4:
+                text = text[:-4].rstrip() + "..."
+            return text
+
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+        canvas.setLineWidth(0.45)
+        canvas.setFillColor(colors.HexColor("#eaf2f5"))
+        canvas.rect(x, y - row_h, table_w, row_h, stroke=1, fill=1)
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 6.4)
+        cursor_x = x
+        for header, col_w in zip(headers, col_widths):
+            canvas.drawString(cursor_x + 3, y - 11, fitted_text(header, col_w, True))
+            canvas.line(cursor_x, y, cursor_x, y - table_h)
+            cursor_x += col_w
+        canvas.line(x + table_w, y, x + table_w, y - table_h)
+        canvas.line(x, y, x + table_w, y)
+        canvas.line(x, y - row_h, x + table_w, y - row_h)
+
+        current_y = y - row_h
+        for index, item in enumerate(recordings):
+            next_y = current_y - row_h
+            if index % 2:
+                canvas.setFillColor(colors.HexColor("#f8fbfc"))
+                canvas.rect(x, next_y, table_w, row_h, stroke=0, fill=1)
+            canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+            canvas.line(x, next_y, x + table_w, next_y)
+            values = [
+                item.get("date"),
+                item.get("name"),
+                item.get("start_hour"),
+                item.get("end_hour"),
+                item.get("call_duration"),
+                item.get("recording_duration"),
+                item.get("modified_by"),
+            ]
+            cursor_x = x
+            canvas.setFont("Times-Roman", 6.4)
+            for column_index, (value, col_w) in enumerate(zip(values, col_widths)):
+                text = fitted_text(value, col_w)
+                if column_index == 1 and _clean(item.get("web_url")):
+                    canvas.setFillColor(colors.HexColor("#145da0"))
+                    canvas.drawString(cursor_x + 3, current_y - 11, text)
+                    canvas.linkURL(
+                        _clean(item.get("web_url")),
+                        (cursor_x + 2, next_y + 2, cursor_x + col_w - 2, current_y - 2),
+                        relative=0,
+                    )
+                    canvas.setFillColor(dark)
+                else:
+                    canvas.drawString(cursor_x + 3, current_y - 11, text)
+                canvas.line(cursor_x, current_y, cursor_x, next_y)
+                cursor_x += col_w
+            canvas.line(x + table_w, current_y, x + table_w, next_y)
+            current_y = next_y
+        canvas.restoreState()
+        return y - table_h - 8
+
     def draw_grade_summary_table(x: float, y: float) -> float:
         headers = ["Nota máxima", "Nota mínima", "Estudiantes reprobados"]
         values = [
@@ -3856,6 +4473,17 @@ def _teacher_compliance_model_pdf(
     grade_values = [_number(item.get("promedio_final")) for item in students]
     grade_values = [value for value in grade_values if value is not None]
     failed = sum(1 for value in grade_values if value < 7)
+    teams_recordings = [
+        item
+        for item in (params.get("teams_recordings") or [])
+        if isinstance(item, dict) and _clean(item.get("name"))
+    ]
+    recordings_per_page = 18
+    recording_chunks = [
+        teams_recordings[index : index + recordings_per_page]
+        for index in range(0, len(teams_recordings), recordings_per_page)
+    ]
+    total_pages = 4 + len(recording_chunks) if recording_chunks else 4
 
     start_page(1)
     y = 662
@@ -3909,14 +4537,43 @@ def _teacher_compliance_model_pdf(
 
     new_page(2)
     y = 702
-    for item in ["Evaluación(es) teórica(s)", "Componente(s) práctico(s)", "Evidencia de clases grabadas en TEAMS Ejemplo:"]:
+    for item in ["Evaluación(es) teórica(s)", "Componente(s) práctico(s)", "Evidencia de clases grabadas en TEAMS:"]:
         y = line(f"•    {item}", body_x + 18, y, 11)
     y = draw_group(("aula", "virtual", "recursos"), body_x + 18, y - 6, 494, 150, 3)
 
-    new_page(3)
-    y = 718
-    y = draw_group(("teams", "clases"), body_x + 18, y, 494, 105, 1)
-    y -= 42
+    if recording_chunks:
+        for chunk_index, recording_chunk in enumerate(recording_chunks):
+            new_page(3 + chunk_index)
+            y = 718
+            team_name = _clean(recording_chunk[0].get("team_name")) if recording_chunk else ""
+            y = line(
+                f"Clases grabadas en TEAMS ({len(teams_recordings)} registro(s) obtenidos desde Microsoft Graph)",
+                body_x + 18,
+                y,
+                10,
+                True,
+            )
+            if team_name:
+                y = wrapped(f"Equipo: {team_name}", body_x + 18, y, content_width, 9, False, 11)
+            if chunk_index == 0 and _clean(params.get("observaciones")):
+                y = wrapped(_clean(params.get("observaciones")), body_x + 18, y, content_width, 9, False, 11)
+            y = draw_teams_recordings_table(recording_chunk, body_x + 18, y - 4, content_width)
+            canvas.setFont("Times-Italic", 7)
+            canvas.setFillColor(dark)
+            canvas.drawString(
+                body_x + 18,
+                y,
+                f"Bloque {chunk_index + 1} de {len(recording_chunks)}. Los nombres azules enlazan al archivo en Microsoft 365.",
+            )
+        new_page(3 + len(recording_chunks))
+        y = 718
+    else:
+        new_page(3)
+        y = 718
+        y = draw_group(("teams", "clases"), body_x + 18, y, 494, 105, 1)
+        if _clean(params.get("observaciones")):
+            y = wrapped(_clean(params.get("observaciones")), body_x + 18, y - 4, content_width, 9, False, 11)
+        y -= 42
     y = line("3.4.     Asistencias", body_x + 18, y, 11, True)
     y = draw_group(("asistencia",), body_x + 58, y - 6, 455, 105, 1)
     y -= 12
@@ -3927,7 +4584,7 @@ def _teacher_compliance_model_pdf(
     y = draw_group(("notas", "reporte"), body_x + 24, y, 470, 205, 1)
     y = draw_grade_summary_table(body_x + 24, y)
 
-    new_page(4)
+    new_page(4 + len(recording_chunks))
     y = 662
     y = line("3.6.     Anexos:", body_x + 18, y, 12, True)
     y -= 16
@@ -4163,7 +4820,7 @@ def _teacher_compliance_report_pdf_legacy(
         story.append(p(item, "ComplianceBody"))
 
     story.append(Spacer(1, 0.16 * cm))
-    story.append(p("Evidencia de clases grabadas en TEAMS Ejemplo:", "ComplianceBody"))
+    story.append(p("Evidencia de clases grabadas en TEAMS:", "ComplianceBody"))
     if _clean(params.get("observaciones")):
         story.append(p(_clean(params.get("observaciones")), "ComplianceBody"))
     add_evidence("teams", "clases")
@@ -4332,7 +4989,7 @@ def _teacher_compliance_report_docx(
         if item.get("content"):
             _docx_add_picture(document, item["content"], 16.6)
 
-    _docx_paragraph(document, "Evidencia de clases grabadas en TEAMS Ejemplo:")
+    _docx_paragraph(document, "Evidencia de clases grabadas en TEAMS:")
     if _clean(params.get("observaciones")):
         _docx_paragraph(document, _clean(params.get("observaciones")))
     for item in evidence_group("teams", "clases"):
@@ -4476,6 +5133,7 @@ def _build_teacher_compliance_pdf(
     telefono: str = "",
     actualizaciones: str = "",
     observaciones: str = "",
+    teams_recordings: list[dict[str, Any]] | None = None,
     evidence_images: list[dict[str, Any]] | None = None,
 ) -> tuple[bytes, str]:
     codigo_doc = _teacher_code(current_user)
@@ -4536,6 +5194,7 @@ def _build_teacher_compliance_pdf(
         "telefono": telefono,
         "actualizaciones": actualizaciones,
         "observaciones": observaciones,
+        "teams_recordings": teams_recordings or [],
     }
     pdf_bytes = _teacher_compliance_report_pdf(
         teacher,
@@ -4561,6 +5220,7 @@ def _teacher_compliance_response(
     telefono: str = "",
     actualizaciones: str = "",
     observaciones: str = "",
+    teams_recordings: list[dict[str, Any]] | None = None,
     evidence_images: list[dict[str, Any]] | None = None,
 ) -> StreamingResponse:
     pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
@@ -4576,6 +5236,7 @@ def _teacher_compliance_response(
         telefono=telefono,
         actualizaciones=actualizaciones,
         observaciones=observaciones,
+        teams_recordings=teams_recordings,
         evidence_images=evidence_images,
     )
     return StreamingResponse(
@@ -5574,10 +6235,12 @@ async def teacher_compliance_report_pdf_with_evidence(
     telefono: Annotated[str, Form(max_length=40)] = "",
     actualizaciones: Annotated[str, Form(max_length=1000)] = "",
     observaciones: Annotated[str, Form(max_length=1000)] = "",
+    teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
 ) -> StreamingResponse:
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
+    teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
     return _teacher_compliance_response(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -5591,6 +6254,7 @@ async def teacher_compliance_report_pdf_with_evidence(
         telefono=telefono,
         actualizaciones=actualizaciones,
         observaciones=observaciones,
+        teams_recordings=teams_recordings,
         evidence_images=evidence_images,
     )
 
@@ -5614,6 +6278,7 @@ async def teacher_sign_compliance_report(
     telefono: Annotated[str, Form(max_length=40)] = "",
     actualizaciones: Annotated[str, Form(max_length=1000)] = "",
     observaciones: Annotated[str, Form(max_length=1000)] = "",
+    teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
 ) -> StreamingResponse:
@@ -5627,6 +6292,7 @@ async def teacher_sign_compliance_report(
         raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
 
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
+    teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
     pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -5640,6 +6306,7 @@ async def teacher_sign_compliance_report(
         telefono=telefono,
         actualizaciones=actualizaciones,
         observaciones=observaciones,
+        teams_recordings=teams_recordings,
         evidence_images=evidence_images,
     )
     signed_pdf = await _sign_pdf_with_pkcs12(
@@ -5673,17 +6340,22 @@ def teacher_save_grades(
     if values.get("teoria_homo") is not None or values.get("practica_homo") is not None:
         final_grade = _weighted_homologation_final(values.get("teoria_homo"), values.get("practica_homo"))
     else:
-        prom_p1 = _weighted_regular_partial(values.get("p1_tareas"), values.get("p1_proyectos"), values.get("p1_examen"))
-        prom_p2 = _weighted_regular_partial(values.get("p2_tareas"), values.get("p2_proyectos"), values.get("p2_examen"))
-        prom_p3 = _weighted_regular_partial(values.get("p3_tareas"), values.get("p3_proyectos"), values.get("p3_examen"))
+        regular_grade = calculate_regular_grade_with_recovery(
+            (
+                (values.get("p1_tareas"), values.get("p1_proyectos"), values.get("p1_examen")),
+                (values.get("p2_tareas"), values.get("p2_proyectos"), values.get("p2_examen")),
+                (values.get("p3_tareas"), values.get("p3_proyectos"), values.get("p3_examen")),
+            ),
+            values.get("recuperacion"),
+        )
+        prom_p1, prom_p2, prom_p3 = regular_grade.partials
         if prom_p1 is not None:
             values["prom_p1"] = prom_p1
         if prom_p2 is not None:
             values["prom_p2"] = prom_p2
         if prom_p3 is not None:
             values["prom_p3"] = prom_p3
-        if prom_p1 is not None and prom_p2 is not None and prom_p3 is not None:
-            final_grade = round((prom_p1 + prom_p2 + prom_p3) / 3, 2)
+        final_grade = regular_grade.final
 
     if final_grade is not None:
         values["promedio"] = final_grade
@@ -5738,6 +6410,7 @@ def teacher_save_grades(
                   ON TRY_CONVERT(int, target_pensum.Cod_AnioBasica) = ?
                  AND TRY_CONVERT(int, target_pensum.codigo_materia) = ?
                 WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
+                  AND TRY_CONVERT(int, cxd.cod_AnioBasica) = ?
                   AND TRY_CONVERT(int, cxd.codigo_periodo) = ?
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
                   AND UPPER(LTRIM(RTRIM(COALESCE(
@@ -5755,6 +6428,7 @@ def teacher_save_grades(
                 payload.cod_anio_basica,
                 payload.codigo_materia,
                 codigo_doc,
+                payload.cod_anio_basica,
                 payload.codigo_periodo,
                 parallel,
                 payload.codigo_materia,

@@ -18,6 +18,7 @@ function isPage(value: string): value is Page {
     value === 'reporteria-carreras' ||
     value === 'reporteria-integral' ||
     value === 'reportes-individuales' ||
+    value === 'admin-notas-asignatura' ||
     value === 'gestion-sisacademico' ||
     value === 'periodo-academico' ||
     value === 'periodo-matriculados' ||

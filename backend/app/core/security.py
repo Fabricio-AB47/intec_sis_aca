@@ -57,6 +57,7 @@ class SessionProfile(BaseModel):
     codigo_estud: int | None = None
     codigo_doc: int | None = None
     cedula: str | None = None
+    origen: str | None = None
 
 
 class SessionUser(SessionProfile):
@@ -108,6 +109,7 @@ def create_session_token(user: SessionUser) -> str:
         "codigo_estud": user.codigo_estud,
         "codigo_doc": user.codigo_doc,
         "cedula": user.cedula,
+        "origen": user.origen,
         "perfiles": [profile.model_dump() for profile in user.perfiles],
         "iat": issued_at,
         "exp": expires_at,

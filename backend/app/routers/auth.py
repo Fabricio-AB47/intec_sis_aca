@@ -43,6 +43,7 @@ class LoginResponse(BaseModel):
     codigo_estud: int | None = None
     codigo_doc: int | None = None
     cedula: str | None = None
+    origen: str | None = None
     perfiles: list[SessionProfile] = Field(default_factory=list)
 
 

@@ -9,13 +9,61 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
+from app.routers.students import _MATRICULA_CNE_CTE
 from app.services.db import get_connection
+from app.services.grade_calculation import calculate_regular_grade_with_recovery
 
 router = APIRouter(prefix="/api/students/reporteria-integral", tags=["reporteria-integral"])
 
 AllowedUser = Depends(require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR"))
+GradeEditor = Depends(require_roles("ADMINISTRADOR", "ACADEMICO", "SECRETARIA"))
+
+
+class ReportGradeUpdatePayload(BaseModel):
+    codigo_estud: int
+    cod_anio_basica: int
+    codigo_periodo: int
+    codigo_materia: int
+    paralelo: str = Field(min_length=1, max_length=10)
+    num_matricula: int
+    num_grupo: int
+    es_homologacion: bool = False
+    teoria_homo: float | None = Field(default=None, ge=0, le=10)
+    practica_homo: float | None = Field(default=None, ge=0, le=10)
+    p1_tareas: float | None = Field(default=None, ge=0, le=10)
+    p1_proyectos: float | None = Field(default=None, ge=0, le=10)
+    p1_examen: float | None = Field(default=None, ge=0, le=10)
+    p2_tareas: float | None = Field(default=None, ge=0, le=10)
+    p2_proyectos: float | None = Field(default=None, ge=0, le=10)
+    p2_examen: float | None = Field(default=None, ge=0, le=10)
+    p3_tareas: float | None = Field(default=None, ge=0, le=10)
+    p3_proyectos: float | None = Field(default=None, ge=0, le=10)
+    p3_examen: float | None = Field(default=None, ge=0, le=10)
+    asistencia: float | None = Field(default=None, ge=0, le=100)
+    recuperacion: float | None = Field(default=None, ge=0, le=10)
+
+
+def _weighted_grade_partial(tareas: float | None, proyectos: float | None, examen: float | None) -> float | None:
+    if tareas is None or proyectos is None or examen is None:
+        return None
+    return round((tareas * 0.30) + (proyectos * 0.30) + (examen * 0.40), 2)
+
+
+def _weighted_homologation_grade(teoria: float | None, practica: float | None) -> float | None:
+    if teoria is None or practica is None:
+        return None
+    return round((teoria * 0.40) + (practica * 0.60), 2)
+
+
+def _grade_condition(final_grade: float | None) -> tuple[str | None, str]:
+    if final_grade is None:
+        return None, "PENDIENTE"
+    if final_grade >= 7:
+        return "A", "APROBADO"
+    return "R", "REPROBADO"
 
 
 REPORTS: dict[str, dict[str, Any]] = {
@@ -116,11 +164,11 @@ REPORTS: dict[str, dict[str, Any]] = {
         ],
     },
     "notas_carrera_materia": {
-        "title": "Notas por carrera y periodo",
-        "description": "Estudiantes activos por periodo, con materias y calificaciones regular u homologacion.",
+        "title": "Calificaciones de estudiantes",
+        "description": "Consulte todos los estudiantes activos y filtre por nombre para revisar sus materias, periodos, calificaciones y docente responsable.",
         "category": "Academico",
-        "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO"],
-        "filters": ["periodo", "carrera", "limite"],
+        "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO", "CARRERAXDOCENTE", "DATOSDOCENTE"],
+        "filters": ["buscar"],
         "estado_options": [],
     },
     "estud_per_c_m": {
@@ -983,6 +1031,8 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
             pe.Semestre AS semestre,
             LTRIM(RTRIM(ce.paralelo)) AS paralelo,
             ce.TipoMatricula AS tipo_matricula,
+            TRY_CONVERT(int, ce.Num_Matricula) AS num_matricula,
+            TRY_CONVERT(int, ce.NumGrupo) AS num_grupo,
             CASE
                 WHEN UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
                   OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
@@ -994,6 +1044,7 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
             de.Cedula_Est AS cedula,
             de.Apellidos_nombre AS estudiante,
             de.Estado AS estado_codigo,
+            COALESCE(responsables.docente_responsable, N'Sin docente asignado') AS docente_responsable,
             ce.teoriaHomo AS teoria_homo,
             ce.practicahomo AS practica_homo,
             ce.P1Tareas AS p1_tareas,
@@ -1010,35 +1061,260 @@ def _notas_carrera_materia_query(limit: int, params: dict[str, str | None]) -> t
             ce.promP3 AS promedio_p3,
             ce.Asistencia AS asistencia,
             ce.Recuperacion AS recuperacion,
-            ce.PromedioFinal AS promedio_final,
-            LTRIM(RTRIM(ce.caprueba)) AS condicion,
+            calculo.promedio_final,
+            CASE
+                WHEN calculo.promedio_final IS NULL THEN 'PENDIENTE'
+                WHEN calculo.promedio_final >= 7 THEN 'APROBADO'
+                ELSE 'REPROBADO'
+            END AS condicion,
             ce.estadoMoodle AS estado_moodle,
             ce.seguimiento,
             ce.observaciones
         FROM dbo.CARRERAXESTUD ce
         INNER JOIN dbo.DATOS_ESTUD de ON ce.codigo_estud = de.codigo_estud
         INNER JOIN dbo.CARRERAS c ON ce.cod_anio_Basica = c.Cod_AnioBasica
-        INNER JOIN dbo.PENSUM pe ON ce.codigo_materia = pe.codigo_materia
+        INNER JOIN dbo.PENSUM pe
+          ON ce.codigo_materia = pe.codigo_materia
+         AND ce.cod_anio_Basica = pe.Cod_AnioBasica
         INNER JOIN dbo.PERIODO p ON ce.codigo_periodo = p.cod_periodo
-        WHERE (? IS NULL OR CAST(ce.codigo_periodo AS varchar(30)) = ?)
-          AND (? IS NULL OR CAST(c.Cod_AnioBasica AS varchar(30)) = ?)
-          AND UPPER(LTRIM(RTRIM(ISNULL(de.Estado, '')))) = 'A'
-          AND (
-            ? IS NULL
-            OR de.Apellidos_nombre LIKE ?
-            OR de.Cedula_Est LIKE ?
-            OR LTRIM(RTRIM(c.Nombre_Basica)) LIKE ?
-            OR LTRIM(RTRIM(pe.Nomb_Materia)) LIKE ?
-            OR LTRIM(RTRIM(ce.paralelo)) LIKE ?
-          )
-        ORDER BY p.anio DESC, p.Detalle_Periodo DESC, c.Nombre_Basica, pe.Semestre, pe.Nomb_Materia, de.Apellidos_nombre
+        OUTER APPLY (
+            SELECT COALESCE(
+                TRY_CONVERT(float, ce.PromedioFinal),
+                CASE
+                    WHEN (
+                            UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                         OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                         OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                         )
+                     AND TRY_CONVERT(float, ce.teoriaHomo) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.practicahomo) IS NOT NULL
+                    THEN (TRY_CONVERT(float, ce.teoriaHomo) * 0.4)
+                       + (TRY_CONVERT(float, ce.practicahomo) * 0.6)
+                END,
+                CASE
+                    WHEN TRY_CONVERT(float, ce.promP1) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.promP2) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.promP3) IS NOT NULL
+                    THEN (TRY_CONVERT(float, ce.promP1)
+                        + TRY_CONVERT(float, ce.promP2)
+                        + TRY_CONVERT(float, ce.promP3)) / 3.0
+                END,
+                TRY_CONVERT(float, ce.Promedio),
+                TRY_CONVERT(float, ce.PromedioAux)
+            ) AS promedio_final
+        ) calculo
+        OUTER APPLY (
+            SELECT STRING_AGG(asignados.docente, N' / ') AS docente_responsable
+            FROM (
+                SELECT DISTINCT
+                    TRY_CONVERT(
+                        nvarchar(max),
+                        CONCAT(
+                            COALESCE(
+                                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), dd.apellidos_nombre))), N''),
+                                N'Docente sin nombre'
+                            ),
+                            N' (código ',
+                            TRY_CONVERT(nvarchar(50), cxd.codigo_doc),
+                            N')'
+                        )
+                    ) AS docente
+                FROM dbo.CARRERAXDOCENTE cxd
+                LEFT JOIN dbo.DATOSDOCENTE dd
+                  ON TRY_CONVERT(int, dd.codigo_doc) = TRY_CONVERT(int, cxd.codigo_doc)
+                WHERE TRY_CONVERT(int, cxd.cod_Anio_Basica) = TRY_CONVERT(int, ce.cod_anio_Basica)
+                  AND TRY_CONVERT(int, cxd.codigo_materia) = TRY_CONVERT(int, ce.codigo_materia)
+                  AND TRY_CONVERT(int, cxd.codigo_periodo) = TRY_CONVERT(int, ce.codigo_periodo)
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) =
+                      UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ce.paralelo))))
+            ) asignados
+        ) responsables
+        WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
+          AND (? IS NULL OR de.Apellidos_nombre LIKE ?)
+          AND (? IS NULL OR TRY_CONVERT(varchar(30), ce.codigo_estud) = ?)
+          AND (? IS NULL OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), c.Nombre_Basica)))) = UPPER(LTRIM(RTRIM(?))))
+          AND (? IS NULL OR CASE
+                WHEN UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                THEN 'H'
+                ELSE 'R'
+              END = ?)
+        ORDER BY de.Apellidos_nombre, p.anio DESC, ce.codigo_periodo DESC, c.Nombre_Basica, pe.Semestre, pe.Nomb_Materia
     """
-    buscar = params["buscar"]
+    buscar = params.get("buscar")
+    codigo_estud = params.get("codigo_estud")
+    carrera_nombre = params.get("carrera_nombre")
+    tipo_matricula = params.get("tipo_matricula")
     return sql, [
-        params["periodo"], params["periodo"],
-        params["carrera"], params["carrera"],
-        buscar, buscar, buscar, buscar, buscar, buscar,
+        buscar,
+        buscar,
+        codigo_estud,
+        codigo_estud,
+        carrera_nombre,
+        carrera_nombre,
+        tipo_matricula,
+        tipo_matricula,
     ]
+
+
+_ACTIVE_GRADE_STUDENTS_SQL = _MATRICULA_CNE_CTE + """
+    , active_enrollments AS (
+        SELECT
+            TRY_CONVERT(varchar(30), student.codigo_estud) AS estudiante_codigo,
+            cne.Cedula_Est AS cedula,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), student.Apellidos_nombre))), N''),
+                cne.Apellidos_nombre
+            ) AS estudiante,
+            COALESCE(NULLIF(cne.nombre_carrera, N''), N'Sin carrera registrada') AS carrera,
+            cne.tipo_matricula,
+            cne.estado_codigo
+        FROM matricula_cne_catalogada cne
+        OUTER APPLY (
+            SELECT TOP (1)
+                de.codigo_estud,
+                de.Apellidos_nombre
+            FROM dbo.DATOS_ESTUD de
+            WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), de.Cedula_Est))) = cne.Cedula_Est
+            ORDER BY
+                CASE
+                    WHEN UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
+                    THEN 0
+                    ELSE 1
+                END,
+                TRY_CONVERT(bigint, de.codigo_estud) DESC
+        ) student
+        WHERE cne.estado_codigo = 'A'
+    ),
+    grade_values AS (
+        SELECT
+            TRY_CONVERT(varchar(30), ce.codigo_estud) AS estudiante_codigo,
+            UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), c.Nombre_Basica)))) AS carrera_clave,
+            CASE
+                WHEN UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                  OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                THEN 'H'
+                ELSE 'R'
+            END AS tipo_matricula,
+            calculo.promedio_final
+        FROM dbo.CARRERAXESTUD ce
+        INNER JOIN dbo.CARRERAS c ON ce.cod_anio_Basica = c.Cod_AnioBasica
+        INNER JOIN dbo.PENSUM pe
+          ON ce.codigo_materia = pe.codigo_materia
+         AND ce.cod_anio_Basica = pe.Cod_AnioBasica
+        INNER JOIN dbo.PERIODO p ON ce.codigo_periodo = p.cod_periodo
+        OUTER APPLY (
+            SELECT COALESCE(
+                TRY_CONVERT(float, ce.PromedioFinal),
+                CASE
+                    WHEN (
+                            UPPER(LTRIM(RTRIM(ISNULL(ce.TipoMatricula, '')))) = 'H'
+                         OR UPPER(LTRIM(RTRIM(ISNULL(p.TipoMatricula, '')))) = 'H'
+                         OR UPPER(LTRIM(RTRIM(ISNULL(p.Detalle_Periodo, '')))) LIKE '%HOMO%'
+                         )
+                     AND TRY_CONVERT(float, ce.teoriaHomo) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.practicahomo) IS NOT NULL
+                    THEN (TRY_CONVERT(float, ce.teoriaHomo) * 0.4)
+                       + (TRY_CONVERT(float, ce.practicahomo) * 0.6)
+                END,
+                CASE
+                    WHEN TRY_CONVERT(float, ce.promP1) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.promP2) IS NOT NULL
+                     AND TRY_CONVERT(float, ce.promP3) IS NOT NULL
+                    THEN (TRY_CONVERT(float, ce.promP1)
+                        + TRY_CONVERT(float, ce.promP2)
+                        + TRY_CONVERT(float, ce.promP3)) / 3.0
+                END,
+                TRY_CONVERT(float, ce.Promedio),
+                TRY_CONVERT(float, ce.PromedioAux)
+            ) AS promedio_final
+        ) calculo
+    ),
+    grade_summary AS (
+        SELECT
+            estudiante_codigo,
+            carrera_clave,
+            tipo_matricula,
+            COUNT(*) AS total_materias,
+            SUM(CASE WHEN promedio_final >= 7 THEN 1 ELSE 0 END) AS aprobadas,
+            SUM(CASE WHEN promedio_final IS NOT NULL AND promedio_final < 7 THEN 1 ELSE 0 END) AS reprobadas,
+            SUM(CASE WHEN promedio_final IS NULL THEN 1 ELSE 0 END) AS pendientes
+        FROM grade_values
+        GROUP BY estudiante_codigo, carrera_clave, tipo_matricula
+    ),
+    active_grade_records AS (
+        SELECT DISTINCT
+            CONCAT(
+                COALESCE(NULLIF(active.estudiante_codigo, ''), active.cedula),
+                N'|',
+                UPPER(LTRIM(RTRIM(active.carrera))),
+                N'|',
+                active.tipo_matricula
+            ) AS registro_clave,
+            active.estudiante_codigo,
+            active.cedula,
+            active.estudiante,
+            active.carrera,
+            active.tipo_matricula,
+            active.estado_codigo,
+            COALESCE(grades.total_materias, 0) AS total_materias,
+            COALESCE(grades.aprobadas, 0) AS aprobadas,
+            COALESCE(grades.reprobadas, 0) AS reprobadas,
+            COALESCE(grades.pendientes, 0) AS pendientes
+        FROM active_enrollments active
+        LEFT JOIN grade_summary grades
+          ON grades.estudiante_codigo = active.estudiante_codigo
+         AND grades.carrera_clave = UPPER(LTRIM(RTRIM(active.carrera)))
+         AND grades.tipo_matricula = active.tipo_matricula
+    )
+    SELECT
+        active.registro_clave,
+        MAX(active.estudiante_codigo) AS estudiante_codigo,
+        MAX(active.cedula) AS cedula,
+        MAX(active.estudiante) AS estudiante,
+        MAX(active.carrera) AS carrera,
+        MAX(active.tipo_matricula) AS tipo_matricula,
+        MAX(active.estado_codigo) AS estado_codigo,
+        COUNT(*) AS matriculas_activas,
+        SUM(active.total_materias) AS total_materias,
+        SUM(active.aprobadas) AS aprobadas,
+        SUM(active.reprobadas) AS reprobadas,
+        SUM(active.pendientes) AS pendientes
+    FROM active_grade_records active
+    GROUP BY active.registro_clave
+    ORDER BY MAX(active.estudiante), MAX(active.cedula)
+"""
+
+
+def _active_grade_students_payload() -> dict[str, Any]:
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(_ACTIVE_GRADE_STUDENTS_SQL)
+            columns, rows = _rows_from_cursor(cursor)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo consultar el padrón de estudiantes activos",
+        ) from exc
+
+    total_matriculas_activas = sum(int(row.get("matriculas_activas") or 0) for row in rows)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "dbo.TOTALESTUDMATRICCNE (Estado A, matrícula R/H) + historial académico",
+        "columns": columns,
+        "items": rows,
+        "total": len(rows),
+        "total_matriculas_activas": total_matriculas_activas,
+        "criteria": {
+            "estado": "A",
+            "tipo_matricula": "R/H",
+            "granularidad": "matricula_activa_unica",
+        },
+    }
 
 
 def _estud_per_c_m_query(limit: int, params: dict[str, str | None]) -> tuple[str, list[Any]]:
@@ -1270,6 +1546,7 @@ def _default_estado_for_report(report_key: str, estado: str | None) -> str | Non
 
 
 REPORTS = {
+    **REPORTS,
     "provincia": {
         "title": "Provincia",
         "description": "Totales por provincia divididos en matrícula regular y homologación, filtrable por año.",
@@ -1707,6 +1984,20 @@ def _periodo_query(limit: int, params: dict[str, str | None]) -> tuple[str, list
 
 
 QUERY_BUILDERS = {
+    "matriculados": _matriculados_query,
+    "becas_edades": _becas_edades_query,
+    "preinscritos": _preinscritos_query,
+    "docentes": _docentes_query,
+    "documentos": _documentos_query,
+    "seguimiento": _seguimiento_query,
+    "practicas": _practicas_query,
+    "evaluacion_docente": _evaluacion_docente_query,
+    "moodle_notas": _moodle_notas_query,
+    "notas_carrera_materia": _notas_carrera_materia_query,
+    "estud_per_c_m": _estud_per_c_m_query,
+    "correos_intec": _correos_intec_query,
+    "microsoft_audit": _microsoft_audit_query,
+    "pagos_matricula": _pagos_matricula_query,
     "provincia": _provincia_query,
     "provincia_genero": _provincia_genero_query,
     "provincia_carrera": _provincia_carrera_query,
@@ -1835,6 +2126,56 @@ def catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
     }
 
 
+@router.get("/active-grade-students")
+def active_grade_students(
+    response: Response,
+    _: SessionUser = AllowedUser,
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return _active_grade_students_payload()
+
+
+@router.get("/active-grade-students/{codigo_estud}/grades")
+def active_student_grades(
+    codigo_estud: int,
+    response: Response,
+    carrera: str | None = Query(default=None, max_length=300),
+    tipo_matricula: str | None = Query(default=None, pattern="^[RrHh]$"),
+    _: SessionUser = AllowedUser,
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    filters = _base_params(None, None, None, None)
+    filters["codigo_estud"] = str(codigo_estud)
+    filters["carrera_nombre"] = _clean(carrera)
+    filters["tipo_matricula"] = _clean(tipo_matricula.upper() if tipo_matricula else None)
+    sql, sql_params = _notas_carrera_materia_query(10000, filters)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, sql_params)
+            columns, rows = _rows_from_cursor(cursor)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudieron consultar las calificaciones del estudiante",
+        ) from exc
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "dbo.CARRERAXESTUD + datos académicos relacionados",
+        "report": _report_payload("notas_carrera_materia"),
+        "columns": columns,
+        "rows": rows,
+        "total": len(rows),
+        "criteria": {"estado": "A", "codigo_estud": codigo_estud},
+    }
+
+
 def _modernized_legacy_reports_catalog() -> dict[str, Any]:
     totals = {
         "total": len(CRYSTAL_REPORTS),
@@ -1879,6 +2220,148 @@ def crystal_report_detail(report_key: str, _: SessionUser = AllowedUser) -> dict
     payload["deprecated"] = True
     payload["replacement_endpoint"] = f"/api/students/reporteria-integral/modern-catalog/{report_key}"
     return payload
+
+
+@router.put("/grades")
+def update_student_grade(
+    payload: ReportGradeUpdatePayload,
+    current_user: SessionUser = GradeEditor,
+) -> dict[str, Any]:
+    parallel = payload.paralelo.strip().upper()
+    if payload.es_homologacion:
+        average_p1 = average_p2 = average_p3 = None
+        final_grade = _weighted_homologation_grade(payload.teoria_homo, payload.practica_homo)
+        assignments = [
+            "teoriaHomo = ?",
+            "practicahomo = ?",
+            "Asistencia = ?",
+            "Recuperacion = ?",
+            "Promedio = ?",
+            "PromedioAux = ?",
+            "PromedioFinal = ?",
+            "caprueba = ?",
+            "Usuario = ?",
+        ]
+        approval_code, condition = _grade_condition(final_grade)
+        update_params: list[Any] = [
+            payload.teoria_homo,
+            payload.practica_homo,
+            payload.asistencia,
+            payload.recuperacion,
+            final_grade,
+            final_grade,
+            final_grade,
+            approval_code,
+            str(current_user.login or current_user.id_usuario or "SISTEMA")[:10],
+        ]
+    else:
+        regular_grade = calculate_regular_grade_with_recovery(
+            (
+                (payload.p1_tareas, payload.p1_proyectos, payload.p1_examen),
+                (payload.p2_tareas, payload.p2_proyectos, payload.p2_examen),
+                (payload.p3_tareas, payload.p3_proyectos, payload.p3_examen),
+            ),
+            payload.recuperacion,
+        )
+        average_p1, average_p2, average_p3 = regular_grade.partials
+        final_grade = regular_grade.final
+        assignments = [
+            "P1Tareas = ?",
+            "P1Proyectos = ?",
+            "P1Examen = ?",
+            "promP1 = ?",
+            "P2Tareas = ?",
+            "P2Proyectos = ?",
+            "P2Examen = ?",
+            "promP2 = ?",
+            "P3Tareas = ?",
+            "P3Proyectos = ?",
+            "P3Examen = ?",
+            "promP3 = ?",
+            "Asistencia = ?",
+            "Recuperacion = ?",
+            "Promedio = ?",
+            "PromedioAux = ?",
+            "PromedioFinal = ?",
+            "caprueba = ?",
+            "Usuario = ?",
+        ]
+        approval_code, condition = _grade_condition(final_grade)
+        update_params = [
+            payload.p1_tareas,
+            payload.p1_proyectos,
+            payload.p1_examen,
+            average_p1,
+            payload.p2_tareas,
+            payload.p2_proyectos,
+            payload.p2_examen,
+            average_p2,
+            payload.p3_tareas,
+            payload.p3_proyectos,
+            payload.p3_examen,
+            average_p3,
+            payload.asistencia,
+            payload.recuperacion,
+            final_grade,
+            final_grade,
+            final_grade,
+            approval_code,
+            str(current_user.login or current_user.id_usuario or "SISTEMA")[:10],
+        ]
+
+    where_sql = """
+        TRY_CONVERT(int, codigo_estud) = ?
+        AND TRY_CONVERT(int, cod_anio_Basica) = ?
+        AND TRY_CONVERT(int, codigo_periodo) = ?
+        AND TRY_CONVERT(int, codigo_materia) = ?
+        AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), paralelo)))) = ?
+        AND TRY_CONVERT(int, Num_Matricula) = ?
+        AND TRY_CONVERT(int, NumGrupo) = ?
+    """
+    key_params = [
+        payload.codigo_estud,
+        payload.cod_anio_basica,
+        payload.codigo_periodo,
+        payload.codigo_materia,
+        parallel,
+        payload.num_matricula,
+        payload.num_grupo,
+    ]
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) FROM dbo.CARRERAXESTUD WHERE {where_sql}", *key_params)
+            matches = int(cursor.fetchone()[0] or 0)
+            if matches == 0:
+                raise HTTPException(status_code=404, detail="No se encontró la matrícula y materia seleccionadas")
+            if matches > 1:
+                raise HTTPException(status_code=409, detail="La matrícula seleccionada no es única; no se realizaron cambios")
+
+            cursor.execute(
+                f"UPDATE dbo.CARRERAXESTUD SET {', '.join(assignments)} WHERE {where_sql}",
+                *update_params,
+                *key_params,
+            )
+            affected = int(cursor.rowcount or 0)
+            if affected != 1:
+                raise HTTPException(status_code=409, detail="No se pudo aislar una única calificación para actualizar")
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudieron actualizar las calificaciones") from exc
+
+    return {
+        "ok": True,
+        "message": "Calificaciones actualizadas correctamente",
+        "affected_rows": 1,
+        "promedio_p1": average_p1,
+        "promedio_p2": average_p2,
+        "promedio_p3": average_p3,
+        "promedio_final": final_grade,
+        "condicion": condition,
+    }
 
 
 @router.get("")

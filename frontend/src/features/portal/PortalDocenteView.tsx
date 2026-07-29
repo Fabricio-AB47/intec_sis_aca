@@ -4,15 +4,21 @@ import {
   downloadPortalTeacherComplianceReport,
   downloadPortalTeacherCourseReport,
   downloadPortalTeacherStudentGradeReport,
+  fetchMyTeamRecordings,
+  fetchMyTeamsCatalog,
   fetchPortalTeacherCourses,
   fetchPortalTeacherStudents,
   savePortalTeacherGrades,
   signPortalTeacherComplianceReport,
 } from '../../lib/api'
+import { calculateRegularGradeWithRecovery, constrainDecimalInput, parseBoundedDecimal } from '../../lib/gradeCalculation'
 import type {
+  GraphTeam,
   PortalAcademicRecordItem,
   PortalTeacherCourse,
   PortalTeacherGradePayload,
+  TeacherComplianceTeamsRecording,
+  TeamRecording,
 } from '../../types/app'
 
 type PortalDocenteViewProps = {
@@ -32,7 +38,7 @@ const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
 const COMPLIANCE_EVIDENCE_OPTIONS = [
   { key: 'pea', label: 'Captura PEA y sílabo firmado' },
   { key: 'aula', label: 'Captura aula virtual y recursos' },
-  { key: 'teams', label: 'Captura TEAMS y clases grabadas' },
+  { key: 'teams', label: 'TEAMS y clases grabadas' },
   { key: 'asistencia', label: 'Captura de asistencias' },
   { key: 'notas', label: 'Captura reporte de notas firmado' },
 ] as const
@@ -62,6 +68,7 @@ type GradeDraft = {
 function courseKey(course: PortalTeacherCourse) {
   const periodos = course.codigo_periodos?.length ? course.codigo_periodos.join(',') : course.codigo_periodo
   return [
+    course.cod_anio_basica,
     periodos,
     course.cod_materia || course.codigo_materia,
     course.paralelo,
@@ -91,7 +98,8 @@ function courseJourneyLabel(course: PortalTeacherCourse) {
 function courseOptionLabel(course: PortalTeacherCourse) {
   const period = course.detalle_periodos || course.detalle_periodo || course.codigo_periodo || 'Sin período'
   const kind = coursePeriodKind(course) === 'H' ? 'HOMO' : 'REGULAR'
-  return `${course.nombre_materia || course.codigo_materia || 'Materia'} - ${period} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)} - ${kind}`
+  const career = course.nombre_carrera || `Carrera ${course.cod_anio_basica || '-'}`
+  return `${course.nombre_materia || course.codigo_materia || 'Materia'} - ${career} - ${period} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)} - ${kind}`
 }
 
 function studentKey(item: PortalAcademicRecordItem) {
@@ -183,37 +191,20 @@ function weightedHomologationFinal(teoria: number | null, practica: number | nul
   return Number((teoria * 0.4 + practica * 0.6).toFixed(2))
 }
 
-function weightedPartial(tareas: number | null, proyectos: number | null, examen: number | null) {
-  if (tareas === null || proyectos === null || examen === null) return null
-  return Number((tareas * 0.3 + proyectos * 0.4 + examen * 0.3).toFixed(2))
-}
-
-function regularFinal(p1: number | null, p2: number | null, p3: number | null) {
-  if (p1 === null || p2 === null || p3 === null) return null
-  return Number(((p1 + p2 + p3) / 3).toFixed(2))
-}
-
 function regularAverages(draft: GradeDraft) {
-  const promP1 = weightedPartial(
-    toNumberOrNull(draft.p1_tareas),
-    toNumberOrNull(draft.p1_proyectos),
-    toNumberOrNull(draft.p1_examen)
-  )
-  const promP2 = weightedPartial(
-    toNumberOrNull(draft.p2_tareas),
-    toNumberOrNull(draft.p2_proyectos),
-    toNumberOrNull(draft.p2_examen)
-  )
-  const promP3 = weightedPartial(
-    toNumberOrNull(draft.p3_tareas),
-    toNumberOrNull(draft.p3_proyectos),
-    toNumberOrNull(draft.p3_examen)
+  const calculation = calculateRegularGradeWithRecovery(
+    [
+      [toNumberOrNull(draft.p1_tareas), toNumberOrNull(draft.p1_proyectos), toNumberOrNull(draft.p1_examen)],
+      [toNumberOrNull(draft.p2_tareas), toNumberOrNull(draft.p2_proyectos), toNumberOrNull(draft.p2_examen)],
+      [toNumberOrNull(draft.p3_tareas), toNumberOrNull(draft.p3_proyectos), toNumberOrNull(draft.p3_examen)],
+    ],
+    toNumberOrNull(draft.recuperacion),
   )
   return {
-    promP1,
-    promP2,
-    promP3,
-    final: regularFinal(promP1, promP2, promP3),
+    promP1: calculation.partials[0],
+    promP2: calculation.partials[1],
+    promP3: calculation.partials[2],
+    final: calculation.final,
   }
 }
 
@@ -264,6 +255,117 @@ function evidencePayload(files: Record<ComplianceEvidenceKey, File[]>) {
   )
 }
 
+function normalizeTeamText(value: unknown) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+}
+
+function teamCourseMatchScore(team: GraphTeam, course: PortalTeacherCourse, periodCodes: string[]) {
+  const searchable = normalizeTeamText([team.displayName, team.description, team.mail].filter(Boolean).join(' '))
+  const subjectName = normalizeTeamText(course.nombre_materia)
+  const subjectCode = normalizeTeamText(course.cod_materia || course.codigo_materia)
+  const careerName = normalizeTeamText(course.nombre_carrera)
+  const parallel = normalizeTeamText(course.paralelo)
+  let score = 0
+
+  if (subjectCode.length >= 3 && searchable.includes(subjectCode)) score += 120
+  if (subjectName.length >= 5 && searchable.includes(subjectName)) score += 100
+  const subjectTokens = subjectName
+    .split(' ')
+    .filter((token) => token.length >= 4 && !['PARA', 'CON', 'DELA'].includes(token))
+  score += subjectTokens.filter((token) => searchable.includes(token)).length * 12
+  if (careerName.length >= 5 && searchable.includes(careerName)) score += 10
+  if (parallel && searchable.includes(`PARALELO ${parallel}`)) score += 18
+  score += periodCodes.filter((code) => {
+    const normalizedCode = normalizeTeamText(code)
+    return normalizedCode.length >= 3 && searchable.includes(normalizedCode)
+  }).length * 20
+  return score
+}
+
+function recordingKey(recording: TeamRecording) {
+  return String(
+    recording.id ||
+      recording.webUrl ||
+      `${recording.name || 'grabacion'}|${recording.callStartTime || recording.recordingStartTime || recording.startTime || ''}`
+  )
+}
+
+function dateLabelToIso(value?: string) {
+  const label = String(value || '').trim()
+  const match = label.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (!match) return ''
+  return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
+}
+
+function recordingIsoDate(recording: TeamRecording) {
+  const localDate = dateLabelToIso(
+    recording.callDateLabel || recording.recordingDateLabel || recording.startDateLabel || recording.fileCreatedDateLabel
+  )
+  if (localDate) return localDate
+  const source =
+    recording.callStartTime ||
+    recording.recordingStartTime ||
+    recording.startTime ||
+    recording.fileCreatedAt ||
+    recording.uploadedAt ||
+    recording.modifiedAt
+  const match = String(source || '').match(/^(\d{4}-\d{2}-\d{2})/)
+  return match?.[1] || ''
+}
+
+function recordingDateLabel(recording: TeamRecording) {
+  return (
+    recording.callDateLabel ||
+    recording.recordingDateLabel ||
+    recording.startDateLabel ||
+    recording.fileCreatedDateLabel ||
+    recording.uploadedDateLabel ||
+    'No disponible'
+  )
+}
+
+function teamsRecordingPayload(
+  team: GraphTeam | null,
+  recordings: TeamRecording[]
+): TeacherComplianceTeamsRecording[] {
+  if (!team?.id) return []
+  return recordings.slice(0, 50).map((recording) => ({
+    team_id: team.id || '',
+    team_name: team.displayName || 'Equipo de Teams',
+    recording_id: recordingKey(recording),
+    name: recording.name || 'Grabación de clase',
+    date: recordingDateLabel(recording),
+    start_hour:
+      recording.callStartHourLabel ||
+      recording.recordingStartHourLabel ||
+      recording.startHourLabel ||
+      recording.fileCreatedHourLabel ||
+      'No disponible',
+    end_hour:
+      recording.callEndHourLabel || recording.recordingEndHourLabel || recording.endHourLabel || 'No disponible',
+    call_duration:
+      recording.callDurationClock ||
+      recording.callDurationLabel ||
+      recording.calculatedDurationClock ||
+      recording.calculatedDurationLabel ||
+      'No disponible',
+    recording_duration:
+      recording.recordingDurationClock ||
+      recording.durationClock ||
+      recording.recordingDurationLabel ||
+      recording.durationLabel ||
+      'No disponible',
+    modified_by: recording.lastModifiedByName || recording.createdByName || 'No disponible',
+    web_url: recording.webUrl || '',
+    source: 'Microsoft Graph',
+  }))
+}
+
 export function PortalDocenteView({ displayName, initialMode = 'courses' }: Readonly<PortalDocenteViewProps>) {
   const [courses, setCourses] = useState<PortalTeacherCourse[]>([])
   const [selectedCourseKey, setSelectedCourseKey] = useState('')
@@ -303,6 +405,15 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     asistencia: [],
     notas: [],
   })
+  const [complianceTeams, setComplianceTeams] = useState<GraphTeam[]>([])
+  const [selectedComplianceTeamId, setSelectedComplianceTeamId] = useState('')
+  const [complianceRecordings, setComplianceRecordings] = useState<TeamRecording[]>([])
+  const [selectedComplianceRecordingKeys, setSelectedComplianceRecordingKeys] = useState<string[]>([])
+  const [loadingComplianceTeams, setLoadingComplianceTeams] = useState(false)
+  const [loadingComplianceRecordings, setLoadingComplianceRecordings] = useState(false)
+  const [complianceTeamsError, setComplianceTeamsError] = useState('')
+  const [complianceTeamsRefreshToken, setComplianceTeamsRefreshToken] = useState(0)
+  const [complianceRecordingsRefreshToken, setComplianceRecordingsRefreshToken] = useState(0)
   const [signingCertificate, setSigningCertificate] = useState<File | null>(null)
   const [signingCertificateInputKey, setSigningCertificateInputKey] = useState(0)
   const [signingPassword, setSigningPassword] = useState('')
@@ -378,7 +489,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const complianceCourseOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; label: string; course: PortalTeacherCourse; periods: number }>()
     for (const course of filteredCourses) {
-      const key = [courseSubjectKey(course), (course.paralelo || '').trim().toUpperCase(), course.cod_jornada || ''].join('|')
+      const key = [
+        (course.cod_anio_basica || '').trim(),
+        courseSubjectKey(course),
+        (course.paralelo || '').trim().toUpperCase(),
+        course.cod_jornada || '',
+      ].join('|')
       const periodCount = course.codigo_periodos?.length || (course.codigo_periodo ? 1 : 0)
       const current = grouped.get(key)
       if (current) {
@@ -387,7 +503,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       }
       grouped.set(key, {
         key: courseKey(course),
-        label: `${courseSubjectLabel(course)} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)}`,
+        label: `${courseSubjectLabel(course)} - ${course.nombre_carrera || `Carrera ${course.cod_anio_basica || '-'}`} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)}`,
         course,
         periods: periodCount,
       })
@@ -400,12 +516,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   )
   const targetCoursePeriodOptions = useMemo(() => {
     if (!targetCourse) return []
+    const selectedCareer = (targetCourse.cod_anio_basica || '').trim()
     const selectedSubject = courseSubjectKey(targetCourse)
     const selectedParallel = (targetCourse.paralelo || '').trim().toUpperCase()
+    const selectedJourney = targetCourse.cod_jornada ?? null
     const options = new Map<string, { code: string; label: string }>()
     for (const course of courses) {
+      if ((course.cod_anio_basica || '').trim() !== selectedCareer) continue
       if (courseSubjectKey(course) !== selectedSubject) continue
       if ((course.paralelo || '').trim().toUpperCase() !== selectedParallel) continue
+      if ((course.cod_jornada ?? null) !== selectedJourney) continue
       const codes = course.codigo_periodos?.length
         ? course.codigo_periodos
         : course.codigo_periodo
@@ -428,6 +548,33 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const availableCompliancePeriodOptions = useMemo(
     () => targetCoursePeriodOptions.filter((option) => !compliancePeriodCodes.includes(option.code)),
     [compliancePeriodCodes, targetCoursePeriodOptions]
+  )
+  const selectedComplianceTeam = useMemo(
+    () => complianceTeams.find((team) => team.id === selectedComplianceTeamId) || null,
+    [complianceTeams, selectedComplianceTeamId]
+  )
+  const filteredComplianceRecordings = useMemo(
+    () =>
+      complianceRecordings.filter((recording) => {
+        if (!complianceStartDate && !complianceEndDate) return true
+        const recordingDate = recordingIsoDate(recording)
+        if (!recordingDate) return false
+        if (complianceStartDate && recordingDate < complianceStartDate) return false
+        if (complianceEndDate && recordingDate > complianceEndDate) return false
+        return true
+      }),
+    [complianceEndDate, complianceRecordings, complianceStartDate]
+  )
+  const selectedComplianceRecordings = useMemo(
+    () =>
+      filteredComplianceRecordings.filter((recording) =>
+        selectedComplianceRecordingKeys.includes(recordingKey(recording))
+      ),
+    [filteredComplianceRecordings, selectedComplianceRecordingKeys]
+  )
+  const complianceTeamsReportPayload = useMemo(
+    () => teamsRecordingPayload(selectedComplianceTeam, selectedComplianceRecordings),
+    [selectedComplianceRecordings, selectedComplianceTeam]
   )
   const courseUsesHomologation = useMemo(
     () => students.some((item) => isHomologation(item)) || isHomologation(selectedCourse),
@@ -479,6 +626,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     try {
       const payload = await fetchPortalTeacherStudents({
         codigoPeriodos: periodos,
+        codAnioBasica: course.cod_anio_basica,
         codigoMateria: subjectCode,
         paralelo: course.paralelo,
         codJornada: course.cod_jornada ?? null,
@@ -537,6 +685,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         const chunk = periodos.slice(index, index + 2)
         const payload = await fetchPortalTeacherStudents({
           codigoPeriodos: chunk,
+          codAnioBasica: course.cod_anio_basica,
           codigoMateria: subjectCode,
           paralelo: course.paralelo,
           codJornada: course.cod_jornada ?? null,
@@ -576,12 +725,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   function updateDraft(item: PortalAcademicRecordItem, field: keyof GradeDraft, value: string) {
+    const constrained = constrainDecimalInput(value, field === 'asistencia' ? 100 : 10)
+    if (constrained === null) return
     const key = studentKey(item)
     setDrafts((current) => ({
       ...current,
       [key]: {
         ...(current[key] || draftFromItem(item)),
-        [field]: value,
+        [field]: constrained,
       },
     }))
   }
@@ -590,8 +741,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const key = studentKey(item)
     const draft = drafts[key] || draftFromItem(item)
     const homo = isHomologation(item) || isHomologation(selectedCourse)
-    const teoriaHomo = toNumberOrNull(draft.teoria_homo)
-    const practicaHomo = toNumberOrNull(draft.practica_homo)
+    const teoriaHomo = parseBoundedDecimal(draft.teoria_homo, 10, 'La nota teórica')
+    const practicaHomo = parseBoundedDecimal(draft.practica_homo, 10, 'La nota práctica')
     const regular = regularAverages(draft)
     const promedioFinal = homo
       ? weightedHomologationFinal(teoriaHomo, practicaHomo)
@@ -606,22 +757,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       num_grupo: item.num_grupo ?? null,
       teoria_homo: homo ? teoriaHomo : null,
       practica_homo: homo ? practicaHomo : null,
-      p1_tareas: homo ? null : toNumberOrNull(draft.p1_tareas),
-      p1_proyectos: homo ? null : toNumberOrNull(draft.p1_proyectos),
-      p1_examen: homo ? null : toNumberOrNull(draft.p1_examen),
+      p1_tareas: homo ? null : parseBoundedDecimal(draft.p1_tareas, 10, 'Tareas del parcial 1'),
+      p1_proyectos: homo ? null : parseBoundedDecimal(draft.p1_proyectos, 10, 'Proyectos del parcial 1'),
+      p1_examen: homo ? null : parseBoundedDecimal(draft.p1_examen, 10, 'Examen del parcial 1'),
       prom_p1: homo ? null : regular.promP1,
-      p2_tareas: homo ? null : toNumberOrNull(draft.p2_tareas),
-      p2_proyectos: homo ? null : toNumberOrNull(draft.p2_proyectos),
-      p2_examen: homo ? null : toNumberOrNull(draft.p2_examen),
+      p2_tareas: homo ? null : parseBoundedDecimal(draft.p2_tareas, 10, 'Tareas del parcial 2'),
+      p2_proyectos: homo ? null : parseBoundedDecimal(draft.p2_proyectos, 10, 'Proyectos del parcial 2'),
+      p2_examen: homo ? null : parseBoundedDecimal(draft.p2_examen, 10, 'Examen del parcial 2'),
       prom_p2: homo ? null : regular.promP2,
-      p3_tareas: homo ? null : toNumberOrNull(draft.p3_tareas),
-      p3_proyectos: homo ? null : toNumberOrNull(draft.p3_proyectos),
-      p3_examen: homo ? null : toNumberOrNull(draft.p3_examen),
+      p3_tareas: homo ? null : parseBoundedDecimal(draft.p3_tareas, 10, 'Tareas del parcial 3'),
+      p3_proyectos: homo ? null : parseBoundedDecimal(draft.p3_proyectos, 10, 'Proyectos del parcial 3'),
+      p3_examen: homo ? null : parseBoundedDecimal(draft.p3_examen, 10, 'Examen del parcial 3'),
       prom_p3: homo ? null : regular.promP3,
       promedio: promedioFinal,
       promedio_final: promedioFinal,
-      asistencia: toNumberOrNull(draft.asistencia),
-      recuperacion: toNumberOrNull(draft.recuperacion),
+      asistencia: parseBoundedDecimal(draft.asistencia, 100, 'La asistencia'),
+      recuperacion: homo ? null : parseBoundedDecimal(draft.recuperacion, 10, 'La recuperación'),
       caprueba: promedioFinal === null ? null : promedioFinal >= 7 ? 'A' : 'R',
     }
     return { payload, promedioFinal }
@@ -670,6 +821,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     return {
       periodos,
       subjectCode,
+      codAnioBasica: course.cod_anio_basica || '',
       paralelo: course.paralelo,
       codJornada: course.cod_jornada ?? null,
     }
@@ -680,6 +832,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     if (!params) return null
     return downloadPortalTeacherCourseReport({
       codigoPeriodos: params.periodos,
+      codAnioBasica: params.codAnioBasica,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
       codJornada: params.codJornada,
@@ -691,6 +844,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     if (!params) return null
     return downloadPortalTeacherStudentGradeReport({
       codigoPeriodos: params.periodos,
+      codAnioBasica: params.codAnioBasica,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
       codJornada: params.codJornada,
@@ -718,6 +872,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
     return downloadPortalTeacherComplianceReport({
       codigoPeriodos: params.periodos,
+      codAnioBasica: params.codAnioBasica,
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
       codJornada: params.codJornada,
@@ -727,6 +882,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       telefono: compliancePhone,
       actualizaciones: complianceUpdates,
       observaciones: complianceObservations,
+      grabacionesTeams: complianceTeamsReportPayload,
       evidencias: evidencePayload(complianceEvidenceFiles),
     })
   }
@@ -916,6 +1072,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     try {
       const blob = await signPortalTeacherComplianceReport({
         codigoPeriodos: params.periodos,
+        codAnioBasica: params.codAnioBasica,
         codigoMateria: params.subjectCode,
         paralelo: params.paralelo,
         codJornada: params.codJornada,
@@ -925,6 +1082,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         telefono: compliancePhone,
         actualizaciones: complianceUpdates,
         observaciones: complianceObservations,
+        grabacionesTeams: complianceTeamsReportPayload,
         evidencias: evidencePayload(complianceEvidenceFiles),
         certificado: signingCertificate,
         contrasenaCertificado: signingPassword,
@@ -1017,6 +1175,95 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     if (availableCompliancePeriodOptions.some((option) => option.code === compliancePeriodToAdd)) return
     setCompliancePeriodToAdd(availableCompliancePeriodOptions[0]?.code || '')
   }, [availableCompliancePeriodOptions, compliancePeriodToAdd])
+
+  useEffect(() => {
+    if (initialMode !== 'compliance' || !targetCourse) {
+      setComplianceTeams([])
+      setSelectedComplianceTeamId('')
+      setComplianceRecordings([])
+      setSelectedComplianceRecordingKeys([])
+      return
+    }
+    let cancelled = false
+    setLoadingComplianceTeams(true)
+    setComplianceTeamsError('')
+    setSelectedComplianceTeamId('')
+    setComplianceRecordings([])
+    setSelectedComplianceRecordingKeys([])
+
+    void fetchMyTeamsCatalog()
+      .then((payload) => {
+        if (cancelled) return
+        const periodCodes = targetCourse.codigo_periodos?.length
+          ? targetCourse.codigo_periodos
+          : targetCourse.codigo_periodo
+            ? [targetCourse.codigo_periodo]
+            : []
+        const ranked = (payload.value || [])
+          .filter((team) => Boolean(team.id))
+          .map((team) => ({ team, score: teamCourseMatchScore(team, targetCourse, periodCodes) }))
+          .sort((left, right) => right.score - left.score || String(left.team.displayName || '').localeCompare(String(right.team.displayName || ''), 'es'))
+        const teams = ranked.map((item) => item.team)
+        const bestMatch = ranked[0]
+        setComplianceTeams(teams)
+        setSelectedComplianceTeamId(
+          bestMatch && (bestMatch.score >= 24 || ranked.length === 1) ? bestMatch.team.id || '' : ''
+        )
+        if (teams.length === 0) {
+          setComplianceTeamsError('La cuenta docente no pertenece a ningún equipo de Teams.')
+        } else if (!bestMatch || bestMatch.score < 24) {
+          setComplianceTeamsError('Seleccione el equipo correspondiente; no se encontró una coincidencia segura con la materia.')
+        }
+      })
+      .catch((apiError) => {
+        if (cancelled) return
+        setComplianceTeams([])
+        setComplianceTeamsError(
+          apiError instanceof Error ? apiError.message : 'No se pudieron consultar los equipos del docente'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingComplianceTeams(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [complianceTeamsRefreshToken, initialMode, targetCourse])
+
+  useEffect(() => {
+    if (initialMode !== 'compliance' || !selectedComplianceTeamId) {
+      setComplianceRecordings([])
+      setSelectedComplianceRecordingKeys([])
+      return
+    }
+    let cancelled = false
+    setLoadingComplianceRecordings(true)
+    setComplianceTeamsError('')
+    void fetchMyTeamRecordings(selectedComplianceTeamId)
+      .then((payload) => {
+        if (cancelled) return
+        const items = (payload.value || []).slice(0, 50)
+        setComplianceRecordings(items)
+        setSelectedComplianceRecordingKeys(items.map(recordingKey))
+        if (items.length === 0) {
+          setComplianceTeamsError('Microsoft Graph no encontró grabaciones en el equipo seleccionado.')
+        }
+      })
+      .catch((apiError) => {
+        if (cancelled) return
+        setComplianceRecordings([])
+        setSelectedComplianceRecordingKeys([])
+        setComplianceTeamsError(
+          apiError instanceof Error ? apiError.message : 'No se pudieron consultar las grabaciones del equipo'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingComplianceRecordings(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [complianceRecordingsRefreshToken, initialMode, selectedComplianceTeamId])
 
   return (
     <div className="student-dashboard portal-page">
@@ -1232,28 +1479,190 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
             <div className="portal-compliance-evidence">
               <div className="section-title">
                 <div>
-                  <span>Capturas de pantalla</span>
+                  <span>Evidencias documentales</span>
                   <h2>Evidencias del informe</h2>
                 </div>
-                <strong>{evidencePayload(complianceEvidenceFiles).length} archivo(s)</strong>
+                <strong>
+                  {evidencePayload(complianceEvidenceFiles).length + complianceTeamsReportPayload.length} evidencia(s)
+                </strong>
               </div>
               <div className="portal-compliance-evidence-grid">
                 {COMPLIANCE_EVIDENCE_OPTIONS.map((option, optionIndex) => (
-                  <label className="portal-compliance-evidence-item" key={option.key}>
+                  <div
+                    className={`portal-compliance-evidence-item${option.key === 'teams' ? ' portal-compliance-evidence-item--teams' : ''}`}
+                    key={option.key}
+                  >
                     <span className="portal-compliance-evidence-title"><b>{optionIndex + 1}</b>{option.label}{option.key === 'notas' ? ' *' : ''}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(event) => {
-                        const selectedFiles = Array.from(event.target.files || [])
-                        setComplianceEvidenceFiles((current) => ({
-                          ...current,
-                          [option.key]: [...current[option.key], ...selectedFiles],
-                        }))
-                        event.target.value = ''
-                      }}
-                    />
+                    {option.key === 'teams' ? (
+                      <div className="portal-compliance-teams">
+                        <div className="portal-compliance-teams-toolbar">
+                          <label>
+                            <span>Equipo asociado</span>
+                            <select
+                              value={selectedComplianceTeamId}
+                              onChange={(event) => setSelectedComplianceTeamId(event.target.value)}
+                              disabled={loadingComplianceTeams || complianceTeams.length === 0}
+                            >
+                              <option value="">Seleccione un equipo</option>
+                              {complianceTeams.map((team) => (
+                                <option key={team.id} value={team.id}>
+                                  {team.displayName || team.id}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => setComplianceTeamsRefreshToken((current) => current + 1)}
+                            disabled={loadingComplianceTeams}
+                          >
+                            {loadingComplianceTeams ? 'Buscando equipos...' : 'Buscar equipo'}
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => setComplianceRecordingsRefreshToken((current) => current + 1)}
+                            disabled={!selectedComplianceTeamId || loadingComplianceRecordings}
+                          >
+                            {loadingComplianceRecordings ? 'Consultando...' : 'Actualizar grabaciones'}
+                          </button>
+                        </div>
+                        {complianceTeamsError ? (
+                          <p className="portal-compliance-teams-alert">{complianceTeamsError}</p>
+                        ) : null}
+                        {selectedComplianceTeam ? (
+                          <div className="portal-compliance-teams-summary">
+                            <div>
+                              <span>Microsoft Graph</span>
+                              <strong>{selectedComplianceTeam.displayName || 'Equipo seleccionado'}</strong>
+                            </div>
+                            <div>
+                              <span>Encontradas</span>
+                              <strong>{filteredComplianceRecordings.length}</strong>
+                            </div>
+                            <div>
+                              <span>Incluidas</span>
+                              <strong>{selectedComplianceRecordings.length}</strong>
+                            </div>
+                            <div className="portal-compliance-teams-selection-actions">
+                              <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={() =>
+                                  setSelectedComplianceRecordingKeys((current) =>
+                                    Array.from(new Set([...current, ...filteredComplianceRecordings.map(recordingKey)]))
+                                  )
+                                }
+                                disabled={filteredComplianceRecordings.length === 0}
+                              >
+                                Todas
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={() => {
+                                  const visibleKeys = new Set(filteredComplianceRecordings.map(recordingKey))
+                                  setSelectedComplianceRecordingKeys((current) =>
+                                    current.filter((key) => !visibleKeys.has(key))
+                                  )
+                                }}
+                                disabled={filteredComplianceRecordings.length === 0}
+                              >
+                                Ninguna
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {loadingComplianceRecordings ? (
+                          <div className="portal-compliance-teams-empty">Consultando SharePoint, OneDrive y reuniones de Teams...</div>
+                        ) : filteredComplianceRecordings.length > 0 ? (
+                          <div className="excel-table-wrap portal-compliance-teams-table-wrap">
+                            <table className="matricula-table portal-compliance-teams-table">
+                              <thead>
+                                <tr>
+                                  <th>Incluye</th>
+                                  <th>Fecha</th>
+                                  <th>Grabación</th>
+                                  <th>Inicio</th>
+                                  <th>Fin</th>
+                                  <th>Duración llamada</th>
+                                  <th>Duración grabación</th>
+                                  <th>Modificado por</th>
+                                  <th>Enlace</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredComplianceRecordings.map((recording) => {
+                                  const key = recordingKey(recording)
+                                  return (
+                                    <tr key={key}>
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedComplianceRecordingKeys.includes(key)}
+                                          onChange={(event) =>
+                                            setSelectedComplianceRecordingKeys((current) =>
+                                              event.target.checked
+                                                ? Array.from(new Set([...current, key]))
+                                                : current.filter((value) => value !== key)
+                                            )
+                                          }
+                                        />
+                                      </td>
+                                      <td>{recordingDateLabel(recording)}</td>
+                                      <td>{recording.name || 'Grabación de clase'}</td>
+                                      <td>{recording.callStartHourLabel || recording.recordingStartHourLabel || 'N/D'}</td>
+                                      <td>{recording.callEndHourLabel || recording.recordingEndHourLabel || 'N/D'}</td>
+                                      <td>{recording.callDurationClock || recording.callDurationLabel || 'N/D'}</td>
+                                      <td>{recording.recordingDurationClock || recording.durationClock || recording.recordingDurationLabel || 'N/D'}</td>
+                                      <td>{recording.lastModifiedByName || recording.createdByName || 'N/D'}</td>
+                                      <td>
+                                        {recording.webUrl ? (
+                                          <a href={recording.webUrl} target="_blank" rel="noreferrer">Abrir</a>
+                                        ) : 'N/D'}
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : selectedComplianceTeamId ? (
+                          <div className="portal-compliance-teams-empty">Sin grabaciones para el rango de fechas seleccionado.</div>
+                        ) : null}
+                        <details className="portal-compliance-teams-fallback">
+                          <summary>Agregar captura manual</summary>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(event) => {
+                              const selectedFiles = Array.from(event.target.files || [])
+                              setComplianceEvidenceFiles((current) => ({
+                                ...current,
+                                teams: [...current.teams, ...selectedFiles],
+                              }))
+                              event.target.value = ''
+                            }}
+                          />
+                        </details>
+                      </div>
+                    ) : (
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(event) => {
+                          const selectedFiles = Array.from(event.target.files || [])
+                          setComplianceEvidenceFiles((current) => ({
+                            ...current,
+                            [option.key]: [...current[option.key], ...selectedFiles],
+                          }))
+                          event.target.value = ''
+                        }}
+                      />
+                    )}
                     {complianceEvidenceFiles[option.key].length > 0 ? (
                       <ul className="portal-compliance-evidence-files">
                         {complianceEvidenceFiles[option.key].map((file, fileIndex) => (
@@ -1275,9 +1684,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         ))}
                       </ul>
                     ) : (
-                      <small>Sin capturas seleccionadas</small>
+                      <small>{option.key === 'teams' && complianceTeamsReportPayload.length > 0 ? 'Evidencia automática lista' : 'Sin capturas seleccionadas'}</small>
                     )}
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
@@ -1598,24 +2007,24 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       {gradePartial === 'P1' ? (
                         <>
                           <th>P1 tareas 30%</th>
-                          <th>P1 proyectos 40%</th>
-                          <th>P1 examen 30%</th>
+                          <th>P1 proyectos 30%</th>
+                          <th>P1 examen 40%</th>
                           <th>P1 prom.</th>
                         </>
                       ) : null}
                       {gradePartial === 'P2' ? (
                         <>
                           <th>P2 tareas 30%</th>
-                          <th>P2 proyectos 40%</th>
-                          <th>P2 examen 30%</th>
+                          <th>P2 proyectos 30%</th>
+                          <th>P2 examen 40%</th>
                           <th>P2 prom.</th>
                         </>
                       ) : null}
                       {gradePartial === 'P3' ? (
                         <>
                           <th>P3 tareas 30%</th>
-                          <th>P3 proyectos 40%</th>
-                          <th>P3 examen 30%</th>
+                          <th>P3 proyectos 30%</th>
+                          <th>P3 examen 40%</th>
                           <th>P3 prom.</th>
                           <th>Final</th>
                           <th>Estado</th>
@@ -1650,6 +2059,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           <td>
                             <input
                               className="portal-grade-input"
+                              type="number"
+                              min={0}
+                              max={10}
+                              step="0.01"
                               value={draft.teoria_homo}
                               inputMode="decimal"
                               onChange={(event) => updateDraft(item, 'teoria_homo', event.target.value)}
@@ -1659,6 +2072,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           <td>
                             <input
                               className="portal-grade-input"
+                              type="number"
+                              min={0}
+                              max={10}
+                              step="0.01"
                               value={draft.practica_homo}
                               inputMode="decimal"
                               onChange={(event) => updateDraft(item, 'practica_homo', event.target.value)}
@@ -1671,13 +2088,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           {gradePartial === 'P1' ? (
                             <>
                               <td>
-                                <input className="portal-grade-input" value={draft.p1_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_tareas', event.target.value)} placeholder={numberText(item.p1_tareas)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p1_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_tareas', event.target.value)} placeholder={numberText(item.p1_tareas)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p1_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_proyectos', event.target.value)} placeholder={numberText(item.p1_proyectos)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p1_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_proyectos', event.target.value)} placeholder={numberText(item.p1_proyectos)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p1_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_examen', event.target.value)} placeholder={numberText(item.p1_examen)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p1_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p1_examen', event.target.value)} placeholder={numberText(item.p1_examen)} />
                               </td>
                               <td>
                                 <span className="portal-grade-calculated">{numberText(calculatedRegular.promP1 ?? item.prom_p1)}</span>
@@ -1687,13 +2104,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           {gradePartial === 'P2' ? (
                             <>
                               <td>
-                                <input className="portal-grade-input" value={draft.p2_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_tareas', event.target.value)} placeholder={numberText(item.p2_tareas)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p2_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_tareas', event.target.value)} placeholder={numberText(item.p2_tareas)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p2_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_proyectos', event.target.value)} placeholder={numberText(item.p2_proyectos)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p2_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_proyectos', event.target.value)} placeholder={numberText(item.p2_proyectos)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p2_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_examen', event.target.value)} placeholder={numberText(item.p2_examen)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p2_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p2_examen', event.target.value)} placeholder={numberText(item.p2_examen)} />
                               </td>
                               <td>
                                 <span className="portal-grade-calculated">{numberText(calculatedRegular.promP2 ?? item.prom_p2)}</span>
@@ -1703,13 +2120,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           {gradePartial === 'P3' ? (
                             <>
                               <td>
-                                <input className="portal-grade-input" value={draft.p3_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_tareas', event.target.value)} placeholder={numberText(item.p3_tareas)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p3_tareas} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_tareas', event.target.value)} placeholder={numberText(item.p3_tareas)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p3_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_proyectos', event.target.value)} placeholder={numberText(item.p3_proyectos)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p3_proyectos} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_proyectos', event.target.value)} placeholder={numberText(item.p3_proyectos)} />
                               </td>
                               <td>
-                                <input className="portal-grade-input" value={draft.p3_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_examen', event.target.value)} placeholder={numberText(item.p3_examen)} />
+                                <input className="portal-grade-input" type="number" min={0} max={10} step="0.01" value={draft.p3_examen} inputMode="decimal" onChange={(event) => updateDraft(item, 'p3_examen', event.target.value)} placeholder={numberText(item.p3_examen)} />
                               </td>
                               <td>
                                 <span className="portal-grade-calculated">{numberText(calculatedRegular.promP3 ?? item.prom_p3)}</span>
@@ -1735,6 +2152,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           <td>
                             <input
                               className="portal-grade-input"
+                              type="number"
+                              min={0}
+                              max={100}
+                              step="0.01"
                               value={draft.asistencia}
                               inputMode="decimal"
                               onChange={(event) => updateDraft(item, 'asistencia', event.target.value)}
@@ -1744,6 +2165,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           <td>
                             <input
                               className="portal-grade-input"
+                              type="number"
+                              min={0}
+                              max={10}
+                              step="0.01"
                               value={draft.recuperacion}
                               inputMode="decimal"
                               onChange={(event) => updateDraft(item, 'recuperacion', event.target.value)}

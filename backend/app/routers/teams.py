@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/teams", tags=["teams"])
 logger = logging.getLogger(__name__)
 
 _TEAMS_ROLE_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_TEAMS_SELF_ROLE_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR", "DOCENTE")
 _INSTITUTIONAL_EMAIL_DOMAIN = "intec.edu.ec"
 
 
@@ -48,6 +49,20 @@ def _require_teams_access(
 
 
 _TEAMS_ACCESS = _require_teams_access
+
+
+def _require_teams_self_access(
+    current_user: SessionUser = Depends(_TEAMS_SELF_ROLE_ACCESS),
+) -> SessionUser:
+    if _institutional_email_for_user(current_user) is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Teams requiere una cuenta institucional @intec.edu.ec autenticada",
+        )
+    return current_user
+
+
+_TEAMS_SELF_ACCESS = _require_teams_self_access
 _EXAMPLE_START_HOUR = "6:00 PM"
 _EXAMPLE_END_HOUR = "8:00 PM"
 _UTC_OFFSET_SUFFIX = "+00:00"
@@ -58,6 +73,9 @@ _RECORDINGS_CACHE_TTL_SECONDS = 30
 _RECORDINGS_CACHE_MAX_TEAMS = 100
 _RECORDINGS_CACHE_LOCK = Lock()
 _RECORDINGS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_JOINED_TEAMS_CACHE_TTL_SECONDS = 60
+_JOINED_TEAMS_CACHE_LOCK = Lock()
+_JOINED_TEAMS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _RECORDING_TIME_MATCH_TOLERANCE_SECONDS = 2 * 60 * 60
 _CHANNEL_MESSAGES_LIMIT = 20
 _MESSAGE_REPLIES_LIMIT = 30
@@ -2096,6 +2114,57 @@ def _wait_for_team_ready(team_id: str, timeout_seconds: int = _TEAM_READY_TIMEOU
     )
 
 
+def _joined_teams_for_current_user(current_user: SessionUser) -> list[dict[str, Any]]:
+    institutional_email = _institutional_email_for_user(current_user)
+    if institutional_email is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Teams requiere una cuenta institucional @intec.edu.ec autenticada",
+        )
+
+    cache_key = institutional_email.lower()
+    with _JOINED_TEAMS_CACHE_LOCK:
+        cached_entry = _JOINED_TEAMS_CACHE.get(cache_key)
+        if cached_entry and time.monotonic() - cached_entry[0] < _JOINED_TEAMS_CACHE_TTL_SECONDS:
+            return [dict(item) for item in cached_entry[1]]
+
+    encoded_email = quote(institutional_email, safe="")
+    url = (
+        f"https://graph.microsoft.com/v1.0/users/{encoded_email}/joinedTeams"
+        "?$select=id,displayName,description,visibility,webUrl"
+    )
+    payload = graph_get_all(url)
+    teams = [
+        {
+            "id": item.get("id"),
+            "displayName": item.get("displayName"),
+            "description": item.get("description"),
+            "visibility": item.get("visibility"),
+            "webUrl": item.get("webUrl"),
+        }
+        for item in _graph_value_items(payload)
+        if str(item.get("id") or "").strip()
+    ]
+    teams.sort(key=lambda item: str(item.get("displayName") or "").casefold())
+
+    with _JOINED_TEAMS_CACHE_LOCK:
+        _JOINED_TEAMS_CACHE[cache_key] = (time.monotonic(), [dict(item) for item in teams])
+    return teams
+
+
+@router.get("/mine/catalog", responses={500: {"description": "Error interno del servidor"}})
+def my_teams_catalog(
+    current_user: Annotated[SessionUser, Depends(_TEAMS_SELF_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        teams = _joined_teams_for_current_user(current_user)
+        return {"value": teams, "count": len(teams)}
+    except httpx.HTTPStatusError as exc:
+        _raise_graph_http_exception(exc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/catalog", responses={500: {"description": "Error interno del servidor"}})
 def teams_catalog(
     current_user: Annotated[SessionUser, Depends(_TEAMS_ACCESS)],
@@ -2173,6 +2242,28 @@ def teams_courses(
             for channel in channels
         ]
         return {"value": items, "count": len(items)}
+    except httpx.HTTPStatusError as exc:
+        _raise_graph_http_exception(exc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/mine/{team_id}/recordings", responses={500: {"description": "Error interno del servidor"}})
+def my_team_recordings(
+    team_id: str,
+    current_user: Annotated[SessionUser, Depends(_TEAMS_SELF_ACCESS)],
+) -> dict[str, Any]:
+    normalized_team_id = str(team_id or "").strip().lower()
+    if not normalized_team_id:
+        raise HTTPException(status_code=400, detail="Debe indicar el equipo de Teams")
+    try:
+        joined_teams = _joined_teams_for_current_user(current_user)
+        if not any(str(item.get("id") or "").strip().lower() == normalized_team_id for item in joined_teams):
+            raise HTTPException(
+                status_code=403,
+                detail="El equipo solicitado no pertenece al docente autenticado",
+            )
+        return teams_recordings(team_id, current_user)
     except httpx.HTTPStatusError as exc:
         _raise_graph_http_exception(exc)
     except RuntimeError as exc:

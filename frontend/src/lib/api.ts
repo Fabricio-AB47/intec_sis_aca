@@ -1,4 +1,7 @@
 import type {
+  AdminGradeCourseSelection,
+  AdminGradeStudentsResponse,
+  AdminGradeTeachersResponse,
   AcademicEnrollmentCareersResponse,
   AcademicEnrollmentCatalogResponse,
   AcademicEnrollmentCohortResponse,
@@ -63,6 +66,9 @@ import type {
   LegacyDataUpdateDetailResponse,
   LegacyDataUpdateSearchResponse,
   LegacyDataUpdateTarget,
+  LegacyActiveGradeStudentsResponse,
+  LegacyGradeUpdatePayload,
+  LegacyGradeUpdateResponse,
   LegacyReportFilters,
   LegacyReportsCatalogResponse,
   LegacyReportResponse,
@@ -121,6 +127,8 @@ import type {
   ScholarshipConfigurationPayload,
   ScholarshipConfigurationSaveResponse,
   ScholarshipBeneficiaryListResponse,
+  ScreenAccessResponse,
+  ScreenAccessRole,
   SisAcademicoCatalogResponse,
   SisAcademicoListResponse,
   SisAcademicoRecordResponse,
@@ -169,6 +177,7 @@ import type {
   TeacherEvaluationSubmitPayload,
   TeacherEvaluationSubmitResponse,
   TeacherComplianceReportFormat,
+  TeacherComplianceTeamsRecording,
   DefensaCalificacionPayload,
   DefensaTemaPayload,
   ExamenComplexivoCalificacionPayload,
@@ -317,6 +326,17 @@ export async function logoutRequest(): Promise<void> {
   await request<void>('/api/auth/logout', { method: 'POST' })
 }
 
+export async function fetchScreenAccessAssignments(includeAll = false): Promise<ScreenAccessResponse> {
+  return request<ScreenAccessResponse>(`/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`)
+}
+
+export async function updateScreenAccessAssignment(role: string, pages: string[]): Promise<ScreenAccessRole> {
+  return request<ScreenAccessRole>(`/api/auth/screen-access/${encodeURIComponent(role)}`, {
+    method: 'PUT',
+    body: { pages },
+  })
+}
+
 export async function fetchCarnetMe(): Promise<CarnetPhotoStatus> {
   return request<CarnetPhotoStatus>('/api/carnet/me')
 }
@@ -399,6 +419,10 @@ export async function fetchTeamsCatalog(): Promise<TeamsCatalogResponse> {
   return request<TeamsCatalogResponse>('/api/teams/catalog')
 }
 
+export async function fetchMyTeamsCatalog(): Promise<TeamsCatalogResponse> {
+  return request<TeamsCatalogResponse>('/api/teams/mine/catalog')
+}
+
 export async function fetchTeamParticipants(teamId: string): Promise<TeamCollectionResponse<TeamParticipant>> {
   return request<TeamCollectionResponse<TeamParticipant>>(
     `/api/teams/${encodeURIComponent(teamId)}/participants`
@@ -414,6 +438,12 @@ export async function fetchTeamCourses(teamId: string): Promise<TeamCollectionRe
 export async function fetchTeamRecordings(teamId: string): Promise<TeamCollectionResponse<TeamRecording>> {
   return request<TeamCollectionResponse<TeamRecording>>(
     `/api/teams/${encodeURIComponent(teamId)}/recordings`
+  )
+}
+
+export async function fetchMyTeamRecordings(teamId: string): Promise<TeamCollectionResponse<TeamRecording>> {
+  return request<TeamCollectionResponse<TeamRecording>>(
+    `/api/teams/mine/${encodeURIComponent(teamId)}/recordings`
   )
 }
 
@@ -722,6 +752,36 @@ export async function fetchLegacyReport(filters: LegacyReportFilters = {}): Prom
   })
 }
 
+export async function fetchActiveLegacyGradeStudents(): Promise<LegacyActiveGradeStudentsResponse> {
+  return request<LegacyActiveGradeStudentsResponse>('/api/students/reporteria-integral/active-grade-students', {
+    cache: 'no-store',
+  })
+}
+
+export async function fetchLegacyStudentGrades(
+  codigoEstud: string,
+  carrera?: string,
+  tipoMatricula?: string,
+): Promise<LegacyReportResponse> {
+  const params = new URLSearchParams()
+  if (carrera) params.set('carrera', carrera)
+  if (tipoMatricula) params.set('tipo_matricula', tipoMatricula)
+  const query = params.toString()
+  return request<LegacyReportResponse>(
+    `/api/students/reporteria-integral/active-grade-students/${encodeURIComponent(codigoEstud)}/grades${query ? `?${query}` : ''}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function updateLegacyStudentGrade(
+  payload: LegacyGradeUpdatePayload,
+): Promise<LegacyGradeUpdateResponse> {
+  return request<LegacyGradeUpdateResponse>('/api/students/reporteria-integral/grades', {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
 export async function downloadLegacyReportWorkbook(filters: LegacyReportFilters = {}): Promise<Blob> {
   const params = buildLegacyReportParams({ ...filters, limit: filters.limit ?? 5000 })
   const response = await fetch(`/api/students/reporteria-integral/export?${params.toString()}`, {
@@ -854,6 +914,33 @@ export async function importFechaGradoExcel(file: File): Promise<FechaGradoImpor
   const formData = new FormData()
   formData.append('file', file)
   return request<FechaGradoImportResponse>('/api/students/fecha-grado/importar', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function analyzeFechaGradoExcel(file: File): Promise<FechaGradoImportResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<FechaGradoImportResponse>('/api/students/fecha-grado/senescyt/analizar', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function analyzeFechaGradoPdfs(files: File[]): Promise<FechaGradoImportResponse> {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  return request<FechaGradoImportResponse>('/api/students/fecha-grado/senescyt/pdf/analizar', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function importFechaGradoPdfs(files: File[]): Promise<FechaGradoImportResponse> {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  return request<FechaGradoImportResponse>('/api/students/fecha-grado/senescyt/pdf/importar', {
     method: 'POST',
     body: formData,
   })
@@ -1768,6 +1855,41 @@ export async function fetchPortalTeacherCourses(): Promise<PortalTeacherCoursesR
   return request<PortalTeacherCoursesResponse>('/api/portal/teacher/courses')
 }
 
+export async function fetchAdminGradeTeachers(params: {
+  buscar?: string
+  estado?: string
+  limit?: number
+} = {}): Promise<AdminGradeTeachersResponse> {
+  const query = new URLSearchParams()
+  if (params.buscar) query.set('buscar', params.buscar)
+  if (params.estado) query.set('estado', params.estado)
+  query.set('limit', String(params.limit ?? 1000))
+  return request<AdminGradeTeachersResponse>(`/api/portal/admin/grades/teachers?${query.toString()}`, {
+    cache: 'no-store',
+  })
+}
+
+export async function fetchAdminGradeTeacherCourses(codigoDoc: string): Promise<PortalTeacherCoursesResponse> {
+  return request<PortalTeacherCoursesResponse>(
+    `/api/portal/admin/grades/teachers/${encodeURIComponent(codigoDoc)}/courses`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function fetchAdminGradeTeacherStudents(params: {
+  codigoDoc: string
+  courses: AdminGradeCourseSelection[]
+}): Promise<AdminGradeStudentsResponse> {
+  return request<AdminGradeStudentsResponse>(
+    `/api/portal/admin/grades/teachers/${encodeURIComponent(params.codigoDoc)}/students`,
+    {
+      method: 'POST',
+      body: { courses: params.courses },
+      cache: 'no-store',
+    },
+  )
+}
+
 export async function fetchPortalTeacherContracts(): Promise<PortalTeacherContractsResponse> {
   return request<PortalTeacherContractsResponse>('/api/portal/teacher/contracts')
 }
@@ -1912,6 +2034,7 @@ type TeacherComplianceReportParams = {
   telefono?: string
   actualizaciones?: string
   observaciones?: string
+  grabacionesTeams?: TeacherComplianceTeamsRecording[]
   evidencias?: Array<{ label: string; file: File }>
 }
 
@@ -1926,6 +2049,9 @@ function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): 
   if (params.telefono) formData.append('telefono', params.telefono)
   if (params.actualizaciones) formData.append('actualizaciones', params.actualizaciones)
   if (params.observaciones) formData.append('observaciones', params.observaciones)
+  if (params.grabacionesTeams?.length) {
+    formData.append('teams_recordings_json', JSON.stringify(params.grabacionesTeams))
+  }
   const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
   for (const codigoPeriodo of periodos) {
     formData.append('codigo_periodo', codigoPeriodo)

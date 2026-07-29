@@ -2,13 +2,14 @@ import { ReporteriaIntegralView } from './ReporteriaIntegralView'
 
 type ReportesIndividualesViewProps = {
   displayName: string
+  role?: string
   initialReportKey?: string
 }
 
-export function ReportesIndividualesView({ displayName, initialReportKey }: Readonly<ReportesIndividualesViewProps>) {
+export function ReportesIndividualesView({ displayName, role, initialReportKey }: Readonly<ReportesIndividualesViewProps>) {
   const heading =
     initialReportKey === 'notas_carrera_materia'
-      ? 'Notas por carrera y periodo'
+      ? 'Calificaciones de estudiantes'
       : initialReportKey === 'estud_per_c_m'
         ? 'Estudiantes por periodo, carrera y materia'
         : initialReportKey === 'becas_edades'
@@ -18,6 +19,7 @@ export function ReportesIndividualesView({ displayName, initialReportKey }: Read
   return (
     <ReporteriaIntegralView
       displayName={displayName}
+      role={role}
       eyebrow="Reporteria"
       heading={heading}
       individualMode

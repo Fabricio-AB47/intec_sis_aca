@@ -15,10 +15,12 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.datetime import from_excel
 from openpyxl.worksheet.datavalidation import DataValidation
 import pandas as pd
 from pydantic import BaseModel, Field
 import pyodbc
+from starlette.concurrency import run_in_threadpool
 
 from app.core.security import SessionUser, require_roles
 from app.services.complement_sync import sync_person_complements
@@ -71,6 +73,8 @@ class GraduationDateItem(BaseModel):
     fecha_grado: str | None = None
     fecha_emision_senescyt: str | None = None
     cod_refrendacion: str | None = Field(default=None, max_length=50)
+    cod_registro: str | None = Field(default=None, max_length=50)
+    nomina: str | None = Field(default=None, max_length=50)
 
 
 class GraduationDateSavePayload(BaseModel):
@@ -4517,32 +4521,166 @@ def ingreso_ventas(
         raise HTTPException(status_code=500, detail=f"Error consultando ingreso por ventas: {exc}") from exc
 
 
-def _parse_graduation_date(value: Any) -> date | None:
-    text = _clean_cell(value)
-    if not text:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return datetime.fromisoformat(text[:10]).date()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Fecha de grado invalida: {text}") from exc
+_GRADUATION_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_GRADUATION_UPLOAD_MAX_ROWS = 5000
+_GRADUATION_HEADER_SCAN_ROWS = 25
+_GRADUATION_PDF_MAX_FILES = 100
+_GRADUATION_PDF_MAX_FILE_BYTES = 15 * 1024 * 1024
+_GRADUATION_PDF_MAX_TOTAL_BYTES = 120 * 1024 * 1024
+_GRADUATION_PDF_MAX_PAGES = 20
+_GRADUATION_SENESCYT_FIELDS = (
+    "identificacion",
+    "fecha_grado",
+    "fecha_emision_senescyt",
+    "cod_registro",
+    "nomina",
+)
+_GRADUATION_SENESCYT_HEADER_ALIASES = {
+    "identificacion": {
+        "CEDULA",
+        "CEDULAEST",
+        "DOCUMENTODEIDENTIFICACION",
+        "IDENTIFICACION",
+        "NUMERODEDOCUMENTO",
+        "NUMERODEIDENTIFICACION",
+        "NUMEROIDENTIFICACION",
+        "NUMIDENTIFICACION",
+    },
+    "fecha_grado": {
+        "FECHAACTAGRADO",
+        "FECHADEACTADEGRADO",
+        "FECHADEGRADO",
+        "FECHADEGRADUACION",
+        "FECHAGRADO",
+        "FECHAGRADUACION",
+    },
+    "fecha_emision_senescyt": {
+        "FECHADEEMISION",
+        "FECHADEEMISIONDELASENESCYT",
+        "FECHADEEMISIONSENESCYT",
+        "FECHAEMISION",
+        "FECHAEMISIONDELASENESCYT",
+        "FECHAEMISIONSENESCYT",
+    },
+    "cod_registro": {
+        "CODIGODEREGISTRO",
+        "CODIGOREGISTRO",
+        "CODIGOREGISTROSENESCYT",
+        "CODREGISTRO",
+        "NUMERODEREGISTRO",
+        "REGISTROSENESCYT",
+    },
+    "nomina": {
+        "NONOMINA",
+        "NOMINA",
+        "NOMINANUMERO",
+        "NUMERODENOMINA",
+    },
+}
+
+
+def _graduation_header_key(value: Any) -> str:
+    text = unicodedata.normalize("NFD", _clean_cell(value).upper())
+    text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+    return re.sub(r"[^A-Z0-9]+", "", text)
+
+
+def _graduation_header_field(value: Any) -> str:
+    key = _graduation_header_key(value)
+    for field, aliases in _GRADUATION_SENESCYT_HEADER_ALIASES.items():
+        if key in aliases:
+            return field
+    return ""
+
+
+def _graduation_excel_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+    return _clean_cell(value)
+
+
+def _normalize_graduation_identifier(value: Any) -> str:
+    text = _graduation_excel_text(value).upper()
+    if re.fullmatch(r"\d+\.0+", text):
+        text = text.split(".", 1)[0]
+    compact = re.sub(r"[^A-Z0-9]+", "", text)
+    if compact.isdigit():
+        if len(compact) == 13 and compact.endswith("001"):
+            compact = compact[:10]
+        if len(compact) == 9:
+            compact = compact.zfill(10)
+    return compact
 
 
 def _parse_optional_excel_date(value: Any, label: str) -> date | None:
-    text = _clean_cell(value)
-    if not text:
+    if value is None or _clean_cell(value) == "":
         return None
+    parsed: date | None = None
     if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return datetime.fromisoformat(text[:10]).date()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"{label} invalida: {text}") from exc
+        parsed = value.date()
+    elif isinstance(value, date):
+        parsed = value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            converted = from_excel(value)
+            if isinstance(converted, datetime):
+                parsed = converted.date()
+            elif isinstance(converted, date):
+                parsed = converted
+        except (TypeError, ValueError, OverflowError):
+            parsed = None
+    else:
+        text = _clean_cell(value)
+        normalized = text.split("T", 1)[0].split(" ", 1)[0]
+        for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+            try:
+                parsed = datetime.strptime(normalized, date_format).date()
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            normalized_spanish = unicodedata.normalize("NFD", text.upper())
+            normalized_spanish = "".join(
+                char for char in normalized_spanish if unicodedata.category(char) != "Mn"
+            )
+            match = re.fullmatch(r"\s*(\d{1,2})\s+DE\s+([A-Z]+)\s+DE\s+(\d{4})\s*", normalized_spanish)
+            if match and match.group(2) in _SPANISH_MONTHS:
+                try:
+                    parsed = date(int(match.group(3)), _SPANISH_MONTHS[match.group(2)], int(match.group(1)))
+                except ValueError:
+                    parsed = None
+    if parsed is None or parsed < date(1900, 1, 1) or parsed > date.today():
+        raise HTTPException(status_code=400, detail=f"{label} inválida: {_graduation_excel_text(value)}")
+    return parsed
+
+
+def _parse_graduation_date(value: Any) -> date | None:
+    return _parse_optional_excel_date(value, "Fecha de grado")
+
+
+def _required_graduation_date(value: Any, label: str) -> date:
+    parsed = _parse_optional_excel_date(value, label)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail=f"{label} vacía")
+    return parsed
+
+
+def _required_graduation_text(value: Any, label: str) -> str:
+    text = _graduation_excel_text(value)
+    if not text:
+        raise HTTPException(status_code=400, detail=f"{label} vacío")
+    if len(text) > 50:
+        raise HTTPException(status_code=400, detail=f"{label} supera los 50 caracteres")
+    return text
 
 
 def _ensure_graduation_extra_columns(cursor: pyodbc.Cursor) -> None:
@@ -4568,8 +4706,712 @@ def _ensure_graduation_extra_columns(cursor: pyodbc.Cursor) -> None:
                 ALTER TABLE dbo.DATOS_ESTUD ALTER COLUMN Cod_Refrendacion varchar(50) NULL
             END
         END
+        IF COL_LENGTH('dbo.DATOS_ESTUD', 'Cod_registro') IS NULL
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ADD Cod_registro varchar(50) NULL
+        END
+        ELSE IF EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('dbo.DATOS_ESTUD')
+              AND name = 'Cod_registro'
+              AND max_length < 50
+        )
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ALTER COLUMN Cod_registro varchar(50) NULL
+        END
+        IF COL_LENGTH('dbo.DATOS_ESTUD', 'Nomina') IS NULL
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ADD Nomina varchar(50) NULL
+        END
+        ELSE IF EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('dbo.DATOS_ESTUD')
+              AND name = 'Nomina'
+              AND max_length < 50
+        )
+        BEGIN
+            ALTER TABLE dbo.DATOS_ESTUD ALTER COLUMN Nomina varchar(50) NULL
+        END
         """
     )
+
+
+def _find_graduation_senescyt_header(workbook: Any) -> tuple[Any, int, dict[str, int]]:
+    required = set(_GRADUATION_SENESCYT_FIELDS)
+    for worksheet in workbook.worksheets:
+        last_header_row = min(worksheet.max_row or 1, _GRADUATION_HEADER_SCAN_ROWS)
+        last_column = min(worksheet.max_column or 1, 100)
+        for row_number in range(1, last_header_row + 1):
+            values = next(
+                worksheet.iter_rows(
+                    min_row=row_number,
+                    max_row=row_number,
+                    min_col=1,
+                    max_col=last_column,
+                    values_only=True,
+                )
+            )
+            indexes: dict[str, int] = {}
+            for index, value in enumerate(values):
+                field = _graduation_header_field(value)
+                if field and field not in indexes:
+                    indexes[field] = index
+            if required.issubset(indexes):
+                return worksheet, row_number, indexes
+    expected = (
+        "NÚMERO DE IDENTIFICACIÓN, FECHA DE GRADO, FECHA DE EMISIÓN SENESCYT, "
+        "CÓDIGO DE REGISTRO y NÓMINA #"
+    )
+    raise HTTPException(
+        status_code=400,
+        detail=f"No se encontró la fila de encabezados SENESCYT. Columnas requeridas: {expected}.",
+    )
+
+
+def _parse_graduation_senescyt_workbook(content: bytes) -> dict[str, Any]:
+    try:
+        workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo leer el archivo Excel") from exc
+    try:
+        worksheet, header_row, indexes = _find_graduation_senescyt_header(workbook)
+        parsed_rows: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        seen_identifiers: dict[str, int] = {}
+        detected_rows = 0
+        max_data_row = min(worksheet.max_row or header_row, header_row + _GRADUATION_UPLOAD_MAX_ROWS + 1)
+        for row_number, values in enumerate(
+            worksheet.iter_rows(
+                min_row=header_row + 1,
+                max_row=max_data_row,
+                values_only=True,
+            ),
+            start=header_row + 1,
+        ):
+            raw = {
+                field: values[index] if index < len(values) else None
+                for field, index in indexes.items()
+            }
+            if not any(_graduation_excel_text(value) for value in raw.values()):
+                continue
+            detected_rows += 1
+            if detected_rows > _GRADUATION_UPLOAD_MAX_ROWS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El archivo supera el límite de {_GRADUATION_UPLOAD_MAX_ROWS} registros.",
+                )
+            identifier = _normalize_graduation_identifier(raw.get("identificacion"))
+            row_error = {"fila": row_number, "cedula": identifier, "identificacion": identifier}
+            if not identifier or not 5 <= len(identifier) <= 20:
+                errors.append({**row_error, "error": "Número de identificación vacío o inválido"})
+                continue
+            if identifier in seen_identifiers:
+                errors.append(
+                    {
+                        **row_error,
+                        "error": f"Identificación duplicada; ya aparece en la fila {seen_identifiers[identifier]}",
+                    }
+                )
+                continue
+            seen_identifiers[identifier] = row_number
+            try:
+                graduation_date = _required_graduation_date(raw.get("fecha_grado"), "Fecha de grado")
+                senescyt_date = _required_graduation_date(
+                    raw.get("fecha_emision_senescyt"),
+                    "Fecha de emisión SENESCYT",
+                )
+                if senescyt_date < graduation_date:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="La fecha de emisión SENESCYT no puede ser anterior a la fecha de grado",
+                    )
+                registration_code = _required_graduation_text(raw.get("cod_registro"), "Código de registro")
+                roster = _required_graduation_text(raw.get("nomina"), "Nómina")
+            except HTTPException as exc:
+                errors.append({**row_error, "error": str(exc.detail)})
+                continue
+            parsed_rows.append(
+                {
+                    "fila": row_number,
+                    "identificacion": identifier,
+                    "fecha_grado": graduation_date,
+                    "fecha_emision_senescyt": senescyt_date,
+                    "cod_registro": registration_code,
+                    "nomina": roster,
+                }
+            )
+        if detected_rows == 0:
+            raise HTTPException(status_code=400, detail="El archivo no contiene registros debajo de los encabezados.")
+        return {
+            "hoja": worksheet.title,
+            "fila_encabezado": header_row,
+            "filas_detectadas": detected_rows,
+            "rows": parsed_rows,
+            "errors": errors,
+        }
+    finally:
+        workbook.close()
+
+
+def _graduation_pdf_flat_text(value: str) -> str:
+    text = unicodedata.normalize("NFC", str(value or ""))
+    text = text.replace("\x00", " ").replace("\u00a0", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _extract_graduation_pdf_text(content: bytes) -> tuple[str, str]:
+    text_parts: list[str] = []
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(content)
+        try:
+            if len(document) > _GRADUATION_PDF_MAX_PAGES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El PDF supera el límite de {_GRADUATION_PDF_MAX_PAGES} páginas.",
+                )
+            for page_index in range(len(document)):
+                page = document[page_index]
+                try:
+                    text_page = page.get_textpage()
+                    try:
+                        text_parts.append(text_page.get_text_range())
+                    finally:
+                        text_page.close()
+                finally:
+                    page.close()
+        finally:
+            document.close()
+    except HTTPException:
+        raise
+    except Exception:
+        text_parts = []
+
+    selectable_text = "\n".join(text_parts)
+    flat_selectable = _graduation_pdf_flat_text(selectable_text)
+    normalized_selectable = _graduation_header_key(flat_selectable)
+    if "NOMINADEGRADUADOSREGISTRADOS" in normalized_selectable:
+        return selectable_text, "TEXTO_PDF"
+
+    if len(flat_selectable) >= 300:
+        return selectable_text, "TEXTO_PDF"
+
+    try:
+        from app.routers.certificate_renamer import _extract_text_with_optional_ocr
+
+        ocr_text = _extract_text_with_optional_ocr(content)
+    except Exception:
+        ocr_text = ""
+    if _graduation_pdf_flat_text(ocr_text):
+        return ocr_text, "OCR"
+    return selectable_text, "SIN_TEXTO"
+
+
+def _graduation_pdf_labeled_date(flat_text: str) -> date | None:
+    patterns = (
+        r"FECHA\s+DE\s+EMISI[ÓO]N\s+SENESCYT\s*[:\-]\s*"
+        r"(\d{4}[\-/]\d{1,2}[\-/]\d{1,2}|\d{1,2}[\-/]\d{1,2}[\-/]\d{4})",
+        r"FECHA\s+DE\s+EMISI[ÓO]N\s*[:\-]\s*"
+        r"(\d{4}[\-/]\d{1,2}[\-/]\d{1,2}|\d{1,2}[\-/]\d{1,2}[\-/]\d{4})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, flat_text, flags=re.IGNORECASE)
+        if match:
+            return _required_graduation_date(match.group(1), "Fecha de emisión SENESCYT")
+    return None
+
+
+def _graduation_pdf_roster(flat_text: str) -> str:
+    patterns = (
+        r"#\s*N[ÓO]MINA\s*[:#\-]?\s*([0-9A-Z][0-9A-Z./\-]{2,49})",
+        r"N[ÚU]MERO\s+DE\s+N[ÓO]MINA\s*[:#\-]?\s*([0-9A-Z][0-9A-Z./\-]{2,49})",
+        r"N[ÓO]MINA\s+(?:NRO|NO|N[ÚU]MERO)\.?\s*[:#\-]?\s*([0-9A-Z][0-9A-Z./\-]{2,49})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, flat_text, flags=re.IGNORECASE)
+        if match:
+            return _required_graduation_text(match.group(1), "Nómina")
+    return ""
+
+
+_GRADUATION_PDF_ROW_PATTERN = re.compile(
+    r"(?<!\d)(?P<identificacion>\d{9,13})(?!\d)\s+"
+    r"(?P<nombres>.{1,260}?)\s+"
+    r"(?P<cod_registro>[A-Z0-9]{2,12}(?:\s*-\s*[A-Z0-9]{2,15}){1,4})\s+"
+    r"(?P<fecha_grado>\d{4}[\-/]\d{1,2}[\-/]\d{1,2})(?:\s+|$)",
+    flags=re.IGNORECASE,
+)
+
+
+def _parse_graduation_senescyt_pdf_text(
+    filename: str,
+    text: str,
+    extraction_method: str = "TEXTO_PDF",
+) -> dict[str, Any]:
+    flat_text = _graduation_pdf_flat_text(text)
+    errors: list[dict[str, Any]] = []
+    if "NOMINADEGRADUADOSREGISTRADOS" not in _graduation_header_key(flat_text):
+        errors.append(
+            {
+                "archivo": filename,
+                "error": "El PDF no corresponde a una Nómina de Graduados Registrados de SENESCYT.",
+            }
+        )
+        return {
+            "archivo": filename,
+            "filas_detectadas": 0,
+            "rows": [],
+            "errors": errors,
+            "metodo_extraccion": extraction_method,
+        }
+
+    roster = _graduation_pdf_roster(flat_text)
+    emission_date = _graduation_pdf_labeled_date(flat_text)
+    if not roster:
+        errors.append({"archivo": filename, "error": "No se encontró el número de nómina."})
+    if emission_date is None:
+        errors.append({"archivo": filename, "error": "No se encontró la fecha de emisión SENESCYT."})
+
+    table_header = re.search(
+        r"N[ÚU]MERO\s+DE\s+IDENTIFICACI[ÓO]N",
+        flat_text,
+        flags=re.IGNORECASE,
+    )
+    table_text = flat_text[table_header.end() :] if table_header else ""
+    emission_label = re.search(
+        r"FECHA\s+DE\s+EMISI[ÓO]N\s+SENESCYT",
+        table_text,
+        flags=re.IGNORECASE,
+    )
+    if emission_label:
+        table_text = table_text[: emission_label.start()]
+
+    matches = list(_GRADUATION_PDF_ROW_PATTERN.finditer(table_text))
+    if not matches:
+        errors.append(
+            {
+                "archivo": filename,
+                "error": "No se encontraron filas con identificación, código de registro y fecha de acta.",
+            }
+        )
+
+    rows: list[dict[str, Any]] = []
+    seen_identifiers: dict[str, int] = {}
+    for row_number, match in enumerate(matches, start=1):
+        identifier = _normalize_graduation_identifier(match.group("identificacion"))
+        registration_code = re.sub(r"\s*-\s*", "-", match.group("cod_registro")).strip()
+        row_error = {
+            "archivo": filename,
+            "fila": row_number,
+            "cedula": identifier,
+            "identificacion": identifier,
+        }
+        if not identifier or not 5 <= len(identifier) <= 20:
+            errors.append({**row_error, "error": "Número de identificación vacío o inválido."})
+            continue
+        if identifier in seen_identifiers:
+            errors.append(
+                {
+                    **row_error,
+                    "error": f"Identificación duplicada dentro del PDF; ya aparece en la fila {seen_identifiers[identifier]}.",
+                }
+            )
+            continue
+        seen_identifiers[identifier] = row_number
+        try:
+            graduation_date = _required_graduation_date(match.group("fecha_grado"), "Fecha de acta de grado")
+            registration_code = _required_graduation_text(registration_code, "Código de registro")
+            if emission_date is not None and emission_date < graduation_date:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La fecha de emisión SENESCYT no puede ser anterior a la fecha de acta de grado",
+                )
+        except HTTPException as exc:
+            errors.append({**row_error, "error": str(exc.detail)})
+            continue
+        if not roster or emission_date is None:
+            continue
+        rows.append(
+            {
+                "fila": row_number,
+                "registro_documento": row_number,
+                "archivo": filename,
+                "metodo_extraccion": extraction_method,
+                "identificacion": identifier,
+                "nombres_documento": _clean_cell(match.group("nombres")),
+                "fecha_grado": graduation_date,
+                "fecha_emision_senescyt": emission_date,
+                "cod_registro": registration_code,
+                "nomina": roster,
+            }
+        )
+    return {
+        "archivo": filename,
+        "filas_detectadas": len(matches),
+        "rows": rows,
+        "errors": errors,
+        "metodo_extraccion": extraction_method,
+    }
+
+
+def _parse_graduation_senescyt_pdf_batch(files: list[tuple[str, bytes]]) -> dict[str, Any]:
+    parsed_rows: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    file_details: list[dict[str, Any]] = []
+    files_without_rows: list[str] = []
+    seen_identifiers: dict[str, dict[str, Any]] = {}
+    detected_rows = 0
+
+    for filename, content in files:
+        try:
+            text, extraction_method = _extract_graduation_pdf_text(content)
+            parsed_file = _parse_graduation_senescyt_pdf_text(filename, text, extraction_method)
+        except HTTPException as exc:
+            parsed_file = {
+                "archivo": filename,
+                "filas_detectadas": 0,
+                "rows": [],
+                "errors": [{"archivo": filename, "error": str(exc.detail)}],
+                "metodo_extraccion": "ERROR",
+            }
+        detected_rows += int(parsed_file["filas_detectadas"])
+        errors.extend(parsed_file["errors"])
+        accepted_for_file = 0
+        for source in parsed_file["rows"]:
+            identifier = source["identificacion"]
+            previous = seen_identifiers.get(identifier)
+            if previous is not None:
+                fields = ("fecha_grado", "fecha_emision_senescyt", "cod_registro", "nomina")
+                same_values = all(
+                    _graduation_compare_value(field, previous[field])
+                    == _graduation_compare_value(field, source[field])
+                    for field in fields
+                )
+                if same_values:
+                    warnings.append(
+                        f"{identifier} aparece repetido con los mismos datos en {previous['archivo']} y {filename}; se procesará una sola vez."
+                    )
+                else:
+                    errors.append(
+                        {
+                            "archivo": filename,
+                            "fila": source["registro_documento"],
+                            "cedula": identifier,
+                            "identificacion": identifier,
+                            "error": f"La identificación tiene datos contradictorios con el archivo {previous['archivo']}.",
+                        }
+                    )
+                continue
+            source = {**source, "fila": len(parsed_rows) + 1}
+            seen_identifiers[identifier] = source
+            parsed_rows.append(source)
+            accepted_for_file += 1
+        if accepted_for_file == 0:
+            files_without_rows.append(filename)
+        file_details.append(
+            {
+                "archivo": filename,
+                "registros_detectados": parsed_file["filas_detectadas"],
+                "registros_validos": accepted_for_file,
+                "metodo_extraccion": parsed_file["metodo_extraccion"],
+            }
+        )
+
+    return {
+        "origen": "PDF",
+        "hoja": f"{len(files)} documento(s) PDF",
+        "fila_encabezado": 0,
+        "archivos_detectados": len(files),
+        "archivos_procesados": sum(1 for detail in file_details if detail["registros_validos"] > 0),
+        "archivos_sin_registros": files_without_rows,
+        "archivos_detalle": file_details,
+        "advertencias": warnings,
+        "filas_detectadas": detected_rows,
+        "rows": parsed_rows,
+        "errors": errors,
+    }
+
+
+def _graduation_date_iso(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return ""
+
+
+def _graduation_compare_value(field: str, value: Any) -> str:
+    if field in {"fecha_grado", "fecha_emision_senescyt"}:
+        return _graduation_date_iso(value)
+    return _clean_cell(value).upper()
+
+
+def _graduation_senescyt_analysis(
+    cursor: pyodbc.Cursor,
+    parsed: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    _ensure_graduation_extra_columns(cursor)
+    cursor.execute(
+        """
+        SELECT
+            TRY_CONVERT(varchar(50), codigo_estud) AS codigo_estud,
+            LTRIM(RTRIM(TRY_CONVERT(varchar(50), Cedula_Est))) AS cedula,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), Apellidos_nombre))) AS nombres,
+            Fecha_Grado AS fecha_grado,
+            Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
+            LTRIM(RTRIM(TRY_CONVERT(varchar(50), Cod_registro))) AS cod_registro,
+            LTRIM(RTRIM(TRY_CONVERT(varchar(50), Nomina))) AS nomina
+        FROM dbo.DATOS_ESTUD
+        """
+    )
+    students_by_identifier: dict[str, list[dict[str, Any]]] = {}
+    for row in cursor.fetchall():
+        identifier = _normalize_graduation_identifier(row.cedula)
+        if not identifier:
+            continue
+        students_by_identifier.setdefault(identifier, []).append(
+            {
+                "codigo_estud": _clean_cell(row.codigo_estud),
+                "cedula": _clean_cell(row.cedula),
+                "nombres": _clean_cell(row.nombres),
+                "fecha_grado": row.fecha_grado,
+                "fecha_emision_senescyt": row.fecha_emision_senescyt,
+                "cod_registro": _clean_cell(row.cod_registro),
+                "nomina": _clean_cell(row.nomina),
+            }
+        )
+
+    errors = list(parsed["errors"])
+    not_found: list[dict[str, Any]] = []
+    preview: list[dict[str, Any]] = []
+    matched: list[dict[str, Any]] = []
+    new_count = 0
+    changed_count = 0
+    unchanged_count = 0
+    shared_source: dict[tuple[str, str], list[str]] = {}
+
+    for source in parsed["rows"]:
+        identifier = source["identificacion"]
+        shared_key = (
+            _clean_cell(source["nomina"]).upper(),
+            _graduation_date_iso(source["fecha_emision_senescyt"]),
+        )
+        shared_source.setdefault(shared_key, []).append(identifier)
+        candidates = students_by_identifier.get(identifier, [])
+        common = {
+            "fila": source["fila"],
+            "cedula": identifier,
+            "identificacion": identifier,
+            "archivo": source.get("archivo", ""),
+            "registro_documento": source.get("registro_documento"),
+            "metodo_extraccion": source.get("metodo_extraccion", ""),
+            "fecha_grado": _graduation_date_iso(source["fecha_grado"]),
+            "fecha_emision_senescyt": _graduation_date_iso(source["fecha_emision_senescyt"]),
+            "cod_registro": source["cod_registro"],
+            "nomina": source["nomina"],
+        }
+        if not candidates:
+            detail = {**common, "error": "Identificación no encontrada en DATOS_ESTUD"}
+            not_found.append(detail)
+            preview.append({**common, "estado": "NO_ENCONTRADO", "campos_modificados": []})
+            continue
+        if len(candidates) > 1:
+            detail = {
+                **common,
+                "error": "La identificación corresponde a más de un registro en DATOS_ESTUD",
+            }
+            errors.append(detail)
+            preview.append({**common, "estado": "DUPLICADO_EN_BASE", "campos_modificados": []})
+            continue
+        student = candidates[0]
+        current = {
+            "fecha_grado": student["fecha_grado"],
+            "fecha_emision_senescyt": student["fecha_emision_senescyt"],
+            "cod_registro": student["cod_registro"],
+            "nomina": student["nomina"],
+        }
+        changed_fields = [
+            field
+            for field in ("fecha_grado", "fecha_emision_senescyt", "cod_registro", "nomina")
+            if _graduation_compare_value(field, current[field])
+            != _graduation_compare_value(field, source[field])
+        ]
+        current_is_empty = not any(_graduation_compare_value(field, current[field]) for field in current)
+        if not changed_fields:
+            status = "SIN_CAMBIOS"
+            unchanged_count += 1
+        elif current_is_empty:
+            status = "NUEVO"
+            new_count += 1
+        else:
+            status = "ACTUALIZAR"
+            changed_count += 1
+        matched_item = {"source": source, "student": student, "changed": bool(changed_fields)}
+        matched.append(matched_item)
+        preview.append(
+            {
+                **common,
+                "codigo_estud": student["codigo_estud"],
+                "nombres": student["nombres"],
+                "estado": status,
+                "campos_modificados": changed_fields,
+                "valores_actuales": {
+                    "fecha_grado": _graduation_date_iso(current["fecha_grado"]),
+                    "fecha_emision_senescyt": _graduation_date_iso(current["fecha_emision_senescyt"]),
+                    "cod_registro": current["cod_registro"],
+                    "nomina": current["nomina"],
+                },
+            }
+        )
+
+    shared_rosters = [
+        {
+            "nomina": roster,
+            "fecha_emision_senescyt": emission_date,
+            "estudiantes": len(identifiers),
+            "identificaciones": identifiers,
+        }
+        for (roster, emission_date), identifiers in shared_source.items()
+        if len(identifiers) > 1
+    ]
+    can_import = bool(parsed["rows"]) and not errors and not not_found
+    found = len(matched)
+    summary = (
+        f"Detectados: {parsed['filas_detectadas']}. Encontrados: {found}. "
+        f"No encontrados: {len(not_found)}. Errores: {len(errors)}."
+    )
+    payload = {
+        "ok": can_import,
+        "puede_importar": can_import,
+        "actualizados": 0,
+        "procesados": len(parsed["rows"]),
+        "filas_detectadas": parsed["filas_detectadas"],
+        "encontrados": found,
+        "no_encontrados": not_found,
+        "errores": errors,
+        "nuevos": new_count,
+        "cambios": changed_count,
+        "sin_cambios": unchanged_count,
+        "nominas_compartidas": len(shared_rosters),
+        "nominas_compartidas_detalle": shared_rosters,
+        "vista_previa": preview[:1000],
+        "vista_previa_limitada": len(preview) > 1000,
+        "hoja": parsed["hoja"],
+        "fila_encabezado": parsed["fila_encabezado"],
+        "origen": parsed.get("origen", "EXCEL"),
+        "archivos_detectados": parsed.get("archivos_detectados", 1),
+        "archivos_procesados": parsed.get("archivos_procesados", 1 if parsed["rows"] else 0),
+        "archivos_sin_registros": parsed.get("archivos_sin_registros", []),
+        "archivos_detalle": parsed.get("archivos_detalle", []),
+        "advertencias": parsed.get("advertencias", []),
+        "resumen": summary,
+    }
+    return payload, matched
+
+
+def _apply_graduation_senescyt_analysis(
+    conn: pyodbc.Connection,
+    cursor: pyodbc.Cursor,
+    payload: dict[str, Any],
+    matched: list[dict[str, Any]],
+    source_label: str,
+) -> dict[str, Any]:
+    if not payload["puede_importar"]:
+        payload["resumen"] = f"No se aplicaron cambios. {payload['resumen']}"
+        return payload
+
+    updated_rows: list[dict[str, Any]] = []
+    for item in matched:
+        if not item["changed"]:
+            continue
+        source = item["source"]
+        student = item["student"]
+        cursor.execute(
+            """
+            UPDATE dbo.DATOS_ESTUD
+            SET Fecha_Grado = ?,
+                Fecha_Emision_SENESCYT = ?,
+                Cod_registro = ?,
+                Nomina = ?
+            WHERE TRY_CONVERT(varchar(50), codigo_estud) = ?
+            """,
+            source["fecha_grado"],
+            source["fecha_emision_senescyt"],
+            source["cod_registro"],
+            source["nomina"],
+            student["codigo_estud"],
+        )
+        if cursor.rowcount == 0 or cursor.rowcount > 1:
+            conn.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=f"No se pudo actualizar de forma única la identificación {source['identificacion']}.",
+            )
+        updated_rows.append(
+            {
+                "fila": source["fila"],
+                "archivo": source.get("archivo", ""),
+                "cedula": source["identificacion"],
+                "codigo_estud": student["codigo_estud"],
+                "fecha_grado": source["fecha_grado"].isoformat(),
+                "fecha_emision_senescyt": source["fecha_emision_senescyt"].isoformat(),
+                "cod_registro": source["cod_registro"],
+                "nomina": source["nomina"],
+                "registros": 1,
+            }
+        )
+    conn.commit()
+    payload["ok"] = True
+    payload["actualizados"] = len(updated_rows)
+    payload["actualizados_detalle"] = updated_rows
+    payload["resumen"] = (
+        f"Carga {source_label} aplicada. Procesados: {payload['procesados']}. "
+        f"Actualizados: {len(updated_rows)}. Sin cambios: {payload['sin_cambios']}."
+    )
+    return payload
+
+
+def _validate_graduation_upload(filename: str, content: bytes) -> None:
+    if not filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Carga un archivo Excel .xlsx o .xlsm")
+    if not content:
+        raise HTTPException(status_code=400, detail="El archivo Excel está vacío")
+    if len(content) > _GRADUATION_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="El archivo Excel supera el límite de 10 MB")
+
+
+def _validate_graduation_pdf_upload(filename: str, content: bytes) -> None:
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail=f"{filename}: solo se aceptan documentos PDF")
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{filename}: el documento está vacío")
+    if len(content) > _GRADUATION_PDF_MAX_FILE_BYTES:
+        raise HTTPException(status_code=400, detail=f"{filename}: supera el límite de 15 MB")
+    if b"%PDF-" not in content[:1024]:
+        raise HTTPException(status_code=400, detail=f"{filename}: el contenido no corresponde a un PDF válido")
+
+
+async def _read_graduation_pdf_uploads(files: list[UploadFile]) -> list[tuple[str, bytes]]:
+    if not files:
+        raise HTTPException(status_code=400, detail="Selecciona al menos un documento PDF SENESCYT")
+    if len(files) > _GRADUATION_PDF_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo se permiten {_GRADUATION_PDF_MAX_FILES} PDF por lote.",
+        )
+    uploads: list[tuple[str, bytes]] = []
+    total_bytes = 0
+    for index, upload in enumerate(files, start=1):
+        filename = Path(upload.filename or f"documento-{index}.pdf").name
+        content = await upload.read()
+        _validate_graduation_pdf_upload(filename, content)
+        total_bytes += len(content)
+        if total_bytes > _GRADUATION_PDF_MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=400, detail="El lote de PDF supera el límite total de 120 MB")
+        uploads.append((filename, content))
+    return uploads
 
 
 def _style_excel_header(worksheet: Any) -> None:
@@ -4657,7 +5499,9 @@ def _graduation_date_student_rows(
                 LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), p.Detalle_Periodo))) AS periodo,
                 d.Fecha_Grado AS fecha_grado,
                 d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
-                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion,
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_registro))) AS cod_registro,
+                LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Nomina))) AS nomina
             FROM dbo.CARRERAXESTUD cx
             INNER JOIN dbo.DATOS_ESTUD d
                 ON TRY_CONVERT(varchar(50), d.codigo_estud) = TRY_CONVERT(varchar(50), cx.codigo_estud)
@@ -4669,7 +5513,7 @@ def _graduation_date_student_rows(
             GROUP BY
                 d.codigo_estud, d.Cedula_Est, d.Apellidos_nombre,
                 cx.cod_anio_Basica, c.Nombre_Basica, cx.codigo_periodo, p.Detalle_Periodo,
-                d.Fecha_Grado, d.Fecha_Emision_SENESCYT, d.Cod_Refrendacion
+                d.Fecha_Grado, d.Fecha_Emision_SENESCYT, d.Cod_Refrendacion, d.Cod_registro, d.Nomina
             ORDER BY d.Apellidos_nombre, c.Nombre_Basica
             """,
             *params,
@@ -4686,6 +5530,8 @@ def _graduation_date_student_rows(
                 "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
                 "fecha_emision_senescyt": row.fecha_emision_senescyt.isoformat() if row.fecha_emision_senescyt else "",
                 "cod_refrendacion": _clean_cell(row.cod_refrendacion),
+                "cod_registro": _clean_cell(row.cod_registro),
+                "nomina": _clean_cell(row.nomina),
             }
             for row in cursor.fetchall()
         ]
@@ -4818,11 +5664,20 @@ def graduation_date_verification(
                         {status_expr} AS estado_codigo,
                         d.Fecha_Grado AS fecha_grado,
                         d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
-                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_registro))) AS cod_registro,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Nomina))) AS nomina
                     FROM dbo.DATOS_ESTUD d
                 )
                 SELECT COUNT(1) AS total,
-                    SUM(CASE WHEN fecha_grado IS NULL THEN 0 ELSE 1 END) AS con_fecha
+                    SUM(CASE WHEN fecha_grado IS NULL THEN 0 ELSE 1 END) AS con_fecha,
+                    SUM(CASE
+                        WHEN fecha_grado IS NOT NULL
+                         AND fecha_emision_senescyt IS NOT NULL
+                         AND NULLIF(cod_registro, '') IS NOT NULL
+                         AND NULLIF(nomina, '') IS NOT NULL
+                        THEN 1 ELSE 0
+                    END) AS con_senescyt
                 FROM base
                 {where}
                 """,
@@ -4831,6 +5686,7 @@ def graduation_date_verification(
             summary = cursor.fetchone()
             total = int(summary.total or 0) if summary else 0
             con_fecha = int(summary.con_fecha or 0) if summary else 0
+            con_senescyt = int(summary.con_senescyt or 0) if summary else 0
 
             cursor.execute(
                 f"""
@@ -4843,10 +5699,13 @@ def graduation_date_verification(
                         {status_expr} AS estado_codigo,
                         d.Fecha_Grado AS fecha_grado,
                         d.Fecha_Emision_SENESCYT AS fecha_emision_senescyt,
-                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_Refrendacion))) AS cod_refrendacion,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Cod_registro))) AS cod_registro,
+                        LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.Nomina))) AS nomina
                     FROM dbo.DATOS_ESTUD d
                 )
-                SELECT codigo_estud, cedula, nombres, estado_raw, estado_codigo, fecha_grado, fecha_emision_senescyt, cod_refrendacion
+                SELECT codigo_estud, cedula, nombres, estado_raw, estado_codigo,
+                    fecha_grado, fecha_emision_senescyt, cod_refrendacion, cod_registro, nomina
                 FROM base
                 {where}
                 ORDER BY nombres, codigo_estud
@@ -4867,6 +5726,8 @@ def graduation_date_verification(
                     "fecha_grado": row.fecha_grado.isoformat() if row.fecha_grado else "",
                     "fecha_emision_senescyt": row.fecha_emision_senescyt.isoformat() if row.fecha_emision_senescyt else "",
                     "cod_refrendacion": _clean_cell(row.cod_refrendacion),
+                    "cod_registro": _clean_cell(row.cod_registro),
+                    "nomina": _clean_cell(row.nomina),
                 }
                 for row in cursor.fetchall()
             ]
@@ -4878,6 +5739,8 @@ def graduation_date_verification(
                 "total_pages": max(1, math.ceil(total / page_size)) if total else 1,
                 "con_fecha": con_fecha,
                 "sin_fecha": max(total - con_fecha, 0),
+                "con_senescyt": con_senescyt,
+                "sin_senescyt": max(total - con_senescyt, 0),
                 "estado": status_code,
             }
     except pyodbc.Error as exc:
@@ -4891,16 +5754,23 @@ def graduation_date_template(
     del current_user
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Fecha de grado"
-    headers = ["cedula", "fecha_grado", "fecha_emision_senescyt", "cod_refrendacion"]
+    sheet.title = "Carga SENESCYT"
+    headers = [
+        "NÚMERO DE IDENTIFICACIÓN",
+        "FECHA DE GRADO",
+        "FECHA DE EMISIÓN SENESCYT",
+        "CÓDIGO DE REGISTRO",
+        "NÓMINA #",
+    ]
     sheet.append(headers)
-    sheet["A1"].comment = Comment("Numero de cedula del estudiante. Se valida directamente contra DATOS_ESTUD.", "INTEC")
-    sheet["B1"].comment = Comment("Fecha de grado en formato AAAA-MM-DD. Ejemplo: 2026-06-30.", "INTEC")
-    sheet["C1"].comment = Comment("Fecha de emision SENESCYT en formato AAAA-MM-DD. Ejemplo: 2026-07-15.", "INTEC")
-    sheet["D1"].comment = Comment("Codigo de refrendacion. Maximo 50 caracteres.", "INTEC")
+    sheet["A1"].comment = Comment("Cédula o identificación del estudiante. Se valida contra DATOS_ESTUD.", "Sistema académico")
+    sheet["B1"].comment = Comment("Fecha de grado. Formato recomendado: AAAA-MM-DD.", "Sistema académico")
+    sheet["C1"].comment = Comment("Fecha de emisión del registro SENESCYT. Formato recomendado: AAAA-MM-DD.", "Sistema académico")
+    sheet["D1"].comment = Comment("Código de registro SENESCYT. Máximo 50 caracteres.", "Sistema académico")
+    sheet["E1"].comment = Comment("Número de nómina. Puede repetirse para estudiantes del mismo documento.", "Sistema académico")
     _style_excel_header(sheet)
     sheet.freeze_panes = "A2"
-    widths = [18, 18, 26, 24]
+    widths = [29, 20, 30, 25, 24]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
     max_row = 1000
@@ -4924,10 +5794,11 @@ def graduation_date_template(
         sheet[f"B{row}"].number_format = "yyyy-mm-dd"
         sheet[f"C{row}"].number_format = "yyyy-mm-dd"
         sheet[f"D{row}"].number_format = "@"
+        sheet[f"E{row}"].number_format = "@"
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
-    filename = "plantilla_fecha_grado_datos_estud.xlsx"
+    filename = "plantilla_carga_senescyt_datos_estud.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4935,9 +5806,10 @@ def graduation_date_template(
     )
 
 
-@router.post("/fecha-grado/importar")
-async def import_graduation_dates(
+@router.post("/fecha-grado/senescyt/analizar")
+async def analyze_graduation_senescyt_file(
     current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
+    response: Response,
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     del current_user
@@ -4945,111 +5817,85 @@ async def import_graduation_dates(
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     filename = file.filename or ""
-    if not filename.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="Carga un archivo Excel .xlsx")
     content = await file.read()
-    try:
-        workbook = load_workbook(BytesIO(content), data_only=True)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="No se pudo leer el archivo Excel") from exc
-    sheet = workbook.active
-    headers = [_clean_cell(cell.value).strip().lower() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-    try:
-        cedula_index = headers.index("cedula")
-        fecha_index = headers.index("fecha_grado")
-        fecha_senescyt_index = headers.index("fecha_emision_senescyt")
-        refrendacion_index = headers.index("cod_refrendacion")
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="La plantilla debe incluir columnas cedula, fecha_grado, fecha_emision_senescyt y cod_refrendacion",
-        ) from exc
-
-    updates: list[tuple[date | None, date | None, str, str, int]] = []
-    errors: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row_number, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-        cedula = re.sub(r"\D+", "", _clean_cell(row[cedula_index] if cedula_index < len(row) else ""))
-        raw_date = row[fecha_index] if fecha_index < len(row) else None
-        raw_senescyt_date = row[fecha_senescyt_index] if fecha_senescyt_index < len(row) else None
-        raw_refrendacion = _clean_cell(row[refrendacion_index] if refrendacion_index < len(row) else "")[:50]
-        if not cedula and not _clean_cell(raw_date) and not _clean_cell(raw_senescyt_date) and not raw_refrendacion:
-            continue
-        if not cedula:
-            errors.append({"fila": row_number, "cedula": "", "error": "Cédula vacía"})
-            continue
-        if cedula in seen:
-            errors.append({"fila": row_number, "cedula": cedula, "error": "Cédula duplicada en el Excel"})
-            continue
-        seen.add(cedula)
-        try:
-            parsed_date = _parse_graduation_date(raw_date)
-            parsed_senescyt_date = _parse_optional_excel_date(raw_senescyt_date, "Fecha de emision SENESCYT")
-        except HTTPException as exc:
-            errors.append({"fila": row_number, "cedula": cedula, "error": exc.detail})
-            continue
-        updates.append((parsed_date, parsed_senescyt_date, raw_refrendacion, cedula, row_number))
-    if errors:
-        return {
-            "ok": False,
-            "actualizados": 0,
-            "errores": errors,
-            "procesados": len(updates),
-            "no_encontrados": [],
-            "resumen": "El Excel contiene errores de formato o duplicados.",
-        }
-    if not updates:
-        raise HTTPException(status_code=400, detail="No se encontraron filas válidas para actualizar")
+    _validate_graduation_upload(filename, content)
+    parsed = _parse_graduation_senescyt_workbook(content)
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            _ensure_graduation_extra_columns(cursor)
-            updated = 0
-            not_found: list[dict[str, Any]] = []
-            updated_rows: list[dict[str, Any]] = []
-            for graduation_date, senescyt_date, refrendacion, cedula, row_number in updates:
-                cursor.execute(
-                    """
-                    UPDATE dbo.DATOS_ESTUD
-                    SET Fecha_Grado = ?,
-                        Fecha_Emision_SENESCYT = ?,
-                        Cod_Refrendacion = ?
-                    WHERE REPLACE(REPLACE(TRY_CONVERT(varchar(50), Cedula_Est), '-', ''), ' ', '') = ?
-                    """,
-                    graduation_date,
-                    senescyt_date,
-                    refrendacion,
-                    cedula,
-                )
-                rowcount = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
-                if rowcount:
-                    updated += rowcount
-                    updated_rows.append({
-                        "fila": row_number,
-                        "cedula": cedula,
-                        "fecha_grado": graduation_date.isoformat() if graduation_date else "",
-                        "fecha_emision_senescyt": senescyt_date.isoformat() if senescyt_date else "",
-                        "cod_refrendacion": refrendacion,
-                        "registros": rowcount,
-                    })
-                else:
-                    not_found.append({
-                        "fila": row_number,
-                        "cedula": cedula,
-                        "error": "Cédula no encontrada en DATOS_ESTUD",
-                    })
-            conn.commit()
+            payload, _matched = _graduation_senescyt_analysis(cursor, parsed)
+            return payload
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo importar fecha de grado: {exc}") from exc
-    return {
-        "ok": True,
-        "actualizados": updated,
-        "procesados": len(updates),
-        "errores": [],
-        "no_encontrados": not_found,
-        "actualizados_detalle": updated_rows,
-        "resumen": f"Procesados: {len(updates)}. Actualizados: {updated}. No encontrados: {len(not_found)}.",
-    }
+        raise HTTPException(status_code=500, detail=f"No se pudo analizar el archivo SENESCYT: {exc}") from exc
+
+
+@router.post("/fecha-grado/senescyt/pdf/analizar")
+async def analyze_graduation_senescyt_pdfs(
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
+    response: Response,
+    files: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    uploads = await _read_graduation_pdf_uploads(files)
+    parsed = await run_in_threadpool(_parse_graduation_senescyt_pdf_batch, uploads)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            payload, _matched = _graduation_senescyt_analysis(cursor, parsed)
+            return payload
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudieron analizar los PDF SENESCYT: {exc}") from exc
+
+
+@router.post("/fecha-grado/senescyt/pdf/importar")
+async def import_graduation_senescyt_pdfs(
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
+    response: Response,
+    files: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    uploads = await _read_graduation_pdf_uploads(files)
+    parsed = await run_in_threadpool(_parse_graduation_senescyt_pdf_batch, uploads)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            payload, matched = _graduation_senescyt_analysis(cursor, parsed)
+            return _apply_graduation_senescyt_analysis(conn, cursor, payload, matched, "PDF")
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudieron importar los PDF SENESCYT: {exc}") from exc
+
+
+@router.post("/fecha-grado/importar")
+async def import_graduation_dates(
+    current_user: Annotated[SessionUser, Depends(_GRADUATION_ACCESS)],
+    response: Response,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    del current_user
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    filename = file.filename or ""
+    content = await file.read()
+    _validate_graduation_upload(filename, content)
+    parsed = _parse_graduation_senescyt_workbook(content)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            payload, matched = _graduation_senescyt_analysis(cursor, parsed)
+            return _apply_graduation_senescyt_analysis(conn, cursor, payload, matched, "Excel")
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo importar el archivo SENESCYT: {exc}") from exc
 
 
 @router.post("/fecha-grado/guardar")
@@ -5066,19 +5912,25 @@ def save_graduation_dates(
             for item in payload.items:
                 code = _clean_cell(item.codigo_estud)
                 graduation_date = _parse_graduation_date(item.fecha_grado)
-                senescyt_date = _parse_optional_excel_date(item.fecha_emision_senescyt, "Fecha de emision SENESCYT")
+                senescyt_date = _parse_optional_excel_date(item.fecha_emision_senescyt, "Fecha de emisión SENESCYT")
                 refrendacion = _clean_cell(item.cod_refrendacion)[:50]
+                registration_code = _clean_cell(item.cod_registro)[:50]
+                roster = _clean_cell(item.nomina)[:50]
                 cursor.execute(
                     """
                     UPDATE dbo.DATOS_ESTUD
                     SET Fecha_Grado = ?,
                         Fecha_Emision_SENESCYT = ?,
-                        Cod_Refrendacion = ?
+                        Cod_Refrendacion = ?,
+                        Cod_registro = ?,
+                        Nomina = ?
                     WHERE TRY_CONVERT(varchar(50), codigo_estud) = ?
                     """,
                     graduation_date,
                     senescyt_date,
                     refrendacion,
+                    registration_code,
+                    roster,
                     code,
                 )
                 updated += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0

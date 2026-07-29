@@ -21,10 +21,38 @@ export type UserProfile = {
   codigo_estud?: number
   codigo_doc?: number
   cedula?: string
+  origen?: string
 }
 
 export type UserSession = UserProfile & {
   perfiles?: UserProfile[]
+}
+
+export type ScreenAccessScreen = {
+  page: Page
+  label: string
+  description: string
+  group: string
+}
+
+export type ScreenAccessRole = {
+  value: Role
+  label: string
+  description: string
+  pages: Page[]
+  default_pages: Page[]
+  configured: boolean
+  protected: boolean
+  updated_at?: string | null
+  updated_by?: string | null
+}
+
+export type ScreenAccessResponse = {
+  source: string
+  synchronized_at: string
+  current_role: Role
+  screens: ScreenAccessScreen[]
+  roles: ScreenAccessRole[]
 }
 
 export type Page =
@@ -42,6 +70,7 @@ export type Page =
   | 'reporteria-carreras'
   | 'reporteria-integral'
   | 'reportes-individuales'
+  | 'admin-notas-asignatura'
   | 'sisacademico-v1'
   | 'asignacion-pantallas'
   | 'gestion-sisacademico'
@@ -1374,6 +1403,21 @@ export type TeamRecording = {
   eTag?: string
 }
 
+export type TeacherComplianceTeamsRecording = {
+  team_id: string
+  team_name: string
+  recording_id: string
+  name: string
+  date: string
+  start_hour: string
+  end_hour: string
+  call_duration: string
+  recording_duration: string
+  modified_by: string
+  web_url: string
+  source: 'Microsoft Graph'
+}
+
 export type TeamRecordingSummary = {
   totalDurationSeconds?: number
   totalDurationLabel?: string
@@ -1828,6 +1872,68 @@ export type LegacyReportFilters = {
 
 export type LegacyReportRow = Record<string, string | number | boolean | null | undefined>
 
+export type LegacyActiveGradeStudent = {
+  registro_clave: string
+  estudiante_codigo: string
+  cedula?: string
+  estudiante: string
+  carrera?: string
+  tipo_matricula?: 'R' | 'H' | string
+  estado_codigo: string
+  matriculas_activas?: number
+  total_materias: number
+  aprobadas: number
+  reprobadas: number
+  pendientes: number
+}
+
+export type LegacyActiveGradeStudentsResponse = {
+  generated_at?: string
+  source?: string
+  columns?: string[]
+  items?: LegacyActiveGradeStudent[]
+  total?: number
+  total_matriculas_activas?: number
+  criteria?: Record<string, string | number | null | undefined>
+  detail?: string
+}
+
+export type LegacyGradeUpdatePayload = {
+  codigo_estud: number
+  cod_anio_basica: number
+  codigo_periodo: number
+  codigo_materia: number
+  paralelo: string
+  num_matricula: number
+  num_grupo: number
+  es_homologacion: boolean
+  teoria_homo?: number | null
+  practica_homo?: number | null
+  p1_tareas?: number | null
+  p1_proyectos?: number | null
+  p1_examen?: number | null
+  p2_tareas?: number | null
+  p2_proyectos?: number | null
+  p2_examen?: number | null
+  p3_tareas?: number | null
+  p3_proyectos?: number | null
+  p3_examen?: number | null
+  asistencia?: number | null
+  recuperacion?: number | null
+}
+
+export type LegacyGradeUpdateResponse = {
+  ok?: boolean
+  message?: string
+  affected_rows?: number
+  promedio_p1?: number | null
+  promedio_p2?: number | null
+  promedio_p3?: number | null
+  promedio_final?: number | null
+  condicion?: string
+  detail?: string
+}
+
 export type LegacyReportResponse = {
   generated_at?: string
   source?: string
@@ -1946,6 +2052,8 @@ export type FechaGradoStudent = {
   fecha_grado?: string
   fecha_emision_senescyt?: string
   cod_refrendacion?: string
+  cod_registro?: string
+  nomina?: string
 }
 
 export type FechaGradoStudentsResponse = {
@@ -1961,6 +2069,8 @@ export type FechaGradoSavePayload = {
     fecha_grado?: string | null
     fecha_emision_senescyt?: string | null
     cod_refrendacion?: string | null
+    cod_registro?: string | null
+    nomina?: string | null
   }>
 }
 
@@ -1972,23 +2082,79 @@ export type FechaGradoSaveResponse = {
 export type FechaGradoImportResponse = {
   ok: boolean
   actualizados: number
+  origen?: 'PDF' | 'EXCEL' | string
+  puede_importar?: boolean
   procesados?: number
+  filas_detectadas?: number
+  encontrados?: number
+  nuevos?: number
+  cambios?: number
+  sin_cambios?: number
+  nominas_compartidas?: number
+  hoja?: string
+  fila_encabezado?: number
+  archivos_detectados?: number
+  archivos_procesados?: number
+  archivos_sin_registros?: string[]
+  advertencias?: string[]
+  archivos_detalle?: Array<{
+    archivo?: string
+    registros_detectados?: number
+    registros_validos?: number
+    metodo_extraccion?: string
+  }>
+  vista_previa_limitada?: boolean
   errores?: Array<{
     fila?: number
+    archivo?: string
     cedula?: string
+    identificacion?: string
     error?: string
   }>
   no_encontrados?: Array<{
     fila?: number
+    archivo?: string
     cedula?: string
+    identificacion?: string
     error?: string
+  }>
+  vista_previa?: Array<{
+    fila?: number
+    registro_documento?: number
+    archivo?: string
+    metodo_extraccion?: string
+    cedula?: string
+    identificacion?: string
+    codigo_estud?: string
+    nombres?: string
+    fecha_grado?: string
+    fecha_emision_senescyt?: string
+    cod_registro?: string
+    nomina?: string
+    estado?: 'NUEVO' | 'ACTUALIZAR' | 'SIN_CAMBIOS' | 'NO_ENCONTRADO' | 'DUPLICADO_EN_BASE' | string
+    campos_modificados?: string[]
+    valores_actuales?: {
+      fecha_grado?: string
+      fecha_emision_senescyt?: string
+      cod_registro?: string
+      nomina?: string
+    }
+  }>
+  nominas_compartidas_detalle?: Array<{
+    nomina?: string
+    fecha_emision_senescyt?: string
+    estudiantes?: number
+    identificaciones?: string[]
   }>
   actualizados_detalle?: Array<{
     fila?: number
+    archivo?: string
     cedula?: string
+    codigo_estud?: string
     fecha_grado?: string
     fecha_emision_senescyt?: string
-    cod_refrendacion?: string
+    cod_registro?: string
+    nomina?: string
     registros?: number
   }>
   resumen?: string
@@ -2005,6 +2171,8 @@ export type FechaGradoVerificationRow = {
   fecha_grado?: string
   fecha_emision_senescyt?: string
   cod_refrendacion?: string
+  cod_registro?: string
+  nomina?: string
 }
 
 export type FechaGradoVerificationResponse = {
@@ -2015,6 +2183,8 @@ export type FechaGradoVerificationResponse = {
   total_pages?: number
   con_fecha?: number
   sin_fecha?: number
+  con_senescyt?: number
+  sin_senescyt?: number
   estado?: string
 }
 
@@ -3253,6 +3423,50 @@ export type PortalTeacherCoursesResponse = {
   total?: number
   items?: PortalTeacherCourse[]
   detail?: string
+}
+
+export type AdminGradeTeacher = {
+  codigo_doc: string
+  cedula?: string
+  docente: string
+  correo?: string
+  estado?: string
+  estado_nombre?: string
+  total_asignaciones: number
+  total_asignaturas: number
+  total_periodos: number
+}
+
+export type AdminGradeTeachersResponse = {
+  total: number
+  items: AdminGradeTeacher[]
+}
+
+export type AdminGradeStudent = PortalAcademicRecordItem & {
+  estado_nota?: 'APROBADO' | 'REPROBADO' | 'PENDIENTE' | string
+  estado_registro?: 'COMPLETA' | 'EN_PROCESO' | 'SIN_CALIFICAR' | string
+}
+
+export type AdminGradeCourseSelection = {
+  codigo_periodo: number
+  cod_anio_basica: number
+  codigo_materia: string
+  paralelo: string
+  cod_jornada?: number | null
+}
+
+export type AdminGradeStudentsResponse = {
+  total: number
+  items: AdminGradeStudent[]
+  periodos_seleccionados?: number
+  tipo_seleccion?: 'R' | 'H'
+  summary: {
+    completas: number
+    en_proceso: number
+    sin_calificar: number
+    aprobados: number
+    reprobados: number
+  }
 }
 
 export type PortalTeacherContractClass = {

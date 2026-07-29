@@ -29,10 +29,16 @@ function destination(profile: UserProfile) {
   if (profile.rol === 'DOCENTE') {
     return { order: 2, initial: 'D', title: 'Docente', detail: 'Cursos, calificaciones e informes docentes' }
   }
-  if (administrativeRoles.has(profile.rol)) {
-    return { order: 3, initial: 'A', title: 'Administrativo', detail: `Gestión institucional · ${profile.rol.replaceAll('_', ' ')}` }
+  if (profile.rol === 'ACADEMICO') {
+    return { order: 3, initial: 'AC', title: 'Académico', detail: 'Dashboard, calificaciones y gestión académica' }
   }
-  return { order: 4, initial: 'P', title: profile.rol, detail: 'Acceso institucional' }
+  if (profile.rol === 'BIENESTAR') {
+    return { order: 4, initial: 'BI', title: 'Bienestar', detail: 'Dashboard, calificaciones y bienestar estudiantil' }
+  }
+  if (administrativeRoles.has(profile.rol)) {
+    return { order: 5, initial: 'A', title: 'Administrativo', detail: `Gestión institucional · ${profile.rol.replaceAll('_', ' ')}` }
+  }
+  return { order: 6, initial: 'P', title: profile.rol, detail: 'Acceso institucional' }
 }
 
 export function ProfileSelectionView({
@@ -49,6 +55,11 @@ export function ProfileSelectionView({
   return (
     <AuthShell title="Seleccione su acceso" subtitle={`Hola, ${session.nombres || session.login}. ¿A dónde desea ingresar?`}>
       <div className="profile-selection" aria-label="Perfiles disponibles">
+        <p className="profile-selection__summary">
+          {profiles.length === 1
+            ? 'Se encontró 1 acceso activo para esta cuenta.'
+            : `Se encontraron ${profiles.length} accesos activos para esta cuenta.`}
+        </p>
         {profiles.map((profile) => {
           const option = destination(profile)
           return (
@@ -63,6 +74,7 @@ export function ProfileSelectionView({
               <span className="profile-option__copy">
                 <strong>{option.title}</strong>
                 <small>{option.detail}</small>
+                {profile.origen ? <span>{profile.origen}</span> : null}
               </span>
               <span className="profile-option__arrow" aria-hidden="true">›</span>
             </button>

@@ -88,8 +88,38 @@ def _is_active(value: Any) -> bool:
     return _clean(value).upper() in {"1", "ACTIVO", "A", "TRUE", "SI"}
 
 
-def _password_matches(candidate: str, *stored_values: Any) -> bool:
-    return any(verify_password(candidate, _clean(value)) for value in stored_values if _clean(value))
+def _normalize_status(value: Any) -> str:
+    normalized = _clean(value).upper()
+    return (
+        normalized.replace("Á", "A")
+        .replace("É", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ú", "U")
+    )
+
+
+def _student_access_allowed(correo_status: Any, academic_status: Any) -> bool:
+    allowed_mail_statuses = {
+        "A",
+        "ACTIVO",
+        "R",
+        "RETIRADO",
+        "I",
+        "INACTIVO",
+        "G",
+        "GRADUADO",
+    }
+    excluded_academic_statuses = {
+        "D",
+        "E CONTINUA",
+        "EDUCACION CONTINUA",
+        "EDUCACION_CONTINUA",
+    }
+    return (
+        _normalize_status(correo_status) in allowed_mail_statuses
+        and _normalize_status(academic_status) not in excluded_academic_statuses
+    )
 
 
 def _authenticate_administrative_user(login_or_email: str, password: str | None) -> SessionUser | None:
@@ -110,10 +140,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
         TRY_CONVERT(nvarchar(100), tu.detalle_tipo_us) AS detalle_tipo_us
     FROM [dbo].[USUARIO_SIS]
     LEFT JOIN [dbo].[TIPO_USUARIO] tu
-      ON TRY_CONVERT(int, tu.Codigo_tipo_us) = COALESCE(
-            TRY_CONVERT(int, [tp_us]),
-            TRY_CONVERT(int, [tipousuario])
-         )
+      ON TRY_CONVERT(int, tu.Codigo_tipo_us) = TRY_CONVERT(int, [tp_us])
     WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [login])))) = LOWER(?)
        OR LOWER(LTRIM(RTRIM(TRY_CONVERT(varchar(255), [email])))) = LOWER(?)
        OR LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), [cedula]), N''))) = ?
@@ -142,22 +169,20 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
     if not active_rows:
         raise PermissionError("El usuario no esta activo")
 
+    typed_rows = [candidate for candidate in active_rows if _clean(candidate.tp_us)]
+    if not typed_rows:
+        raise PermissionError("Usuario administrativo sin tipo de usuario asignado")
+
     row = next(
-        (
-            candidate
-            for candidate in active_rows
-            if _normalize_role(candidate.tp_us)
-            or _normalize_role(candidate.tipousuario)
-            or _normalize_role(candidate.detalle_tipo_us)
-        ),
+        (candidate for candidate in typed_rows if _normalize_role(candidate.tp_us)),
         None,
     )
     if row is None:
-        raise PermissionError("Usuario sin rol valido")
+        raise PermissionError("Tipo de usuario administrativo no valido")
 
-    role = _normalize_role(row.tp_us) or _normalize_role(row.tipousuario) or _normalize_role(row.detalle_tipo_us)
+    role = _normalize_role(row.tp_us)
     if not role:
-        raise PermissionError("Usuario sin rol valido")
+        raise PermissionError("Tipo de usuario administrativo no valido")
 
     if role not in _ALLOWED_ROLES:
         raise PermissionError("Usuario sin acceso a este portal")
@@ -169,6 +194,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
         id_usuario=_int_or_none(row.id_usuarios),
         rol=role,
         cedula=_clean(row.cedula) or None,
+        origen="USUARIO_SIS",
     )
 
 
@@ -180,32 +206,22 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
         TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre) AS Apellidos_nombre,
         TRY_CONVERT(nvarchar(255), de.correo) AS correo,
         TRY_CONVERT(nvarchar(255), de.correointec) AS correointec,
-        TRY_CONVERT(nvarchar(255), de.clave) AS clave,
         TRY_CONVERT(nvarchar(100), de.Estado) AS Estado,
         TRY_CONVERT(nvarchar(255), ce.CorreoIntec) AS CorreoIntec,
         TRY_CONVERT(nvarchar(255), ce.CorreoPersonal) AS CorreoPersonal,
         TRY_CONVERT(nvarchar(255), ce.[Password]) AS CorreoPassword,
-        TRY_CONVERT(int, u.Codigo_Usuario) AS Codigo_Usuario,
-        TRY_CONVERT(nvarchar(255), u.login) AS usuario_login,
-        TRY_CONVERT(nvarchar(255), u.[password]) AS usuario_password
+        TRY_CONVERT(nvarchar(100), ce.Estado) AS CorreoEstado
     FROM dbo.DATOS_ESTUD de
-    LEFT JOIN dbo.CorreosEstudIntec ce
+    INNER JOIN dbo.CorreosEstudIntec ce
       ON TRY_CONVERT(int, ce.codestud) = TRY_CONVERT(int, de.codigo_estud)
-    LEFT JOIN dbo.USUARIOS u
-      ON TRY_CONVERT(nvarchar(100), u.cedula) COLLATE SQL_Latin1_General_CP1_CI_AS =
-         TRY_CONVERT(nvarchar(100), de.Cedula_Est) COLLATE SQL_Latin1_General_CP1_CI_AS
-     AND TRY_CONVERT(int, u.tipo_usuario) = 1
     WHERE LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), ce.CorreoIntec), N'')))) = LOWER(?)
-       OR LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), de.correointec), N'')))) = LOWER(?)
-       OR LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), de.correo), N'')))) = LOWER(?)
-       OR LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), u.login), N'')))) = LOWER(?)
+       OR LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), ce.CorreoPersonal), N'')))) = LOWER(?)
        OR LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), de.Cedula_Est), N''))) = ?
     ORDER BY
         CASE
             WHEN LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), ce.CorreoIntec), N'')))) = LOWER(?) THEN 0
-            WHEN LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), de.correointec), N'')))) = LOWER(?) THEN 1
-            WHEN LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), u.login), N'')))) = LOWER(?) THEN 2
-            ELSE 3
+            WHEN LOWER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(255), ce.CorreoPersonal), N'')))) = LOWER(?) THEN 1
+            ELSE 2
         END
     """
 
@@ -219,9 +235,6 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
                 login_or_email,
                 login_or_email,
                 login_or_email,
-                login_or_email,
-                login_or_email,
-                login_or_email,
             ),
         )
         rows = cursor.fetchall()
@@ -230,26 +243,31 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
         return None
 
     authenticated_rows = [
-        row
-        for row in rows
-        if password is None or _password_matches(password, row.CorreoPassword, row.clave, row.usuario_password)
+        row for row in rows if password is None or verify_password(password, row.CorreoPassword)
     ]
     if not authenticated_rows:
         return None
 
-    active_rows = [row for row in authenticated_rows if _is_active(row.Estado)]
+    active_rows = [
+        row
+        for row in authenticated_rows
+        if _student_access_allowed(row.CorreoEstado, row.Estado)
+    ]
     if not active_rows:
-        raise PermissionError("El usuario estudiante no esta activo")
+        raise PermissionError(
+            "El acceso estudiantil no esta habilitado para educacion continua, estado D o estados sin clasificar"
+        )
     row = active_rows[0]
 
     return SessionUser(
-        login=_clean(row.CorreoIntec) or _clean(row.correointec) or _clean(row.usuario_login) or login_or_email,
+        login=_clean(row.CorreoIntec) or login_or_email,
         nombres=_clean(row.Apellidos_nombre) or None,
         email=_clean(row.CorreoIntec) or _clean(row.correointec) or _clean(row.correo) or None,
-        id_usuario=_int_or_none(row.Codigo_Usuario),
+        id_usuario=None,
         rol="ESTUDIANTE",
         codigo_estud=_int_or_none(row.codigo_estud),
         cedula=_clean(row.Cedula_Est) or None,
+        origen="CorreosEstudIntec",
     )
 
 
@@ -324,6 +342,7 @@ def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionU
         rol="DOCENTE",
         codigo_doc=_int_or_none(row.codigo_doc),
         cedula=_clean(row.cedula_doc) or _clean(row.cedula_usuario) or None,
+        origen="USUARIOS",
     )
 
 

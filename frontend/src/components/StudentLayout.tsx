@@ -9,6 +9,7 @@ type StudentLayoutProps = {
   activePortalStudentSection?: PortalStudentSection
   activePreinscriptionStage?: PreinscriptionStage
   role?: string
+  screenAccessPages?: Page[] | null
   displayName?: string
   cedula?: string
   onOpenDashboard: () => void
@@ -30,6 +31,7 @@ type StudentLayoutProps = {
   onOpenReporteriaCarreras: () => void
   onOpenReporteriaIntegral: (reportKey?: string) => void
   onOpenReportesIndividuales: (reportKey?: string) => void
+  onOpenAdminNotasAsignatura: () => void
   onOpenGestionSisAcademico: (sectionKey?: string) => void
   onOpenSisAcademicoV1: () => void
   onOpenAsignacionPantallas: () => void
@@ -86,7 +88,7 @@ const roleBrandMap: Record<string, { initials: string; title: string }> = {
   ADMIN: { initials: 'AD', title: 'Administracion' },
   FINANCIERO: { initials: 'FI', title: 'Financiero' },
   BIENESTAR: { initials: 'BI', title: 'Bienestar' },
-  ACADEMICO: { initials: 'AC', title: 'Academico' },
+  ACADEMICO: { initials: 'AC', title: 'Académico' },
   ADMISIONES: { initials: 'AM', title: 'Admisiones' },
   RECTOR: { initials: 'RC', title: 'Rectoria' },
   VICERRECTOR: { initials: 'VR', title: 'Vicerrectoria' },
@@ -103,10 +105,9 @@ const administratorRoles = new Set(['1', 'ADMINISTRADOR', 'ADMINISTRACION', 'ADM
 const academicRoles = new Set(['ACADEMICO', 'BIENESTAR'])
 const dashboardOnlyRoles = new Set(['RECTOR', 'VICERRECTOR'])
 const technicalGlobalRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE'])
-const financialPages = new Set<Page>(['dashboard', 'sistema-academico', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'sisacademico-v1', 'reporteria-integral', 'carnet-institucional'])
+const financialPages = new Set<Page>(['dashboard', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'sisacademico-v1', 'reporteria-integral', 'carnet-institucional'])
 const academicPages = new Set<Page>([
   'dashboard',
-  'sistema-academico',
   'preinscripcion',
   'matricula',
   'matricula-acad',
@@ -114,6 +115,7 @@ const academicPages = new Set<Page>([
   'estado-docente',
   'actualizar-datos-estudiante',
   'reportes-individuales',
+  'admin-notas-asignatura',
   'reporteria-integral',
   'gestion-sisacademico',
   'sisacademico-v1',
@@ -163,9 +165,9 @@ const academicSisSections = new Set([
 const financialSisSections = new Set(['cabecera_matricula', 'pagos_matricula', 'datos_factura'])
 const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente', 'genero_docentes'])
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
-const admissionsPages = new Set<Page>(['dashboard', 'sistema-academico', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
+const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico', 'sisacademico-v1'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['sistema-academico', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'])
+const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -179,29 +181,31 @@ function isAdministratorRole(role: string) {
   return administratorRoles.has(normalizeRoleKey(role))
 }
 
-function customPagesForRole(role: string): Set<Page> | null {
-  try {
-    const raw = window.localStorage.getItem('intec:user-type-screen-access:v1')
-    if (!raw) return null
-    const assignments = JSON.parse(raw) as Partial<Record<string, Page[]>>
-    const pages = assignments[normalizeRoleKey(role)]
-    return Array.isArray(pages) ? new Set(pages) : null
-  } catch {
-    return null
-  }
-}
-
-function navItemAllowedForRole(role: string, item: NavItem) {
+function navItemAllowedForRole(role: string, item: NavItem, assignedPages: Page[] | null = null) {
   const normalizedRole = normalizeRoleKey(role)
-  const customPages = customPagesForRole(normalizedRole)
-  const isTeacherCorePage = normalizedRole === 'DOCENTE' && (
-    item.page === 'portal-docente'
-    || item.page === 'portal-docente-informe'
-    || item.page === 'portal-docente-planificacion'
-    || item.page === 'portal-docente-contratos'
-  )
-  const allowedByCustomConfig = isTeacherCorePage || !item.page || item.page === 'asignacion-pantallas' || item.page === 'sistema-academico' || !customPages || customPages.has(item.page)
-  if (!allowedByCustomConfig) return false
+  const isAdministrator = isAdministratorRole(normalizedRole)
+
+  if (item.page === 'sistema-academico' && !isAdministrator) return false
+
+  if (assignedPages !== null) {
+    if (!item.page) return false
+    if (!isAdministrator && !assignedPages.includes(item.page)) return false
+    if (isAdministrator) return true
+
+    // Algunas pantallas agrupan procesos distintos. La asignacion habilita la
+    // pantalla, pero cada perfil conserva solo sus subsecciones operativas.
+    if (normalizedRole === 'ADMISIONES' && item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
+    if (academicRoles.has(normalizedRole)) {
+      if (item.sectionKey && !academicSisSections.has(item.sectionKey)) return false
+      if (item.reportKey && !academicReportKeys.has(item.reportKey)) return false
+    }
+    if (normalizedRole === 'FINANCIERO') {
+      if (item.sectionKey && !financialSisSections.has(item.sectionKey)) return false
+      if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
+    }
+    return true
+  }
+
   if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
   if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') {
@@ -225,7 +229,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
     if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
     return true
   }
-  if (technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion' && item.page !== 'portal-docente-contratos'
+  if (isAdministrator || technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion' && item.page !== 'portal-docente-contratos'
   return item.page === 'dashboard'
 }
 
@@ -321,6 +325,7 @@ function groupIconName(groupKey: string): GroupIconName {
     vinculacion: 'briefcase',
     catalogos: 'catalog',
     reporteria: 'report',
+    calificaciones: 'academic',
     'datos-senecyt': 'report',
     integraciones: 'integration',
     'admision-integraciones': 'integration',
@@ -468,6 +473,7 @@ export function StudentLayout({
   activePortalStudentSection = 'dashboard',
   activePreinscriptionStage = 'registro',
   role = '',
+  screenAccessPages = null,
   displayName = '',
   cedula = '',
   onOpenDashboard,
@@ -487,6 +493,7 @@ export function StudentLayout({
   onOpenPreinscripcion,
   onOpenReporteriaIntegral,
   onOpenReportesIndividuales,
+  onOpenAdminNotasAsignatura,
   onOpenGestionSisAcademico,
   onOpenSisAcademicoV1,
   onOpenAsignacionPantallas,
@@ -512,12 +519,11 @@ export function StudentLayout({
   onLogout,
   children,
 }: Readonly<StudentLayoutProps>) {
-  const normalizedRole = role.trim().toUpperCase()
+  const normalizedRole = normalizeRoleKey(role)
   const isAdministrator = isAdministratorRole(normalizedRole)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(() => new Set())
-  const [, setAccessConfigVersion] = useState(0)
 
   useEffect(() => {
     const coarsePointerQuery = window.matchMedia('(pointer: coarse)')
@@ -538,16 +544,6 @@ export function StudentLayout({
     return () => {
       coarsePointerQuery.removeEventListener('change', syncMobileState)
       window.removeEventListener('resize', syncMobileState)
-    }
-  }, [])
-
-  useEffect(() => {
-    const refreshAccessConfig = () => setAccessConfigVersion((current) => current + 1)
-    window.addEventListener('intec-screen-access-updated', refreshAccessConfig)
-    window.addEventListener('storage', refreshAccessConfig)
-    return () => {
-      window.removeEventListener('intec-screen-access-updated', refreshAccessConfig)
-      window.removeEventListener('storage', refreshAccessConfig)
     }
   }, [])
 
@@ -800,6 +796,26 @@ export function StudentLayout({
           page: 'gestion-sisacademico',
           sectionKey: 'pagos_matricula',
           action: () => onOpenGestionSisAcademico('pagos_matricula'),
+        },
+      ],
+    },
+    {
+      key: 'calificaciones',
+      title: 'Calificaciones',
+      summary: 'Estudiantes y docentes responsables',
+      items: [
+        {
+          label: 'Notas por asignatura',
+          description: 'Seleccione docente, asignatura y período para revisar estudiantes y calificaciones pendientes.',
+          page: 'admin-notas-asignatura',
+          action: onOpenAdminNotasAsignatura,
+        },
+        {
+          label: 'Consulta por estudiante',
+          description: 'Buscar el historial de notas por estudiante, cédula, materia o docente responsable.',
+          page: 'reportes-individuales',
+          reportKey: 'notas_carrera_materia',
+          action: () => onOpenReportesIndividuales('notas_carrera_materia'),
         },
       ],
     },
@@ -1600,6 +1616,26 @@ export function StudentLayout({
         : []
     ),
     {
+      key: 'calificaciones',
+      title: 'Calificaciones',
+      summary: 'Notas por docente y asignatura',
+      items: [
+        {
+          label: 'Notas por asignatura',
+          description: 'Seleccione docente, asignatura, carrera y período para revisar estudiantes y notas.',
+          page: 'admin-notas-asignatura',
+          action: onOpenAdminNotasAsignatura,
+        },
+        {
+          label: 'Consulta por estudiante',
+          description: 'Historial de notas por estudiante, materia, período y docente responsable.',
+          page: 'reportes-individuales',
+          reportKey: 'notas_carrera_materia',
+          action: () => onOpenReportesIndividuales('notas_carrera_materia'),
+        },
+      ],
+    },
+    {
       key: 'admision-matriculas',
       title: 'Control de matrícula',
       summary: 'Matrícula, estudiantes y notas',
@@ -1698,8 +1734,8 @@ export function StudentLayout({
       summary: 'Notas y desempeño',
       items: [
         {
-          label: 'Reporte de notas',
-          description: 'Reporte por carrera, materia, periodo y estudiante.',
+          label: 'Calificaciones de estudiantes',
+          description: 'Notas por estudiante, materia, periodo y docente responsable.',
           page: 'reportes-individuales',
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
@@ -2120,27 +2156,51 @@ export function StudentLayout({
     },
   ]
 
-  const baseMenuGroups =
-    normalizedRole === 'ESTUDIANTE'
-      ? studentMenuGroups
-      : normalizedRole === 'DOCENTE'
-        ? teacherMenuGroups
-        : normalizedRole === 'ADMISIONES'
-          ? admissionsMenuGroups
-          : normalizedRole === 'SECRETARIA'
-            ? secretaryMenuGroups
-            : academicRoles.has(normalizedRole)
-              ? academicMenuGroups
-              : dashboardOnlyRoles.has(normalizedRole)
-                ? executiveMenuGroups
-                : normalizedRole === 'FINANCIERO'
-                  ? financialMenuGroups
-                  : adminMenuGroups
+  const roleMenuGroups = normalizedRole === 'ESTUDIANTE'
+    ? studentMenuGroups
+    : normalizedRole === 'DOCENTE'
+      ? teacherMenuGroups
+      : normalizedRole === 'ADMISIONES'
+        ? admissionsMenuGroups
+        : normalizedRole === 'SECRETARIA'
+          ? secretaryMenuGroups
+          : academicRoles.has(normalizedRole)
+            ? academicMenuGroups
+            : dashboardOnlyRoles.has(normalizedRole)
+              ? executiveMenuGroups
+              : normalizedRole === 'FINANCIERO'
+                ? financialMenuGroups
+                : adminMenuGroups
+
+  const representedPages = new Set(
+    roleMenuGroups.flatMap((group) => group.items.flatMap((item) => item.page ? [item.page] : [])),
+  )
+  const supplementalItems = screenAccessPages === null || isAdministrator
+    ? []
+    : screenAccessPages.flatMap((page) => {
+        if (representedPages.has(page)) return []
+        const item = adminMenuGroups
+          .flatMap((group) => group.items)
+          .find((candidate) => candidate.page === page)
+        return item ? [item] : []
+      })
+  const baseMenuGroups = supplementalItems.length > 0
+    ? [
+        ...roleMenuGroups,
+        {
+          key: 'accesos-asignados',
+          title: 'Accesos asignados',
+          summary: 'Pantallas adicionales autorizadas',
+          items: supplementalItems,
+        },
+      ]
+    : roleMenuGroups
 
   const menuGroups = baseMenuGroups
+    .filter((group) => isAdministrator || group.key !== 'flujo-academico')
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => navItemAllowedForRole(normalizedRole, item)),
+      items: group.items.filter((item) => navItemAllowedForRole(normalizedRole, item, screenAccessPages)),
     }))
     .filter((group) => group.items.length > 0)
 
