@@ -18,6 +18,7 @@ import type {
 type PortalEstudianteViewProps = {
   displayName: string
   activeSection: PortalStudentSection
+  allowedSections?: PortalStudentSection[]
   onSectionChange: (section: PortalStudentSection) => void
 }
 
@@ -126,7 +127,12 @@ function academicSortValue(item: PortalCurriculumItem | PortalAcademicGridItem) 
   ] as const
 }
 
-export function PortalEstudianteView({ displayName, activeSection, onSectionChange }: Readonly<PortalEstudianteViewProps>) {
+export function PortalEstudianteView({
+  displayName,
+  activeSection,
+  allowedSections,
+  onSectionChange,
+}: Readonly<PortalEstudianteViewProps>) {
   const [approvedOnly, setApprovedOnly] = useState(false)
   const [selectedPeriod, setSelectedPeriod] = useState('')
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set())
@@ -513,6 +519,8 @@ export function PortalEstudianteView({ displayName, activeSection, onSectionChan
   }
 
   function renderActionCard(section: PortalStudentSection, icon: string, title: string, subtitle: string, value: string) {
+    if (allowedSections && !allowedSections.includes(section)) return null
+
     return (
       <button
         type="button"

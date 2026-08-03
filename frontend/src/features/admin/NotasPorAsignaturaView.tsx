@@ -6,16 +6,23 @@ import {
   fetchAdminGradeTeacherStudents,
   updateLegacyStudentGrade,
 } from '../../lib/api'
-import { calculateRegularGradeWithRecovery, constrainDecimalInput, parseBoundedDecimal } from '../../lib/gradeCalculation'
+import {
+  calculateHomologationGradeWithRecovery,
+  calculateRegularGradeWithRecovery,
+  constrainDecimalInput,
+  parseBoundedDecimal,
+} from '../../lib/gradeCalculation'
 import type {
   AdminGradeStudent,
   AdminGradeTeacher,
   PortalTeacherCourse,
 } from '../../types/app'
+import { CalificacionesTabs } from './CalificacionesTabs'
 
 type NotasPorAsignaturaViewProps = {
   displayName: string
   role: string
+  onOpenLanguages?: () => void
 }
 
 type SubjectGroup = {
@@ -163,8 +170,11 @@ function draftFinal(student: AdminGradeStudent, draft: GradeDraft): number | nul
   if (student.es_homologacion) {
     const theory = nullableGrade(draft.teoria_homo)
     const practice = nullableGrade(draft.practica_homo)
-    if (theory === null || practice === null) return null
-    return Math.round(((theory * 0.4) + (practice * 0.6)) * 100) / 100
+    return calculateHomologationGradeWithRecovery(
+      theory,
+      practice,
+      nullableGrade(draft.recuperacion),
+    ).final
   }
   return draftRegularCalculation(draft).final
 }
@@ -190,7 +200,11 @@ function normalizedAccessRole(role: string): string {
   return role.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
 }
 
-export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorAsignaturaViewProps>) {
+export function NotasPorAsignaturaView({
+  displayName,
+  role,
+  onOpenLanguages,
+}: Readonly<NotasPorAsignaturaViewProps>) {
   const [teachers, setTeachers] = useState<AdminGradeTeacher[]>([])
   const [courses, setCourses] = useState<PortalTeacherCourse[]>([])
   const [students, setStudents] = useState<AdminGradeStudent[]>([])
@@ -556,7 +570,7 @@ export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorA
         p3_proyectos: isHomologation ? null : parseBoundedDecimal(gradeDraft.p3_proyectos, 10, 'Proyectos del parcial 3'),
         p3_examen: isHomologation ? null : parseBoundedDecimal(gradeDraft.p3_examen, 10, 'Examen del parcial 3'),
         asistencia: parseBoundedDecimal(gradeDraft.asistencia, 100, 'La asistencia'),
-        recuperacion: isHomologation ? null : parseBoundedDecimal(gradeDraft.recuperacion, 10, 'La recuperación'),
+        recuperacion: parseBoundedDecimal(gradeDraft.recuperacion, 10, 'La recuperación'),
       })
       setEditingStudent(null)
       setGradeDraft(null)
@@ -599,6 +613,8 @@ export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorA
           </div>
         </div>
       </header>
+
+      <CalificacionesTabs active="asignaturas" onOpenLanguages={onOpenLanguages} />
 
       {error && <div className="admin-grades-alert" role="alert">{error}</div>}
       {notice && <div className="admin-grades-notice" role="status">{notice}</div>}
@@ -789,7 +805,7 @@ export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorA
                       || Boolean(selectedPeriodType && period.type !== selectedPeriodType)
                     }
                   >
-                    [{periodTypeLabel(period.type)}] {period.detail} · {period.careerNames.length} {period.careerNames.length === 1 ? 'carrera' : 'carreras'} · {period.totalStudents} estudiante(s)
+                    [{periodTypeLabel(period.type)}] {period.detail} · {period.careerNames.length} {period.careerNames.length === 1 ? 'carrera' : 'carreras'} · {period.totalStudents} estudiante{period.totalStudents === 1 ? '' : 's'} activo{period.totalStudents === 1 ? '' : 's'}
                   </option>
                 ))}
               </select>
@@ -816,7 +832,7 @@ export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorA
                     <div>
                       <strong>{period.detail}</strong>
                       <small>
-                        {period.careerNames.join(' / ')} · {period.courses.length} {period.courses.length === 1 ? 'curso' : 'cursos'} · {period.totalStudents} estudiante(s)
+                        {period.careerNames.join(' / ')} · {period.courses.length} {period.courses.length === 1 ? 'curso' : 'cursos'} · {period.totalStudents} estudiante{period.totalStudents === 1 ? '' : 's'} activo{period.totalStudents === 1 ? '' : 's'}
                       </small>
                     </div>
                     <span className="admin-grades-type">{period.type}</span>
@@ -1024,13 +1040,15 @@ export function NotasPorAsignaturaView({ displayName, role }: Readonly<NotasPorA
                   <span>Asistencia (%)</span>
                   <input type="number" min={0} max={100} step="0.01" value={gradeDraft.asistencia} onChange={(event) => updateGradeDraft('asistencia', event.target.value)} />
                 </label>
-                {!editingStudent.es_homologacion && (
-                  <label>
-                    <span>Recuperación</span>
-                    <input type="number" min={0} max={10} step="0.01" value={gradeDraft.recuperacion} onChange={(event) => updateGradeDraft('recuperacion', event.target.value)} />
-                    <small className="reporteria-grade-editor__help">Reemplaza una sola nota puntual mínima entre los tres parciales y luego recalcula el promedio.</small>
-                  </label>
-                )}
+                <label>
+                  <span>Recuperación</span>
+                  <input type="number" min={0} max={10} step="0.01" value={gradeDraft.recuperacion} onChange={(event) => updateGradeDraft('recuperacion', event.target.value)} />
+                  <small className="reporteria-grade-editor__help">
+                    {editingStudent.es_homologacion
+                      ? 'Se registra en el único parcial y reemplaza una sola nota mínima entre teoría y práctica.'
+                      : 'Se registra en el tercer parcial, reemplaza una sola nota puntual mínima y recalcula el promedio.'}
+                  </small>
+                </label>
                 <div className="reporteria-grade-editor__final">
                   <span>Promedio final</span>
                   <strong>{score(gradePreviewFinal)}</strong>

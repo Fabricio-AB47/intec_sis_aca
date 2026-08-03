@@ -4,7 +4,13 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import pyodbc
+
 from app.services.db import get_integration_control_connection
+
+
+class ScreenAccessUnavailableError(RuntimeError):
+    """Raised when the central screen assignment cannot be consulted."""
 
 
 ROLE_CATALOG: tuple[dict[str, str], ...] = (
@@ -24,15 +30,43 @@ ROLE_CATALOG: tuple[dict[str, str], ...] = (
 
 
 def _screen(page: str, label: str, description: str, group: str) -> dict[str, str]:
-    return {"page": page, "label": label, "description": description, "group": group}
+    return {
+        "page": page,
+        "label": label,
+        "description": description,
+        "group": group,
+        "parent_page": "",
+        "kind": "screen",
+    }
 
 
-SCREEN_CATALOG: tuple[dict[str, str], ...] = (
+def _flow(parent_page: str, key: str, label: str, group: str) -> dict[str, str]:
+    return {
+        "page": f"{parent_page}/{key}",
+        "label": label,
+        "description": f"Acceso independiente al flujo {label.lower()}.",
+        "group": group,
+        "parent_page": parent_page,
+        "kind": "flow",
+    }
+
+
+BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("dashboard", "Dashboard", "Indicadores generales y resumen institucional.", "Inicio"),
     _screen("sistema-academico", "Sistema academico", "Flujo academico institucional integrado.", "Inicio"),
-    _screen("preinscripcion", "Preinscripcion y becas", "Aspirantes, inscripcion, becas y matricula inicial.", "Admision"),
-    _screen("matricula", "Consulta de matricula", "Resumen y consulta general de matriculas.", "Matricula"),
-    _screen("matricula-acad", "Matricula academica", "Cabecera, materias y control academico.", "Matricula"),
+    _screen(
+        "preinscripcion",
+        "Inscripcion de estudiantes",
+        "Registro previo, inscripcion, becas y matricula inicial.",
+        "Inscripcion",
+    ),
+    _screen("matricula", "Consulta de matriculas", "Resumen y consulta general de matriculas.", "Matricula"),
+    _screen(
+        "matricula-acad",
+        "Matriculacion academica",
+        "Registro y actualizacion de la cabecera de matricula y materias del estudiante.",
+        "Matricula",
+    ),
     _screen("matricula-docente", "Matricula docente", "Asignacion docente por materia y periodo.", "Docencia"),
     _screen("estado-docente", "Estado docente", "Activacion, inactivacion y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualizacion de datos", "Datos personales de estudiantes y docentes.", "Personas"),
@@ -68,21 +102,172 @@ SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("evaluacion-docente-avance", "Avance de evaluacion", "Seguimiento y ponderacion de evaluaciones.", "Evaluacion"),
     _screen("evaluacion-docente-reportes", "Reportes de evaluacion", "Documentos y resultados de evaluacion docente.", "Evaluacion"),
     _screen("formato-informe-docente", "Formato de informe docente", "Configuracion institucional del informe docente.", "Evaluacion"),
-    _screen("portal-estudiante", "Portal estudiante", "Malla, notas y estado academico del estudiante.", "Portales"),
-    _screen("ingles", "Evaluacion de Ingles", "Entrega, expediente y calificacion del examen de Ingles.", "Portales"),
+    _screen("portal-estudiante", "Inicio del estudiante", "Resumen y estado academico del estudiante.", "Portal estudiante"),
+    _screen("portal-estudiante-malla-curricular", "Malla curricular del estudiante", "Materias, niveles, codigos y creditos de la carrera.", "Portal estudiante"),
+    _screen("portal-estudiante-malla-academica", "Avance de malla del estudiante", "Materias aprobadas, pendientes y avance academico.", "Portal estudiante"),
+    _screen("portal-estudiante-calificaciones", "Calificaciones del estudiante", "Notas del estudiante organizadas por periodo academico.", "Portal estudiante"),
+    _screen(
+        "ingles",
+        "Escuela de Idiomas",
+        "Matricula vigente, evidencias por parcial y calificaciones de idiomas.",
+        "Calificaciones",
+    ),
     _screen("expedientes-documentales", "Expedientes documentales", "Documentos de Ingles, titulacion, practicas y vinculacion almacenados en Microsoft 365.", "Documentos"),
-    _screen("portal-docente", "Portal docente", "Cursos, estudiantes y registro de notas.", "Portales"),
+    _screen("portal-docente", "Cursos y calificaciones docentes", "Cursos asignados, estudiantes y registro de calificaciones.", "Portal docente"),
     _screen("portal-docente-informe", "Informe docente", "Informe de cumplimiento y firma electronica.", "Portales"),
     _screen("portal-docente-planificacion", "Silabo y PEA", "Planificacion academica y firma electronica.", "Portales"),
     _screen("portal-docente-contratos", "Contrato docente", "Condiciones contractuales y carga asignada.", "Portales"),
 )
 
 
-ALL_PAGES: tuple[str, ...] = tuple(screen["page"] for screen in SCREEN_CATALOG)
+PREINSCRIPTION_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("preinscripcion", "registro", "Inscripcion", "Inscripcion / Flujo"),
+    _flow("preinscripcion", "inscritos", "Estudiantes inscritos", "Inscripcion / Flujo"),
+    _flow("preinscripcion", "cabecera", "Cabecera de matricula", "Inscripcion / Matricula"),
+    _flow("preinscripcion", "documentos", "Documentos de matricula", "Inscripcion / Matricula"),
+    _flow("preinscripcion", "materias", "Matricular primer nivel", "Inscripcion / Matricula"),
+    _flow("preinscripcion", "seguimiento", "Seguimiento de inscripcion", "Inscripcion / Seguimiento"),
+    _flow("preinscripcion", "gestion-becas", "Gestion de becas", "Inscripcion / Becas"),
+    _flow("preinscripcion", "becas", "Aprobaciones de becas", "Inscripcion / Becas"),
+    _flow("preinscripcion", "becados", "Listado de becados", "Inscripcion / Becas"),
+)
+
+
+MATRICULA_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("matricula-acad", "individual", "Matricula individual", "Matricula / Operacion"),
+    _flow("matricula-acad", "masiva", "Matricula masiva", "Matricula / Operacion"),
+    _flow(
+        "matricula-acad",
+        "prerrequisitos",
+        "Prerrequisitos de materias",
+        "Matricula / Control academico",
+    ),
+)
+
+
+SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("gestion-sisacademico", "preinscripciones", "Aspirantes y asesores", "Operacion / Matricula"),
+    _flow("gestion-sisacademico", "datos_factura", "Datos de factura", "Operacion / Matricula"),
+    _flow("gestion-sisacademico", "cabecera_matricula", "Cabecera de matricula y pagos", "Operacion / Matricula"),
+    _flow("gestion-sisacademico", "matricula_materias", "Materias matriculadas y notas", "Operacion / Matricula"),
+    _flow("gestion-sisacademico", "pagos_matricula", "Pagos y valores", "Operacion / Matricula"),
+    _flow("gestion-sisacademico", "estudiantes", "Ficha del estudiante", "Operacion / Estudiantes"),
+    _flow("gestion-sisacademico", "registro_documentos_estudiante", "Documentos del estudiante", "Operacion / Estudiantes"),
+    _flow("gestion-sisacademico", "correos", "Correos institucionales", "Operacion / Estudiantes"),
+    _flow("gestion-sisacademico", "seguimiento", "Seguimiento academico", "Operacion / Estudiantes"),
+    _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Operacion / Estudiantes"),
+    _flow("gestion-sisacademico", "docentes", "Ficha docente", "Operacion / Docentes"),
+    _flow("gestion-sisacademico", "docente_materias", "Materias asignadas al docente", "Operacion / Docentes"),
+    _flow("gestion-sisacademico", "actualizacion_est", "Estado docente", "Operacion / Docentes"),
+    _flow("gestion-sisacademico", "numero_preguntas", "Control de cuestionarios", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "cuestionarios", "Banco de preguntas", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "preguntas_evaluacion", "Preguntas de evaluacion", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "planes_foros", "Planes, cuestionarios y foros", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "evaluacion_resultados", "Resultados de evaluacion", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "autoevaluacion_resultados", "Resultados de autoevaluacion", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "fechas_autoevaluacion", "Apertura de autoevaluacion", "Operacion / Evaluacion"),
+    _flow("gestion-sisacademico", "usuarios", "Registrar usuarios", "Operacion / Seguridad"),
+    _flow("gestion-sisacademico", "menu_usuarios", "Accesos por usuario", "Operacion / Seguridad"),
+    _flow("gestion-sisacademico", "menu_general", "Mapa operativo", "Operacion / Seguridad"),
+    _flow("gestion-sisacademico", "talento_humano_empleados", "Empleados", "Operacion / Talento humano"),
+    _flow("gestion-sisacademico", "talento_humano_solicitudes", "Solicitudes de talento humano", "Operacion / Talento humano"),
+    _flow("gestion-sisacademico", "talento_humano_tareas", "Tareas de talento humano", "Operacion / Talento humano"),
+    _flow("gestion-sisacademico", "moodle_notas", "Notas Moodle", "Operacion / Integraciones"),
+    _flow("gestion-sisacademico", "moodle_sincronizacion", "Sincronizacion Moodle", "Operacion / Integraciones"),
+    _flow("gestion-sisacademico", "microsoft365_audit", "Auditoria Microsoft 365", "Operacion / Integraciones"),
+    _flow("gestion-sisacademico", "practicas", "Practicas profesionales", "Operacion / Practicas"),
+    _flow("gestion-sisacademico", "practicas_vinculacion", "Vinculacion con la sociedad", "Operacion / Practicas"),
+    _flow("gestion-sisacademico", "empresas", "Empresas de practicas", "Operacion / Practicas"),
+    _flow("gestion-sisacademico", "carreras", "Carreras", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "materias", "Materias y pensum", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "mallas", "Mallas academicas", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "materia_homo_textof", "Textos de materias de homologacion", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "paralelos", "Paralelos", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "periodos", "Periodos academicos", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "provincias", "Provincias", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "jornadas", "Jornadas", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "modalidades", "Modalidades", "Operacion / Catalogos"),
+    _flow("gestion-sisacademico", "fechas_notas", "Apertura de notas", "Operacion / Control academico"),
+    _flow("gestion-sisacademico", "asistencia_estudiantes", "Asistencia de estudiantes", "Operacion / Control academico"),
+    _flow("gestion-sisacademico", "dias_matricula", "Dias de matricula", "Operacion / Control academico"),
+    _flow("gestion-sisacademico", "horarios_matricula", "Horarios de matricula", "Operacion / Control academico"),
+    _flow("gestion-sisacademico", "cambio_periodo_hr", "Migracion de homologacion a regular", "Operacion / Control academico"),
+    _flow("gestion-sisacademico", "certificados_generados", "Historial de certificados", "Operacion / Documentos"),
+    _flow("gestion-sisacademico", "credenciales_curso", "Credenciales de curso", "Operacion / Documentos"),
+    _flow("gestion-sisacademico", "repositorio", "Repositorio digital", "Operacion / Documentos"),
+    _flow("gestion-sisacademico", "cursos_edu_continua", "Cursos de educacion continua", "Operacion / Educacion continua"),
+    _flow("gestion-sisacademico", "corte_curso", "Cortes de curso", "Operacion / Educacion continua"),
+    _flow("gestion-sisacademico", "corte_curso_estudiante", "Estudiantes por corte", "Operacion / Educacion continua"),
+)
+
+
+REPORT_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("reporteria-integral", "carrera", "Reporte por carrera", "Reporteria / Institucional"),
+    _flow("reporteria-integral", "genero", "Reporte por genero", "Reporteria / Institucional"),
+    _flow("reporteria-integral", "genero_docentes", "Genero de docentes", "Reporteria / Institucional"),
+    _flow("reporteria-integral", "graduados_2025", "Reporte de graduados", "Reporteria / Institucional"),
+    _flow("reporteria-integral", "periodo", "Reporte por periodo", "Reporteria / Institucional"),
+    _flow("reporteria-integral", "provincia", "Reporte por provincia", "Reporteria / Institucional"),
+    _flow("reportes-individuales", "evaluacion_docente", "Evaluacion docente individual", "Reporteria / Individual"),
+    _flow("reportes-individuales", "notas_carrera_materia", "Calificaciones de estudiantes", "Reporteria / Individual"),
+)
+
+
+TITLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("titulos-registrados", "senescyt", "Titulos registrados SENESCYT", "Titulacion / Registros"),
+    _flow("titulos-registrados", "institucional", "Titulos institucionales", "Titulacion / Registros"),
+)
+
+
+FLOW_SCREEN_CATALOG = (
+    PREINSCRIPTION_FLOW_CATALOG
+    + MATRICULA_FLOW_CATALOG
+    + SISACADEMICO_FLOW_CATALOG
+    + REPORT_FLOW_CATALOG
+    + TITLE_FLOW_CATALOG
+)
+SCREEN_CATALOG: tuple[dict[str, str], ...] = BASE_SCREEN_CATALOG + FLOW_SCREEN_CATALOG
+
+FLOW_PARENT_BY_PAGE: dict[str, str] = {
+    screen["page"]: screen["parent_page"]
+    for screen in FLOW_SCREEN_CATALOG
+}
+FLOW_PAGES_BY_PARENT: dict[str, tuple[str, ...]] = {
+    parent: tuple(
+        screen["page"]
+        for screen in FLOW_SCREEN_CATALOG
+        if screen["parent_page"] == parent
+    )
+    for parent in {screen["parent_page"] for screen in FLOW_SCREEN_CATALOG}
+}
+CONTAINER_PAGES = frozenset(FLOW_PAGES_BY_PARENT)
+KNOWN_PAGES: tuple[str, ...] = tuple(screen["page"] for screen in SCREEN_CATALOG)
+ASSIGNABLE_SCREEN_CATALOG: tuple[dict[str, str], ...] = tuple(
+    screen
+    for screen in SCREEN_CATALOG
+    if screen["page"] not in CONTAINER_PAGES
+)
+# ALL_PAGES intentionally contains only options that open a concrete view. A
+# parent with child flows remains in the catalog as navigation metadata, but it
+# is never counted or persisted as an additional permission.
+ALL_PAGES: tuple[str, ...] = tuple(screen["page"] for screen in ASSIGNABLE_SCREEN_CATALOG)
 ADMIN_ONLY_PAGES = frozenset({"sistema-academico", "asignacion-pantallas"})
 ROLE_DENIED_PAGES: dict[str, frozenset[str]] = {
     "ESTUDIANTE": frozenset({"expedientes-documentales"}),
 }
+
+
+def _flow_codes(parent_page: str, keys: Iterable[str] | None = None) -> tuple[str, ...]:
+    available = FLOW_PAGES_BY_PARENT.get(parent_page, ())
+    if keys is None:
+        return available
+    selected = {f"{parent_page}/{key}" for key in keys}
+    return tuple(page for page in available if page in selected)
+
+
+def _combine_pages(*collections: Iterable[str]) -> tuple[str, ...]:
+    selected = {page for collection in collections for page in collection}
+    return tuple(page for page in ALL_PAGES if page in selected)
 
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
@@ -97,24 +282,79 @@ _ACADEMIC_PAGES = (
     "ingles", "expedientes-documentales",
 )
 
+_ACADEMIC_SIS_FLOWS = _flow_codes(
+    "gestion-sisacademico",
+    (
+        "estudiantes", "registro_documentos_estudiante", "correos",
+        "matricula_materias", "seguimiento", "actualizacion_estudiantes",
+        "docentes", "docente_materias", "actualizacion_est",
+        "preguntas_evaluacion", "evaluacion_resultados",
+        "autoevaluacion_resultados", "fechas_autoevaluacion", "carreras",
+        "materias", "mallas", "paralelos", "periodos", "fechas_notas",
+        "asistencia_estudiantes", "jornadas", "modalidades", "practicas",
+        "practicas_vinculacion", "empresas",
+    ),
+)
+_ACADEMIC_REPORT_FLOWS = _combine_pages(
+    _flow_codes(
+        "reportes-individuales",
+        ("notas_carrera_materia", "evaluacion_docente"),
+    ),
+    _flow_codes("reporteria-integral", ("genero_docentes",)),
+)
+_ADMISSIONS_SIS_FLOWS = _flow_codes(
+    "gestion-sisacademico",
+    ("preinscripciones", "estudiantes", "cabecera_matricula", "pagos_matricula", "datos_factura"),
+)
+_FINANCIAL_SIS_FLOWS = _flow_codes(
+    "gestion-sisacademico",
+    ("cabecera_matricula", "pagos_matricula", "datos_factura"),
+)
+_FINANCIAL_REPORT_FLOWS = _flow_codes(
+    "reporteria-integral",
+    ("provincia", "genero", "carrera", "periodo", "graduados_2025"),
+)
+
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "ADMINISTRADOR": ALL_PAGES,
-    "ACADEMICO": _ACADEMIC_PAGES,
-    "BIENESTAR": (
-        "dashboard", "preinscripcion", "actualizar-datos-estudiante",
-        "admin-notas-asignatura", "reportes-individuales", "reporteria-integral",
-        "carnet-institucional",
+    "ACADEMICO": _combine_pages(
+        _ACADEMIC_PAGES,
+        _flow_codes("preinscripcion"),
+        _flow_codes("matricula-acad"),
+        _ACADEMIC_SIS_FLOWS,
+        _ACADEMIC_REPORT_FLOWS,
     ),
-    "ADMISIONES": ("dashboard", "preinscripcion", "gestion-sisacademico"),
-    "FINANCIERO": (
-        "dashboard", "preinscripcion", "ingreso-ventas",
-        "gestion-sisacademico", "reporteria-integral",
-        "carnet-institucional",
+    "BIENESTAR": _combine_pages(
+        (
+            "dashboard", "preinscripcion", "actualizar-datos-estudiante",
+            "admin-notas-asignatura", "reportes-individuales", "reporteria-integral",
+            "carnet-institucional",
+        ),
+        _flow_codes("preinscripcion", ("gestion-becas", "becas", "becados")),
+        _ACADEMIC_REPORT_FLOWS,
     ),
-    "SECRETARIA": (
-        "practicas-institucionales", "fecha-grado",
-        "senescyt-estudiantes", "titulacion", "titulacion-proceso",
-        "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
+    "ADMISIONES": _combine_pages(
+        ("dashboard", "preinscripcion", "gestion-sisacademico"),
+        _flow_codes("preinscripcion"),
+        _ADMISSIONS_SIS_FLOWS,
+    ),
+    "FINANCIERO": _combine_pages(
+        (
+            "dashboard", "preinscripcion", "ingreso-ventas",
+            "gestion-sisacademico", "reporteria-integral",
+            "carnet-institucional",
+        ),
+        _flow_codes("preinscripcion", ("registro", "documentos")),
+        _FINANCIAL_SIS_FLOWS,
+        _FINANCIAL_REPORT_FLOWS,
+    ),
+    "SECRETARIA": _combine_pages(
+        (
+            "practicas-institucionales", "fecha-grado",
+            "senescyt-estudiantes", "titulacion", "titulacion-proceso",
+            "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
+        ),
+        _flow_codes("titulos-registrados"),
     ),
     "SOPORTE": tuple(
         page for page in ALL_PAGES
@@ -129,8 +369,24 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
         "portal-docente", "portal-docente-informe", "portal-docente-planificacion",
         "portal-docente-contratos", "ingles", "carnet-institucional",
     ),
-    "ESTUDIANTE": ("portal-estudiante", "ingles", "evaluacion-docente", "practicas-institucionales", "carnet-institucional"),
+    "ESTUDIANTE": (
+        "portal-estudiante", "portal-estudiante-malla-curricular",
+        "portal-estudiante-malla-academica", "portal-estudiante-calificaciones",
+        "ingles", "evaluacion-docente", "practicas-institucionales", "carnet-institucional",
+    ),
 }
+
+
+_SPLIT_SCREEN_MIGRATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "portal-estudiante",
+        (
+            "portal-estudiante-malla-curricular",
+            "portal-estudiante-malla-academica",
+            "portal-estudiante-calificaciones",
+        ),
+    ),
+)
 
 _TP_US_ROLE_CATALOG = {
     "1": "ADMINISTRADOR",
@@ -188,6 +444,14 @@ def normalize_role(value: Any) -> str:
     )
     role = " ".join(role.split())
     return _ROLE_ALIASES.get(role, role)
+
+
+def _is_page_or_flow_of(page: str, parent_page: str) -> bool:
+    return page == parent_page or page.startswith(f"{parent_page}/")
+
+
+def _is_restricted_page(page: str, restricted_pages: Iterable[str]) -> bool:
+    return any(_is_page_or_flow_of(page, parent) for parent in restricted_pages)
 
 
 def _ensure_tables(cursor: Any) -> None:
@@ -260,10 +524,10 @@ def _sync_catalog(cursor: Any) -> None:
             order,
         )
 
-    placeholders = ", ".join("?" for _ in ALL_PAGES)
+    placeholders = ", ".join("?" for _ in KNOWN_PAGES)
     cursor.execute(
         f"UPDATE cfg.PantallaPortal SET Activo = 0, FechaActualizacion = SYSDATETIME() WHERE Activo <> 0 AND Codigo NOT IN ({placeholders})",
-        *ALL_PAGES,
+        *KNOWN_PAGES,
     )
 
     # Los expedientes institucionales contienen documentos internos. Aunque
@@ -276,11 +540,32 @@ def _sync_catalog(cursor: Any) -> None:
                    SET Activo = 0,
                        FechaActualizacion = SYSDATETIME(),
                        UsuarioActualizacion = N'SISTEMA'
-                 WHERE RolCodigo = ? AND PantallaCodigo = ? AND Activo <> 0
+                 WHERE RolCodigo = ?
+                   AND (PantallaCodigo = ? OR PantallaCodigo LIKE ?)
+                   AND Activo <> 0
                 """,
                 role,
                 page,
+                f"{page}/%",
             )
+
+
+def _deactivate_container_assignments(cursor: Any) -> None:
+    """Removes legacy parent grants after their child permissions exist."""
+    if not CONTAINER_PAGES:
+        return
+    placeholders = ", ".join("?" for _ in CONTAINER_PAGES)
+    cursor.execute(
+        f"""
+        UPDATE cfg.AccesoPantallaRol
+           SET Activo = 0,
+               FechaActualizacion = SYSDATETIME(),
+               UsuarioActualizacion = N'SISTEMA_CONTENEDORES'
+         WHERE Activo <> 0
+           AND PantallaCodigo IN ({placeholders})
+        """,
+        *sorted(CONTAINER_PAGES),
+    )
 
 
 def _initialize_role_assignments(cursor: Any) -> None:
@@ -316,6 +601,87 @@ def _initialize_role_assignments(cursor: Any) -> None:
                 role,
                 page,
                 int(page in initial_pages),
+            )
+
+
+def _migrate_split_screen_assignments(cursor: Any) -> None:
+    """Conserva el acceso previo al separar una pantalla en opciones individuales."""
+    for role_meta in ROLE_CATALOG:
+        role = role_meta["value"]
+        for legacy_page, split_pages in _SPLIT_SCREEN_MIGRATIONS:
+            for split_page in split_pages:
+                cursor.execute(
+                    """
+                    MERGE cfg.AccesoPantallaRol AS target
+                    USING
+                    (
+                        SELECT
+                            ? AS RolCodigo,
+                            ? AS PantallaCodigo,
+                            CAST(
+                                CASE WHEN EXISTS
+                                (
+                                    SELECT 1
+                                    FROM cfg.AccesoPantallaRol AS legacy
+                                    WHERE legacy.RolCodigo = ?
+                                      AND legacy.PantallaCodigo = ?
+                                      AND legacy.Activo = 1
+                                ) THEN 1 ELSE 0 END
+                                AS BIT
+                            ) AS Activo
+                    ) AS source
+                       ON target.RolCodigo = source.RolCodigo
+                      AND target.PantallaCodigo = source.PantallaCodigo
+                    WHEN NOT MATCHED THEN
+                        INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+                        VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, N'SISTEMA_MIGRACION');
+                    """,
+                    role,
+                    split_page,
+                    role,
+                    legacy_page,
+                )
+
+
+def _migrate_flow_screen_assignments(cursor: Any) -> None:
+    """Creates each flow permission once, preserving the previous parent access."""
+    for role_meta in ROLE_CATALOG:
+        role = role_meta["value"]
+        if role == "ADMINISTRADOR":
+            continue
+        role_defaults = set(DEFAULT_ACCESS.get(role, ()))
+        for flow_page, parent_page in FLOW_PARENT_BY_PAGE.items():
+            cursor.execute(
+                """
+                MERGE cfg.AccesoPantallaRol AS target
+                USING
+                (
+                    SELECT
+                        ? AS RolCodigo,
+                        ? AS PantallaCodigo,
+                        CAST(
+                            CASE WHEN ? = 1 AND EXISTS
+                            (
+                                SELECT 1
+                                FROM cfg.AccesoPantallaRol AS parent_access
+                                WHERE parent_access.RolCodigo = ?
+                                  AND parent_access.PantallaCodigo = ?
+                                  AND parent_access.Activo = 1
+                            ) THEN 1 ELSE 0 END
+                            AS BIT
+                        ) AS Activo
+                ) AS source
+                   ON target.RolCodigo = source.RolCodigo
+                  AND target.PantallaCodigo = source.PantallaCodigo
+                WHEN NOT MATCHED THEN
+                    INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+                    VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, N'SISTEMA_FLUJOS');
+                """,
+                role,
+                flow_page,
+                int(flow_page in role_defaults),
+                role,
+                parent_page,
             )
 
 
@@ -368,7 +734,8 @@ def _role_payloads(cursor: Any, roles: Iterable[str]) -> list[dict[str, Any]]:
             pages = [
                 page
                 for page in pages
-                if page not in ADMIN_ONLY_PAGES and page not in denied_pages
+                if not _is_restricted_page(page, ADMIN_ONLY_PAGES)
+                and not _is_restricted_page(page, denied_pages)
             ]
         result.append(
             {
@@ -384,6 +751,49 @@ def _role_payloads(cursor: Any, roles: Iterable[str]) -> list[dict[str, Any]]:
     return result
 
 
+def role_has_screen_access(role: str, page: str) -> bool:
+    """Checks the effective assignment without applying role-based fallbacks."""
+    role_code = normalize_role(role)
+    page_code = str(page or "").strip()
+    valid_roles = {item["value"] for item in ROLE_CATALOG}
+
+    if page_code not in KNOWN_PAGES:
+        raise ValueError(f"Pantalla no reconocida: {page_code or '(vacia)'}")
+    if role_code not in valid_roles:
+        return False
+    if role_code == "ADMINISTRADOR":
+        return True
+    if _is_restricted_page(page_code, ADMIN_ONLY_PAGES) or _is_restricted_page(
+        page_code,
+        ROLE_DENIED_PAGES.get(role_code, frozenset()),
+    ):
+        return False
+
+    try:
+        with get_integration_control_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (1) 1
+                FROM cfg.AccesoPantallaRol AS acceso
+                INNER JOIN cfg.PantallaPortal AS pantalla
+                  ON pantalla.Codigo = acceso.PantallaCodigo
+                WHERE acceso.RolCodigo = ?
+                  AND (acceso.PantallaCodigo = ? OR acceso.PantallaCodigo LIKE ?)
+                  AND acceso.Activo = 1
+                  AND pantalla.Activo = 1
+                """,
+                role_code,
+                page_code,
+                f"{page_code}/%",
+            )
+            return cursor.fetchone() is not None
+    except (RuntimeError, pyodbc.Error) as exc:
+        raise ScreenAccessUnavailableError(
+            "No se pudo consultar la asignacion central de pantallas."
+        ) from exc
+
+
 def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]:
     current_role = normalize_role(role)
     valid_roles = {item["value"] for item in ROLE_CATALOG}
@@ -396,6 +806,9 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
         _ensure_tables(cursor)
         _sync_catalog(cursor)
         _initialize_role_assignments(cursor)
+        _migrate_split_screen_assignments(cursor)
+        _migrate_flow_screen_assignments(cursor)
+        _deactivate_container_assignments(cursor)
         roles = _role_payloads(cursor, requested_roles)
         conn.commit()
 
@@ -403,7 +816,7 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
         "source": "INTEC_INTEGRACION_CONTROL.cfg",
         "synchronized_at": datetime.now(timezone.utc).isoformat(),
         "current_role": current_role,
-        "screens": list(SCREEN_CATALOG),
+        "screens": list(ASSIGNABLE_SCREEN_CATALOG),
         "roles": roles,
     }
 
@@ -418,7 +831,11 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
     invalid_pages = sorted({page for page in requested_pages if page not in ALL_PAGES})
     if invalid_pages:
         raise ValueError(f"Pantallas no reconocidas: {', '.join(invalid_pages)}")
-    denied_pages = sorted(set(requested_pages) & ROLE_DENIED_PAGES.get(role_code, frozenset()))
+    denied_pages = sorted(
+        page
+        for page in set(requested_pages)
+        if _is_restricted_page(page, ROLE_DENIED_PAGES.get(role_code, frozenset()))
+    )
     if denied_pages:
         raise ValueError(
             f"El perfil {role_code} no puede acceder a: {', '.join(denied_pages)}"
@@ -426,7 +843,7 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
     allowed_requested_pages = [
         page
         for page in requested_pages
-        if role_code == "ADMINISTRADOR" or page not in ADMIN_ONLY_PAGES
+        if role_code == "ADMINISTRADOR" or not _is_restricted_page(page, ADMIN_ONLY_PAGES)
     ]
     if role_code != "ADMINISTRADOR" and not allowed_requested_pages:
         raise ValueError("Debe asignar al menos una pantalla al tipo de usuario.")
@@ -439,6 +856,9 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
         _ensure_tables(cursor)
         _sync_catalog(cursor)
         _initialize_role_assignments(cursor)
+        _migrate_split_screen_assignments(cursor)
+        _migrate_flow_screen_assignments(cursor)
+        _deactivate_container_assignments(cursor)
         cursor.execute(
             "UPDATE cfg.AccesoPantallaRol SET Activo = 0, FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ? WHERE RolCodigo = ?",
             audit_user,

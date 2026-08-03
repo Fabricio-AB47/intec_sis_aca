@@ -14,6 +14,13 @@ class RegularGradeCalculation:
     replacement: tuple[int, int] | None
 
 
+@dataclass(frozen=True)
+class HomologationGradeCalculation:
+    components: tuple[float | None, float | None]
+    final: float | None
+    replacement: int | None
+
+
 def _weighted_partial(partial: RegularPartial) -> float | None:
     if len(partial) != 3:
         raise ValueError("Cada parcial debe contener tareas, proyectos y examen")
@@ -74,3 +81,31 @@ def regular_final_with_recovery(
     recovery: float | None = None,
 ) -> float | None:
     return calculate_regular_grade_with_recovery(partials, recovery).final
+
+
+def calculate_homologation_grade_with_recovery(
+    theory: float | None,
+    practice: float | None,
+    recovery: float | None = None,
+) -> HomologationGradeCalculation:
+    """Apply recovery to one lowest homologation component and calculate 40/60."""
+    adjusted = [theory, practice]
+    replacement: int | None = None
+    if recovery is not None and all(value is not None for value in adjusted):
+        numeric_components = [float(value) for value in adjusted]
+        lowest_value = min(numeric_components)
+        if float(recovery) > lowest_value:
+            replacement = numeric_components.index(lowest_value)
+            adjusted[replacement] = float(recovery)
+
+    typed_components = (adjusted[0], adjusted[1])
+    if any(value is None for value in typed_components):
+        final = None
+    else:
+        final = round((float(typed_components[0]) * 0.40) + (float(typed_components[1]) * 0.60), 2)
+
+    return HomologationGradeCalculation(
+        components=typed_components,
+        final=final,
+        replacement=replacement,
+    )

@@ -29,10 +29,16 @@ from app.routers.portal_academico import (
     _resolve_admin_grade_course_selections,
     _student_grade_report_pdf,
     _weighted_regular_partial,
+    teacher_course_students,
+    teacher_courses,
     teacher_subject_students,
     teacher_save_grades,
 )
-from app.services.grade_calculation import calculate_regular_grade_with_recovery, regular_final_with_recovery
+from app.services.grade_calculation import (
+    calculate_homologation_grade_with_recovery,
+    calculate_regular_grade_with_recovery,
+    regular_final_with_recovery,
+)
 
 
 def _course(career: str, period: str, students: int = 1) -> dict:
@@ -173,6 +179,58 @@ class TeacherGradeScopeTests(unittest.TestCase):
             {item["cod_materia"] for item in grouped},
             {"VGA-CG-2023-06", "VGA-CG-2023-07"},
         )
+
+    @patch("app.routers.portal_academico.get_connection")
+    def test_teacher_course_catalog_counts_only_active_students(self, get_connection: MagicMock):
+        connection = MagicMock()
+        cursor = MagicMock()
+        connection.cursor.return_value = cursor
+        connection.__enter__.return_value = connection
+        connection.__exit__.return_value = False
+        cursor.fetchall.return_value = []
+        get_connection.return_value = connection
+
+        teacher_courses(
+            SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            )
+        )
+
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("INNER JOIN dbo.DATOS_ESTUD de_active", sql)
+        self.assertIn("de_active.Estado", sql)
+        self.assertIn("N'A', N'ACTIVO', N'ACTIVA'", sql)
+
+    @patch("app.routers.portal_academico.get_connection")
+    def test_teacher_grade_roster_only_loads_active_students(self, get_connection: MagicMock):
+        connection = MagicMock()
+        cursor = MagicMock()
+        connection.cursor.return_value = cursor
+        connection.__enter__.return_value = connection
+        connection.__exit__.return_value = False
+        cursor.fetchall.return_value = []
+        get_connection.return_value = connection
+
+        teacher_course_students(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            codigo_periodo=[1030],
+            codigo_materia="VGA-CG-2023-06",
+            paralelo="A",
+            cod_anio_basica=10,
+            cod_jornada=2,
+        )
+
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("de.Estado", sql)
+        self.assertIn("N'A', N'ACTIVO', N'ACTIVA'", sql)
 
     @patch("app.routers.portal_academico.teacher_course_students")
     @patch("app.routers.portal_academico.teacher_courses")
@@ -424,6 +482,22 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertEqual(incomplete.partials, (10, None, 8))
         self.assertIsNone(incomplete.final)
 
+    def test_homologation_recovery_replaces_only_one_lowest_component(self):
+        calculation = calculate_homologation_grade_with_recovery(7, 7, 9)
+
+        self.assertEqual(calculation.replacement, 0)
+        self.assertEqual(calculation.components, (9, 7))
+        self.assertEqual(calculation.final, 7.8)
+
+    def test_homologation_recovery_does_not_lower_or_complete_grades(self):
+        unchanged = calculate_homologation_grade_with_recovery(8, 9, 7)
+        incomplete = calculate_homologation_grade_with_recovery(8, None, 10)
+
+        self.assertIsNone(unchanged.replacement)
+        self.assertEqual(unchanged.final, 8.6)
+        self.assertIsNone(incomplete.replacement)
+        self.assertIsNone(incomplete.final)
+
     def test_grade_payloads_reject_values_outside_zero_to_ten(self):
         base = {
             "codigo_estud": 800,
@@ -485,6 +559,8 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertIn("promP2 = ?", update_sql)
         self.assertIn("promP3 = ?", update_sql)
         self.assertIn("Recuperacion = ?", update_sql)
+        self.assertIn("INNER JOIN dbo.DATOS_ESTUD AS de_active", update_sql)
+        self.assertIn("de_active.Estado", update_sql)
         self.assertEqual(update_params[3], 9.3)
         self.assertEqual(update_params[7], 8.87)
         self.assertEqual(update_params[11], 10)
@@ -542,6 +618,8 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertIn("codigo_materia", update_sql)
         self.assertIn("Num_Matricula", update_sql)
         self.assertIn("NumGrupo", update_sql)
+        self.assertIn("INNER JOIN dbo.DATOS_ESTUD AS de_active", update_sql)
+        self.assertIn("de_active.Estado", update_sql)
         self.assertEqual(result["affected_rows"], 1)
         self.assertEqual(result["promedio_final"], 8.8)
         self.assertEqual(result["condicion"], "APROBADO")

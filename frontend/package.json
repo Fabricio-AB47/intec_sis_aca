@@ -7,7 +7,8 @@
     "predev": "node scripts/free-vite-port.cjs",
     "dev": "vite",
     "dev:full": "node scripts/free-vite-port.cjs && node scripts/ensure-backend.cjs && vite",
-    "build": "tsc -b && vite build",
+    "check:screens": "node scripts/check-screen-catalog.cjs",
+    "build": "npm run check:screens && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -21,9 +21,17 @@ import {
   selectProfileRequest,
 } from '../lib/api'
 import { clearStoredPage, readStoredPage, writeStoredPage } from '../lib/storage'
+import {
+  firstPermissionForPage,
+  permissionRootPage,
+  screenPermissionAllowsCode,
+  screenPermissionAllowsPage,
+  screenPermissionForView,
+} from '../lib/screenAccess'
 import type {
   ExcelSqlCrossResponse,
   DashboardMatriculaResponse,
+  AcademicEnrollmentMode,
   GraphTeam,
   IngresoVentasResponse,
   MatriculaCareerStateSummaryResponse,
@@ -36,6 +44,7 @@ import type {
   Page,
   PreinscriptionStage,
   PortalStudentSection,
+  ScreenPermissionCode,
   UserSession,
 } from '../types/app'
 import { useInactivityLogout } from './useInactivityLogout'
@@ -109,18 +118,13 @@ const MASS_EMAIL_ALLOWED_ROLES = new Set([
   'VICERRECTOR',
   'SOPORTE',
 ])
-const ADMISSIONS_ALLOWED_SIS_SECTIONS = new Set([
-  'preinscripciones',
-  'estudiantes',
-  'cabecera_matricula',
-  'pagos_matricula',
-  'datos_factura',
-])
-const FINANCIAL_ALLOWED_SIS_SECTIONS = new Set([
-  'cabecera_matricula',
-  'pagos_matricula',
-  'datos_factura',
-])
+const STUDENT_PORTAL_PAGE_BY_SECTION: Record<PortalStudentSection, Page> = {
+  dashboard: 'portal-estudiante',
+  curricular: 'portal-estudiante-malla-curricular',
+  academica: 'portal-estudiante-malla-academica',
+  notas: 'portal-estudiante-calificaciones',
+}
+const STUDENT_PORTAL_PAGES = new Set<Page>(Object.values(STUDENT_PORTAL_PAGE_BY_SECTION))
 
 type ApiErrorOptions = {
   expireOnUnauthorized?: boolean
@@ -142,7 +146,7 @@ function normalizedRoleKey(role?: string): string {
   return ADMINISTRATOR_ROLE_ALIASES.has(normalized) ? 'ADMINISTRADOR' : normalized
 }
 
-function defaultPageForRole(role?: string, assignedPages: Page[] | null = null): Page {
+function defaultPageForRole(role?: string, assignedPages: ScreenPermissionCode[] | null = null): Page {
   const normalizedRole = normalizedRoleKey(role)
   const eligibleAssignedPages = assignedPages
   let preferredPage: Page = 'dashboard'
@@ -151,19 +155,27 @@ function defaultPageForRole(role?: string, assignedPages: Page[] | null = null):
   else if (normalizedRole === 'FINANCIERO') preferredPage = 'preinscripcion'
   else if (normalizedRole === 'SECRETARIA') preferredPage = 'practicas-institucionales'
 
-  if (eligibleAssignedPages !== null && eligibleAssignedPages.length > 0 && !eligibleAssignedPages.includes(preferredPage)) {
-    return eligibleAssignedPages[0]
+  if (
+    eligibleAssignedPages !== null
+    && eligibleAssignedPages.length > 0
+    && !screenPermissionAllowsPage(eligibleAssignedPages, preferredPage)
+  ) {
+    return permissionRootPage(eligibleAssignedPages[0])
   }
   return preferredPage
 }
 
-function pageAllowedForRole(role: string | undefined, page: Page, assignedPages: Page[] | null = null): boolean {
+function pageAllowedForRole(
+  role: string | undefined,
+  page: Page,
+  assignedPages: ScreenPermissionCode[] | null = null,
+): boolean {
   const normalizedRole = normalizedRoleKey(role)
-  if (assignedPages !== null) return assignedPages.includes(page)
+  if (assignedPages !== null) return screenPermissionAllowsPage(assignedPages, page)
   if (ADMIN_ONLY_PAGES.has(page) && normalizedRole !== 'ADMINISTRADOR') return false
   if (page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'].includes(normalizedRole)) return false
   if (normalizedRole === 'ESTUDIANTE') {
-    return page === 'portal-estudiante' || page === 'ingles' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
+    return STUDENT_PORTAL_PAGES.has(page) || page === 'ingles' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
   }
   if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'ingles' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
@@ -174,25 +186,60 @@ function pageAllowedForRole(role: string | undefined, page: Page, assignedPages:
   if (page === 'credenciales') return normalizedRole === 'ADMINISTRADOR'
   if (page === 'correos-masivos') return MASS_EMAIL_ALLOWED_ROLES.has(normalizedRole || '')
   if (page === 'carnet-institucional') return Boolean(normalizedRole)
-  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return page !== 'portal-estudiante' && page !== 'portal-docente' && page !== 'portal-docente-informe' && page !== 'portal-docente-planificacion' && page !== 'portal-docente-contratos'
+  if (TECHNICAL_GLOBAL_ROLES.has(normalizedRole || '')) return !STUDENT_PORTAL_PAGES.has(page) && page !== 'portal-docente' && page !== 'portal-docente-informe' && page !== 'portal-docente-planificacion' && page !== 'portal-docente-contratos'
   return page === 'dashboard'
 }
 
-function admissionsSection(sectionKey: string | null): string {
-  const requestedSection = sectionKey || ''
-  return ADMISSIONS_ALLOWED_SIS_SECTIONS.has(requestedSection) ? requestedSection : 'preinscripciones'
-}
-
-function financialSection(sectionKey: string | null): string {
-  const requestedSection = sectionKey || ''
-  return FINANCIAL_ALLOWED_SIS_SECTIONS.has(requestedSection) ? requestedSection : 'cabecera_matricula'
+function studentSectionForPage(page: Page): PortalStudentSection | null {
+  if (page === 'portal-estudiante') return 'dashboard'
+  if (page === 'portal-estudiante-malla-curricular') return 'curricular'
+  if (page === 'portal-estudiante-malla-academica') return 'academica'
+  if (page === 'portal-estudiante-calificaciones') return 'notas'
+  return null
 }
 
 function preinscriptionStage(stage: string | null): PreinscriptionStage {
   const value = stage || ''
-  return ['registro', 'inscritos', 'cabecera', 'documentos', 'materias', 'seguimiento'].includes(value)
+  return [
+    'registro', 'inscritos', 'cabecera', 'documentos', 'materias',
+    'seguimiento', 'gestion-becas', 'becas', 'becados',
+  ].includes(value)
     ? value as PreinscriptionStage
     : 'registro'
+}
+
+function enrollmentMode(value: string | null): AcademicEnrollmentMode {
+  return ['individual', 'masiva', 'prerrequisitos'].includes(value || '')
+    ? value as AcademicEnrollmentMode
+    : 'individual'
+}
+
+function requestedPermissionFromUrl(
+  url: URL,
+  permissions: readonly ScreenPermissionCode[],
+): ScreenPermissionCode | null {
+  const requestedPage = url.searchParams.get('open_page') as Page | null
+  if (!requestedPage) return null
+
+  let requestedPermission: ScreenPermissionCode = requestedPage
+  if (requestedPage === 'preinscripcion') {
+    requestedPermission = `${requestedPage}/${preinscriptionStage(url.searchParams.get('preinscripcion_stage'))}`
+  } else if (requestedPage === 'matricula-acad') {
+    requestedPermission = `${requestedPage}/${enrollmentMode(url.searchParams.get('matricula_mode'))}`
+  } else if (requestedPage === 'gestion-sisacademico') {
+    const section = url.searchParams.get('sis_section') || ''
+    requestedPermission = section ? `${requestedPage}/${section}` : requestedPage
+  } else if (requestedPage === 'reporteria-integral' || requestedPage === 'reportes-individuales') {
+    const report = url.searchParams.get('report_key') || ''
+    requestedPermission = report ? `${requestedPage}/${report}` : requestedPage
+  } else if (requestedPage === 'titulos-registrados') {
+    const requestedType = url.searchParams.get('title_type') || 'senescyt'
+    requestedPermission = `${requestedPage}/${requestedType === 'intec' ? 'institucional' : requestedType}`
+  }
+
+  return screenPermissionAllowsCode(permissions, requestedPermission)
+    ? requestedPermission
+    : firstPermissionForPage(permissions, requestedPage)
 }
 
 export function useReporteriaApp() {
@@ -203,7 +250,7 @@ export function useReporteriaApp() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [session, setSession] = useState<UserSession | null>(null)
-  const [screenAccessPages, setScreenAccessPages] = useState<Page[] | null>(null)
+  const [screenAccessPages, setScreenAccessPages] = useState<ScreenPermissionCode[] | null>(null)
   const [screenAccessLoading, setScreenAccessLoading] = useState(false)
   const [screenAccessError, setScreenAccessError] = useState('')
   const [screenAccessRevision, setScreenAccessRevision] = useState(0)
@@ -211,6 +258,7 @@ export function useReporteriaApp() {
   const [profileSelectionLoading, setProfileSelectionLoading] = useState(false)
   const [profileSelectionError, setProfileSelectionError] = useState('')
   const [activePage, setActivePage] = useState<Page>(() => readStoredPage())
+  const [matriculaAcadMode, setMatriculaAcadMode] = useState<AcademicEnrollmentMode>('individual')
   const [sisAcademicoSectionKey, setSisAcademicoSectionKey] = useState('')
   const [legacyReportKey, setLegacyReportKey] = useState('')
   const [portalStudentSection, setPortalStudentSection] = useState<PortalStudentSection>('dashboard')
@@ -263,12 +311,53 @@ export function useReporteriaApp() {
   const [enrollLoading, setEnrollLoading] = useState(false)
   const [selectedTeamIndex, setSelectedTeamIndex] = useState<number | null>(null)
 
+  const applyScreenPermission = useCallback((permission: ScreenPermissionCode) => {
+    const [root, child = ''] = permission.split('/', 2)
+    const page = root as Page
+
+    setSisAcademicoSectionKey(page === 'gestion-sisacademico' ? child : '')
+    setLegacyReportKey(
+      page === 'reporteria-integral' || page === 'reportes-individuales' ? child : '',
+    )
+    if (page === 'preinscripcion' && child) {
+      setPreinscriptionActiveStage(preinscriptionStage(child))
+    }
+    if (page === 'matricula-acad' && child) {
+      setMatriculaAcadMode(enrollmentMode(child))
+    }
+    if (page === 'titulos-registrados' && child) {
+      setTitulosRegistradosTipo(child === 'institucional' ? 'intec' : child)
+    }
+    const studentSection = studentSectionForPage(page)
+    if (studentSection) setPortalStudentSection(studentSection)
+    setActivePage(page)
+  }, [])
+
+  const activateAssignedScreen = useCallback((permission: ScreenPermissionCode) => {
+    if (screenAccessPages === null) return false
+    const root = permissionRootPage(permission)
+    const resolvedPermission = screenPermissionAllowsCode(screenAccessPages, permission)
+      ? permission
+      : permission.includes('/')
+        ? null
+        : firstPermissionForPage(screenAccessPages, root)
+    if (!resolvedPermission) {
+      setScreenAccessError('La pantalla solicitada no esta asignada al perfil autenticado.')
+      return false
+    }
+    setScreenAccessError('')
+    applyScreenPermission(resolvedPermission)
+    return true
+  }, [applyScreenPermission, screenAccessPages])
+
   const resetWorkspace = useCallback(() => {
     setActivePage('dashboard')
+    setMatriculaAcadMode('individual')
     setSisAcademicoSectionKey('')
     setLegacyReportKey('')
     setPortalStudentSection('dashboard')
     setPreinscriptionActiveStage('registro')
+    setTitulosRegistradosTipo('')
     setCatalogLoading(false)
     setDashboardMatriculaLoading(false)
     setCatalogMessage('')
@@ -463,152 +552,54 @@ export function useReporteriaApp() {
 
   useEffect(() => {
     if (!session || screenAccessPages === null) return
-    if (normalizedRoleKey(session.rol) === 'ESTUDIANTE') {
-      if (!pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-        const nextPage = defaultPageForRole(session.rol, screenAccessPages)
-        setActivePage(nextPage)
-        if (nextPage === 'portal-estudiante') setPortalStudentSection('dashboard')
-      }
-      return
-    }
-    if (normalizedRoleKey(session.rol) === 'DOCENTE') {
-      if (!pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-        setActivePage(defaultPageForRole(session.rol, screenAccessPages))
-      }
-      return
-    }
     const url = new URL(globalThis.location.href)
-    const openPage = url.searchParams.get('open_page')
-    if (openPage && !pageAllowedForRole(session.rol, openPage as Page, screenAccessPages)) {
-      setActivePage(defaultPageForRole(session.rol, screenAccessPages))
-      setSisAcademicoSectionKey('')
-      setLegacyReportKey('')
-      return
-    }
-    if (session.rol === 'ADMISIONES') {
-      if (openPage === 'gestion-sisacademico') {
-        setSisAcademicoSectionKey(admissionsSection(url.searchParams.get('sis_section')))
-        setActivePage('gestion-sisacademico')
-      } else if (openPage && pageAllowedForRole(session.rol, openPage as Page, screenAccessPages)) {
-        setSisAcademicoSectionKey('')
-        setActivePage(openPage as Page)
-      } else if (!openPage && pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-        setSisAcademicoSectionKey('')
-      } else {
-        setSisAcademicoSectionKey('')
-        setPreinscriptionActiveStage(preinscriptionStage(url.searchParams.get('preinscripcion_stage')))
-        setActivePage(defaultPageForRole(session.rol, screenAccessPages))
+    const requestedPermission = requestedPermissionFromUrl(url, screenAccessPages)
+    if (url.searchParams.has('open_page')) {
+      for (const parameter of [
+        'open_page', 'sis_section', 'preinscripcion_stage', 'matricula_mode',
+        'report_key', 'title_type',
+      ]) {
+        url.searchParams.delete(parameter)
       }
+      globalThis.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    }
+
+    const currentPermission = screenPermissionForView(activePage, {
+      matriculaAcadMode,
+      preinscriptionStage: preinscriptionActiveStage,
+      sisAcademicoSection: sisAcademicoSectionKey,
+      reportKey: legacyReportKey,
+      registeredTitleType: titulosRegistradosTipo,
+    })
+    if (requestedPermission) {
+      if (requestedPermission !== currentPermission) applyScreenPermission(requestedPermission)
       return
     }
-    if (session.rol === 'FINANCIERO') {
-      if (openPage === 'gestion-sisacademico') {
-        setSisAcademicoSectionKey(financialSection(url.searchParams.get('sis_section')))
-        setActivePage('gestion-sisacademico')
-      } else if (openPage === 'preinscripcion') {
-        setSisAcademicoSectionKey('')
-        setPreinscriptionActiveStage(preinscriptionStage(url.searchParams.get('preinscripcion_stage')))
-        setActivePage('preinscripcion')
-      } else if (openPage && pageAllowedForRole(session.rol, openPage as Page, screenAccessPages)) {
-        setActivePage(openPage as Page)
-      } else if (!pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-        setActivePage(defaultPageForRole(session.rol, screenAccessPages))
-      }
-      return
+    if (screenPermissionAllowsCode(screenAccessPages, currentPermission)) return
+
+    const preferredRoot = defaultPageForRole(session.rol, screenAccessPages)
+    const fallbackPermission = firstPermissionForPage(screenAccessPages, preferredRoot) || screenAccessPages[0]
+    if (fallbackPermission) {
+      applyScreenPermission(fallbackPermission)
+    } else {
+      setScreenAccessError('El perfil autenticado no tiene pantallas asignadas.')
     }
-    if (openPage === 'teams') {
-      setActivePage('teams')
-    } else if (openPage === 'teams-matricula') {
-      setActivePage('teams-matricula')
-    } else if (openPage === 'periodo-academico') {
-      setActivePage('periodo-academico')
-    } else if (openPage === 'matricula-acad') {
-      setActivePage('matricula-acad')
-    } else if (openPage === 'matricula-docente') {
-      setActivePage('matricula-docente')
-    } else if (openPage === 'evaluacion-docente-admin') {
-      setActivePage('evaluacion-docente-admin')
-    } else if (openPage === 'evaluacion-docente-avance') {
-      setActivePage('evaluacion-docente-avance')
-    } else if (openPage === 'evaluacion-docente-reportes') {
-      setActivePage('evaluacion-docente-reportes')
-    } else if (openPage === 'formato-informe-docente') {
-      setActivePage('formato-informe-docente')
-    } else if (openPage === 'practicas-institucionales' && pageAllowedForRole(session.rol, 'practicas-institucionales', screenAccessPages)) {
-      setActivePage('practicas-institucionales')
-    } else if (openPage === 'expedientes-documentales' && pageAllowedForRole(session.rol, 'expedientes-documentales', screenAccessPages)) {
-      setActivePage('expedientes-documentales')
-    } else if (openPage === 'estado-docente') {
-      setActivePage('estado-docente')
-    } else if (openPage === 'senescyt-estudiantes' && pageAllowedForRole(session.rol, 'senescyt-estudiantes', screenAccessPages)) {
-      setActivePage('senescyt-estudiantes')
-    } else if (openPage === 'fecha-grado' && pageAllowedForRole(session.rol, 'fecha-grado', screenAccessPages)) {
-      setActivePage('fecha-grado')
-    } else if (openPage === 'titulacion' && pageAllowedForRole(session.rol, 'titulacion', screenAccessPages)) {
-      setActivePage('titulacion')
-    } else if (openPage === 'titulacion-proceso' && pageAllowedForRole(session.rol, 'titulacion-proceso', screenAccessPages)) {
-      setActivePage('titulacion-proceso')
-    } else if (openPage === 'titulacion-responsables' && pageAllowedForRole(session.rol, 'titulacion-responsables', screenAccessPages)) {
-      setActivePage('titulacion-responsables')
-    } else if (openPage === 'titulos-registrados' && pageAllowedForRole(session.rol, 'titulos-registrados', screenAccessPages)) {
-      setActivePage('titulos-registrados')
-    } else if (openPage === 'preinscripcion') {
-      setPreinscriptionActiveStage(preinscriptionStage(url.searchParams.get('preinscripcion_stage')))
-      setActivePage('preinscripcion')
-    } else if (openPage === 'reporteria-carreras') {
-      setActivePage('reporteria-carreras')
-    } else if (openPage === 'reporteria-integral') {
-      setLegacyReportKey(url.searchParams.get('report_key') || '')
-      setActivePage('reporteria-integral')
-    } else if (openPage === 'reportes-individuales') {
-      setLegacyReportKey(url.searchParams.get('report_key') || '')
-      setActivePage('reportes-individuales')
-    } else if (openPage === 'sisacademico-v1' && pageAllowedForRole(session.rol, 'sisacademico-v1', screenAccessPages)) {
-      setSisAcademicoSectionKey('')
-      setLegacyReportKey('')
-      setActivePage('sisacademico-v1')
-    } else if (openPage === 'asignacion-pantallas' && pageAllowedForRole(session.rol, 'asignacion-pantallas', screenAccessPages)) {
-      setActivePage('asignacion-pantallas')
-    } else if (openPage === 'gestion-sisacademico') {
-      setSisAcademicoSectionKey(url.searchParams.get('sis_section') || '')
-      setActivePage('gestion-sisacademico')
-    } else if (openPage === 'periodo-matriculados') {
-      setActivePage('periodo-matriculados')
-    } else if (openPage === 'ingreso-ventas') {
-      setActivePage('ingreso-ventas')
-    } else if (openPage === 'cruce-datos') {
-      setActivePage('cruce-datos')
-    } else if (openPage === 'validar-excel') {
-      setActivePage('validar-excel')
-    } else if (openPage === 'rango-edades') {
-      setActivePage('rango-edades')
-    } else if (openPage === 'certificados') {
-      setActivePage('certificados')
-    } else if (openPage === 'matricula-excel-certificados') {
-      setActivePage('matricula-excel-certificados')
-    } else if (openPage === 'renombrar-certificados') {
-      setActivePage('renombrar-certificados')
-    } else if (openPage === 'credenciales' && session.rol === 'ADMINISTRADOR') {
-      setActivePage('credenciales')
-    } else if (openPage === 'correos-masivos' && pageAllowedForRole(session.rol, 'correos-masivos', screenAccessPages)) {
-      setActivePage('correos-masivos')
-    } else if (openPage === 'carnet-institucional' && pageAllowedForRole(session.rol, 'carnet-institucional', screenAccessPages)) {
-      setActivePage('carnet-institucional')
-    } else if (openPage === 'evaluacion-docente' && pageAllowedForRole(session.rol, 'evaluacion-docente', screenAccessPages)) {
-      setActivePage('evaluacion-docente')
-    } else if (!openPage && !pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-      setActivePage(defaultPageForRole(session.rol, screenAccessPages))
-    }
-  }, [activePage, screenAccessPages, session])
+  }, [
+    activePage,
+    applyScreenPermission,
+    legacyReportKey,
+    matriculaAcadMode,
+    preinscriptionActiveStage,
+    screenAccessPages,
+    session,
+    sisAcademicoSectionKey,
+    titulosRegistradosTipo,
+  ])
 
   useEffect(() => {
-    if (!session || screenAccessPages === null) return
-    if (!pageAllowedForRole(session.rol, activePage, screenAccessPages)) {
-      setActivePage(defaultPageForRole(session.rol, screenAccessPages))
-      setSisAcademicoSectionKey('')
-      setLegacyReportKey('')
-    }
-  }, [activePage, screenAccessPages, session])
+    const section = studentSectionForPage(activePage)
+    if (section) setPortalStudentSection(section)
+  }, [activePage])
 
   useEffect(() => {
     if (session) {
@@ -1082,179 +1073,167 @@ export function useReporteriaApp() {
   }
 
   const openDashboard = () => {
-    setActivePage('dashboard')
+    if (!activateAssignedScreen('dashboard')) return
     if (!dashboardMatricula && !dashboardMatriculaLoading) {
       void loadDashboardMatricula()
     }
   }
   const openPortalEstudiantePage = (section: PortalStudentSection = 'dashboard') => {
-    setPortalStudentSection(section)
-    setActivePage('portal-estudiante')
+    activateAssignedScreen(STUDENT_PORTAL_PAGE_BY_SECTION[section])
   }
   const openPortalDocentePage = () => {
-    setActivePage('portal-docente')
+    activateAssignedScreen('portal-docente')
   }
   const openPortalDocenteInformePage = () => {
-    setActivePage('portal-docente-informe')
+    activateAssignedScreen('portal-docente-informe')
   }
   const openInglesPage = () => {
-    setActivePage('ingles')
+    activateAssignedScreen('ingles')
   }
   const openExpedientesDocumentalesPage = () => {
-    setActivePage('expedientes-documentales')
+    activateAssignedScreen('expedientes-documentales')
   }
   const openSistemaAcademicoPage = () => {
-    setActivePage('sistema-academico')
+    if (!activateAssignedScreen('sistema-academico')) return
     if (!dashboardMatricula && !dashboardMatriculaLoading) {
       void loadDashboardMatricula()
     }
   }
   const openPortalDocentePlanificacionPage = () => {
-    setActivePage('portal-docente-planificacion')
+    activateAssignedScreen('portal-docente-planificacion')
   }
   const openPortalDocenteContratosPage = () => {
-    setActivePage('portal-docente-contratos')
+    activateAssignedScreen('portal-docente-contratos')
   }
   const openTeacherEvaluationPage = () => {
-    setActivePage('evaluacion-docente')
+    activateAssignedScreen('evaluacion-docente')
   }
   const openTeacherEvaluationAdminPage = () => {
-    setActivePage('evaluacion-docente-admin')
+    activateAssignedScreen('evaluacion-docente-admin')
   }
   const openTeacherEvaluationProgressPage = () => {
-    setActivePage('evaluacion-docente-avance')
+    activateAssignedScreen('evaluacion-docente-avance')
   }
   const openTeacherEvaluationReportsPage = () => {
-    setActivePage('evaluacion-docente-reportes')
+    activateAssignedScreen('evaluacion-docente-reportes')
   }
   const openTeacherComplianceFormatPage = () => {
-    setActivePage('formato-informe-docente')
+    activateAssignedScreen('formato-informe-docente')
   }
-  const openTeamsPage = () => setActivePage('teams')
+  const openTeamsPage = () => activateAssignedScreen('teams')
   const openTeamsMatriculaPage = () => {
-    setActivePage('teams-matricula')
+    if (!activateAssignedScreen('teams-matricula')) return
     if (catalogTeams.length === 0 && !catalogLoading) {
       void loadCatalog()
     }
   }
   const openMatriculaPage = async () => {
-    setActivePage('matricula')
+    if (!activateAssignedScreen('matricula')) return
     await loadAcademicMatriculaSummary()
   }
-  const openMatriculaAcadPage = () => {
-    setActivePage('matricula-acad')
+  const openMatriculaAcadPage = (mode: AcademicEnrollmentMode = 'individual') => {
+    activateAssignedScreen(`matricula-acad/${mode}`)
   }
   const openMatriculaDocentePage = () => {
-    setActivePage('matricula-docente')
+    activateAssignedScreen('matricula-docente')
   }
   const openEstadoDocentePage = () => {
-    setActivePage('estado-docente')
+    activateAssignedScreen('estado-docente')
   }
   const openSenescytEstudiantesPage = () => {
-    setActivePage('senescyt-estudiantes')
+    activateAssignedScreen('senescyt-estudiantes')
   }
   const openActualizarDatosEstudiantePage = () => {
-    setActivePage('actualizar-datos-estudiante')
+    activateAssignedScreen('actualizar-datos-estudiante')
   }
   const openPreinscripcionPage = () => {
-    setPreinscriptionActiveStage('registro')
-    setActivePage('preinscripcion')
+    activateAssignedScreen('preinscripcion/registro')
   }
   const openPreinscripcionStage = (stage: PreinscriptionStage = 'registro') => {
-    setPreinscriptionActiveStage(stage)
-    setActivePage('preinscripcion')
+    activateAssignedScreen(`preinscripcion/${stage}`)
   }
   const openReporteriaCarrerasPage = async () => {
-    setActivePage('reporteria-carreras')
+    if (!activateAssignedScreen('reporteria-carreras')) return
     await loadMatriculaCareerStateReport()
   }
   const openReporteriaIntegralPage = (reportKey?: string) => {
-    setLegacyReportKey(reportKey || '')
-    setActivePage('reporteria-integral')
+    activateAssignedScreen(reportKey ? `reporteria-integral/${reportKey}` : 'reporteria-integral')
   }
   const openReportesIndividualesPage = (reportKey?: string) => {
-    setLegacyReportKey(reportKey || '')
-    setActivePage('reportes-individuales')
+    activateAssignedScreen(reportKey ? `reportes-individuales/${reportKey}` : 'reportes-individuales')
   }
   const openAdminNotasAsignaturaPage = () => {
-    setLegacyReportKey('')
-    setActivePage('admin-notas-asignatura')
+    activateAssignedScreen('admin-notas-asignatura')
   }
   const openGestionSisAcademicoPage = (sectionKey?: string) => {
-    setSisAcademicoSectionKey(sectionKey || '')
-    setActivePage('gestion-sisacademico')
-  }
-  const openSisAcademicoV1Page = () => {
-    setSisAcademicoSectionKey('')
-    setLegacyReportKey('')
-    setActivePage('sisacademico-v1')
+    activateAssignedScreen(sectionKey ? `gestion-sisacademico/${sectionKey}` : 'gestion-sisacademico')
   }
   const openAsignacionPantallasPage = () => {
-    setActivePage('asignacion-pantallas')
+    activateAssignedScreen('asignacion-pantallas')
   }
   const openPeriodoAcademicoPage = async () => {
-    setActivePage('periodo-academico')
+    if (!activateAssignedScreen('periodo-academico')) return
     await loadAcademicMatriculaSummary()
   }
   const openPeriodoMatriculadosPage = async () => {
-    setActivePage('periodo-matriculados')
+    if (!activateAssignedScreen('periodo-matriculados')) return
     await loadMovementMatriculaSummary()
   }
   const openIngresoVentasPage = async () => {
-    setActivePage('ingreso-ventas')
+    if (!activateAssignedScreen('ingreso-ventas')) return
     if (!ingresoVentas && !ingresoVentasLoading) {
       await loadIngresoVentas()
     }
   }
   const openCruceDatosPage = async () => {
-    setActivePage('cruce-datos')
+    if (!activateAssignedScreen('cruce-datos')) return
     if (!cruceDatos && !cruceDatosLoading) {
       await loadCruceDatos()
     }
   }
   const openValidarExcelPage = () => {
-    setActivePage('validar-excel')
+    activateAssignedScreen('validar-excel')
   }
   const openRangoEdadesPage = () => {
-    setActivePage('rango-edades')
+    activateAssignedScreen('rango-edades')
   }
   const openFechaGradoPage = () => {
-    setActivePage('fecha-grado')
+    activateAssignedScreen('fecha-grado')
   }
   const openTitulosRegistradosPage = (tipo = '') => {
-    setTitulosRegistradosTipo(tipo)
-    setActivePage('titulos-registrados')
+    const titleType = tipo === 'intec' ? 'institucional' : tipo || 'senescyt'
+    activateAssignedScreen(`titulos-registrados/${titleType}`)
   }
   const openTitulacionPage = () => {
-    setActivePage('titulacion')
+    activateAssignedScreen('titulacion')
   }
 
   const openTitulacionProcesoPage = () => {
-    setActivePage('titulacion-proceso')
+    activateAssignedScreen('titulacion-proceso')
   }
   const openTitulacionResponsablesPage = () => {
-    setActivePage('titulacion-responsables')
+    activateAssignedScreen('titulacion-responsables')
   }
   const openCertificadosPage = () => {
-    setActivePage('certificados')
+    activateAssignedScreen('certificados')
   }
   const openMatriculaExcelCertificadosPage = () => {
-    setActivePage('matricula-excel-certificados')
+    activateAssignedScreen('matricula-excel-certificados')
   }
   const openCertificateRenamerPage = () => {
-    setActivePage('renombrar-certificados')
+    activateAssignedScreen('renombrar-certificados')
   }
   const openCredentialGeneratorPage = () => {
-    setActivePage('credenciales')
+    activateAssignedScreen('credenciales')
   }
   const openMassEmailPage = () => {
-    setActivePage('correos-masivos')
+    activateAssignedScreen('correos-masivos')
   }
   const openCarnetInstitucionalPage = () => {
-    setActivePage('carnet-institucional')
+    activateAssignedScreen('carnet-institucional')
   }
   const openPracticasInstitucionalesPage = () => {
-    setActivePage('practicas-institucionales')
+    activateAssignedScreen('practicas-institucionales')
   }
 
   const displayName = session?.nombres?.trim() || session?.login || ''
@@ -1332,6 +1311,7 @@ export function useReporteriaApp() {
     enrollLoading,
     selectedTeamIndex,
     selectedTeam,
+    matriculaAcadMode,
     setLogin,
     setPassword,
     setShowPassword,
@@ -1362,13 +1342,11 @@ export function useReporteriaApp() {
     openActualizarDatosEstudiantePage,
     openPreinscripcionPage,
     openPreinscripcionStage,
-    setPreinscriptionActiveStage,
     openReporteriaCarrerasPage,
     openReporteriaIntegralPage,
     openReportesIndividualesPage,
     openAdminNotasAsignaturaPage,
     openGestionSisAcademicoPage,
-    openSisAcademicoV1Page,
     openAsignacionPantallasPage,
     openPeriodoAcademicoPage,
     openPeriodoMatriculadosPage,

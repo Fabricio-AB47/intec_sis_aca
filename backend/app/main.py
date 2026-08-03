@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.core.audit_context import AuditContext, reset_audit_context, set_audit_context
 from app.core.config import get_settings
+from app.core.security import decode_session_token
 from app.routers.academic_enrollment import router as academic_enrollment_router
 from app.routers.academic_system import router as academic_system_router
 from app.routers.age_ranges import router as age_ranges_router
@@ -46,6 +50,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def bind_database_audit_context(request: Request, call_next):
+    request_id = (request.headers.get("X-Request-ID") or str(uuid4())).strip()[:128]
+    user = None
+    session_token = request.cookies.get(settings.session_cookie_name)
+    if session_token:
+        try:
+            user = decode_session_token(session_token)
+        except Exception:
+            user = None
+
+    context_token = set_audit_context(
+        AuditContext(
+            user=(user.login if user else "NO_AUTENTICADO"),
+            role=(user.rol if user else "PUBLICO"),
+            user_id=(str(user.id_usuario) if user and user.id_usuario is not None else ""),
+            origin=(user.origen if user and user.origen else "API"),
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            client_ip=(request.client.host if request.client else ""),
+        )
+    )
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        reset_audit_context(context_token)
+
 
 app.include_router(health_router)
 app.include_router(teams_router)

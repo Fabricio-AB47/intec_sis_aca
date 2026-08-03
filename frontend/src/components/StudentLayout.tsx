@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import type { Page, PortalStudentSection, PreinscriptionStage } from '../types/app'
+import type { AcademicEnrollmentMode, Page, PortalStudentSection, PreinscriptionStage, ScreenPermissionCode } from '../types/app'
 
 type StudentLayoutProps = {
   activePage: Page
@@ -8,8 +8,9 @@ type StudentLayoutProps = {
   activeLegacyReport?: string
   activePortalStudentSection?: PortalStudentSection
   activePreinscriptionStage?: PreinscriptionStage
+  activeMatriculaAcadMode?: AcademicEnrollmentMode
   role?: string
-  screenAccessPages?: Page[] | null
+  screenAccessPages?: ScreenPermissionCode[] | null
   displayName?: string
   cedula?: string
   onOpenDashboard: () => void
@@ -24,7 +25,7 @@ type StudentLayoutProps = {
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
   onOpenMatricula: () => void
-  onOpenMatriculaAcad: () => void
+  onOpenMatriculaAcad: (mode?: AcademicEnrollmentMode) => void
   onOpenMatriculaDocente: () => void
   onOpenEstadoDocente: () => void
   onOpenSenescytEstudiantes: () => void
@@ -67,6 +68,7 @@ type NavItem = {
   label: string
   description?: string
   page?: Page
+  accessCode?: ScreenPermissionCode
   sectionKey?: string
   reportKey?: string
   portalSection?: PortalStudentSection
@@ -108,6 +110,12 @@ const administratorOnlyPages = new Set<Page>(['sistema-academico', 'asignacion-p
 const academicRoles = new Set(['ACADEMICO', 'BIENESTAR'])
 const dashboardOnlyRoles = new Set(['RECTOR', 'VICERRECTOR'])
 const technicalGlobalRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE'])
+const studentPortalPages = new Set<Page>([
+  'portal-estudiante',
+  'portal-estudiante-malla-curricular',
+  'portal-estudiante-malla-academica',
+  'portal-estudiante-calificaciones',
+])
 const financialPages = new Set<Page>(['dashboard', 'preinscripcion', 'ingreso-ventas', 'gestion-sisacademico', 'reporteria-integral', 'carnet-institucional'])
 const academicPages = new Set<Page>([
   'dashboard',
@@ -192,11 +200,11 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   if (item.page && administratorOnlyPages.has(item.page) && !isAdministrator) return false
   if (item.page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'].includes(normalizedRole)) return false
 
-  if (normalizedRole === 'ESTUDIANTE') return item.page === 'portal-estudiante' || item.page === 'ingles' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'ESTUDIANTE') return Boolean(item.page && studentPortalPages.has(item.page)) || item.page === 'ingles' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
   if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
-    if (item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
+    if (item.page === 'gestion-sisacademico' && item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
     return true
   }
   if (normalizedRole === 'SECRETARIA') {
@@ -205,27 +213,34 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   if (dashboardOnlyRoles.has(normalizedRole)) return item.page === 'dashboard'
   if (academicRoles.has(normalizedRole)) {
     if (!item.page || !academicPages.has(item.page)) return false
-    if (item.sectionKey && !academicSisSections.has(item.sectionKey)) return false
+    if (item.page === 'gestion-sisacademico' && item.sectionKey && !academicSisSections.has(item.sectionKey)) return false
     if (item.reportKey && !academicReportKeys.has(item.reportKey)) return false
     return true
   }
   if (normalizedRole === 'FINANCIERO') {
     if (!item.page || !financialPages.has(item.page)) return false
-    if (item.sectionKey && !financialSisSections.has(item.sectionKey)) return false
+    if (item.page === 'gestion-sisacademico' && item.sectionKey && !financialSisSections.has(item.sectionKey)) return false
     if (item.reportKey && !financialReportKeys.has(item.reportKey)) return false
     return true
   }
-  if (isAdministrator || technicalGlobalRoles.has(normalizedRole)) return item.page !== 'portal-estudiante' && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion' && item.page !== 'portal-docente-contratos'
+  if (isAdministrator || technicalGlobalRoles.has(normalizedRole)) return (!item.page || !studentPortalPages.has(item.page)) && item.page !== 'portal-docente' && item.page !== 'portal-docente-informe' && item.page !== 'portal-docente-planificacion' && item.page !== 'portal-docente-contratos'
   return item.page === 'dashboard'
 }
 
+function navItemAccessCode(item: NavItem): ScreenPermissionCode {
+  if (item.accessCode) return item.accessCode
+  if (!item.page) return ''
+  if (item.sectionKey) return `${item.page}/${item.sectionKey}`
+  if (item.reportKey) return `${item.page}/${item.reportKey}`
+  if (item.preinscriptionStage) return `${item.page}/${item.preinscriptionStage}`
+  return item.page
+}
+
 function navItemIdentity(item: NavItem) {
+  const accessCode = navItemAccessCode(item)
+  if (accessCode) return `access:${accessCode}`
   return [
-    item.page || '',
-    item.sectionKey || '',
-    item.reportKey || '',
     item.portalSection || '',
-    item.preinscriptionStage || '',
     item.label,
   ].join('|')
 }
@@ -236,7 +251,7 @@ function mergeNavigationGroups(groups: NavGroup[]) {
 
   groups.forEach((group) => {
     const availableItems = group.items.filter((item) => {
-      const identity = item.page ? `page:${item.page}` : navItemIdentity(item)
+      const identity = navItemIdentity(item)
       if (seenItems.has(identity)) return false
       seenItems.add(identity)
       return true
@@ -257,22 +272,22 @@ function mergeNavigationGroups(groups: NavGroup[]) {
 function buildAssignedMenuGroups(
   roleGroups: NavGroup[],
   catalogGroups: NavGroup[],
-  assignedPages: Page[],
+  assignedPages: ScreenPermissionCode[],
 ) {
   const assignedSet = new Set(assignedPages)
-  const pagesRepresentedByRole = new Set(
-    roleGroups.flatMap((group) => group.items.flatMap((item) => item.page ? [item.page] : [])),
+  const permissionsRepresentedByRole = new Set(
+    roleGroups.flatMap((group) => group.items.map(navItemAccessCode).filter(Boolean)),
   )
-  const pagesMissingFromRole = new Set(
-    assignedPages.filter((page) => !pagesRepresentedByRole.has(page)),
+  const permissionsMissingFromRole = new Set(
+    assignedPages.filter((page) => !permissionsRepresentedByRole.has(page)),
   )
 
   const assignedRoleGroups = roleGroups.flatMap((group) => {
-    const items = group.items.filter((item) => Boolean(item.page && assignedSet.has(item.page)))
+    const items = group.items.filter((item) => assignedSet.has(navItemAccessCode(item)))
     return items.length > 0 ? [{ ...group, items }] : []
   })
   const assignedFallbackGroups = catalogGroups.flatMap((group) => {
-    const items = group.items.filter((item) => Boolean(item.page && pagesMissingFromRole.has(item.page)))
+    const items = group.items.filter((item) => permissionsMissingFromRole.has(navItemAccessCode(item)))
     return items.length > 0 ? [{ ...group, items }] : []
   })
 
@@ -316,13 +331,14 @@ function sortNavGroups(groups: NavGroup[]) {
     administracion: 20,
     desempeno: 25,
     'admision-matriculas': 30,
+    matriculacion: 31,
     becas: 32,
     migracion: 35,
     carnetizacion: 50,
     certificados: 60,
     'datos-senecyt': 70,
     'portal-estudiante': 80,
-    ingles: 85,
+    idiomas: 85,
     'expedientes-documentales': 87,
     'portal-docente': 90,
     integraciones: 100,
@@ -362,12 +378,13 @@ function groupIconName(groupKey: string): GroupIconName {
     inicio: 'home',
     'actualizacion-estados': 'status',
     'admision-matriculas': 'matricula',
+    matriculacion: 'matricula',
     becas: 'briefcase',
     'admision-proceso': 'admission',
     migracion: 'matricula',
     certificados: 'certificate',
     'portal-estudiante': 'student',
-    ingles: 'academic',
+    idiomas: 'academic',
     'expedientes-documentales': 'certificate',
     'portal-docente': 'teacher',
     administracion: 'users',
@@ -523,6 +540,7 @@ export function StudentLayout({
   activeLegacyReport = '',
   activePortalStudentSection = 'dashboard',
   activePreinscriptionStage = 'registro',
+  activeMatriculaAcadMode = 'individual',
   role = '',
   screenAccessPages = null,
   displayName = '',
@@ -655,6 +673,34 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('seguimiento'),
     },
   ]
+  const enrollmentMenuGroup: NavGroup = {
+    key: 'matriculacion',
+    title: 'Matriculación',
+    summary: 'Matrícula y configuración académica',
+    items: [
+      {
+        label: 'Matrícula individual',
+        description: 'Buscar por nombre, cédula o código y matricular materias.',
+        page: 'matricula-acad',
+        sectionKey: 'individual',
+        action: () => onOpenMatriculaAcad('individual'),
+      },
+      {
+        label: 'Matrícula masiva',
+        description: 'Matricular una cohorte completa en un período destino.',
+        page: 'matricula-acad',
+        sectionKey: 'masiva',
+        action: () => onOpenMatriculaAcad('masiva'),
+      },
+      {
+        label: 'Prerrequisitos de materias',
+        description: 'Crear y administrar las relaciones entre materias.',
+        page: 'matricula-acad',
+        sectionKey: 'prerrequisitos',
+        action: () => onOpenMatriculaAcad('prerrequisitos'),
+      },
+    ],
+  }
   const scholarshipMenuGroup: NavGroup = {
     key: 'becas',
     title: 'Becas',
@@ -726,11 +772,12 @@ export function StudentLayout({
       action: onOpenActualizarDatosEstudiante,
     },
     {
-      label: '3. Matrícula académica',
-      description: 'Registrar cabecera, materias, pagos y convenio de matrícula.',
+      label: '3. Matriculación de estudiantes',
+      description: 'Registrar la cabecera y las materias de cada matrícula.',
       page: 'matricula-acad',
+      sectionKey: 'individual',
       category: 'Flujo académico',
-      action: onOpenMatriculaAcad,
+      action: () => onOpenMatriculaAcad('individual'),
     },
     {
       label: '4. Cursado y notas',
@@ -827,7 +874,13 @@ export function StudentLayout({
           sectionKey: 'datos_factura',
           action: () => onOpenGestionSisAcademico('datos_factura'),
         },
-        { label: 'Matricula academica', description: 'Flujo academico actual de matricula.', page: 'matricula-acad', action: onOpenMatriculaAcad },
+        {
+          label: 'Matrícula individual',
+          description: 'Buscar y matricular las materias de un estudiante.',
+          page: 'matricula-acad',
+          sectionKey: 'individual',
+          action: () => onOpenMatriculaAcad('individual'),
+        },
         {
           label: 'Cabecera matricula y pagos',
           description: 'Valores, documentos, jornada y control de matricula.',
@@ -868,6 +921,12 @@ export function StudentLayout({
           page: 'reportes-individuales',
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
+        },
+        {
+          label: 'Idiomas',
+          description: 'Revisar matrículas, entregas por parcial y calificaciones de la Escuela de Idiomas.',
+          page: 'ingles',
+          action: onOpenIngles,
         },
       ],
     },
@@ -986,12 +1045,14 @@ export function StudentLayout({
           label: 'Títulos registrados SENESCYT',
           description: 'Carpetas y documentos registrados por SENESCYT.',
           page: 'titulos-registrados',
+          accessCode: 'titulos-registrados/senescyt',
           action: () => onOpenTitulosRegistrados('senescyt'),
         },
         {
           label: 'Titulación',
           description: 'Carpetas y documentos institucionales INTEC.',
           page: 'titulos-registrados',
+          accessCode: 'titulos-registrados/institucional',
           action: () => onOpenTitulosRegistrados('intec'),
         },
       ],
@@ -1493,14 +1554,12 @@ export function StudentLayout({
       title: 'Integraciones',
       summary: 'Teams, Office 365 y servicios externos',
       items: [
-        ...(isAdministrator
-          ? [{
-              label: 'Credenciales Office 365',
-              description: 'Crear usuarios por curso mediante Microsoft Graph.',
-              page: 'credenciales' as Page,
-              action: onOpenCredentialGenerator,
-            }]
-          : []),
+        {
+          label: 'Credenciales Office 365',
+          description: 'Crear usuarios por curso mediante Microsoft Graph.',
+          page: 'credenciales' as Page,
+          action: onOpenCredentialGenerator,
+        },
         {
           label: 'Correos masivos',
           description: 'Enviar mensajes con adjuntos por cedula mediante Microsoft Graph.',
@@ -1673,6 +1732,12 @@ export function StudentLayout({
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
         },
+        {
+          label: 'Idiomas',
+          description: 'Matrículas, evidencias por parcial y notas de la Escuela de Idiomas.',
+          page: 'ingles',
+          action: onOpenIngles,
+        },
       ],
     },
     {
@@ -1680,7 +1745,13 @@ export function StudentLayout({
       title: 'Control de matrícula',
       summary: 'Matrícula, estudiantes y notas',
       items: [
-        { label: 'Matrícula académica', description: 'Control y registro académico de matrícula.', page: 'matricula-acad', action: onOpenMatriculaAcad },
+        {
+          label: 'Matrícula individual',
+          description: 'Control de cabecera y materias de un estudiante.',
+          page: 'matricula-acad',
+          sectionKey: 'individual',
+          action: () => onOpenMatriculaAcad('individual'),
+        },
         {
           label: 'Materias y notas',
           description: 'Materias matriculadas, paralelos, notas y actualización de calificaciones.',
@@ -2088,12 +2159,14 @@ export function StudentLayout({
           label: 'Títulos registrados SENESCYT',
           description: 'Consultar carpetas y documentos registrados por SENESCYT.',
           page: 'titulos-registrados',
+          accessCode: 'titulos-registrados/senescyt',
           action: () => onOpenTitulosRegistrados('senescyt'),
         },
         {
           label: 'Titulación',
           description: 'Consultar carpetas y documentos institucionales INTEC.',
           page: 'titulos-registrados',
+          accessCode: 'titulos-registrados/institucional',
           action: () => onOpenTitulosRegistrados('intec'),
         },
       ],
@@ -2116,21 +2189,21 @@ export function StudentLayout({
         {
           label: 'Malla curricular',
           description: 'Materias a cursar, codigos, niveles y creditos.',
-          page: 'portal-estudiante',
+          page: 'portal-estudiante-malla-curricular',
           portalSection: 'curricular',
           action: () => onOpenPortalEstudiante('curricular'),
         },
         {
           label: 'Malla academica',
           description: 'Materias aprobadas, pendientes y avance por promedio.',
-          page: 'portal-estudiante',
+          page: 'portal-estudiante-malla-academica',
           portalSection: 'academica',
           action: () => onOpenPortalEstudiante('academica'),
         },
         {
           label: 'Calificaciones por periodo',
           description: 'Revision de notas filtrada por periodo academico.',
-          page: 'portal-estudiante',
+          page: 'portal-estudiante-calificaciones',
           portalSection: 'notas',
           action: () => onOpenPortalEstudiante('notas'),
         },
@@ -2197,15 +2270,15 @@ export function StudentLayout({
   ]
 
   const englishMenuGroup: NavGroup = {
-    key: 'ingles',
-    title: 'Inglés',
-    summary: normalizedRole === 'ESTUDIANTE' ? 'Entrega del examen' : 'Entregas y calificaciones',
+    key: 'idiomas',
+    title: 'Escuela de Idiomas',
+    summary: normalizedRole === 'ESTUDIANTE' ? 'Evidencias por parcial' : 'Entregas y calificaciones',
     items: [
       {
-        label: normalizedRole === 'ESTUDIANTE' ? 'Examen de Inglés' : 'Evaluación de Inglés',
+        label: normalizedRole === 'ESTUDIANTE' ? 'Evaluación de idiomas' : 'Calificaciones de idiomas',
         description: normalizedRole === 'ESTUDIANTE'
-          ? 'Subir la evidencia y reemplazarla durante los 15 minutos habilitados.'
-          : 'Ver, descargar y calificar los archivos entregados por estudiantes.',
+          ? 'Subir el video de cada parcial cuando exista una matrícula vigente de la asignatura.'
+          : 'Consultar únicamente estudiantes matriculados, revisar videos y calificar cada parcial.',
         page: 'ingles',
         action: onOpenIngles,
       },
@@ -2278,15 +2351,15 @@ export function StudentLayout({
       ? [englishMenuGroup, ...teacherMenuGroups]
       : normalizedRole === 'ADMISIONES'
         ? admissionsMenuGroups
-        : normalizedRole === 'SECRETARIA'
+          : normalizedRole === 'SECRETARIA'
           ? [...secretaryMenuGroups, documentExpedientsMenuGroup]
           : academicRoles.has(normalizedRole)
-            ? [...academicMenuGroups, englishMenuGroup, documentExpedientsMenuGroup]
+            ? [enrollmentMenuGroup, ...academicMenuGroups, documentExpedientsMenuGroup]
             : dashboardOnlyRoles.has(normalizedRole)
               ? executiveMenuGroups
               : normalizedRole === 'FINANCIERO'
                 ? financialMenuGroups
-                : [...adminMenuGroups, assignableUtilitiesMenuGroup, englishMenuGroup, documentExpedientsMenuGroup]
+                : [enrollmentMenuGroup, ...adminMenuGroups, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
 
   const roleScopedMenuGroups = roleMenuGroups
     .filter((group) => isAdministrator || group.key !== 'flujo-academico')
@@ -2301,19 +2374,23 @@ export function StudentLayout({
     ...secretaryMenuGroups,
     ...studentMenuGroups,
     ...teacherMenuGroups,
+    enrollmentMenuGroup,
+    scholarshipMenuGroup,
     assignableUtilitiesMenuGroup,
     englishMenuGroup,
     documentExpedientsMenuGroup,
-  ].filter((group) => isAdministrator || group.key !== 'flujo-academico')
+  ]
 
   const menuGroups = screenAccessPages === null
-    ? roleScopedMenuGroups
-        .map((group) => ({
+    ? mergeNavigationGroups(
+        roleScopedMenuGroups
+          .map((group) => ({
           ...group,
           items: group.items.filter((item) => navItemAllowedForRole(normalizedRole, item)),
-        }))
-        .filter((group) => group.items.length > 0)
-    : buildAssignedMenuGroups(roleScopedMenuGroups, navigationCatalogGroups, screenAccessPages)
+          }))
+          .filter((group) => group.items.length > 0),
+      )
+    : buildAssignedMenuGroups([], navigationCatalogGroups, screenAccessPages)
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
@@ -2348,6 +2425,9 @@ export function StudentLayout({
   function itemIsActive(item: NavItem) {
     if (item.page !== activePage) return false
     if (item.sectionKey) {
+      if (item.page === 'matricula-acad') {
+        return item.sectionKey === activeMatriculaAcadMode
+      }
       return item.sectionKey === activeSisAcademicoSection
     }
     if (item.reportKey) {

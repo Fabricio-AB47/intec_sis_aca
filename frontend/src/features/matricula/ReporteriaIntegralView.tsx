@@ -8,7 +8,12 @@ import {
   fetchLegacyStudentGrades,
   updateLegacyStudentGrade,
 } from '../../lib/api'
-import { calculateRegularGradeWithRecovery, constrainDecimalInput, parseBoundedDecimal } from '../../lib/gradeCalculation'
+import {
+  calculateHomologationGradeWithRecovery,
+  calculateRegularGradeWithRecovery,
+  constrainDecimalInput,
+  parseBoundedDecimal,
+} from '../../lib/gradeCalculation'
 import type {
   LegacyActiveGradeStudent,
   LegacyReportOption,
@@ -291,8 +296,11 @@ function draftFinal(row: LegacyReportRow, draft: GradeDraft): number | null {
   if (isHomologationRow(row)) {
     const theory = nullableGrade(draft.teoria_homo)
     const practice = nullableGrade(draft.practica_homo)
-    if (theory === null || practice === null) return null
-    return Math.round(((theory * 0.4) + (practice * 0.6)) * 100) / 100
+    return calculateHomologationGradeWithRecovery(
+      theory,
+      practice,
+      nullableGrade(draft.recuperacion),
+    ).final
   }
   return draftRegularCalculation(draft).final
 }
@@ -405,7 +413,7 @@ export function ReporteriaIntegralView({
     () => reports.find((report) => report.key === reportKey) || reports[0],
     [reportKey, reports],
   )
-  const directReportMode = individualMode && Boolean(initialReportKey)
+  const directReportMode = Boolean(initialReportKey)
   const enabledFilters = useMemo(
     () => reportKey === 'notas_carrera_materia'
       ? new Set(['buscar'])
@@ -726,9 +734,7 @@ export function ReporteriaIntegralView({
         p3_proyectos: parseBoundedDecimal(gradeDraft.p3_proyectos, 10, 'Proyectos del parcial 3'),
         p3_examen: parseBoundedDecimal(gradeDraft.p3_examen, 10, 'Examen del parcial 3'),
         asistencia: parseBoundedDecimal(gradeDraft.asistencia, 100, 'La asistencia'),
-        recuperacion: isHomologationRow(selectedGradeSubject)
-          ? null
-          : parseBoundedDecimal(gradeDraft.recuperacion, 10, 'La recuperación'),
+        recuperacion: parseBoundedDecimal(gradeDraft.recuperacion, 10, 'La recuperación'),
       })
       if (!selectedGradeStudent?.studentCode) throw new Error('No se encontró el código académico del estudiante')
       const refreshed = await fetchLegacyStudentGrades(
@@ -1517,7 +1523,11 @@ export function ReporteriaIntegralView({
                           <label>
                             <span>Recuperación</span>
                             <input type="number" min={0} max={10} step="0.01" value={gradeDraft.recuperacion} onChange={(event) => updateGradeDraft('recuperacion', event.target.value)} />
-                            <small className="reporteria-grade-editor__help">Reemplaza una sola nota puntual mínima entre los tres parciales y luego recalcula el promedio.</small>
+                            <small className="reporteria-grade-editor__help">
+                              {isHomologationRow(selectedGradeSubject)
+                                ? 'Se registra en el único parcial y reemplaza una sola nota mínima entre teoría y práctica.'
+                                : 'Se registra en el tercer parcial, reemplaza una sola nota puntual mínima y recalcula el promedio.'}
+                            </small>
                           </label>
                           <div className="reporteria-grade-editor__final">
                             <span>Promedio final</span>

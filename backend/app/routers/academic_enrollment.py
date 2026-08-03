@@ -1,18 +1,20 @@
 from datetime import date, datetime
 from decimal import Decimal
 import re
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 import pyodbc
 
-from app.core.security import SessionUser, require_roles
+from app.core.security import SessionUser, require_screen_access
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/matricula-acad", tags=["matricula-acad"])
 
-_ACADEMIC_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
+_ACADEMIC_ACCESS = require_screen_access("matricula-acad")
+_MASS_ENROLLMENT_ACCESS = require_screen_access("matricula-acad/masiva")
+_PREREQUISITE_ACCESS = require_screen_access("matricula-acad/prerrequisitos")
 _VALID_TIPO_MATRICULA = {"R", "H", "E"}
 _VALID_TEACHER_STATE_CODES = {"A", "P"}
 _PASSING_FINAL_GRADE = 7.0
@@ -33,6 +35,15 @@ class AcademicEnrollmentPayload(BaseModel):
     valor: float = 0
     fecha_pago: str | None = None
     remove_unselected: bool = False
+    prerequisite_exception_codes: list[int] = Field(default_factory=list)
+    prerequisite_exception_reason: str | None = Field(default=None, max_length=1000)
+
+
+class AcademicPrerequisiteRulePayload(BaseModel):
+    cod_anio_basica: int
+    codigo_materia_previa: int
+    codigo_materia_consecutiva: int
+    bloqueada_por_reprobacion: bool = True
 
 
 class AcademicParallelBalancePayload(BaseModel):
@@ -58,6 +69,8 @@ class AcademicTeacherUniqueEnrollmentPayload(BaseModel):
     semestre: int | None = None
     cod_jornada: int = 1
     estado_moodle_doc: int = 0
+    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"] = "MASIVA"
+    codigos_estudiantes: list[int] = Field(default_factory=list)
 
 
 class AcademicTeacherStatePayload(BaseModel):
@@ -990,6 +1003,46 @@ def _current_subject_item(row: Any) -> dict[str, Any]:
     }
 
 
+def _academic_history_subject_item(row: Any) -> dict[str, Any]:
+    final_grade = _number_value(getattr(row, "PromedioFinal", None))
+    if final_grade is None:
+        final_grade = _number_value(getattr(row, "Promedio", None))
+    has_grades = bool(getattr(row, "tiene_notas", False))
+    approval_code = (
+        _clean(getattr(row, "ControlAprueba", ""))
+        or _clean(getattr(row, "caprueba", ""))
+    ).upper()
+
+    status = "Sin calificar"
+    if has_grades and final_grade is not None:
+        status = "Aprobada" if _is_passing_final_grade(final_grade) else "Reprobada"
+    elif approval_code in {"A", "AP", "APROBADO", "APROBADA"}:
+        status = "Aprobada"
+    elif approval_code in {"R", "RP", "REPROBADO", "REPROBADA"}:
+        status = "Reprobada"
+
+    credits = getattr(row, "Num_Creditos", None)
+    if credits is None:
+        credits = getattr(row, "Creditos", None)
+    return {
+        "codigo_materia": str(getattr(row, "codigo_materia", "") or ""),
+        "cod_materia": _clean(getattr(row, "cod_materia", "")),
+        "nombre_materia": _clean(getattr(row, "Nomb_Materia", "")),
+        "semestre": _int_value(getattr(row, "Semestre", None)),
+        "creditos": _number_value(credits),
+        "paralelo": _clean(getattr(row, "paralelo", "")),
+        "num_grupo": _int_value(getattr(row, "NumGrupo", None)),
+        "num_matricula": str(getattr(row, "Num_Matricula", "") or ""),
+        "fecha_matricula": _date_text(getattr(row, "Fecha_Matricula", None)),
+        "tipo_matricula": _clean(getattr(row, "TipoMatricula", "")),
+        "promedio_final": final_grade,
+        "recuperacion": _number_value(getattr(row, "Recuperacion", None)),
+        "asistencia": _number_value(getattr(row, "Asistencia", None)),
+        "tiene_notas": has_grades,
+        "estado": status,
+    }
+
+
 def _cabecera_item(row: Any) -> dict[str, Any]:
     return {
         "codigo_estud": str(row.codigo_estud),
@@ -1005,7 +1058,85 @@ def _cabecera_item(row: Any) -> dict[str, Any]:
         "control_matricula": _int_value(row.ControlMatricula),
         "carrera": _clean(row.Nombre_Basica),
         "periodo": _clean(row.Detalle_Periodo),
+        "fecha_inicio_periodo": _date_text(getattr(row, "fecha_inicio_periodo", None)),
+        "fecha_fin_periodo": _date_text(getattr(row, "fecha_fin_periodo", None)),
+        "tipo_periodo": _clean(getattr(row, "tipo_periodo", "")),
     }
+
+
+def _academic_history_groups(
+    cabeceras: list[dict[str, Any]],
+    subject_rows: list[Any],
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for cabecera in cabeceras:
+        key = (
+            str(cabecera.get("codigo_periodo") or ""),
+            str(cabecera.get("cod_anio_basica") or ""),
+        )
+        groups.setdefault(
+            key,
+            {
+                "codigo_periodo": key[0],
+                "periodo": _clean(cabecera.get("periodo")),
+                "fecha_inicio": _clean(cabecera.get("fecha_inicio_periodo")),
+                "fecha_fin": _clean(cabecera.get("fecha_fin_periodo")),
+                "tipo_periodo": _clean(cabecera.get("tipo_periodo")),
+                "cod_anio_basica": key[1],
+                "carrera": _clean(cabecera.get("carrera")),
+                "num_matricula": str(cabecera.get("num_matricula") or ""),
+                "jornada": _clean(cabecera.get("jornada")),
+                "materias": {},
+            },
+        )
+
+    for row in subject_rows:
+        period_code = str(getattr(row, "codigo_periodo", "") or "")
+        career_code = str(getattr(row, "cod_anio_Basica", "") or "")
+        key = (period_code, career_code)
+        group = groups.setdefault(
+            key,
+            {
+                "codigo_periodo": period_code,
+                "periodo": _clean(getattr(row, "Detalle_Periodo", "")),
+                "fecha_inicio": _date_text(getattr(row, "fechain", None)),
+                "fecha_fin": _date_text(getattr(row, "fechafin", None)),
+                "tipo_periodo": _clean(getattr(row, "PeriodoTipoMatricula", "")),
+                "cod_anio_basica": career_code,
+                "carrera": _clean(getattr(row, "Nombre_Basica", "")),
+                "num_matricula": str(getattr(row, "Num_Matricula", "") or ""),
+                "jornada": "",
+                "materias": {},
+            },
+        )
+        subject = _academic_history_subject_item(row)
+        subject_code = str(subject.get("codigo_materia") or "")
+        if subject_code:
+            group["materias"][subject_code] = subject
+
+    history: list[dict[str, Any]] = []
+    for group in groups.values():
+        subjects = list(group.pop("materias").values())
+        subjects.sort(
+            key=lambda item: (
+                _int_value(item.get("semestre")) or 0,
+                _natural_sort_key(_clean(item.get("nombre_materia"))),
+            )
+        )
+        group["materias"] = subjects
+        group["total_materias"] = len(subjects)
+        history.append(group)
+
+    history.sort(
+        key=lambda item: (
+            _clean(item.get("fecha_inicio")),
+            _int_value(item.get("codigo_periodo")) or 0,
+            _natural_sort_key(_clean(item.get("carrera"))),
+        ),
+        reverse=True,
+    )
+    return history
 
 
 def _cohort_base_row(row: Any) -> dict[str, Any]:
@@ -1187,6 +1318,23 @@ def _validate_payload(payload: AcademicEnrollmentPayload) -> None:
     if not payload.materia_codes:
         raise HTTPException(status_code=400, detail="Selecciona al menos una materia del pensum")
     payload.materia_codes = sorted({int(code) for code in payload.materia_codes})
+    payload.prerequisite_exception_codes = sorted(
+        {int(code) for code in payload.prerequisite_exception_codes}
+    )
+    invalid_exception_codes = sorted(
+        set(payload.prerequisite_exception_codes) - set(payload.materia_codes)
+    )
+    if invalid_exception_codes:
+        raise HTTPException(
+            status_code=400,
+            detail="Las excepciones de prerrequisito deben pertenecer a las materias seleccionadas",
+        )
+    payload.prerequisite_exception_reason = _clean(payload.prerequisite_exception_reason) or None
+    if payload.prerequisite_exception_codes and len(payload.prerequisite_exception_reason or "") < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Ingrese un motivo de al menos 10 caracteres para autorizar la excepcion de prerrequisito",
+        )
 
 
 def _preinscription_source_for_student(cursor: pyodbc.Cursor, codigo_estud: int) -> Any | None:
@@ -1306,6 +1454,18 @@ def _validate_teacher_payload(payload: AcademicTeacherEnrollmentPayload) -> None
     payload.estado_moodle_doc = 1 if int(payload.estado_moodle_doc or 0) else 0
 
 
+def _normalize_teacher_student_selection(
+    mode: str,
+    student_codes: list[int],
+) -> list[int] | None:
+    normalized = sorted({int(code) for code in student_codes if int(code) > 0})
+    if mode == "INDIVIDUAL":
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Selecciona al menos un estudiante para la matricula individual")
+        return normalized
+    return None
+
+
 def _ensure_teacher_entities_exist(cursor: pyodbc.Cursor, payload: AcademicTeacherEnrollmentPayload) -> dict[str, Any]:
     cursor.execute(
         """
@@ -1402,25 +1562,63 @@ def _link_teacher_to_enrolled_students(
     codigo_materia: int,
     codigo_periodo: int,
     paralelo: str,
+    student_codes: list[int] | None = None,
 ) -> int:
+    if student_codes is not None and not student_codes:
+        return 0
+
     teacher_user = str(codigo_doc)[:10]
+    student_filter = ""
+    params: list[Any] = [
+        teacher_user,
+        cod_anio_basica,
+        codigo_materia,
+        codigo_periodo,
+        paralelo,
+    ]
+    if student_codes is not None:
+        student_filter = f"AND TRY_CONVERT(int, codigo_estud) IN ({', '.join('?' for _ in student_codes)})"
+        params.extend(student_codes)
     cursor.execute(
-        """
+        f"""
         UPDATE dbo.CARRERAXESTUD
         SET Usuario = ?
         WHERE TRY_CONVERT(int, cod_anio_Basica) = ?
           AND TRY_CONVERT(int, codigo_materia) = ?
           AND TRY_CONVERT(int, codigo_periodo) = ?
           AND UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), paralelo), N'')))) = ?
+          {student_filter}
         """,
-        teacher_user,
+        *params,
+    )
+    rowcount = cursor.rowcount
+    return rowcount if isinstance(rowcount, int) and rowcount > 0 else 0
+
+
+def _fetch_teacher_target_student_codes(
+    cursor: pyodbc.Cursor,
+    *,
+    cod_anio_basica: int,
+    codigo_materia: int,
+    codigo_periodo: int,
+    paralelo: str,
+) -> set[int]:
+    cursor.execute(
+        """
+        SELECT DISTINCT TRY_CONVERT(int, codigo_estud) AS codigo_estud
+        FROM dbo.CARRERAXESTUD
+        WHERE TRY_CONVERT(int, cod_anio_Basica) = ?
+          AND TRY_CONVERT(int, codigo_materia) = ?
+          AND TRY_CONVERT(int, codigo_periodo) = ?
+          AND UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), paralelo), N'')))) = ?
+          AND TRY_CONVERT(int, codigo_estud) IS NOT NULL
+        """,
         cod_anio_basica,
         codigo_materia,
         codigo_periodo,
         paralelo,
     )
-    rowcount = cursor.rowcount
-    return rowcount if isinstance(rowcount, int) and rowcount > 0 else 0
+    return {int(row.codigo_estud) for row in cursor.fetchall() if row.codigo_estud is not None}
 
 
 def _ensure_bulk_entities_exist(cursor: pyodbc.Cursor, payload: AcademicBulkEnrollmentPayload) -> None:
@@ -1507,6 +1705,346 @@ def _fetch_existing_codes(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPayl
             current["tiene_notas"] = bool(current["tiene_notas"] or has_grades)
             current["num_matricula"] = max(int(current.get("num_matricula") or 0), num_matricula)
     return existing
+
+
+def _fetch_individual_prerequisite_rules(
+    cursor: pyodbc.Cursor,
+    cod_anio_basica: int,
+    subject_codes: set[int],
+) -> dict[int, list[int]]:
+    if not subject_codes:
+        return {}
+    cursor.execute(
+        "SELECT CASE WHEN OBJECT_ID(N'dbo.MATERIAS_CONSECUTIVAS', N'U') IS NULL THEN 0 ELSE 1 END"
+    )
+    if int(cursor.fetchone()[0] or 0) == 0:
+        return {}
+    ordered_codes = sorted(subject_codes)
+    placeholders = ",".join("?" for _ in ordered_codes)
+    cursor.execute(
+        f"""
+        SELECT
+            TRY_CONVERT(int, cod_materia) AS materia_previa,
+            TRY_CONVERT(int, cod_materia_consecutiva) AS materia_consecutiva
+        FROM dbo.MATERIAS_CONSECUTIVAS
+        WHERE TRY_CONVERT(int, cod_carrera) = ?
+          AND ISNULL(bloqueada_por_reprobacion, 0) = 1
+          AND TRY_CONVERT(int, cod_materia_consecutiva) IN ({placeholders})
+        """,
+        cod_anio_basica,
+        *ordered_codes,
+    )
+    rules: dict[int, list[int]] = {}
+    for row in cursor.fetchall():
+        previous_code = _int_value(row.materia_previa)
+        next_code = _int_value(row.materia_consecutiva)
+        if previous_code is None or next_code is None:
+            continue
+        rules.setdefault(next_code, []).append(previous_code)
+    return {code: sorted(set(previous)) for code, previous in rules.items()}
+
+
+def _require_prerequisite_rules_table(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        "SELECT CASE WHEN OBJECT_ID(N'dbo.MATERIAS_CONSECUTIVAS', N'U') IS NULL THEN 0 ELSE 1 END"
+    )
+    if int(cursor.fetchone()[0] or 0) == 0:
+        raise HTTPException(
+            status_code=503,
+            detail="No existe dbo.MATERIAS_CONSECUTIVAS en INTECBDD",
+        )
+
+
+def _prerequisite_rule_item(row: Any) -> dict[str, Any]:
+    previous_code = _int_value(row.codigo_materia_previa)
+    next_code = _int_value(row.codigo_materia_consecutiva)
+    return {
+        "id": int(row.id),
+        "cod_anio_basica": str(row.cod_anio_basica),
+        "nombre_carrera": _clean(row.nombre_carrera),
+        "codigo_materia_previa": str(previous_code or ""),
+        "cod_materia_previa": _clean(row.cod_materia_previa),
+        "nombre_materia_previa": _clean(row.nombre_materia_previa),
+        "semestre_materia_previa": _int_value(row.semestre_materia_previa),
+        "codigo_materia_consecutiva": str(next_code or ""),
+        "cod_materia_consecutiva": _clean(row.cod_materia_consecutiva),
+        "nombre_materia_consecutiva": _clean(row.nombre_materia_consecutiva),
+        "semestre_materia_consecutiva": _int_value(row.semestre_materia_consecutiva),
+        "bloqueada_por_reprobacion": bool(row.bloqueada_por_reprobacion),
+        "es_autorreferencia": previous_code is not None and previous_code == next_code,
+    }
+
+
+def _prerequisite_edges(
+    cursor: pyodbc.Cursor,
+    cod_anio_basica: int,
+    *,
+    exclude_rule_id: int | None = None,
+) -> list[tuple[int, int]]:
+    parameters: list[Any] = [cod_anio_basica]
+    exclusion = ""
+    if exclude_rule_id is not None:
+        exclusion = "AND id <> ?"
+        parameters.append(exclude_rule_id)
+    cursor.execute(
+        f"""
+        SELECT
+            TRY_CONVERT(int, cod_materia) AS materia_previa,
+            TRY_CONVERT(int, cod_materia_consecutiva) AS materia_consecutiva
+        FROM dbo.MATERIAS_CONSECUTIVAS
+        WHERE TRY_CONVERT(int, cod_carrera) = ?
+          AND ISNULL(bloqueada_por_reprobacion, 0) = 1
+          {exclusion}
+        """,
+        *parameters,
+    )
+    return [
+        (int(row.materia_previa), int(row.materia_consecutiva))
+        for row in cursor.fetchall()
+        if row.materia_previa is not None and row.materia_consecutiva is not None
+    ]
+
+
+def _would_create_prerequisite_cycle(
+    edges: list[tuple[int, int]],
+    previous_code: int,
+    next_code: int,
+) -> bool:
+    adjacency: dict[int, set[int]] = {}
+    for source, target in [*edges, (previous_code, next_code)]:
+        adjacency.setdefault(source, set()).add(target)
+    pending = [next_code]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current == previous_code:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        pending.extend(adjacency.get(current, set()) - visited)
+    return False
+
+
+def _validate_prerequisite_rule(
+    cursor: pyodbc.Cursor,
+    payload: AcademicPrerequisiteRulePayload,
+    *,
+    exclude_rule_id: int | None = None,
+) -> None:
+    _require_prerequisite_rules_table(cursor)
+    if (
+        payload.bloqueada_por_reprobacion
+        and payload.codigo_materia_previa == payload.codigo_materia_consecutiva
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="La materia previa y la materia habilitada deben ser diferentes",
+        )
+    pensum = _fetch_pensum_by_code(cursor, payload.cod_anio_basica)
+    missing = [
+        code
+        for code in (payload.codigo_materia_previa, payload.codigo_materia_consecutiva)
+        if code not in pensum
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Las materias seleccionadas no pertenecen al pensum de la carrera",
+        )
+    parameters: list[Any] = [
+        payload.cod_anio_basica,
+        payload.codigo_materia_previa,
+        payload.codigo_materia_consecutiva,
+    ]
+    exclusion = ""
+    if exclude_rule_id is not None:
+        exclusion = "AND id <> ?"
+        parameters.append(exclude_rule_id)
+    cursor.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM dbo.MATERIAS_CONSECUTIVAS
+        WHERE TRY_CONVERT(int, cod_carrera) = ?
+          AND TRY_CONVERT(int, cod_materia) = ?
+          AND TRY_CONVERT(int, cod_materia_consecutiva) = ?
+          {exclusion}
+        """,
+        *parameters,
+    )
+    if payload.bloqueada_por_reprobacion and int(cursor.fetchone()[0] or 0) > 0:
+        raise HTTPException(status_code=409, detail="El prerrequisito ya se encuentra registrado")
+    if payload.bloqueada_por_reprobacion and _would_create_prerequisite_cycle(
+        _prerequisite_edges(
+            cursor,
+            payload.cod_anio_basica,
+            exclude_rule_id=exclude_rule_id,
+        ),
+        payload.codigo_materia_previa,
+        payload.codigo_materia_consecutiva,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="La relación genera un ciclo de prerrequisitos y no puede guardarse",
+        )
+
+
+def _list_prerequisite_rules(
+    cursor: pyodbc.Cursor,
+    cod_anio_basica: int | None = None,
+    rule_id: int | None = None,
+) -> list[dict[str, Any]]:
+    _require_prerequisite_rules_table(cursor)
+    filters: list[str] = []
+    parameters: list[Any] = []
+    if cod_anio_basica is not None:
+        filters.append("TRY_CONVERT(int, regla.cod_carrera) = ?")
+        parameters.append(cod_anio_basica)
+    if rule_id is not None:
+        filters.append("regla.id = ?")
+        parameters.append(rule_id)
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    cursor.execute(
+        f"""
+        SELECT
+            regla.id,
+            TRY_CONVERT(int, regla.cod_carrera) AS cod_anio_basica,
+            carrera.Nombre_Basica AS nombre_carrera,
+            TRY_CONVERT(int, regla.cod_materia) AS codigo_materia_previa,
+            previa.cod_materia AS cod_materia_previa,
+            previa.Nomb_Materia AS nombre_materia_previa,
+            previa.Semestre AS semestre_materia_previa,
+            TRY_CONVERT(int, regla.cod_materia_consecutiva) AS codigo_materia_consecutiva,
+            consecutiva.cod_materia AS cod_materia_consecutiva,
+            consecutiva.Nomb_Materia AS nombre_materia_consecutiva,
+            consecutiva.Semestre AS semestre_materia_consecutiva,
+            regla.bloqueada_por_reprobacion
+        FROM dbo.MATERIAS_CONSECUTIVAS AS regla
+        LEFT JOIN dbo.CARRERAS AS carrera
+          ON TRY_CONVERT(int, carrera.Cod_AnioBasica) = TRY_CONVERT(int, regla.cod_carrera)
+        LEFT JOIN dbo.PENSUM AS previa
+          ON TRY_CONVERT(int, previa.Cod_AnioBasica) = TRY_CONVERT(int, regla.cod_carrera)
+         AND TRY_CONVERT(int, previa.codigo_materia) = TRY_CONVERT(int, regla.cod_materia)
+        LEFT JOIN dbo.PENSUM AS consecutiva
+          ON TRY_CONVERT(int, consecutiva.Cod_AnioBasica) = TRY_CONVERT(int, regla.cod_carrera)
+         AND TRY_CONVERT(int, consecutiva.codigo_materia) = TRY_CONVERT(int, regla.cod_materia_consecutiva)
+        {where_clause}
+        ORDER BY
+            carrera.Nombre_Basica,
+            TRY_CONVERT(int, consecutiva.Semestre),
+            consecutiva.Nomb_Materia,
+            previa.Nomb_Materia,
+            regla.id
+        """,
+        *parameters,
+    )
+    return [_prerequisite_rule_item(row) for row in cursor.fetchall()]
+
+
+def _fetch_passed_subject_codes(
+    cursor: pyodbc.Cursor,
+    codigo_estud: int,
+    cod_anio_basica: int,
+    subject_codes: set[int],
+) -> set[int]:
+    if not subject_codes:
+        return set()
+    ordered_codes = sorted(subject_codes)
+    placeholders = ",".join("?" for _ in ordered_codes)
+    cursor.execute(
+        f"""
+        SELECT
+            TRY_CONVERT(int, codigo_materia) AS codigo_materia,
+            MAX(TRY_CONVERT(decimal(10, 2), PromedioFinal)) AS mejor_nota
+        FROM dbo.CARRERAXESTUD
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+          AND TRY_CONVERT(int, codigo_materia) IN ({placeholders})
+        GROUP BY TRY_CONVERT(int, codigo_materia)
+        """,
+        codigo_estud,
+        cod_anio_basica,
+        *ordered_codes,
+    )
+    return {
+        int(row.codigo_materia)
+        for row in cursor.fetchall()
+        if row.codigo_materia is not None and _is_passing_final_grade(row.mejor_nota)
+    }
+
+
+def _missing_individual_prerequisites(
+    cursor: pyodbc.Cursor,
+    payload: AcademicEnrollmentPayload,
+    subject_codes: set[int],
+) -> dict[int, list[int]]:
+    rules = _fetch_individual_prerequisite_rules(
+        cursor,
+        payload.cod_anio_basica,
+        subject_codes,
+    )
+    required_codes = {code for previous in rules.values() for code in previous}
+    passed_codes = _fetch_passed_subject_codes(
+        cursor,
+        payload.codigo_estud,
+        payload.cod_anio_basica,
+        required_codes,
+    )
+    return {
+        subject_code: [code for code in previous if code not in passed_codes]
+        for subject_code, previous in rules.items()
+        if any(code not in passed_codes for code in previous)
+    }
+
+
+def _ensure_prerequisite_exception_audit_table(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'dbo.AUD_EXCEPCION_PRERREQUISITO', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.AUD_EXCEPCION_PRERREQUISITO
+            (
+                IdExcepcion BIGINT IDENTITY(1,1) NOT NULL
+                    CONSTRAINT PK_AUD_EXCEPCION_PRERREQUISITO PRIMARY KEY,
+                codigo_estud INT NOT NULL,
+                cod_anio_basica INT NOT NULL,
+                codigo_periodo INT NOT NULL,
+                codigo_materia INT NOT NULL,
+                materias_previas_pendientes NVARCHAR(500) NOT NULL,
+                motivo NVARCHAR(1000) NOT NULL,
+                usuario NVARCHAR(128) NOT NULL,
+                fecha_registro DATETIME2 NOT NULL
+                    CONSTRAINT DF_AUD_EXCEPCION_PRERREQUISITO_FECHA DEFAULT SYSDATETIME()
+            );
+        END
+        """
+    )
+
+
+def _record_prerequisite_exception(
+    cursor: pyodbc.Cursor,
+    payload: AcademicEnrollmentPayload,
+    codigo_materia: int,
+    missing_codes: list[int],
+    user_code: str,
+) -> None:
+    cursor.execute(
+        """
+        INSERT INTO dbo.AUD_EXCEPCION_PRERREQUISITO
+        (
+            codigo_estud, cod_anio_basica, codigo_periodo, codigo_materia,
+            materias_previas_pendientes, motivo, usuario
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        payload.codigo_estud,
+        payload.cod_anio_basica,
+        payload.codigo_periodo,
+        codigo_materia,
+        ",".join(str(code) for code in missing_codes),
+        payload.prerequisite_exception_reason or "",
+        user_code[:128],
+    )
 
 
 def _next_number(cursor: pyodbc.Cursor, table: str, column: str) -> int:
@@ -1816,40 +2354,18 @@ def _preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPaylo
             detail=f"Materias fuera del pensum de la carrera: {', '.join(str(code) for code in invalid_codes)}",
         )
 
-    target_status = _fetch_target_enrollment_status(
-        cursor,
-        payload.codigo_estud,
-        payload.cod_anio_basica,
-        payload.codigo_periodo,
-    )
-    if target_status["existe"]:
-        def blocked_subject_action(code: int) -> dict[str, Any]:
-            subject = dict(pensum_by_code.get(code, {"codigo_materia": str(code), "nombre_materia": ""}))
-            subject["accion"] = "BLOQUEADA_PERIODO"
-            return subject
-
-        return {
-            "criteria": payload.model_dump(),
-            "cabecera": {
-                "accion": "EXISTENTE",
-                "existe": True,
-                "bloqueada_por_periodo": True,
-            },
-            "summary": {
-                "seleccionadas": len(selected_codes),
-                "insertar": 0,
-                "actualizar": 0,
-                "existentes": int(target_status["materias"] or 0),
-                "remover": 0,
-                "bloqueadas_por_notas": 0,
-                "bloqueadas_por_periodo": len(selected_codes),
-            },
-            "items": [blocked_subject_action(code) for code in sorted(selected_codes)],
-        }
-
     existing = _fetch_existing_codes(cursor, payload)
     existing_codes = set(existing)
-    insert_codes = sorted(selected_codes - existing_codes)
+    candidate_insert_codes = selected_codes - existing_codes
+    missing_prerequisites = _missing_individual_prerequisites(
+        cursor,
+        payload,
+        candidate_insert_codes,
+    )
+    authorized_exception_codes = set(payload.prerequisite_exception_codes) & set(missing_prerequisites)
+    blocked_prerequisite_codes = set(missing_prerequisites) - authorized_exception_codes
+    insert_codes = sorted(candidate_insert_codes - set(missing_prerequisites))
+    exception_insert_codes = sorted(authorized_exception_codes)
     existing_selected_codes = sorted(selected_codes & existing_codes)
     update_codes: list[int] = []
     removable_codes = sorted(existing_codes - selected_codes) if payload.remove_unselected else []
@@ -1873,6 +2389,22 @@ def _preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPaylo
     def subject_action(code: int, action: str) -> dict[str, Any]:
         subject = dict(pensum_by_code.get(code, {"codigo_materia": str(code), "nombre_materia": ""}))
         subject["accion"] = action
+        missing_codes = missing_prerequisites.get(code, [])
+        if missing_codes:
+            subject["materias_previas"] = [
+                (
+                    f"{previous_code} - {pensum_by_code[previous_code].get('nombre_materia', '')}"
+                    if previous_code in pensum_by_code
+                    else str(previous_code)
+                )
+                for previous_code in missing_codes
+            ]
+            subject["materias_previas_codigos"] = missing_codes
+            subject["motivo"] = (
+                "Excepcion autorizada: " + (payload.prerequisite_exception_reason or "")
+                if action == "EXCEPCION_PRERREQUISITO"
+                else "Debe aprobar los prerrequisitos antes de matricular esta materia"
+            )
         return subject
 
     return {
@@ -1883,13 +2415,18 @@ def _preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPaylo
         },
         "summary": {
             "seleccionadas": len(selected_codes),
-            "insertar": len(insert_codes),
+            "insertar": len(insert_codes) + len(exception_insert_codes),
             "actualizar": len(update_codes),
             "existentes": len(existing_selected_codes),
             "remover": len(safe_remove_codes),
             "bloqueadas_por_notas": len(blocked_remove_codes),
+            "bloqueadas_por_periodo": 0,
+            "bloqueadas_por_prerrequisito": len(blocked_prerequisite_codes),
+            "excepciones_prerrequisito": len(exception_insert_codes),
         },
         "items": [subject_action(code, "INSERTAR") for code in insert_codes]
+        + [subject_action(code, "EXCEPCION_PRERREQUISITO") for code in exception_insert_codes]
+        + [subject_action(code, "BLOQUEADA_PRERREQUISITO") for code in sorted(blocked_prerequisite_codes)]
         + [subject_action(code, "EXISTENTE") for code in existing_selected_codes]
         + [subject_action(code, "REMOVER") for code in safe_remove_codes]
         + [subject_action(code, "BLOQUEADA_NOTAS") for code in blocked_remove_codes],
@@ -2461,6 +2998,17 @@ def _save_enrollment_with_cursor(
     if not _resolve_or_create_student_from_preinscription(cursor, payload, True):
         _ensure_entity_exists(cursor, payload)
     preview = _preview_with_cursor(cursor, payload)
+    blocked_by_prerequisite = int(
+        preview.get("summary", {}).get("bloqueadas_por_prerrequisito", 0) or 0
+    )
+    if blocked_by_prerequisite > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Existen materias bloqueadas por prerrequisitos. "
+                "Quite esas materias o autorice una excepcion con su justificacion antes de guardar."
+            ),
+        )
     if int(preview.get("summary", {}).get("bloqueadas_por_periodo", 0) or 0) > 0:
         subject_results = [
             {
@@ -2489,6 +3037,18 @@ def _save_enrollment_with_cursor(
         }
     selected_codes = set(payload.materia_codes)
     pensum_by_code = _fetch_pensum_by_code(cursor, payload.cod_anio_basica)
+    preview_by_code = {
+        int(item.get("codigo_materia") or 0): item
+        for item in preview.get("items", [])
+        if _int_value(item.get("codigo_materia")) is not None
+    }
+    prerequisite_exception_codes = {
+        code
+        for code, item in preview_by_code.items()
+        if item.get("accion") == "EXCEPCION_PRERREQUISITO"
+    }
+    if prerequisite_exception_codes:
+        _ensure_prerequisite_exception_audit_table(cursor)
     fecha_pago = payload.fecha_pago or today.isoformat()
 
     cursor.execute(
@@ -2541,6 +3101,7 @@ def _save_enrollment_with_cursor(
     updated = 0
     existing_skipped = 0
     blocked_by_repetition = 0
+    prerequisite_exceptions = 0
     subject_results: list[dict[str, Any]] = []
     for code in sorted(selected_codes):
         subject = pensum_by_code[code]
@@ -2603,14 +3164,38 @@ def _save_enrollment_with_cursor(
                 user_code,
             )
             inserted += 1
+            action = (
+                "EXCEPCION_PRERREQUISITO"
+                if code in prerequisite_exception_codes
+                else "INSERTAR"
+            )
+            if code in prerequisite_exception_codes:
+                missing_codes = [
+                    int(value)
+                    for value in (
+                        preview_by_code.get(code, {}).get("materias_previas_codigos") or []
+                    )
+                ]
+                _record_prerequisite_exception(
+                    cursor,
+                    payload,
+                    code,
+                    missing_codes,
+                    user_code,
+                )
+                prerequisite_exceptions += 1
             subject_results.append(
                 {
                     "codigo_materia": code,
                     "nombre_materia": subject.get("nombre_materia") or "",
                     "num_matricula": subject_num_matricula,
-                    "accion": "INSERTAR",
+                    "accion": action,
                     "fue_matriculado": True,
-                    "observacion": "Materia insertada en CARRERAXESTUD",
+                    "observacion": (
+                        "Materia insertada con excepcion de prerrequisito auditada"
+                        if action == "EXCEPCION_PRERREQUISITO"
+                        else "Materia insertada en CARRERAXESTUD"
+                    ),
                 }
             )
             next_reg += 1
@@ -2647,6 +3232,8 @@ def _save_enrollment_with_cursor(
         "removed": removed,
         "blocked_by_grades": blocked,
         "blocked_by_repetition": blocked_by_repetition,
+        "blocked_by_prerequisite": 0,
+        "prerequisite_exceptions": prerequisite_exceptions,
         "subject_results": subject_results,
         "preview": preview,
     }
@@ -2869,6 +3456,118 @@ def matricula_acad_pensum(
         raise
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando pensum: {exc}") from exc
+
+
+@router.get("/prerequisites")
+def matricula_acad_prerequisites(
+    current_user: Annotated[SessionUser, Depends(_PREREQUISITE_ACCESS)],
+    cod_anio_basica: Annotated[int | None, Query(description="Carrera a consultar")] = None,
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            items = _list_prerequisite_rules(conn.cursor(), cod_anio_basica)
+        return {
+            "total": len(items),
+            "active": sum(1 for item in items if item["bloqueada_por_reprobacion"]),
+            "items": items,
+        }
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error consultando prerrequisitos: {exc}") from exc
+
+
+@router.post("/prerequisites")
+def create_matricula_acad_prerequisite(
+    payload: AcademicPrerequisiteRulePayload,
+    current_user: Annotated[SessionUser, Depends(_PREREQUISITE_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            _validate_prerequisite_rule(cursor, payload)
+            cursor.execute(
+                """
+                INSERT INTO dbo.MATERIAS_CONSECUTIVAS
+                (cod_carrera, cod_materia, cod_materia_consecutiva, bloqueada_por_reprobacion)
+                OUTPUT INSERTED.id
+                VALUES (?, ?, ?, ?)
+                """,
+                str(payload.cod_anio_basica),
+                str(payload.codigo_materia_previa),
+                str(payload.codigo_materia_consecutiva),
+                payload.bloqueada_por_reprobacion,
+            )
+            rule_id = int(cursor.fetchone()[0])
+            conn.commit()
+            item = _list_prerequisite_rules(cursor, rule_id=rule_id)[0]
+        return {"ok": True, "message": "Prerrequisito creado correctamente", "item": item}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error creando prerrequisito: {exc}") from exc
+
+
+@router.put("/prerequisites/{rule_id}")
+def update_matricula_acad_prerequisite(
+    rule_id: int,
+    payload: AcademicPrerequisiteRulePayload,
+    current_user: Annotated[SessionUser, Depends(_PREREQUISITE_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            _require_prerequisite_rules_table(cursor)
+            cursor.execute("SELECT COUNT(*) FROM dbo.MATERIAS_CONSECUTIVAS WHERE id = ?", rule_id)
+            if int(cursor.fetchone()[0] or 0) == 0:
+                raise HTTPException(status_code=404, detail="No se encontró el prerrequisito")
+            _validate_prerequisite_rule(cursor, payload, exclude_rule_id=rule_id)
+            cursor.execute(
+                """
+                UPDATE dbo.MATERIAS_CONSECUTIVAS
+                SET cod_carrera = ?,
+                    cod_materia = ?,
+                    cod_materia_consecutiva = ?,
+                    bloqueada_por_reprobacion = ?
+                WHERE id = ?
+                """,
+                str(payload.cod_anio_basica),
+                str(payload.codigo_materia_previa),
+                str(payload.codigo_materia_consecutiva),
+                payload.bloqueada_por_reprobacion,
+                rule_id,
+            )
+            conn.commit()
+            item = _list_prerequisite_rules(cursor, rule_id=rule_id)[0]
+        return {"ok": True, "message": "Prerrequisito actualizado correctamente", "item": item}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error actualizando prerrequisito: {exc}") from exc
+
+
+@router.delete("/prerequisites/{rule_id}")
+def delete_matricula_acad_prerequisite(
+    rule_id: int,
+    current_user: Annotated[SessionUser, Depends(_PREREQUISITE_ACCESS)],
+) -> dict[str, Any]:
+    del current_user
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            _require_prerequisite_rules_table(cursor)
+            cursor.execute("DELETE FROM dbo.MATERIAS_CONSECUTIVAS WHERE id = ?", rule_id)
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="No se encontró el prerrequisito")
+            conn.commit()
+        return {"ok": True, "message": "Prerrequisito eliminado correctamente"}
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Error eliminando prerrequisito: {exc}") from exc
 
 
 @router.get("/docentes")
@@ -3601,7 +4300,9 @@ def matricula_acad_teacher_parallel_students(
                     TRY_CONVERT(nvarchar(100), sr.paralelo) AS paralelo,
                     TRY_CONVERT(varchar(50), sr.Num_Matricula) AS Num_Matricula,
                     TRY_CONVERT(nvarchar(100), sr.TipoMatricula) AS TipoMatricula,
-                    TRY_CONVERT(float, sr.PromedioFinal) AS PromedioFinal
+                    TRY_CONVERT(float, sr.PromedioFinal) AS PromedioFinal,
+                    TRY_CONVERT(nvarchar(100), sr.Usuario) AS codigo_docente_asignado,
+                    TRY_CONVERT(nvarchar(4000), assigned_teacher.apellidos_nombre) AS docente_asignado
                 FROM student_rows sr
                 INNER JOIN dbo.DATOS_ESTUD d ON TRY_CONVERT(int, d.codigo_estud) = TRY_CONVERT(int, sr.codigo_estud)
                 LEFT JOIN dbo.CARRERAS c ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, sr.cod_anio_Basica)
@@ -3609,6 +4310,11 @@ def matricula_acad_teacher_parallel_students(
                 LEFT JOIN dbo.PENSUM p
                   ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, sr.cod_anio_Basica)
                  AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, sr.codigo_materia)
+                OUTER APPLY (
+                    SELECT TOP (1) TRY_CONVERT(nvarchar(4000), teacher.apellidos_nombre) AS apellidos_nombre
+                    FROM dbo.DATOSDOCENTE teacher
+                    WHERE TRY_CONVERT(int, teacher.codigo_doc) = TRY_CONVERT(int, sr.Usuario)
+                ) assigned_teacher
                 WHERE sr.rn = 1
                 ORDER BY
                     TRY_CONVERT(nvarchar(4000), c.Nombre_Basica),
@@ -3642,6 +4348,8 @@ def matricula_acad_teacher_parallel_students(
                 "num_matricula": str(row.Num_Matricula or ""),
                 "tipo_matricula": _clean(row.TipoMatricula),
                 "promedio_final": _number_value(row.PromedioFinal),
+                "codigo_docente_asignado": _clean(row.codigo_docente_asignado),
+                "docente_asignado": _clean(row.docente_asignado),
             }
             for row in rows
         ]
@@ -3910,6 +4618,11 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
             subject_key = _clean(payload.cod_materia).upper()
             if not subject_key:
                 raise HTTPException(status_code=400, detail="Selecciona una materia valida")
+            selected_student_codes = _normalize_teacher_student_selection(
+                payload.modo_asignacion,
+                payload.codigos_estudiantes,
+            )
+            payload.codigos_estudiantes = selected_student_codes or []
 
             cursor.execute(
                 """
@@ -3955,16 +4668,57 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
                     detail="No se encontraron estudiantes matriculados para esa materia, periodo y paralelo.",
                 )
 
-            inserted = 0
-            existing = 0
-            duplicate_count = 0
-            students_linked = 0
-            assignments: list[dict[str, Any]] = []
+            requested_student_codes = set(selected_student_codes or [])
+            eligible_student_codes: set[int] = set()
+            prepared_targets: list[tuple[Any, int, int, set[int], list[int] | None]] = []
             for target in targets:
                 cod_anio_basica = _int_value(target.cod_anio_basica)
                 codigo_materia = _int_value(target.codigo_materia)
                 if cod_anio_basica is None or codigo_materia is None:
                     continue
+                target_student_codes = _fetch_teacher_target_student_codes(
+                    cursor,
+                    cod_anio_basica=cod_anio_basica,
+                    codigo_materia=codigo_materia,
+                    codigo_periodo=payload.codigo_periodo,
+                    paralelo=payload.paralelo,
+                )
+                eligible_student_codes.update(target_student_codes)
+                target_selection = (
+                    sorted(requested_student_codes.intersection(target_student_codes))
+                    if selected_student_codes is not None
+                    else None
+                )
+                if selected_student_codes is not None and not target_selection:
+                    continue
+                prepared_targets.append(
+                    (target, cod_anio_basica, codigo_materia, target_student_codes, target_selection)
+                )
+
+            if selected_student_codes is not None:
+                missing_codes = sorted(requested_student_codes.difference(eligible_student_codes))
+                if missing_codes:
+                    missing_text = ", ".join(str(code) for code in missing_codes[:10])
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Los estudiantes seleccionados no pertenecen a la materia, periodo y paralelo indicados: "
+                            f"{missing_text}"
+                        ),
+                    )
+            if not prepared_targets:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No hay estudiantes elegibles para la matricula docente solicitada.",
+                )
+
+            inserted = 0
+            existing = 0
+            duplicate_count = 0
+            student_rows_updated = 0
+            linked_student_codes: set[int] = set()
+            assignments: list[dict[str, Any]] = []
+            for target, cod_anio_basica, codigo_materia, target_student_codes, target_selection in prepared_targets:
                 cursor.execute(
                     """
                     SELECT COUNT(*)
@@ -4005,39 +4759,53 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
                         payload.estado_moodle_doc,
                     )
                     inserted += 1
-                students_linked += _link_teacher_to_enrolled_students(
+                student_rows_updated += _link_teacher_to_enrolled_students(
                     cursor,
                     codigo_doc=payload.codigo_doc,
                     cod_anio_basica=cod_anio_basica,
                     codigo_materia=codigo_materia,
                     codigo_periodo=payload.codigo_periodo,
                     paralelo=payload.paralelo,
+                    student_codes=target_selection,
                 )
+                linked_student_codes.update(target_selection or target_student_codes)
                 assignments.append(
                     {
                         "cod_anio_basica": str(cod_anio_basica),
                         "codigo_materia": str(codigo_materia),
                         "nombre_materia": _clean(target.Nomb_Materia),
                         "nombre_carrera": _clean(target.Nombre_Basica),
+                        "students_linked": len(target_selection or target_student_codes),
                     }
             )
             conn.commit()
 
-        already_exists = inserted == 0 and existing > 0
-        return {
-            "ok": not already_exists,
-            "already_exists": already_exists,
-            "message": (
+        students_linked = len(linked_student_codes)
+        course_already_exists = inserted == 0 and existing > 0
+        individual_assignment = payload.modo_asignacion == "INDIVIDUAL"
+        already_exists = course_already_exists and not individual_assignment
+        if individual_assignment:
+            action = "ASIGNACION_INDIVIDUAL"
+            message = f"Se asignaron {students_linked} estudiante(s) al docente seleccionado."
+        else:
+            action = "EXISTENTE" if course_already_exists else "INSERTADA" if inserted and not existing else "MIXTA"
+            message = (
                 "La matricula docente ya existe para la materia, periodo, paralelo y jornada seleccionados."
-                if already_exists
-                else "Matricula docente guardada por materia unica."
-            ),
-            "action": "EXISTENTE" if already_exists else "INSERTADA" if inserted and not existing else "MIXTA",
+                if course_already_exists
+                else "Matricula docente masiva guardada por materia unica."
+            )
+        return {
+            "ok": individual_assignment or not already_exists,
+            "already_exists": already_exists,
+            "message": message,
+            "action": action,
             "inserted_count": inserted,
-            "updated_count": 0,
+            "updated_count": student_rows_updated,
             "existing_count": existing,
             "duplicate_count": duplicate_count,
             "students_linked": students_linked,
+            "students_requested": len(requested_student_codes) if individual_assignment else len(eligible_student_codes),
+            "modo_asignacion": payload.modo_asignacion,
             "docente": teacher,
             "assignments": assignments,
             "criteria": payload.model_dump(),
@@ -4232,7 +5000,10 @@ def matricula_acad_student_detail(
                     cm.codjornada,
                     cm.ControlMatricula,
                     c.Nombre_Basica,
-                    p.Detalle_Periodo
+                    p.Detalle_Periodo,
+                    p.fechain AS fecha_inicio_periodo,
+                    p.fechafin AS fecha_fin_periodo,
+                    p.TipoMatricula AS tipo_periodo
                 FROM dbo.CABECERA_MATRICULA cm
                 LEFT JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = cm.cod_anio_Basica
                 LEFT JOIN dbo.PERIODO p ON p.cod_periodo = cm.codigo_periodo
@@ -4242,6 +5013,81 @@ def matricula_acad_student_detail(
                 codigo_estud,
             )
             cabeceras = [_cabecera_item(row) for row in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                WITH historial AS
+                (
+                    SELECT
+                        cxe.codigo_estud,
+                        cxe.cod_anio_Basica,
+                        cxe.codigo_periodo,
+                        cxe.codigo_materia,
+                        pensum.cod_materia,
+                        pensum.Nomb_Materia,
+                        pensum.Semestre,
+                        pensum.Creditos,
+                        cxe.Num_Creditos,
+                        cxe.paralelo,
+                        cxe.NumGrupo,
+                        cxe.Num_Matricula,
+                        cxe.Fecha_Matricula,
+                        cxe.TipoMatricula,
+                        cxe.Promedio,
+                        cxe.PromedioFinal,
+                        cxe.Recuperacion,
+                        cxe.Asistencia,
+                        cxe.caprueba,
+                        cxe.ControlAprueba,
+                        carrera.Nombre_Basica,
+                        periodo.Detalle_Periodo,
+                        periodo.fechain,
+                        periodo.fechafin,
+                        periodo.TipoMatricula AS PeriodoTipoMatricula,
+                        CASE
+                            WHEN cxe.Promedio IS NOT NULL OR cxe.PromedioFinal IS NOT NULL OR cxe.Recuperacion IS NOT NULL
+                              OR cxe.P1Tareas IS NOT NULL OR cxe.P1Proyectos IS NOT NULL OR cxe.P1Examen IS NOT NULL
+                              OR cxe.P2Tareas IS NOT NULL OR cxe.P2Proyectos IS NOT NULL OR cxe.P2Examen IS NOT NULL
+                              OR cxe.P3Tareas IS NOT NULL OR cxe.P3Proyectos IS NOT NULL OR cxe.P3Examen IS NOT NULL
+                              OR cxe.teoriaHomo IS NOT NULL OR cxe.practicahomo IS NOT NULL
+                            THEN 1 ELSE 0
+                        END AS tiene_notas,
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY
+                                TRY_CONVERT(int, cxe.codigo_estud),
+                                TRY_CONVERT(int, cxe.cod_anio_Basica),
+                                TRY_CONVERT(int, cxe.codigo_periodo),
+                                TRY_CONVERT(int, cxe.codigo_materia)
+                            ORDER BY
+                                TRY_CONVERT(bigint, cxe.num) DESC,
+                                TRY_CONVERT(int, cxe.Num_Matricula) DESC,
+                                cxe.Fecha_Matricula DESC
+                        ) AS fila
+                    FROM dbo.CARRERAXESTUD cxe
+                    LEFT JOIN dbo.PENSUM pensum
+                      ON TRY_CONVERT(int, pensum.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                     AND TRY_CONVERT(int, pensum.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                    LEFT JOIN dbo.CARRERAS carrera
+                      ON TRY_CONVERT(int, carrera.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                    LEFT JOIN dbo.PERIODO periodo
+                      ON TRY_CONVERT(int, periodo.cod_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
+                    WHERE TRY_CONVERT(int, cxe.codigo_estud) = ?
+                )
+                SELECT *
+                FROM historial
+                WHERE fila = 1
+                ORDER BY
+                    fechain DESC,
+                    TRY_CONVERT(int, codigo_periodo) DESC,
+                    Nombre_Basica,
+                    Semestre,
+                    Nomb_Materia
+                """,
+                codigo_estud,
+            )
+            history_rows = cursor.fetchall()
+            academic_history = _academic_history_groups(cabeceras, history_rows)
 
             selected_career = (
                 cod_anio_basica
@@ -4328,6 +5174,7 @@ def matricula_acad_student_detail(
             "cabeceras": cabeceras,
             "pensum": pensum,
             "materias_actuales": current_subjects,
+            "historial_academico": academic_history,
         }
     except HTTPException:
         raise
@@ -4354,7 +5201,7 @@ def matricula_acad_preview(
 @router.post("/bulk/preview")
 def matricula_acad_bulk_preview(
     payload: AcademicBulkEnrollmentPayload,
-    current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_MASS_ENROLLMENT_ACCESS)],
 ) -> dict[str, Any]:
     del current_user
     try:
@@ -4370,7 +5217,7 @@ def matricula_acad_bulk_preview(
 @router.post("/bulk/save")
 def matricula_acad_bulk_save(
     payload: AcademicBulkEnrollmentPayload,
-    current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_MASS_ENROLLMENT_ACCESS)],
 ) -> dict[str, Any]:
     today = date.today()
     user_code = (current_user.login or "APP")[:10]

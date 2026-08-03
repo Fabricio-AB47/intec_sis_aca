@@ -22,6 +22,8 @@ type MatriculaDocenteViewProps = {
   displayName: string
 }
 
+type TeacherEnrollmentMode = 'MASIVA' | 'INDIVIDUAL'
+
 type ConfirmDialogState = {
   title: string
   message: string
@@ -106,6 +108,9 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const [teacherStudents, setTeacherStudents] = useState<AcademicTeacherStudentItem[]>([])
   const [teacherStudentsLoading, setTeacherStudentsLoading] = useState(false)
   const [teacherStudentsError, setTeacherStudentsError] = useState('')
+  const [teacherEnrollmentMode, setTeacherEnrollmentMode] = useState<TeacherEnrollmentMode>('MASIVA')
+  const [selectedStudentCodes, setSelectedStudentCodes] = useState<string[]>([])
+  const [teacherStudentQuery, setTeacherStudentQuery] = useState('')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null)
 
   const selectedPeriodName = periods.find((period) => period.codigo_periodo === selectedPeriod)?.detalle_periodo || ''
@@ -128,6 +133,31 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       registros: teacherEnrollments.length,
     }
   }, [teacherEnrollments])
+  const uniqueTeacherStudents = useMemo(() => {
+    const studentsByCode = new Map<string, AcademicTeacherStudentItem>()
+    teacherStudents.forEach((student) => {
+      if (student.codigo_estud && !studentsByCode.has(student.codigo_estud)) {
+        studentsByCode.set(student.codigo_estud, student)
+      }
+    })
+    return [...studentsByCode.values()]
+  }, [teacherStudents])
+  const filteredTeacherStudents = useMemo(() => {
+    const query = teacherStudentQuery.trim().toLocaleLowerCase('es')
+    if (!query) return uniqueTeacherStudents
+    return uniqueTeacherStudents.filter((student) =>
+      [
+        student.nombre_estudiante,
+        student.cedula,
+        student.codigo_estud,
+        student.nombre_carrera,
+        student.correo_intec,
+      ].some((value) => String(value || '').toLocaleLowerCase('es').includes(query))
+    )
+  }, [teacherStudentQuery, uniqueTeacherStudents])
+  const selectedStudentCodeSet = useMemo(() => new Set(selectedStudentCodes), [selectedStudentCodes])
+  const allVisibleStudentsSelected =
+    filteredTeacherStudents.length > 0 && filteredTeacherStudents.every((student) => selectedStudentCodeSet.has(student.codigo_estud))
 
   useEffect(() => {
     let cancelled = false
@@ -167,6 +197,31 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherActionMessage('')
   }
 
+  function changeTeacherEnrollmentMode(mode: TeacherEnrollmentMode) {
+    setTeacherEnrollmentMode(mode)
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
+    clearTeacherMessages()
+  }
+
+  function toggleStudentSelection(studentCode: string) {
+    setSelectedStudentCodes((current) =>
+      current.includes(studentCode) ? current.filter((code) => code !== studentCode) : [...current, studentCode]
+    )
+    clearTeacherMessages()
+  }
+
+  function selectVisibleStudents() {
+    const visibleCodes = filteredTeacherStudents.map((student) => student.codigo_estud).filter(Boolean)
+    setSelectedStudentCodes((current) => [...new Set([...current, ...visibleCodes])])
+    clearTeacherMessages()
+  }
+
+  function clearStudentSelection() {
+    setSelectedStudentCodes([])
+    clearTeacherMessages()
+  }
+
   function clearParallelOptions() {
     setParallel('')
     setParallelOptions([])
@@ -180,6 +235,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherQuery('')
     setTeacherStudents([])
     setTeacherStudentsError('')
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
     clearTeacherMessages()
   }
 
@@ -193,6 +250,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     }
     setTeacherStudents([])
     setTeacherStudentsError('')
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
     clearTeacherMessages()
   }
 
@@ -219,6 +278,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setParallelOptionsError('')
     setTeacherEnrollments([])
     setTeacherStudents([])
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
     clearTeacherMessages()
   }
 
@@ -229,6 +290,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     clearParallelOptions()
     setTeacherEnrollments([])
     setTeacherStudents([])
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
     clearTeacherMessages()
   }
 
@@ -369,7 +432,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         selectedCareerCodes,
         selectedSubjectLevel
       )
-      setTeacherStudents(payload.items || [])
+      const items = payload.items || []
+      setTeacherStudents(items)
+      const availableCodes = new Set(items.map((student) => student.codigo_estud))
+      setSelectedStudentCodes((current) => current.filter((code) => availableCodes.has(code)))
     } catch (error) {
       setTeacherStudents([])
       setTeacherStudentsError(handleError(error, 'Error consultando estudiantes del paralelo'))
@@ -386,6 +452,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setParallelOptions([])
     setTeacherEnrollments([])
     setTeacherStudents([])
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
     setTeacherActionError('')
     setTeacherActionMessage('')
     if (selectedPeriod) {
@@ -422,6 +490,11 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     void loadTeacherStudents()
   }, [loadTeacherStudents, parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
 
+  useEffect(() => {
+    setSelectedStudentCodes([])
+    setTeacherStudentQuery('')
+  }, [parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+
   async function saveTeacherEnrollment() {
     if (!selectedTeacherCode || !selectedPeriod || !selectedSubjectCode) {
       setTeacherActionError('Selecciona docente, periodo y materia unica.')
@@ -431,9 +504,17 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       setTeacherActionError('Selecciona un paralelo con estudiantes matriculados.')
       return
     }
+    if (teacherEnrollmentMode === 'INDIVIDUAL' && selectedStudentCodes.length === 0) {
+      setTeacherActionError('Selecciona al menos un estudiante para la matricula docente individual.')
+      return
+    }
+    const assignmentDescription =
+      teacherEnrollmentMode === 'INDIVIDUAL'
+        ? `${selectedStudentCodes.length} estudiante(s) seleccionado(s)`
+        : `todos los ${uniqueTeacherStudents.length} estudiante(s) del paralelo`
     const confirmed = await requestConfirm(
-      'Matricular docente',
-      `Matricular ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubject?.nombre_materia || selectedSubjectCode}, periodo ${selectedPeriodName || selectedPeriod}, paralelo ${parallel}?`
+      teacherEnrollmentMode === 'INDIVIDUAL' ? 'Asignar estudiantes' : 'Matricula docente masiva',
+      `Asignar ${assignmentDescription} a ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubject?.nombre_materia || selectedSubjectCode}, periodo ${selectedPeriodName || selectedPeriod}, paralelo ${parallel}?`
     )
     if (!confirmed) return
 
@@ -449,6 +530,9 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         semestre: selectedSubjectLevel ? Number(selectedSubjectLevel) : null,
         cod_jornada: toNumber(teacherJourney, 1),
         estado_moodle_doc: 0,
+        modo_asignacion: teacherEnrollmentMode,
+        codigos_estudiantes:
+          teacherEnrollmentMode === 'INDIVIDUAL' ? selectedStudentCodes.map((code) => Number(code)) : [],
       })
       const inserted = response.inserted_count ?? (response.action === 'INSERTADA' ? 1 : 0)
       const existing = response.existing_count ?? (response.action === 'EXISTENTE' ? 1 : 0)
@@ -459,8 +543,13 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         )
       } else {
         setTeacherActionMessage(
-          `Matricula docente guardada. Insertadas ${inserted}, existentes ${existing}, estudiantes vinculados ${linked}.`
+          teacherEnrollmentMode === 'INDIVIDUAL'
+            ? `Asignacion individual guardada. ${linked} estudiante(s) vinculado(s) al docente.`
+            : `Matricula docente masiva guardada. Insertadas ${inserted}, existentes ${existing}, estudiantes vinculados ${linked}.`
         )
+      }
+      if (teacherEnrollmentMode === 'INDIVIDUAL' && response.ok !== false) {
+        setSelectedStudentCodes([])
       }
       await loadTeacherEnrollments()
       await loadTeacherStudents()
@@ -505,9 +594,21 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 type="button"
                 className="primary-action"
                 onClick={saveTeacherEnrollment}
-                disabled={teacherSaveLoading || !selectedTeacherCode || !selectedPeriod || !selectedSubjectCode || !parallel}
+                disabled={
+                  teacherSaveLoading ||
+                  !selectedTeacherCode ||
+                  !selectedPeriod ||
+                  !selectedSubjectCode ||
+                  !parallel ||
+                  uniqueTeacherStudents.length === 0 ||
+                  (teacherEnrollmentMode === 'INDIVIDUAL' && selectedStudentCodes.length === 0)
+                }
               >
-                {teacherSaveLoading ? 'Guardando...' : 'Matricular docente'}
+                {teacherSaveLoading
+                  ? 'Guardando...'
+                  : teacherEnrollmentMode === 'INDIVIDUAL'
+                    ? `Asignar ${selectedStudentCodes.length || ''} estudiante(s)`
+                    : 'Matricular curso completo'}
               </button>
             </div>
           </div>
@@ -547,6 +648,27 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               </button>
             </div>
             {teacherSearchError ? <p className="form-error">{teacherSearchError}</p> : null}
+          </div>
+
+          <div className="matricula-docente-mode" role="group" aria-label="Modalidad de matricula docente">
+            <button
+              type="button"
+              className={teacherEnrollmentMode === 'MASIVA' ? 'matricula-docente-mode__option is-active' : 'matricula-docente-mode__option'}
+              aria-pressed={teacherEnrollmentMode === 'MASIVA'}
+              onClick={() => changeTeacherEnrollmentMode('MASIVA')}
+            >
+              <strong>Matricula masiva</strong>
+              <span>Asigna al docente todos los estudiantes del curso seleccionado.</span>
+            </button>
+            <button
+              type="button"
+              className={teacherEnrollmentMode === 'INDIVIDUAL' ? 'matricula-docente-mode__option is-active' : 'matricula-docente-mode__option'}
+              aria-pressed={teacherEnrollmentMode === 'INDIVIDUAL'}
+              onClick={() => changeTeacherEnrollmentMode('INDIVIDUAL')}
+            >
+              <strong>Matricula individual</strong>
+              <span>Permite buscar y seleccionar uno o varios estudiantes.</span>
+            </button>
           </div>
 
           <div className="matricula-acad-form">
@@ -805,11 +927,15 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         <article className="student-card student-card--wide matricula-panel">
           <div className="section-title">
             <div>
-              <span>Estudiantes</span>
-              <h2>Estudiantes del paralelo seleccionado</h2>
+              <span>{teacherEnrollmentMode === 'INDIVIDUAL' ? 'Seleccion individual' : 'Curso completo'}</span>
+              <h2>
+                {teacherEnrollmentMode === 'INDIVIDUAL'
+                  ? 'Seleccionar estudiantes para el docente'
+                  : 'Estudiantes incluidos en la matricula masiva'}
+              </h2>
             </div>
             <div className="matricula-acad-title-actions">
-              <span>{teacherStudentsLoading ? 'Cargando...' : `${teacherStudents.length} registro(s)`}</span>
+              <span>{teacherStudentsLoading ? 'Cargando...' : `${uniqueTeacherStudents.length} estudiante(s)`}</span>
               <button
                 type="button"
                 className="ghost-button"
@@ -821,10 +947,49 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
             </div>
           </div>
           {teacherStudentsError ? <p className="form-error">{teacherStudentsError}</p> : null}
+          <div className="matricula-docente-student-toolbar">
+            <label>
+              <span>Buscar estudiante</span>
+              <input
+                value={teacherStudentQuery}
+                placeholder="Nombre, cedula, codigo, correo o carrera"
+                onChange={(event) => setTeacherStudentQuery(event.target.value)}
+              />
+            </label>
+            {teacherEnrollmentMode === 'INDIVIDUAL' ? (
+              <div className="matricula-docente-student-actions">
+                <div className="matricula-docente-selection-count">
+                  <span>Seleccionados</span>
+                  <strong>{selectedStudentCodes.length}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={allVisibleStudentsSelected ? clearStudentSelection : selectVisibleStudents}
+                  disabled={filteredTeacherStudents.length === 0}
+                >
+                  {allVisibleStudentsSelected ? 'Limpiar seleccion' : 'Seleccionar visibles'}
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={saveTeacherEnrollment}
+                  disabled={teacherSaveLoading || selectedStudentCodes.length === 0 || !selectedTeacherCode}
+                >
+                  {teacherSaveLoading ? 'Guardando...' : 'Asignar seleccionados'}
+                </button>
+              </div>
+            ) : (
+              <p className="matricula-docente-mass-note">
+                Al guardar se asignaran los {uniqueTeacherStudents.length} estudiantes mostrados para este curso.
+              </p>
+            )}
+          </div>
           <div className="matricula-table-wrap">
             <table className="matricula-table">
               <thead>
                 <tr>
+                  {teacherEnrollmentMode === 'INDIVIDUAL' ? <th className="matricula-docente-select-column">Seleccionar</th> : null}
                   <th>Estudiante</th>
                   <th>Cedula</th>
                   <th>Carrera</th>
@@ -833,21 +998,39 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   <th>Paralelo</th>
                   <th>Matricula</th>
                   <th>Promedio</th>
+                  <th>Asignacion actual</th>
                 </tr>
               </thead>
               <tbody>
                 {teacherStudentsLoading ? (
                   <tr>
-                    <td colSpan={8}>Cargando estudiantes...</td>
+                    <td colSpan={teacherEnrollmentMode === 'INDIVIDUAL' ? 10 : 9}>Cargando estudiantes...</td>
                   </tr>
                 ) : null}
-                {!teacherStudentsLoading && teacherStudents.length === 0 ? (
+                {!teacherStudentsLoading && filteredTeacherStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>Sin estudiantes matriculados para ese periodo, materia y paralelo.</td>
+                    <td colSpan={teacherEnrollmentMode === 'INDIVIDUAL' ? 10 : 9}>
+                      {teacherStudentQuery.trim()
+                        ? 'No hay estudiantes que coincidan con la busqueda.'
+                        : 'Sin estudiantes matriculados para ese periodo, materia y paralelo.'}
+                    </td>
                   </tr>
                 ) : null}
-                {teacherStudents.map((student) => (
-                  <tr key={`${student.codigo_periodo}-${student.codigo_estud}-${student.codigo_materia}-${student.paralelo}`}>
+                {filteredTeacherStudents.map((student) => (
+                  <tr
+                    key={`${student.codigo_periodo}-${student.codigo_estud}-${student.codigo_materia}-${student.paralelo}`}
+                    className={selectedStudentCodeSet.has(student.codigo_estud) ? 'matricula-docente-student-row--selected' : ''}
+                  >
+                    {teacherEnrollmentMode === 'INDIVIDUAL' ? (
+                      <td className="matricula-docente-select-column">
+                        <input
+                          type="checkbox"
+                          checked={selectedStudentCodeSet.has(student.codigo_estud)}
+                          aria-label={`Seleccionar ${student.nombre_estudiante || student.codigo_estud}`}
+                          onChange={() => toggleStudentSelection(student.codigo_estud)}
+                        />
+                      </td>
+                    ) : null}
                     <td>
                       <strong>{student.nombre_estudiante || student.codigo_estud}</strong>
                       <span>{student.correo_intec || student.correo_personal || '-'}</span>
@@ -859,6 +1042,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                     <td>{student.paralelo || '-'}</td>
                     <td>{student.num_matricula || '-'}</td>
                     <td>{valueOrDash(student.promedio_final)}</td>
+                    <td>
+                      <strong>{student.docente_asignado || student.codigo_docente_asignado || 'Sin asignar'}</strong>
+                      {student.codigo_docente_asignado === selectedTeacherCode ? <span>Docente seleccionado</span> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>

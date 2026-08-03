@@ -6063,6 +6063,76 @@
   margin-bottom: 0;
 }
 
+.screen-access-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2400;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(8, 14, 31, 0.66);
+  backdrop-filter: blur(3px);
+}
+
+.screen-access-confirm-modal {
+  width: min(480px, calc(100vw - 28px));
+  overflow: hidden;
+  border: 1px solid rgba(141, 187, 199, 0.72);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 28px 72px rgba(8, 14, 31, 0.32);
+}
+
+.screen-access-confirm-modal header {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(199, 198, 198, 0.72);
+  background: linear-gradient(180deg, #ffffff, rgba(141, 187, 199, 0.1));
+}
+
+.screen-access-confirm-modal header span {
+  display: block;
+  margin-bottom: 5px;
+  color: #9b241f;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.screen-access-confirm-modal h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.screen-access-confirm-modal p {
+  margin: 0;
+  padding: 18px 20px;
+  color: #44506d;
+  line-height: 1.5;
+}
+
+.screen-access-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 20px 20px;
+}
+
+.screen-access-confirm-actions button {
+  min-height: 42px;
+}
+
+.screen-access-confirm-discard {
+  border-color: #a9201b;
+  background: #a9201b;
+  color: #ffffff;
+}
+
+.screen-access-confirm-discard:hover:not(:disabled) {
+  border-color: #8e1b17;
+  background: #8e1b17;
+}
+
 .screen-access-source {
   display: grid;
   min-width: min(100%, 280px);
@@ -6578,6 +6648,23 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+}
+
+.screen-access-priority-group {
+  border-color: rgba(15, 130, 124, 0.52);
+  background: linear-gradient(180deg, rgba(141, 187, 199, 0.14), #ffffff);
+  box-shadow: inset 4px 0 0 rgba(15, 130, 124, 0.82);
+}
+
+.screen-access-priority-group .screen-access-group__head p {
+  margin: 5px 0 0;
+  color: #5f6987;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.screen-access-priority-grid {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
 
 .screen-access-group h4 {
@@ -9759,6 +9846,66 @@
   max-width: 1040px;
 }
 
+.gestion-sis-student-modal {
+  width: min(1480px, 96vw);
+  max-width: 1480px;
+}
+
+.gestion-sis-student-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 12px;
+}
+
+.gestion-sis-student-summary article {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  min-height: 92px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff, rgba(141, 187, 199, 0.08));
+}
+
+.gestion-sis-student-summary span {
+  color: #5f6987;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gestion-sis-student-summary strong {
+  color: #16234a;
+  font-size: 17px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.gestion-sis-student-summary small {
+  color: #66718e;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.gestion-sis-student-history {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(199, 198, 198, 0.72);
+}
+
+.gestion-sis-student-history .section-title {
+  margin-bottom: 0;
+}
+
+@media (max-width: 920px) {
+  .screen-access-priority-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .gestion-sis-form-helper {
   display: grid;
   gap: 4px;
@@ -9838,10 +9985,23 @@
   position: sticky;
   bottom: -16px;
   z-index: 3;
+  justify-content: flex-end;
   margin: 16px -16px -16px;
   padding: 12px 16px;
   border-top: 1px solid rgba(199, 198, 198, 0.66);
   background: rgba(255, 255, 255, 0.96);
+}
+
+.gestion-sis-modal-actions .gestion-sis-modal-actions__secondary {
+  border: 1px solid var(--line-strong);
+  background: #ffffff;
+  color: #26314f;
+}
+
+@media (max-width: 700px) {
+  .gestion-sis-student-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 .reporteria-row-action {
@@ -11252,6 +11412,120 @@
   margin-top: 16px;
 }
 
+.matricula-acad-history {
+  display: grid;
+  gap: 10px;
+}
+
+.matricula-acad-history-period {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.matricula-acad-history-period > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 14px;
+  background: var(--surface-tint);
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.matricula-acad-history-period > summary::-webkit-details-marker {
+  display: none;
+}
+
+.matricula-acad-history-period > summary::after {
+  content: '+';
+  width: 24px;
+  color: var(--ink-soft);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+
+.matricula-acad-history-period[open] > summary::after {
+  content: '\2212';
+}
+
+.matricula-acad-history-period > summary > div:first-child,
+.matricula-acad-history-summary-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.matricula-acad-history-period > summary strong {
+  overflow-wrap: anywhere;
+}
+
+.matricula-acad-history-period > summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.matricula-acad-history-summary-meta {
+  justify-items: end;
+  text-align: right;
+}
+
+.matricula-acad-history-summary-meta em {
+  color: var(--ink);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.matricula-acad-history-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(141, 187, 199, 0.05);
+}
+
+.matricula-acad-history-meta div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.matricula-acad-history-meta div:last-child {
+  border-right: 0;
+}
+
+.matricula-acad-history-meta span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.matricula-acad-history-meta strong {
+  color: var(--ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.matricula-acad-history-table {
+  border: 0;
+  border-radius: 0;
+}
+
+.matricula-acad-history-table .status-pill {
+  white-space: nowrap;
+}
+
 .matricula-acad-ficha-card-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
@@ -11348,6 +11622,10 @@
     grid-template-columns: 1fr;
   }
 
+  .matricula-acad-history-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .matricula-acad-ficha-card-grid {
     border-left: 0;
     border-top: 1px solid rgba(199, 198, 198, 0.7);
@@ -11356,6 +11634,35 @@
 }
 
 @media (max-width: 640px) {
+  .matricula-acad-history-period > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .matricula-acad-history-summary-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .matricula-acad-history-period > summary::after {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .matricula-acad-history-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-acad-history-meta div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .matricula-acad-history-meta div:last-child {
+    border-bottom: 0;
+  }
+
   .matricula-acad-ficha-card-grid div {
     border-right: 0;
     border-bottom: 1px solid rgba(199, 198, 198, 0.7);
@@ -12095,6 +12402,49 @@
   background: rgba(255, 255, 255, 0.68);
 }
 
+.matricula-docente-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid rgba(141, 187, 199, 0.68);
+  border-radius: 8px;
+  background: rgba(231, 242, 245, 0.72);
+}
+
+.matricula-docente-mode__option {
+  display: grid;
+  gap: 3px;
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #26314f;
+  text-align: left;
+}
+
+.matricula-docente-mode__option strong {
+  font-size: 14px;
+}
+
+.matricula-docente-mode__option span {
+  color: #66708c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.matricula-docente-mode__option.is-active {
+  border-color: rgba(15, 134, 130, 0.56);
+  background: #ffffff;
+  box-shadow: 0 4px 10px rgba(16, 25, 52, 0.08);
+}
+
+.matricula-docente-mode__option.is-active strong {
+  color: #08736f;
+}
+
 .matricula-docente-loaded {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -12214,6 +12564,79 @@
 .matricula-docente-selector-empty span {
   color: #5f6987;
   font-size: 13px;
+}
+
+.matricula-docente-student-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.62);
+  border-radius: 8px;
+  background: rgba(231, 242, 245, 0.55);
+}
+
+.matricula-docente-student-toolbar > label {
+  display: grid;
+  gap: 6px;
+}
+
+.matricula-docente-student-toolbar > label span,
+.matricula-docente-selection-count span {
+  color: #5f6987;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.matricula-docente-student-toolbar input[type='text'] {
+  width: 100%;
+}
+
+.matricula-docente-student-actions {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.matricula-docente-selection-count {
+  display: grid;
+  min-width: 92px;
+  min-height: 44px;
+  align-content: center;
+  padding: 6px 10px;
+  border-right: 1px solid rgba(141, 187, 199, 0.7);
+}
+
+.matricula-docente-selection-count strong {
+  color: #101934;
+  font-size: 18px;
+}
+
+.matricula-docente-mass-note {
+  max-width: 440px;
+  margin: 0;
+  color: #44506d;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.matricula-docente-select-column {
+  width: 86px;
+  text-align: center;
+}
+
+.matricula-docente-select-column input {
+  width: 17px;
+  min-height: 17px;
+  margin: 0;
+}
+
+.matricula-table tbody tr.matricula-docente-student-row--selected td {
+  background: rgba(15, 134, 130, 0.08);
 }
 
 .estado-docente-grid .student-card--wide {
@@ -13242,6 +13665,8 @@
   .matricula-docente-loaded,
   .matricula-docente-main-selector,
   .matricula-docente-selector-controls,
+  .matricula-docente-mode,
+  .matricula-docente-student-toolbar,
   .estado-docente-controls {
     grid-template-columns: 1fr;
   }
@@ -13335,6 +13760,21 @@
 
   .matricula-docente-school-actions {
     grid-template-columns: 1fr;
+  }
+
+  .matricula-docente-student-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-docente-selection-count {
+    border-right: 0;
+    border-bottom: 1px solid rgba(141, 187, 199, 0.7);
+  }
+
+  .matricula-docente-mass-note {
+    max-width: none;
+    text-align: left;
   }
 }
 
@@ -30642,6 +31082,50 @@ body .student-sidebar .logout-button {
   align-self: stretch;
 }
 
+.grade-area-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #cfd9df;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: var(--card-shadow-soft);
+}
+
+.grade-area-tabs button {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 0;
+  border-right: 1px solid #d8e1e6;
+  border-radius: 0;
+  background: #fff;
+  color: #526078;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.grade-area-tabs button:last-child {
+  border-right: 0;
+}
+
+.grade-area-tabs button:hover,
+.grade-area-tabs button:focus-visible {
+  background: #f2f7f8;
+  color: #116978;
+}
+
+.grade-area-tabs button.is-active {
+  background: #177b89;
+  color: #fff;
+}
+
+.grade-area-tabs button:disabled:not(.is-active) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .admin-grades-alert {
   padding: 12px 15px;
   border: 1px solid #e2aaa7;
@@ -31713,6 +32197,69 @@ body .student-sidebar .logout-button {
   grid-column: 1 / -1;
 }
 
+.english-video-preview,
+.english-review-video {
+  display: block;
+  width: 100%;
+  border: 1px solid #c8d8de;
+  border-radius: 7px;
+  background: #101820;
+  object-fit: contain;
+}
+
+.english-video-preview {
+  max-height: 440px;
+  aspect-ratio: 16 / 9;
+}
+
+.english-review-video {
+  max-height: 480px;
+  aspect-ratio: 16 / 9;
+}
+
+.english-confirm-delivery {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid #e0bd78;
+  border-left: 5px solid #b77913;
+  border-radius: 7px;
+  background: #fff8e8;
+}
+
+.english-confirm-delivery > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.english-confirm-delivery strong { color: #563900; }
+.english-confirm-delivery span { color: #78510a; line-height: 1.45; }
+
+.english-activity-window {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #d7e1e5;
+  border-radius: 7px;
+  background: #f7fafb;
+}
+
+.english-activity-window > span {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-right: 1px solid #d7e1e5;
+  color: #667187;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.english-activity-window > span:last-child { border-right: 0; }
+.english-activity-window strong { color: #17213d; overflow-wrap: anywhere; }
+
 .english-grade-result {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -31762,7 +32309,7 @@ body .student-sidebar .logout-button {
 
 .english-review-filters {
   display: grid;
-  grid-template-columns: minmax(270px, 0.65fr) minmax(320px, 1fr) minmax(190px, 0.3fr) auto;
+  grid-template-columns: minmax(250px, 0.7fr) minmax(260px, 0.7fr) minmax(300px, 1fr) minmax(170px, 0.35fr) auto;
   align-items: end;
   gap: 12px;
   margin-bottom: 14px;
@@ -31914,10 +32461,34 @@ body .student-sidebar .logout-button {
   resize: vertical;
 }
 
+.english-rubric {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  gap: 11px;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid #bdd6dc;
+  border-radius: 7px;
+  background: #f5fafb;
+}
+
+.english-rubric legend {
+  padding: 0 6px;
+  color: #17213d;
+  font-weight: 850;
+}
+
+.english-rubric label > span {
+  color: #526078;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
 .english-grade-weight-summary {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid #bdd6dc;
   border-radius: 7px;
@@ -31967,6 +32538,10 @@ body .student-sidebar .logout-button {
   .english-review-filters { grid-template-columns: 1fr; }
   .english-partial-selector,
   .english-partial-upload--single { grid-template-columns: 1fr; }
+  .english-confirm-delivery,
+  .english-activity-window { grid-template-columns: 1fr; }
+  .english-activity-window > span { border-right: 0; border-bottom: 1px solid #d7e1e5; }
+  .english-activity-window > span:last-child { border-bottom: 0; }
   .english-partial-upload--single label,
   .english-partial-upload--single > small,
   .english-partial-upload--single .primary-action,
@@ -31985,6 +32560,7 @@ body .student-sidebar .logout-button {
   .english-grade-result,
   .english-grade-form { grid-template-columns: 1fr; }
   .english-grade-weight-summary { grid-template-columns: 1fr; }
+  .english-rubric { grid-template-columns: 1fr; }
   .english-grade-weight-summary > div {
     border-right: 0;
     border-bottom: 1px solid #d5e4e8;
@@ -32004,4 +32580,473 @@ body .student-sidebar .logout-button {
   .english-modal-backdrop { padding: 10px; }
   .english-grade-modal { max-height: calc(100vh - 20px); padding: 15px; }
   .english-component-tabs { grid-template-columns: 1fr; }
+}
+.matricula-acad-shell {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.matricula-mode-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #c9d9df;
+  border-radius: 6px;
+  background: #c9d9df;
+}
+
+.prerequisite-management-page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.prerequisite-management-page .report-header,
+.prerequisite-rule-form,
+.prerequisite-rule-list {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.prerequisite-form-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.25fr) minmax(280px, 1.25fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.prerequisite-form-grid label,
+.prerequisite-search {
+  display: grid;
+  gap: 6px;
+  color: #53617c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prerequisite-form-grid select,
+.prerequisite-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #c5d7df;
+  border-radius: 6px;
+  background: #fff;
+  color: #17233f;
+}
+
+.prerequisite-form-grid .primary-action {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.prerequisite-search {
+  margin-bottom: 12px;
+}
+
+.prerequisite-rules-table th:nth-child(1),
+.prerequisite-rules-table th:nth-child(2) {
+  width: 36%;
+}
+
+.prerequisite-rules-table th:nth-child(3) {
+  width: 12%;
+}
+
+.prerequisite-rules-table th:nth-child(4) {
+  width: 16%;
+}
+
+.prerequisite-rules-table td strong,
+.prerequisite-rules-table td small {
+  display: block;
+}
+
+.prerequisite-rules-table td small {
+  margin-top: 4px;
+  color: #657189;
+}
+
+.prerequisite-rule--invalid {
+  background: #fff5ed;
+}
+
+.prerequisite-status {
+  display: inline-block;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.prerequisite-status--active {
+  background: #dff3e9;
+  color: #0b704f;
+}
+
+.prerequisite-status--inactive {
+  background: #edf1f4;
+  color: #526075;
+}
+
+.prerequisite-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.matricula-mode-nav__button {
+  min-height: 70px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  color: #17233f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.matricula-mode-nav__button strong,
+.matricula-mode-nav__button span {
+  display: block;
+}
+
+.matricula-mode-nav__button strong {
+  font-size: 15px;
+}
+
+.matricula-mode-nav__button span {
+  margin-top: 4px;
+  color: #64718a;
+  font-size: 12px;
+}
+
+.matricula-mode-nav__button:hover {
+  background: #f4f8f9;
+}
+
+.matricula-mode-nav__button--active {
+  box-shadow: inset 0 -4px 0 #157f88;
+  background: #edf7f5;
+  color: #075f63;
+}
+
+.matricula-individual-page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.matricula-individual-header {
+  margin: 0;
+}
+
+.matricula-individual-search,
+.matricula-individual-context,
+.matricula-individual-subjects,
+.matricula-exception-panel,
+.matricula-individual-review {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.matricula-individual-searchbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.matricula-individual-searchbar label,
+.matricula-individual-form-grid label,
+.matricula-subject-toolbar label,
+.matricula-exception-panel label {
+  display: grid;
+  gap: 6px;
+  color: #53617c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.matricula-individual-searchbar input,
+.matricula-individual-form-grid input,
+.matricula-individual-form-grid select,
+.matricula-subject-toolbar select,
+.matricula-exception-panel textarea {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #c5d7df;
+  border-radius: 6px;
+  background: #fff;
+  color: #17233f;
+  padding: 9px 12px;
+}
+
+.matricula-individual-searchbar .primary-action {
+  min-width: 130px;
+  min-height: 42px;
+}
+
+.matricula-student-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.matricula-student-results > button {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(190px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1dce1;
+  border-radius: 6px;
+  background: #fff;
+  color: #17233f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.matricula-student-results > button:hover {
+  border-color: #157f88;
+  background: #f1f8f8;
+}
+
+.matricula-student-results span,
+.matricula-student-results strong,
+.matricula-student-results small {
+  display: block;
+}
+
+.matricula-student-results small {
+  margin-top: 3px;
+  color: #66738a;
+}
+
+.matricula-student-results b {
+  color: #157f88;
+}
+
+.matricula-student-summary,
+.matricula-preview-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+  border: 1px solid #d2dde2;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.matricula-preview-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.matricula-student-summary > div,
+.matricula-preview-summary > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border-right: 1px solid #d2dde2;
+  background: #f7fafb;
+}
+
+.matricula-student-summary > div:last-child,
+.matricula-preview-summary > div:last-child {
+  border-right: 0;
+}
+
+.matricula-student-summary span,
+.matricula-student-summary strong,
+.matricula-preview-summary span,
+.matricula-preview-summary strong {
+  display: block;
+}
+
+.matricula-student-summary span,
+.matricula-preview-summary span {
+  color: #657189;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.matricula-student-summary strong,
+.matricula-preview-summary strong {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.matricula-individual-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.matricula-individual-form-grid label:nth-child(1),
+.matricula-individual-form-grid label:nth-child(2) {
+  grid-column: span 2;
+}
+
+.matricula-subject-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.matricula-subject-toolbar label {
+  width: min(320px, 100%);
+}
+
+.matricula-subject-toolbar > div,
+.matricula-individual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.matricula-prerequisite-table th:first-child,
+.matricula-prerequisite-table td:first-child {
+  width: 86px;
+  text-align: center;
+}
+
+.matricula-prerequisite-table th:nth-child(2),
+.matricula-prerequisite-table td:nth-child(2) {
+  width: 70px;
+}
+
+.matricula-prerequisite-table th:nth-child(3),
+.matricula-prerequisite-table td:nth-child(3) {
+  width: 125px;
+}
+
+.matricula-prerequisite-table th:nth-child(5),
+.matricula-prerequisite-table td:nth-child(5) {
+  width: 80px;
+}
+
+.matricula-prerequisite-table th:nth-child(6),
+.matricula-prerequisite-table td:nth-child(6) {
+  width: 250px;
+}
+
+.matricula-prerequisite-table th:last-child,
+.matricula-prerequisite-table td:last-child {
+  width: 165px;
+}
+
+.matricula-prerequisite-table td small {
+  display: block;
+  margin-top: 5px;
+  color: #7a4d18;
+}
+
+.matricula-subject-row--blocked {
+  background: #fff6ee;
+}
+
+.matricula-subject-row--excepted {
+  background: #eef8f5;
+}
+
+.matricula-validation-badge {
+  display: inline-block;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #edf1f4;
+  color: #526075;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.matricula-validation-badge--bloqueada_prerrequisito {
+  background: #fde7dc;
+  color: #9d2d21;
+}
+
+.matricula-validation-badge--excepcion_prerrequisito,
+.matricula-validation-badge--insertar {
+  background: #dff3e9;
+  color: #0b704f;
+}
+
+.matricula-validation-badge--existente {
+  background: #e7f1f5;
+  color: #176179;
+}
+
+.matricula-exception-panel textarea {
+  resize: vertical;
+}
+
+.matricula-exception-panel p,
+.matricula-individual-review > p {
+  color: #627087;
+  font-size: 13px;
+}
+
+.matricula-individual-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 1050px) {
+  .prerequisite-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matricula-individual-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matricula-student-summary,
+  .matricula-preview-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matricula-preview-summary > div:nth-child(2n),
+  .matricula-student-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .matricula-mode-nav,
+  .prerequisite-form-grid,
+  .matricula-individual-searchbar,
+  .matricula-individual-form-grid,
+  .matricula-student-results > button,
+  .matricula-student-summary,
+  .matricula-preview-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .matricula-individual-form-grid label:nth-child(1),
+  .matricula-individual-form-grid label:nth-child(2) {
+    grid-column: auto;
+  }
+
+  .matricula-subject-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .matricula-student-summary > div,
+  .matricula-preview-summary > div {
+    border-right: 0;
+    border-bottom: 1px solid #d2dde2;
+  }
+
+  .matricula-student-summary > div:last-child,
+  .matricula-preview-summary > div:last-child {
+    border-bottom: 0;
+  }
 }

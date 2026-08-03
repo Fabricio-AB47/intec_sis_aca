@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 from app.core.security import SessionUser, require_roles
 from app.routers.students import _MATRICULA_CNE_CTE
 from app.services.db import get_connection
-from app.services.grade_calculation import calculate_regular_grade_with_recovery
+from app.services.grade_calculation import (
+    calculate_homologation_grade_with_recovery,
+    calculate_regular_grade_with_recovery,
+)
 
 router = APIRouter(prefix="/api/students/reporteria-integral", tags=["reporteria-integral"])
 
@@ -2230,7 +2233,11 @@ def update_student_grade(
     parallel = payload.paralelo.strip().upper()
     if payload.es_homologacion:
         average_p1 = average_p2 = average_p3 = None
-        final_grade = _weighted_homologation_grade(payload.teoria_homo, payload.practica_homo)
+        final_grade = calculate_homologation_grade_with_recovery(
+            payload.teoria_homo,
+            payload.practica_homo,
+            payload.recuperacion,
+        ).final
         assignments = [
             "teoriaHomo = ?",
             "practicahomo = ?",
@@ -2310,13 +2317,13 @@ def update_student_grade(
         ]
 
     where_sql = """
-        TRY_CONVERT(int, codigo_estud) = ?
-        AND TRY_CONVERT(int, cod_anio_Basica) = ?
-        AND TRY_CONVERT(int, codigo_periodo) = ?
-        AND TRY_CONVERT(int, codigo_materia) = ?
-        AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), paralelo)))) = ?
-        AND TRY_CONVERT(int, Num_Matricula) = ?
-        AND TRY_CONVERT(int, NumGrupo) = ?
+        TRY_CONVERT(int, cxe.codigo_estud) = ?
+        AND TRY_CONVERT(int, cxe.cod_anio_Basica) = ?
+        AND TRY_CONVERT(int, cxe.codigo_periodo) = ?
+        AND TRY_CONVERT(int, cxe.codigo_materia) = ?
+        AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) = ?
+        AND TRY_CONVERT(int, cxe.Num_Matricula) = ?
+        AND TRY_CONVERT(int, cxe.NumGrupo) = ?
     """
     key_params = [
         payload.codigo_estud,
@@ -2331,15 +2338,38 @@ def update_student_grade(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT COUNT(*) FROM dbo.CARRERAXESTUD WHERE {where_sql}", *key_params)
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM dbo.CARRERAXESTUD AS cxe
+                INNER JOIN dbo.DATOS_ESTUD AS de_active
+                  ON TRY_CONVERT(int, de_active.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
+                WHERE {where_sql}
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de_active.Estado))))
+                      IN (N'A', N'ACTIVO', N'ACTIVA')
+                """,
+                *key_params,
+            )
             matches = int(cursor.fetchone()[0] or 0)
             if matches == 0:
-                raise HTTPException(status_code=404, detail="No se encontró la matrícula y materia seleccionadas")
+                raise HTTPException(
+                    status_code=404,
+                    detail="No se encontro una matricula activa para la materia seleccionada",
+                )
             if matches > 1:
                 raise HTTPException(status_code=409, detail="La matrícula seleccionada no es única; no se realizaron cambios")
 
             cursor.execute(
-                f"UPDATE dbo.CARRERAXESTUD SET {', '.join(assignments)} WHERE {where_sql}",
+                f"""
+                UPDATE cxe
+                SET {', '.join(assignments)}
+                FROM dbo.CARRERAXESTUD AS cxe
+                INNER JOIN dbo.DATOS_ESTUD AS de_active
+                  ON TRY_CONVERT(int, de_active.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
+                WHERE {where_sql}
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de_active.Estado))))
+                      IN (N'A', N'ACTIVO', N'ACTIVA')
+                """,
                 *update_params,
                 *key_params,
             )

@@ -14,8 +14,10 @@ from app.routers.english_exams import (
     _require_teacher_exam_scope,
     _reviewer_enrollments,
     _reviewer_periods,
+    _reviewer_subjects,
     _reviewer_scope_filter,
     _select_reviewer_period,
+    _select_reviewer_subject,
     _virtual_exam_payload,
 )
 
@@ -33,7 +35,7 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIn("e.CarreraXEstudNum", sql)
         self.assertIn("e.Paralelo", sql)
         self.assertIn("carrera_docente.tp_escuela", sql)
-        self.assertNotIn("cxd.codigo_materia) = TRY_CONVERT(INT, e.CodigoMateria)", sql)
+        self.assertIn("cxd.codigo_materia) = TRY_CONVERT(INT, e.CodigoMateria)", sql)
 
     def test_active_english_scope_uses_teacher_career_period_and_parallel(self):
         sql = " ".join(_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL.split())
@@ -42,6 +44,8 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIn("cx.cod_anio_Basica", sql)
         self.assertIn("cxd.codigo_periodo", sql)
         self.assertIn("cx.codigo_periodo", sql)
+        self.assertIn("cxd.codigo_materia", sql)
+        self.assertIn("cx.codigo_materia", sql)
         self.assertIn("cxd.Paralelo", sql)
         self.assertIn("cx.Paralelo", sql)
         self.assertIn("carrera_docente.tp_escuela", sql)
@@ -148,23 +152,13 @@ class EnglishTeacherScopeTests(unittest.TestCase):
 
     def test_period_catalog_prefers_real_active_enrollment_count(self):
         cursor = MagicMock()
-        cursor.fetchall.side_effect = [
-            [
-                SimpleNamespace(
-                    codigo_periodo="1060",
-                    detalle_periodo="C1-2026-PCFF ABRIL 2026 - AGOSTO 2026",
-                    periodo_orden=1060,
-                    total_estudiantes=95,
-                )
-            ],
-            [
-                SimpleNamespace(
-                    codigo_periodo="1060",
-                    detalle_periodo="C1-2026-PCFF ABRIL 2026 - AGOSTO 2026",
-                    periodo_orden=1060,
-                    total_estudiantes=3,
-                )
-            ],
+        cursor.fetchall.return_value = [
+            SimpleNamespace(
+                codigo_periodo="1060",
+                detalle_periodo="C1-2026-PCFF ABRIL 2026 - AGOSTO 2026",
+                periodo_orden=1060,
+                total_estudiantes=95,
+            ),
         ]
         user = SessionUser(login="admin", nombres="Administrador", rol="ADMINISTRADOR")
 
@@ -173,9 +167,49 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertEqual(len(periods), 1)
         self.assertEqual(periods[0]["code"], "1060")
         self.assertEqual(periods[0]["student_count"], 95)
-        first_query = " ".join(cursor.execute.call_args_list[0].args[0].split())
-        self.assertIn("INTECBDD.dbo.CARRERAXESTUD", first_query)
-        self.assertIn("A2+ - INTERMEDIATE", cursor.execute.call_args_list[0].args)
+        self.assertEqual(cursor.execute.call_count, 1)
+        query = " ".join(cursor.execute.call_args.args[0].split())
+        self.assertIn("INTECBDD.dbo.CARRERAXESTUD", query)
+        self.assertNotIn("ing.ExamenIngles", query)
+        self.assertNotIn("A2+ - INTERMEDIATE", cursor.execute.call_args.args)
+
+    def test_subject_catalog_uses_current_enrollment_and_exact_teacher_subject(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            SimpleNamespace(
+                codigo_materia="333",
+                nombre_materia="A2 - PRE-INTERMEDIATE",
+                total_estudiantes=95,
+            ),
+        ]
+        user = SessionUser(
+            login="docente@intec.edu.ec",
+            nombres="Docente prueba",
+            rol="DOCENTE",
+            codigo_doc=100,
+        )
+
+        subjects = _reviewer_subjects(cursor, "1060", user)
+
+        self.assertEqual(subjects[0]["code"], "333")
+        self.assertEqual(subjects[0]["student_count"], 95)
+        query = " ".join(cursor.execute.call_args.args[0].split())
+        self.assertIn("cxd.codigo_materia", query)
+        self.assertIn("cx.codigo_materia", query)
+        self.assertEqual(cursor.execute.call_args.args[1:], ("1060", 100))
+
+    def test_subject_selection_rejects_subject_outside_teacher_assignment(self):
+        user = SessionUser(
+            login="docente@intec.edu.ec",
+            nombres="Docente prueba",
+            rol="DOCENTE",
+            codigo_doc=100,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            _select_reviewer_subject([{"code": "333"}], "334", user)
+
+        self.assertEqual(context.exception.status_code, 403)
 
     def test_reviewer_roster_returns_students_without_exam_deliveries(self):
         cursor = MagicMock()
@@ -200,7 +234,7 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         ]
         user = SessionUser(login="academico", nombres="Académico", rol="ACADEMICO")
 
-        profiles = _reviewer_enrollments(cursor, "1060", user)
+        profiles = _reviewer_enrollments(cursor, "1060", "901", user)
 
         self.assertEqual(len(profiles), 1)
         self.assertEqual(profiles[0]["carrera_x_estud_num"], 5001)
@@ -209,6 +243,7 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIn("ROW_NUMBER() OVER", query)
         self.assertIn("INTECBDD.dbo.CARRERAXESTUD", query)
         self.assertNotIn("CargaExamenIngles", query)
+        self.assertEqual(cursor.execute.call_args.args[1:3], ("1060", "901"))
 
     def test_virtual_exam_payload_marks_enrolled_student_without_delivery(self):
         profile = {

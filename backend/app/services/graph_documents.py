@@ -16,7 +16,13 @@ from app.services.graph import get_graph_token
 
 
 MAX_DOCUMENT_BYTES = 1024 * 1024 * 1024
-GRAPH_DOCUMENT_ROOT = "EXPEDIENTES ACADEMICOS"
+GRAPH_DOCUMENT_ROOT = "EXPEDIENTES ESTUDIANTILES"
+GRAPH_MODULE_FOLDERS = {
+    "INGLES": "IDIOMAS",
+    "TITULACION": "TITULACION",
+    "PRACTICAS": "PRACTICAS PREPROFESIONALES",
+    "VINCULACION": "VINCULACION CON LA SOCIEDAD",
+}
 
 
 def clean(value: Any) -> str:
@@ -35,10 +41,65 @@ def safe_filename(value: str, allowed_extensions: set[str] | None = None) -> str
     return filename[:255]
 
 
-def safe_folder_part(value: str, fallback: str = "expediente") -> str:
-    normalized = re.sub(r"[^0-9A-Za-z._ -]+", "_", clean(value))
+def safe_folder_part(
+    value: str,
+    fallback: str = "expediente",
+    *,
+    max_length: int = 120,
+) -> str:
+    normalized = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", clean(value))
     normalized = re.sub(r"\s+", " ", normalized).strip(" .")
-    return (normalized or fallback)[:120]
+    return (normalized or fallback)[:max_length].rstrip(" .")
+
+
+def build_expedient_folder_path(
+    *,
+    module_code: str,
+    identification: str,
+    student_code: int | None,
+    student_name: str,
+    origin_id: str | int,
+    expedient_code: str = "",
+) -> str:
+    module = clean(module_code).upper()
+    document = re.sub(r"\D+", "", identification)
+    if module not in GRAPH_MODULE_FOLDERS:
+        raise ValueError("Modulo documental no permitido.")
+    if not document:
+        raise ValueError("La identificacion del estudiante es obligatoria.")
+
+    fallback_name = f"ESTUDIANTE {student_code or document}"
+    available_name_length = max(20, 100 - len(document) - 3)
+    normalized_name = safe_folder_part(
+        student_name,
+        fallback_name,
+        max_length=available_name_length,
+    )
+    student_folder = safe_folder_part(
+        f"{normalized_name} - {document}",
+        document,
+        max_length=100,
+    )
+
+    origin = safe_folder_part(str(origin_id), "SIN-ID", max_length=30)
+    case_code = safe_folder_part(
+        expedient_code,
+        module,
+        max_length=max(20, 75 - len(origin)),
+    )
+    case_folder = safe_folder_part(
+        f"CASO {origin} - {case_code}",
+        f"CASO {origin}",
+        max_length=85,
+    )
+    return "/".join(
+        [
+            GRAPH_DOCUMENT_ROOT,
+            student_folder,
+            GRAPH_MODULE_FOLDERS[module],
+            case_folder,
+        ]
+    )
 
 
 def graph_owner_upn() -> str:
@@ -214,18 +275,13 @@ def prepare_expedient(
 ) -> dict[str, Any]:
     module = clean(module_code).upper()
     document = re.sub(r"\D+", "", identification)
-    if module not in {"INGLES", "TITULACION", "PRACTICAS", "VINCULACION"}:
-        raise ValueError("Modulo documental no permitido.")
-    if not document:
-        raise ValueError("La identificacion del estudiante es obligatoria.")
-
-    folder_path = "/".join(
-        [
-            GRAPH_DOCUMENT_ROOT,
-            safe_folder_part(f"{student_code or 'SIN-CODIGO'}-{document}", document),
-            module,
-            safe_folder_part(str(origin_id), "expediente"),
-        ]
+    folder_path = build_expedient_folder_path(
+        module_code=module,
+        identification=document,
+        student_code=student_code,
+        student_name=student_name,
+        origin_id=origin_id,
+        expedient_code=expedient_code,
     )
     folder_item = ensure_folder(folder_path)
     drive_id = clean((folder_item.get("parentReference") or {}).get("driveId"))

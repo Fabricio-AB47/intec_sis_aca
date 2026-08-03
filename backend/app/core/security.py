@@ -189,3 +189,35 @@ def require_roles(*roles: str) -> Callable[[SessionUser], SessionUser]:
         return current_user
 
     return dependency
+
+
+def require_screen_access(page: str) -> Callable[[SessionUser], SessionUser]:
+    from app.services.screen_access import (
+        KNOWN_PAGES,
+        ScreenAccessUnavailableError,
+        role_has_screen_access,
+    )
+
+    page_code = str(page or "").strip()
+    if page_code not in KNOWN_PAGES:
+        raise ValueError(f"Pantalla no reconocida: {page_code or '(vacia)'}")
+
+    def dependency(
+        current_user: SessionUser = Depends(get_current_user),
+    ) -> SessionUser:
+        try:
+            allowed = role_has_screen_access(current_user.rol, page_code)
+        except ScreenAccessUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No se pudo validar la asignacion institucional de pantallas",
+            ) from exc
+
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes asignada la pantalla requerida para esta operacion",
+            )
+        return current_user
+
+    return dependency

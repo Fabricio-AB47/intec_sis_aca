@@ -7,6 +7,8 @@ import { ProfileSelectionView } from './features/auth/ProfileSelectionView'
 import { SessionStatusView } from './features/auth/SessionStatusView'
 import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
+import { screenPermissionAllowsCode, screenPermissionAllowsPage, screenPermissionForView } from './lib/screenAccess'
+import type { AcademicEnrollmentMode, PreinscriptionStage } from './types/app'
 
 const lazyView = <T,>(loader: () => Promise<T>, name: keyof T) =>
   lazy(async () => ({ default: (await loader())[name] as ComponentType<Record<string, unknown>> }))
@@ -43,7 +45,6 @@ const ReporteriaCarrerasView = lazyView(() => import('./features/matricula/Repor
 const ReporteriaIntegralView = lazyView(() => import('./features/matricula/ReporteriaIntegralView'), 'ReporteriaIntegralView')
 const ReportesIndividualesView = lazyView(() => import('./features/matricula/ReportesIndividualesView'), 'ReportesIndividualesView')
 const SenescytEstudiantesView = lazyView(() => import('./features/matricula/SenescytEstudiantesView'), 'SenescytEstudiantesView')
-const SisAcademicoV1CloneView = lazyView(() => import('./features/matricula/SisAcademicoV1CloneView'), 'SisAcademicoV1CloneView')
 const TitulosRegistradosView = lazyView(() => import('./features/matricula/TitulosRegistradosView'), 'TitulosRegistradosView')
 const TitulacionView = lazyView(() => import('./features/matricula/TitulacionView'), 'TitulacionView')
 const PortalDocenteView = lazyView(() => import('./features/portal/PortalDocenteView'), 'PortalDocenteView')
@@ -54,6 +55,36 @@ const PracticasInstitucionalesView = lazyView(() => import('./features/practicas
 const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
 const TeamsView = lazyView(() => import('./features/teams/TeamsView'), 'TeamsView')
 
+const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos']
+const preinscriptionStages: PreinscriptionStage[] = [
+  'registro',
+  'inscritos',
+  'becas',
+  'gestion-becas',
+  'becados',
+  'seguimiento',
+  'cabecera',
+  'materias',
+  'documentos',
+]
+
+function assignedChildren<T extends string>(
+  permissions: string[] | null,
+  parent: string,
+  options: readonly T[],
+): T[] {
+  const assigned = new Set(permissions || [])
+  return options.filter((option) => assigned.has(`${parent}/${option}`))
+}
+
+function assignedDynamicChildren(permissions: string[] | null, parent: string): string[] {
+  const prefix = `${parent}/`
+  return (permissions || [])
+    .filter((permission) => permission.startsWith(prefix))
+    .map((permission) => permission.slice(prefix.length))
+    .filter(Boolean)
+}
+
 function App() {
   const app = useReporteriaApp()
   const [publicTeacherEvaluation, setPublicTeacherEvaluation] = useState(() => {
@@ -61,6 +92,17 @@ function App() {
     const requestedPage = params.get('open_page') || params.get('public')
     return requestedPage === 'evaluacion-docente' || window.location.pathname.includes('evaluacion-docente')
   })
+  const allowedAcademicEnrollmentModes = assignedChildren(
+    app.screenAccessPages,
+    'matricula-acad',
+    academicEnrollmentModes,
+  )
+  const allowedPreinscriptionStages = assignedChildren(
+    app.screenAccessPages,
+    'preinscripcion',
+    preinscriptionStages,
+  )
+  const allowedSisAcademicoSections = assignedDynamicChildren(app.screenAccessPages, 'gestion-sisacademico')
 
   if (app.bootstrapping) {
     return <SessionStatusView message="Validando sesion activa..." />
@@ -111,8 +153,23 @@ function App() {
 
   if (app.session) {
     let pageContent: ReactNode
+    const activePermission = screenPermissionForView(app.activePage, {
+      matriculaAcadMode: app.matriculaAcadMode,
+      preinscriptionStage: app.preinscriptionActiveStage,
+      sisAcademicoSection: app.sisAcademicoSectionKey,
+      reportKey: app.legacyReportKey,
+      registeredTitleType: app.titulosRegistradosTipo,
+    })
+    const activePermissionAllowed = screenPermissionAllowsCode(app.screenAccessPages, activePermission)
 
-    if (app.activePage === 'dashboard') {
+    if (!activePermissionAllowed) {
+      pageContent = (
+        <SessionStatusView
+          message="Validando acceso a la pantalla..."
+          detail={app.screenAccessError || 'La opcion solicitada no esta asignada al perfil autenticado.'}
+        />
+      )
+    } else if (app.activePage === 'dashboard') {
       pageContent = (
         <DashboardView
           displayName={app.displayName}
@@ -161,7 +218,14 @@ function App() {
         />
       )
     } else if (app.activePage === 'matricula-acad') {
-      pageContent = <MatriculaAcadView displayName={app.displayName} />
+      pageContent = (
+        <MatriculaAcadView
+          displayName={app.displayName}
+          initialMode={app.matriculaAcadMode}
+          onModeChange={app.openMatriculaAcadPage}
+          allowedModes={allowedAcademicEnrollmentModes}
+        />
+      )
     } else if (app.activePage === 'matricula-docente') {
       pageContent = <MatriculaDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'estado-docente') {
@@ -176,7 +240,8 @@ function App() {
           displayName={app.displayName}
           role={app.session.rol}
           activeStage={app.preinscriptionActiveStage}
-          onStageChange={app.setPreinscriptionActiveStage}
+          onStageChange={app.openPreinscripcionStage}
+          allowedStages={allowedPreinscriptionStages}
         />
       )
     } else if (app.activePage === 'reporteria-carreras') {
@@ -194,18 +259,24 @@ function App() {
     } else if (app.activePage === 'reportes-individuales') {
       pageContent = <ReportesIndividualesView displayName={app.displayName} role={app.session.rol} initialReportKey={app.legacyReportKey} />
     } else if (app.activePage === 'admin-notas-asignatura') {
-      pageContent = <NotasPorAsignaturaView displayName={app.displayName} role={app.session.rol} />
-    } else if (app.activePage === 'sisacademico-v1') {
       pageContent = (
-        <SisAcademicoV1CloneView
+        <NotasPorAsignaturaView
           displayName={app.displayName}
-          onOpenSection={app.openGestionSisAcademicoPage}
+          role={app.session.rol}
+          onOpenLanguages={screenPermissionAllowsPage(app.screenAccessPages, 'ingles') ? app.openInglesPage : undefined}
         />
       )
     } else if (app.activePage === 'asignacion-pantallas') {
       pageContent = <AsignacionPantallasView displayName={app.displayName} />
     } else if (app.activePage === 'gestion-sisacademico') {
-      pageContent = <GestionSisAcademicoView displayName={app.displayName} initialSectionKey={app.sisAcademicoSectionKey} />
+      pageContent = (
+        <GestionSisAcademicoView
+          displayName={app.displayName}
+          initialSectionKey={app.sisAcademicoSectionKey}
+          allowedSectionKeys={allowedSisAcademicoSections}
+          onSectionChange={app.openGestionSisAcademicoPage}
+        />
+      )
     } else if (app.activePage === 'periodo-academico') {
       pageContent = (
         <PeriodoAcademicoView
@@ -309,16 +380,33 @@ function App() {
       pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="progress" />
     } else if (app.activePage === 'evaluacion-docente-reportes') {
       pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="reports" />
-    } else if (app.activePage === 'portal-estudiante') {
+    } else if (
+      app.activePage === 'portal-estudiante'
+      || app.activePage === 'portal-estudiante-malla-curricular'
+      || app.activePage === 'portal-estudiante-malla-academica'
+      || app.activePage === 'portal-estudiante-calificaciones'
+    ) {
       pageContent = (
         <PortalEstudianteView
           displayName={app.displayName}
           activeSection={app.portalStudentSection}
-          onSectionChange={app.setPortalStudentSection}
+          allowedSections={[
+            ...(screenPermissionAllowsPage(app.screenAccessPages, 'portal-estudiante') ? ['dashboard' as const] : []),
+            ...(screenPermissionAllowsPage(app.screenAccessPages, 'portal-estudiante-malla-curricular') ? ['curricular' as const] : []),
+            ...(screenPermissionAllowsPage(app.screenAccessPages, 'portal-estudiante-malla-academica') ? ['academica' as const] : []),
+            ...(screenPermissionAllowsPage(app.screenAccessPages, 'portal-estudiante-calificaciones') ? ['notas' as const] : []),
+          ]}
+          onSectionChange={app.openPortalEstudiantePage}
         />
       )
     } else if (app.activePage === 'ingles') {
-      pageContent = <InglesView displayName={app.displayName} role={app.session.rol} />
+      pageContent = (
+        <InglesView
+          displayName={app.displayName}
+          role={app.session.rol}
+          onOpenSubjectGrades={screenPermissionAllowsPage(app.screenAccessPages, 'admin-notas-asignatura') ? app.openAdminNotasAsignaturaPage : undefined}
+        />
+      )
     } else if (app.activePage === 'expedientes-documentales') {
       pageContent = <ExpedientesDocumentalesView displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'portal-docente') {
@@ -366,7 +454,7 @@ function App() {
           onCreateAndEnroll={app.createAndEnroll}
         />
       )
-    } else {
+    } else if (app.activePage === 'teams') {
       pageContent = (
         <TeamsView
           displayName={app.displayName}
@@ -381,6 +469,13 @@ function App() {
           onTeamIdFromCatalog={app.setTeamsTeamId}
         />
       )
+    } else {
+      pageContent = (
+        <SessionStatusView
+          message="Pantalla no disponible"
+          detail="La opcion solicitada no forma parte de la navegacion activa."
+        />
+      )
     }
 
     return (
@@ -391,6 +486,7 @@ function App() {
           activeLegacyReport={app.legacyReportKey}
           activePortalStudentSection={app.portalStudentSection}
           activePreinscriptionStage={app.preinscriptionActiveStage}
+          activeMatriculaAcadMode={app.matriculaAcadMode}
           role={app.session.rol}
           screenAccessPages={app.screenAccessPages}
           displayName={app.displayName}

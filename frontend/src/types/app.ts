@@ -28,19 +28,23 @@ export type UserSession = UserProfile & {
   perfiles?: UserProfile[]
 }
 
+export type ScreenPermissionCode = string
+
 export type ScreenAccessScreen = {
-  page: Page
+  page: ScreenPermissionCode
   label: string
   description: string
   group: string
+  parent_page?: Page | ''
+  kind?: 'screen' | 'flow'
 }
 
 export type ScreenAccessRole = {
   value: Role
   label: string
   description: string
-  pages: Page[]
-  default_pages: Page[]
+  pages: ScreenPermissionCode[]
+  default_pages: ScreenPermissionCode[]
   configured: boolean
   protected: boolean
   updated_at?: string | null
@@ -71,7 +75,6 @@ export type Page =
   | 'reporteria-integral'
   | 'reportes-individuales'
   | 'admin-notas-asignatura'
-  | 'sisacademico-v1'
   | 'asignacion-pantallas'
   | 'gestion-sisacademico'
   | 'periodo-academico'
@@ -96,6 +99,9 @@ export type Page =
   | 'evaluacion-docente-avance'
   | 'evaluacion-docente-reportes'
   | 'portal-estudiante'
+  | 'portal-estudiante-malla-curricular'
+  | 'portal-estudiante-malla-academica'
+  | 'portal-estudiante-calificaciones'
   | 'ingles'
   | 'expedientes-documentales'
   | 'portal-docente'
@@ -113,6 +119,18 @@ export type EnglishExamFile = {
   version: number
   uploaded_at: string | null
   web_url: string
+  delivery_state: string
+  confirmed: boolean
+  confirmed_at: string | null
+  integrity_validated: boolean
+  integrity_hash: string
+}
+
+export type EnglishRubric = {
+  language_mastery: number
+  fluency_pronunciation: number
+  content_coherence: number
+  instruction_compliance: number
 }
 
 export type EnglishExamStudent = {
@@ -137,9 +155,25 @@ export type EnglishExamComponent = {
   evaluator: string
   graded_at: string | null
   file: EnglishExamFile | null
+  delivery_state: string
+  confirmed: boolean
+  can_confirm: boolean
   can_edit: boolean
   edit_deadline: string | null
   seconds_remaining: number
+  activity_start: string | null
+  activity_deadline: string | null
+  activity_open: boolean
+  activity_status: string
+  review_state: string
+  draft_grade: number | null
+  draft_observation: string
+  draft_rubric: EnglishRubric | null
+  drafted_at: string | null
+  drafted_by: string
+  published_at: string | null
+  published_by: string
+  notification_state: string
 }
 
 export type EnglishEnrollment = {
@@ -171,11 +205,13 @@ export type EnglishExam = {
   components: EnglishExamComponent[]
   required_components: number
   submitted_components: number
+  staged_components: number
   graded_components: number
   can_edit: boolean
   edit_deadline: string | null
   seconds_remaining: number
   edit_window_minutes: number
+  min_file_bytes: number
   max_file_bytes: number
   enrollment: EnglishEnrollment
   student: EnglishExamStudent
@@ -186,8 +222,10 @@ export type EnglishUploadSessionResponse = {
   upload_url: string
   expires_at: string
   chunk_size: number
+  min_file_bytes: number
   max_file_bytes: number
   version: number
+  component_code: string
 }
 
 export type EnglishSubmissionsResponse = {
@@ -204,6 +242,13 @@ export type EnglishSubmissionsResponse = {
     student_count: number
   }>
   selected_period_code: string
+  subjects: Array<{
+    code: string
+    name: string
+    label: string
+    student_count: number
+  }>
+  selected_subject_code: string
   reviewer: { name: string; role: string }
 }
 
@@ -3143,6 +3188,45 @@ export type AcademicEnrollmentTypeOption = {
   label: string
 }
 
+export type AcademicEnrollmentMode = 'individual' | 'masiva' | 'prerrequisitos'
+
+export type AcademicPrerequisiteRule = {
+  id: number
+  cod_anio_basica: string
+  nombre_carrera?: string
+  codigo_materia_previa: string
+  cod_materia_previa?: string
+  nombre_materia_previa?: string
+  semestre_materia_previa?: number | null
+  codigo_materia_consecutiva: string
+  cod_materia_consecutiva?: string
+  nombre_materia_consecutiva?: string
+  semestre_materia_consecutiva?: number | null
+  bloqueada_por_reprobacion: boolean
+  es_autorreferencia?: boolean
+}
+
+export type AcademicPrerequisiteRulePayload = {
+  cod_anio_basica: number
+  codigo_materia_previa: number
+  codigo_materia_consecutiva: number
+  bloqueada_por_reprobacion: boolean
+}
+
+export type AcademicPrerequisiteRulesResponse = {
+  total?: number
+  active?: number
+  items?: AcademicPrerequisiteRule[]
+  detail?: string
+}
+
+export type AcademicPrerequisiteRuleSaveResponse = {
+  ok?: boolean
+  message?: string
+  item?: AcademicPrerequisiteRule
+  detail?: string
+}
+
 export type AcademicEnrollmentCatalogResponse = {
   carreras?: AcademicCareerOption[]
   periodos?: AcademicPeriodOption[]
@@ -3240,6 +3324,9 @@ export type AcademicEnrollmentCabecera = {
   control_matricula?: number | null
   carrera?: string
   periodo?: string
+  fecha_inicio_periodo?: string
+  fecha_fin_periodo?: string
+  tipo_periodo?: string
 }
 
 export type AcademicEnrollmentSubject = {
@@ -3253,6 +3340,9 @@ export type AcademicEnrollmentSubject = {
   horas?: number | null
   tipo_materia?: string
   accion?: string
+  materias_previas?: string[]
+  materias_previas_codigos?: number[]
+  motivo?: string
 }
 
 export type AcademicEnrollmentCurrentSubject = AcademicEnrollmentSubject & {
@@ -3263,6 +3353,27 @@ export type AcademicEnrollmentCurrentSubject = AcademicEnrollmentSubject & {
   tipo_matricula?: string
   control_matricula?: number | null
   tiene_notas?: boolean
+}
+
+export type AcademicEnrollmentHistorySubject = AcademicEnrollmentCurrentSubject & {
+  promedio_final?: number | null
+  recuperacion?: number | null
+  asistencia?: number | null
+  estado?: string
+}
+
+export type AcademicEnrollmentHistoryPeriod = {
+  codigo_periodo: string
+  periodo?: string
+  fecha_inicio?: string
+  fecha_fin?: string
+  tipo_periodo?: string
+  cod_anio_basica: string
+  carrera?: string
+  num_matricula?: string
+  jornada?: string
+  total_materias?: number
+  materias?: AcademicEnrollmentHistorySubject[]
 }
 
 export type AcademicEnrollmentStudentSearchResponse = {
@@ -3280,6 +3391,7 @@ export type AcademicEnrollmentDetailResponse = {
   cabeceras?: AcademicEnrollmentCabecera[]
   pensum?: AcademicEnrollmentSubject[]
   materias_actuales?: AcademicEnrollmentCurrentSubject[]
+  historial_academico?: AcademicEnrollmentHistoryPeriod[]
   detail?: string
 }
 
@@ -3386,6 +3498,8 @@ export type AcademicTeacherStudentItem = {
   num_matricula?: string
   tipo_matricula?: string
   promedio_final?: number | null
+  codigo_docente_asignado?: string
+  docente_asignado?: string
 }
 
 export type AcademicTeacherStudentsResponse = {
@@ -3853,6 +3967,8 @@ export type AcademicTeacherUniqueEnrollmentPayload = {
   semestre?: number | null
   cod_jornada: number
   estado_moodle_doc: number
+  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+  codigos_estudiantes?: number[]
 }
 
 export type AcademicTeacherEnrollmentSaveResponse = {
@@ -3864,6 +3980,8 @@ export type AcademicTeacherEnrollmentSaveResponse = {
   existing_count?: number
   duplicate_count?: number
   students_linked?: number
+  students_requested?: number
+  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
   already_exists?: boolean
   docente?: AcademicTeacherOption
   assignments?: Array<{
@@ -3871,6 +3989,7 @@ export type AcademicTeacherEnrollmentSaveResponse = {
     codigo_materia?: string
     nombre_materia?: string
     nombre_carrera?: string
+    students_linked?: number
   }>
   criteria?: AcademicTeacherEnrollmentPayload | AcademicTeacherUniqueEnrollmentPayload
   detail?: string
@@ -3930,6 +4049,8 @@ export type AcademicEnrollmentPayload = {
   valor: number
   fecha_pago?: string | null
   remove_unselected: boolean
+  prerequisite_exception_codes?: number[]
+  prerequisite_exception_reason?: string | null
 }
 
 export type AcademicEnrollmentPreviewResponse = {
@@ -3946,6 +4067,8 @@ export type AcademicEnrollmentPreviewResponse = {
     remover?: number
     bloqueadas_por_notas?: number
     bloqueadas_por_periodo?: number
+    bloqueadas_por_prerrequisito?: number
+    excepciones_prerrequisito?: number
   }
   items?: AcademicEnrollmentSubject[]
   detail?: string
@@ -3962,6 +4085,8 @@ export type AcademicEnrollmentSaveResponse = {
   blocked_by_grades?: number
   blocked_by_repetition?: number
   blocked_by_period?: number
+  blocked_by_prerequisite?: number
+  prerequisite_exceptions?: number
   subject_results?: Array<{
     codigo_materia?: number
     nombre_materia?: string

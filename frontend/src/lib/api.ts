@@ -14,6 +14,9 @@ import type {
   AcademicPeriodChangeCatalogResponse,
   AcademicPeriodChangePayload,
   AcademicPeriodChangePreviewResponse,
+  AcademicPrerequisiteRulePayload,
+  AcademicPrerequisiteRulesResponse,
+  AcademicPrerequisiteRuleSaveResponse,
   AcademicParallelBalancePayload,
   AcademicParallelBalanceResponse,
   AcademicEnrollmentPayload,
@@ -1572,6 +1575,43 @@ export async function fetchAcademicEnrollmentPensum(
   return request<AcademicEnrollmentPensumResponse>(`/api/students/matricula-acad/pensum?${params.toString()}`)
 }
 
+export async function fetchAcademicPrerequisiteRules(
+  codAnioBasica?: string
+): Promise<AcademicPrerequisiteRulesResponse> {
+  const params = new URLSearchParams()
+  if (codAnioBasica) params.set('cod_anio_basica', codAnioBasica)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return request<AcademicPrerequisiteRulesResponse>(`/api/students/matricula-acad/prerequisites${suffix}`)
+}
+
+export async function createAcademicPrerequisiteRule(
+  payload: AcademicPrerequisiteRulePayload
+): Promise<AcademicPrerequisiteRuleSaveResponse> {
+  return request<AcademicPrerequisiteRuleSaveResponse>('/api/students/matricula-acad/prerequisites', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function updateAcademicPrerequisiteRule(
+  ruleId: number,
+  payload: AcademicPrerequisiteRulePayload
+): Promise<AcademicPrerequisiteRuleSaveResponse> {
+  return request<AcademicPrerequisiteRuleSaveResponse>(
+    `/api/students/matricula-acad/prerequisites/${encodeURIComponent(String(ruleId))}`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export async function deleteAcademicPrerequisiteRule(
+  ruleId: number
+): Promise<AcademicPrerequisiteRuleSaveResponse> {
+  return request<AcademicPrerequisiteRuleSaveResponse>(
+    `/api/students/matricula-acad/prerequisites/${encodeURIComponent(String(ruleId))}`,
+    { method: 'DELETE' },
+  )
+}
+
 export async function previewAcademicEnrollment(
   payload: AcademicEnrollmentPayload
 ): Promise<AcademicEnrollmentPreviewResponse> {
@@ -2984,7 +3024,7 @@ export async function deleteTituloRegistrado(itemId: string): Promise<TituloRegi
 }
 
 export async function fetchEnglishStudentExam(): Promise<EnglishExam> {
-  return request<EnglishExam>('/api/english/student')
+  return request<EnglishExam>('/api/english/student', { cache: 'no-store' })
 }
 
 export async function createEnglishUploadSession(file: File, componentCode: string): Promise<EnglishUploadSessionResponse> {
@@ -3063,16 +3103,25 @@ export async function finalizeEnglishUpload(uploadId: string): Promise<EnglishEx
   })
 }
 
+export async function confirmEnglishDelivery(uploadId: string, componentCode: string): Promise<EnglishExam> {
+  return request<EnglishExam>('/api/english/student/confirm', {
+    method: 'POST',
+    body: { upload_id: uploadId, component_code: componentCode },
+  })
+}
+
 export async function fetchEnglishSubmissions(filters: {
   search?: string
   state?: string
   periodCode?: string
+  subjectCode?: string
 } = {}): Promise<EnglishSubmissionsResponse> {
   const params = new URLSearchParams()
   if (filters.search?.trim()) params.set('search', filters.search.trim())
   if (filters.state) params.set('state', filters.state)
   if (filters.periodCode?.trim()) params.set('period_code', filters.periodCode.trim())
-  return request<EnglishSubmissionsResponse>(`/api/english/submissions?${params.toString()}`)
+  if (filters.subjectCode?.trim()) params.set('subject_code', filters.subjectCode.trim())
+  return request<EnglishSubmissionsResponse>(`/api/english/submissions?${params.toString()}`, { cache: 'no-store' })
 }
 
 export async function gradeEnglishSubmission(
@@ -3081,6 +3130,34 @@ export async function gradeEnglishSubmission(
 ): Promise<EnglishExam> {
   return request<EnglishExam>(`/api/english/submissions/${examId}/grade`, {
     method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function saveEnglishRubricDraft(
+  examId: number,
+  payload: {
+    language_mastery: number
+    fluency_pronunciation: number
+    content_coherence: number
+    instruction_compliance: number
+    observation?: string
+    period_code: string
+    component_code: string
+  },
+): Promise<EnglishExam> {
+  return request<EnglishExam>(`/api/english/submissions/${examId}/draft`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function publishEnglishRubricGrade(
+  examId: number,
+  payload: { period_code: string; component_code: string },
+): Promise<EnglishExam> {
+  return request<EnglishExam>(`/api/english/submissions/${examId}/publish`, {
+    method: 'POST',
     body: payload,
   })
 }

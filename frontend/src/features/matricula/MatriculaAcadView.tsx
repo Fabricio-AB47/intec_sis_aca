@@ -19,6 +19,7 @@ import type {
   AcademicEnrollmentCohortResponse,
   AcademicEnrollmentCohortStudent,
   AcademicEnrollmentDetailResponse,
+  AcademicEnrollmentMode,
   AcademicEnrollmentPayload,
   AcademicEnrollmentPreviewResponse,
   AcademicEnrollmentSubject,
@@ -27,9 +28,14 @@ import type {
   MatriculaTipo,
   PreinscriptionProcessOption,
 } from '../../types/app'
+import { MatriculaIndividualView } from './MatriculaIndividualView'
+import { PrerequisitosMateriasView } from './PrerequisitosMateriasView'
 
 type MatriculaAcadViewProps = {
   displayName: string
+  initialMode?: AcademicEnrollmentMode
+  onModeChange?: (mode: AcademicEnrollmentMode) => void
+  allowedModes?: AcademicEnrollmentMode[]
 }
 
 type ConfirmDialogState = {
@@ -202,7 +208,7 @@ function normalizeCohortStudent(student: AcademicEnrollmentCohortStudent): Acade
   }
 }
 
-export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewProps>) {
+function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>) {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [careers, setCareers] = useState<AcademicCareerOption[]>([])
@@ -394,6 +400,7 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
   const fichaResolvedStudent = fichaDetail?.student || fichaStudent
   const fichaCabeceras = fichaDetail?.cabeceras || []
   const fichaMateriasActuales = fichaDetail?.materias_actuales || []
+  const fichaHistorialAcademico = fichaDetail?.historial_academico || []
 
   const currentSubjectCodes = useMemo(
     () => new Set((detail?.materias_actuales || []).map((subject) => subject.codigo_materia)),
@@ -1323,8 +1330,8 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
     <div className="student-dashboard">
       <header className="student-hero">
         <div>
-          <p className="eyebrow">Matricula Acad</p>
-          <h1>Matricula academica</h1>
+          <p className="eyebrow">Matrícula</p>
+          <h1>Matriculación de estudiantes</h1>
           <p>{displayName}</p>
         </div>
         <div className="student-user-pill">
@@ -2282,6 +2289,115 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
             <section className="matricula-acad-ficha-section">
               <div className="section-title">
                 <div>
+                  <span>Trayectoria</span>
+                  <h2>Periodos cursados y materias</h2>
+                </div>
+                <span>{fichaHistorialAcademico.length} periodo(s)</span>
+              </div>
+              {fichaHistorialAcademico.length === 0 ? (
+                <p className="empty-block">No hay periodos ni materias cursadas para mostrar.</p>
+              ) : (
+                <div className="matricula-acad-history">
+                  {fichaHistorialAcademico.map((period, index) => (
+                    <details
+                      className="matricula-acad-history-period"
+                      open={index === 0 ? true : undefined}
+                      key={`${period.codigo_periodo}-${period.cod_anio_basica}`}
+                    >
+                      <summary>
+                        <div>
+                          <strong>{period.periodo || period.codigo_periodo}</strong>
+                          <span>{period.carrera || period.cod_anio_basica}</span>
+                        </div>
+                        <div className="matricula-acad-history-summary-meta">
+                          <span>{valueOrDash(period.tipo_periodo)}</span>
+                          <em>{period.total_materias || 0} materia(s)</em>
+                        </div>
+                      </summary>
+                      <div className="matricula-acad-history-meta">
+                        <div>
+                          <span>Codigo de periodo</span>
+                          <strong>{period.codigo_periodo}</strong>
+                        </div>
+                        <div>
+                          <span>Fechas</span>
+                          <strong>
+                            {valueOrDash(period.fecha_inicio)} a {valueOrDash(period.fecha_fin)}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Num. matricula</span>
+                          <strong>{valueOrDash(period.num_matricula)}</strong>
+                        </div>
+                        <div>
+                          <span>Jornada</span>
+                          <strong>{valueOrDash(period.jornada)}</strong>
+                        </div>
+                      </div>
+                      <div className="matricula-table-wrap matricula-acad-history-table">
+                        <table className="matricula-table">
+                          <thead>
+                            <tr>
+                              <th>Nivel</th>
+                              <th>Codigo</th>
+                              <th>Materia cursada</th>
+                              <th>Paralelo</th>
+                              <th>Tipo</th>
+                              <th>Nota final</th>
+                              <th>Resultado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(period.materias || []).length === 0 ? (
+                              <tr>
+                                <td colSpan={7}>La matricula no tiene materias asociadas en CARRERAXESTUD.</td>
+                              </tr>
+                            ) : (
+                              (period.materias || []).map((subject) => (
+                                <tr key={`${period.codigo_periodo}-${period.cod_anio_basica}-${subject.codigo_materia}`}>
+                                  <td>{valueOrDash(subject.semestre)}</td>
+                                  <td>
+                                    <strong>{subject.cod_materia || subject.codigo_materia}</strong>
+                                  </td>
+                                  <td>{subject.nombre_materia}</td>
+                                  <td>{valueOrDash(subject.paralelo)}</td>
+                                  <td>{valueOrDash(subject.tipo_matricula)}</td>
+                                  <td>{
+                                    subject.promedio_final === null || subject.promedio_final === undefined
+                                      ? '-'
+                                      : subject.promedio_final.toLocaleString('es-EC', {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        })
+                                  }</td>
+                                  <td>
+                                    <span
+                                      className={`status-pill ${
+                                        subject.estado === 'Aprobada'
+                                          ? 'is-ok'
+                                          : subject.estado === 'Reprobada'
+                                            ? 'is-warning'
+                                            : 'is-muted'
+                                      }`}
+                                    >
+                                      {subject.estado || 'Sin calificar'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="matricula-acad-ficha-section">
+              <div className="section-title">
+                <div>
                   <span>Materias</span>
                   <h2>Materias actuales</h2>
                 </div>
@@ -2348,6 +2464,58 @@ export function MatriculaAcadView({ displayName }: Readonly<MatriculaAcadViewPro
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+export function MatriculaAcadView({
+  displayName,
+  initialMode = 'individual',
+  onModeChange,
+  allowedModes,
+}: Readonly<MatriculaAcadViewProps>) {
+  if (initialMode === 'prerrequisitos') {
+    return <PrerequisitosMateriasView displayName={displayName} />
+  }
+
+  const modes: Array<{ value: AcademicEnrollmentMode; label: string; description: string }> = [
+    {
+      value: 'individual',
+      label: 'Matrícula individual',
+      description: 'Buscar un estudiante y matricular sus materias.',
+    },
+    {
+      value: 'masiva',
+      label: 'Matrícula masiva',
+      description: 'Procesar una cohorte completa por período.',
+    },
+  ]
+  const visibleModes = allowedModes?.length
+    ? modes.filter((mode) => allowedModes.includes(mode.value))
+    : modes
+
+  return (
+    <div className="matricula-acad-shell">
+      <nav className="matricula-mode-nav" aria-label="Modalidad de matriculación">
+        {visibleModes.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            className={`matricula-mode-nav__button ${initialMode === mode.value ? 'matricula-mode-nav__button--active' : ''}`}
+            onClick={() => onModeChange?.(mode.value)}
+            aria-current={initialMode === mode.value ? 'page' : undefined}
+          >
+            <strong>{mode.label}</strong>
+            <span>{mode.description}</span>
+          </button>
+        ))}
+      </nav>
+
+      {initialMode === 'masiva' ? (
+        <MatriculaMasivaView displayName={displayName} />
+      ) : (
+        <MatriculaIndividualView displayName={displayName} />
+      )}
     </div>
   )
 }

@@ -41,6 +41,9 @@ function isPage(value: string): value is Page {
     value === 'evaluacion-docente-avance' ||
     value === 'evaluacion-docente-reportes' ||
     value === 'portal-estudiante' ||
+    value === 'portal-estudiante-malla-curricular' ||
+    value === 'portal-estudiante-malla-academica' ||
+    value === 'portal-estudiante-calificaciones' ||
     value === 'ingles' ||
     value === 'expedientes-documentales' ||
     value === 'portal-docente' ||

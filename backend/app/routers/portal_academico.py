@@ -41,7 +41,10 @@ from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
 from app.services.db import get_connection, get_finance_connection
-from app.services.grade_calculation import calculate_regular_grade_with_recovery
+from app.services.grade_calculation import (
+    calculate_homologation_grade_with_recovery,
+    calculate_regular_grade_with_recovery,
+)
 
 router = APIRouter(prefix="/api/portal", tags=["portal-academico"])
 logger = logging.getLogger(__name__)
@@ -2326,10 +2329,14 @@ def teacher_courses(
                 OUTER APPLY (
                     SELECT COUNT(DISTINCT TRY_CONVERT(int, cxe.codigo_estud)) AS total_estudiantes
                     FROM dbo.CARRERAXESTUD cxe
+                    INNER JOIN dbo.DATOS_ESTUD de_active
+                      ON TRY_CONVERT(int, de_active.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
                     LEFT JOIN dbo.PENSUM pxe
                       ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                      AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                     WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                      AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de_active.Estado))))
+                          IN (N'A', N'ACTIVO', N'ACTIVA')
                       AND TRY_CONVERT(int, cxe.cod_anio_Basica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
                           UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
@@ -2570,6 +2577,8 @@ def teacher_course_students(
                   ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                  AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                 WHERE (? IS NULL OR TRY_CONVERT(int, cxe.cod_anio_Basica) = ?)
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de.Estado))))
+                      IN (N'A', N'ACTIVO', N'ACTIVA')
                   AND EXISTS (
                       SELECT 1
                       FROM teacher_assignment ta
@@ -3030,10 +3039,14 @@ def admin_grade_teacher_courses(
                 OUTER APPLY (
                     SELECT COUNT(DISTINCT TRY_CONVERT(int, cxe.codigo_estud)) AS total_estudiantes
                     FROM dbo.CARRERAXESTUD cxe
+                    INNER JOIN dbo.DATOS_ESTUD de_active
+                      ON TRY_CONVERT(int, de_active.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
                     LEFT JOIN dbo.PENSUM pxe
                       ON TRY_CONVERT(int, pxe.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
                      AND TRY_CONVERT(int, pxe.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
                     WHERE TRY_CONVERT(int, cxe.codigo_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                      AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de_active.Estado))))
+                          IN (N'A', N'ACTIVO', N'ACTIVA')
                       AND TRY_CONVERT(int, cxe.cod_anio_Basica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
                       AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) =
                           UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo))))
@@ -6570,7 +6583,12 @@ def teacher_save_grades(
     values = payload.model_dump()
     final_grade: float | None = None
     if values.get("teoria_homo") is not None or values.get("practica_homo") is not None:
-        final_grade = _weighted_homologation_final(values.get("teoria_homo"), values.get("practica_homo"))
+        homologation_grade = calculate_homologation_grade_with_recovery(
+            values.get("teoria_homo"),
+            values.get("practica_homo"),
+            values.get("recuperacion"),
+        )
+        final_grade = homologation_grade.final
     else:
         regular_grade = calculate_regular_grade_with_recovery(
             (
@@ -6608,11 +6626,11 @@ def teacher_save_grades(
     params.append(str(codigo_doc)[:10])
 
     where_parts = [
-        "TRY_CONVERT(int, codigo_estud) = ?",
-        "TRY_CONVERT(int, cod_anio_Basica) = ?",
-        "TRY_CONVERT(int, codigo_materia) = ?",
-        "TRY_CONVERT(int, codigo_periodo) = ?",
-        "UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), paralelo)))) = ?",
+        "TRY_CONVERT(int, cxe.codigo_estud) = ?",
+        "TRY_CONVERT(int, cxe.cod_anio_Basica) = ?",
+        "TRY_CONVERT(int, cxe.codigo_materia) = ?",
+        "TRY_CONVERT(int, cxe.codigo_periodo) = ?",
+        "UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo)))) = ?",
     ]
     where_params: list[Any] = [
         payload.codigo_estud,
@@ -6622,10 +6640,10 @@ def teacher_save_grades(
         parallel,
     ]
     if payload.num_matricula is not None:
-        where_parts.append("TRY_CONVERT(int, Num_Matricula) = ?")
+        where_parts.append("TRY_CONVERT(int, cxe.Num_Matricula) = ?")
         where_params.append(payload.num_matricula)
     if payload.num_grupo is not None:
-        where_parts.append("TRY_CONVERT(int, NumGrupo) = ?")
+        where_parts.append("TRY_CONVERT(int, cxe.NumGrupo) = ?")
         where_params.append(payload.num_grupo)
 
     try:
@@ -6670,14 +6688,24 @@ def teacher_save_grades(
 
             cursor.execute(
                 f"""
-                UPDATE dbo.CARRERAXESTUD
+                UPDATE cxe
                 SET {', '.join(assignments)}
+                FROM dbo.CARRERAXESTUD AS cxe
+                INNER JOIN dbo.DATOS_ESTUD AS de_active
+                  ON TRY_CONVERT(int, de_active.codigo_estud) = TRY_CONVERT(int, cxe.codigo_estud)
                 WHERE {' AND '.join(where_parts)}
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de_active.Estado))))
+                      IN (N'A', N'ACTIVO', N'ACTIVA')
                 """,
                 *params,
                 *where_params,
             )
-            affected = cursor.rowcount if cursor.rowcount is not None else 0
+            affected = int(cursor.rowcount or 0)
+            if affected != 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Solo se pueden actualizar notas de una matricula unica con estudiante activo",
+                )
             conn.commit()
         return {"ok": True, "message": "Notas actualizadas", "affected_rows": affected}
     except HTTPException:

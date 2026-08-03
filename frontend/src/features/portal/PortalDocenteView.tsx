@@ -12,7 +12,12 @@ import {
   savePortalTeacherGrades,
   signPortalTeacherComplianceReport,
 } from '../../lib/api'
-import { calculateRegularGradeWithRecovery, constrainDecimalInput, parseBoundedDecimal } from '../../lib/gradeCalculation'
+import {
+  calculateHomologationGradeWithRecovery,
+  calculateRegularGradeWithRecovery,
+  constrainDecimalInput,
+  parseBoundedDecimal,
+} from '../../lib/gradeCalculation'
 import type {
   GraphTeam,
   PortalAcademicRecordItem,
@@ -32,6 +37,7 @@ type CoursePeriodFilter = 'TODOS' | 'R' | 'H'
 type GradePeriodOption = {
   code: string
   label: string
+  activeStudents: number
 }
 
 const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
@@ -105,7 +111,8 @@ function courseHasPeriodKind(course: PortalTeacherCourse, kind: Exclude<CoursePe
 
 function teacherGradePeriodOptions(course: PortalTeacherCourse | null | undefined, kind: 'R' | 'H') {
   const options = new Map<string, GradePeriodOption>()
-  for (const assignment of courseAssignments(course).filter((item) => coursePeriodKind(item) === kind)) {
+  const periodScopes = course?.alcances_periodo?.length ? course.alcances_periodo : courseAssignments(course)
+  for (const assignment of periodScopes.filter((item) => coursePeriodKind(item) === kind)) {
     const codes = assignment.codigo_periodos?.length
       ? assignment.codigo_periodos
       : assignment.codigo_periodo
@@ -117,10 +124,16 @@ function teacherGradePeriodOptions(course: PortalTeacherCourse | null | undefine
       .filter(Boolean)
     for (const [index, code] of codes.entries()) {
       const normalizedCode = String(code || '').trim()
-      if (!normalizedCode || options.has(normalizedCode)) continue
+      if (!normalizedCode) continue
+      const current = options.get(normalizedCode)
+      if (current) {
+        current.activeStudents += Math.max(0, Number(assignment.total_estudiantes) || 0)
+        continue
+      }
       options.set(normalizedCode, {
         code: normalizedCode,
         label: labels[index] || assignment.detalle_periodo || normalizedCode,
+        activeStudents: Math.max(0, Number(assignment.total_estudiantes) || 0),
       })
     }
   }
@@ -345,9 +358,8 @@ function isHomologation(
   return tipo === 'H' || text.includes('HOMO')
 }
 
-function weightedHomologationFinal(teoria: number | null, practica: number | null) {
-  if (teoria === null || practica === null) return null
-  return Number((teoria * 0.4 + practica * 0.6).toFixed(2))
+function weightedHomologationFinal(teoria: number | null, practica: number | null, recuperacion: number | null) {
+  return calculateHomologationGradeWithRecovery(teoria, practica, recuperacion).final
 }
 
 function regularAverages(draft: GradeDraft) {
@@ -790,7 +802,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     [selectedComplianceRecordings, selectedComplianceTeam]
   )
   const courseUsesHomologation = gradePeriodKind === 'H'
-  const gradeTableColumnCount = (courseUsesHomologation ? 6 : gradePartial === 'P3' ? 10 : 8) + 2
+  const gradeTableColumnCount = courseUsesHomologation ? 9 : gradePartial === 'P3' ? 12 : 9
 
   const loadCourses = useCallback(async () => {
     setLoadingCourses(true)
@@ -1003,9 +1015,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const homo = isHomologation(item) || isHomologation(selectedCourse)
     const teoriaHomo = parseBoundedDecimal(draft.teoria_homo, 10, 'La nota teórica')
     const practicaHomo = parseBoundedDecimal(draft.practica_homo, 10, 'La nota práctica')
+    const recuperacion = parseBoundedDecimal(draft.recuperacion, 10, 'La recuperación')
     const regular = regularAverages(draft)
     const promedioFinal = homo
-      ? weightedHomologationFinal(teoriaHomo, practicaHomo)
+      ? weightedHomologationFinal(teoriaHomo, practicaHomo, recuperacion)
       : regular.final
     const payload: PortalTeacherGradePayload = {
       codigo_estud: Number(item.codigo_estud),
@@ -1032,7 +1045,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       promedio: promedioFinal,
       promedio_final: promedioFinal,
       asistencia: parseBoundedDecimal(draft.asistencia, 100, 'La asistencia'),
-      recuperacion: homo ? null : parseBoundedDecimal(draft.recuperacion, 10, 'La recuperación'),
+      recuperacion,
       caprueba: promedioFinal === null ? null : promedioFinal >= 7 ? 'A' : 'R',
     }
     return { payload, promedioFinal }
@@ -2290,7 +2303,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         onChange={() => selectGradePeriod(option.code)}
                       />
                       <span>{option.label}</span>
-                      <small>Código {option.code}</small>
+                      <small>
+                        Código {option.code} · {option.activeStudents} estudiante{option.activeStudents === 1 ? '' : 's'} activo{option.activeStudents === 1 ? '' : 's'}
+                      </small>
                     </label>
                   )
                 })}
@@ -2320,6 +2335,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       <th>Practica 60%</th>
                       <th>Final</th>
                       <th>Estado</th>
+                      <th>Recup.</th>
                     </>
                   ) : (
                     <>
@@ -2350,7 +2366,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         </>
                       ) : null}
                       <th>Asistencia</th>
-                      <th>Recup.</th>
+                      {gradePartial === 'P3' ? <th>Recup.</th> : null}
                     </>
                   )}
                 </tr>
@@ -2362,7 +2378,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   const homo = courseUsesHomologation
                   const teoriaHomo = toNumberOrNull(draft.teoria_homo)
                   const practicaHomo = toNumberOrNull(draft.practica_homo)
-                  const calculatedHomoFinal = weightedHomologationFinal(teoriaHomo, practicaHomo)
+                  const recovery = toNumberOrNull(draft.recuperacion)
+                  const calculatedHomoFinal = weightedHomologationFinal(teoriaHomo, practicaHomo, recovery)
                   const calculatedRegular = regularAverages(draft)
                   const finalValue = calculatedHomoFinal ?? calculatedRegular.final ?? item.promedio_final ?? null
                   const statusText = statusFromFinal(finalValue)
@@ -2474,7 +2491,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           </span>
                         </td>
                       ) : null}
-                      {!homo ? (
+                      {homo ? (
+                        <td>
+                          <input
+                            className="portal-grade-input"
+                            type="number"
+                            min={0}
+                            max={10}
+                            step="0.01"
+                            value={draft.recuperacion}
+                            inputMode="decimal"
+                            onChange={(event) => updateDraft(item, 'recuperacion', event.target.value)}
+                            placeholder={numberText(item.recuperacion)}
+                            title="Reemplaza una sola nota mínima entre teoría y práctica cuando mejora el resultado."
+                          />
+                        </td>
+                      ) : (
                         <>
                           <td>
                             <input
@@ -2489,21 +2521,24 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                               placeholder={numberText(item.asistencia)}
                             />
                           </td>
-                          <td>
-                            <input
-                              className="portal-grade-input"
-                              type="number"
-                              min={0}
-                              max={10}
-                              step="0.01"
-                              value={draft.recuperacion}
-                              inputMode="decimal"
-                              onChange={(event) => updateDraft(item, 'recuperacion', event.target.value)}
-                              placeholder={numberText(item.recuperacion)}
-                            />
-                          </td>
+                          {gradePartial === 'P3' ? (
+                            <td>
+                              <input
+                                className="portal-grade-input"
+                                type="number"
+                                min={0}
+                                max={10}
+                                step="0.01"
+                                value={draft.recuperacion}
+                                inputMode="decimal"
+                                onChange={(event) => updateDraft(item, 'recuperacion', event.target.value)}
+                                placeholder={numberText(item.recuperacion)}
+                                title="Disponible únicamente en el tercer parcial."
+                              />
+                            </td>
+                          ) : null}
                         </>
-                      ) : null}
+                      )}
                     </tr>
                   )
                 })}

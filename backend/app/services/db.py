@@ -1,5 +1,6 @@
 import pyodbc
 
+from app.core.audit_context import get_audit_context
 from app.core.config import get_settings
 
 
@@ -20,6 +21,7 @@ def _build_connection_string(
         f"DATABASE={database};"
         f"UID={user};"
         f"PWD={password};"
+        "APP=INTEC_SIS_ACA_API;"
     )
     if driver.strip().lower() != "sql server":
         connection_string += (
@@ -27,6 +29,41 @@ def _build_connection_string(
             f"TrustServerCertificate={trust_cert};"
         )
     return connection_string
+
+
+def _apply_audit_context(connection: pyodbc.Connection) -> pyodbc.Connection:
+    context = get_audit_context()
+    values = (
+        context.user[:256],
+        context.role[:100],
+        context.user_id[:100],
+        context.origin[:100],
+        context.request_id[:128],
+        context.method[:10],
+        context.path[:1000],
+        context.client_ip[:64],
+    )
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            EXEC sys.sp_set_session_context @key=N'app_user', @value=?;
+            EXEC sys.sp_set_session_context @key=N'app_role', @value=?;
+            EXEC sys.sp_set_session_context @key=N'app_user_id', @value=?;
+            EXEC sys.sp_set_session_context @key=N'app_origin', @value=?;
+            EXEC sys.sp_set_session_context @key=N'request_id', @value=?;
+            EXEC sys.sp_set_session_context @key=N'request_method', @value=?;
+            EXEC sys.sp_set_session_context @key=N'request_path', @value=?;
+            EXEC sys.sp_set_session_context @key=N'request_ip', @value=?;
+            """,
+            *values,
+        )
+        cursor.close()
+    except pyodbc.Error:
+        # SQL Server sin SESSION_CONTEXT sigue operativo; el trigger conserva
+        # ORIGINAL_LOGIN(), HOST_NAME() y APP_NAME() como identidad de respaldo.
+        pass
+    return connection
 
 
 def _connect_with_fallback(
@@ -52,7 +89,7 @@ def _connect_with_fallback(
     )
 
     try:
-        return pyodbc.connect(connection_string, timeout=30)
+        return _apply_audit_context(pyodbc.connect(connection_string, timeout=30))
     except pyodbc.Error as exc:
         message = str(exc).lower()
         is_login_timeout = (
@@ -80,18 +117,20 @@ def _connect_with_fallback(
             for fallback_driver in fallback_drivers:
                 if driver != fallback_driver and fallback_driver in pyodbc.drivers():
                     try:
-                        return pyodbc.connect(
-                            _build_connection_string(
-                                database=database,
-                                user=user,
-                                password=password,
-                                host=host,
-                                port=port,
-                                driver=fallback_driver,
-                                encrypt=encrypt,
-                                trust_cert=trust_cert,
-                            ),
-                            timeout=30,
+                        return _apply_audit_context(
+                            pyodbc.connect(
+                                _build_connection_string(
+                                    database=database,
+                                    user=user,
+                                    password=password,
+                                    host=host,
+                                    port=port,
+                                    driver=fallback_driver,
+                                    encrypt=encrypt,
+                                    trust_cert=trust_cert,
+                                ),
+                                timeout=30,
+                            )
                         )
                     except pyodbc.Error:
                         continue

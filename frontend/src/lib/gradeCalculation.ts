@@ -32,6 +32,12 @@ export type RegularGradeCalculation = {
   replacement: { partialIndex: number; componentIndex: number } | null
 }
 
+export type HomologationGradeCalculation = {
+  components: [number | null, number | null]
+  final: number | null
+  replacement: number | null
+}
+
 function roundGrade(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
@@ -78,4 +84,27 @@ export function regularFinalWithRecovery(
   recovery: number | null,
 ): number | null {
   return calculateRegularGradeWithRecovery(partials, recovery).final
+}
+
+export function calculateHomologationGradeWithRecovery(
+  theory: number | null,
+  practice: number | null,
+  recovery: number | null,
+): HomologationGradeCalculation {
+  const adjusted: [number | null, number | null] = [theory, practice]
+  let replacement: number | null = null
+  if (recovery !== null && adjusted.every((value) => value !== null)) {
+    const numericComponents = adjusted.map(Number)
+    const lowest = Math.min(...numericComponents)
+    if (recovery > lowest) {
+      replacement = numericComponents.indexOf(lowest)
+      adjusted[replacement] = recovery
+    }
+  }
+
+  const final = adjusted.some((value) => value === null)
+    ? null
+    : roundGrade((Number(adjusted[0]) * 0.4) + (Number(adjusted[1]) * 0.6))
+
+  return { components: adjusted, final, replacement }
 }

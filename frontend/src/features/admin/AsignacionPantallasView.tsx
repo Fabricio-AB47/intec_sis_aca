@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ApiError, fetchScreenAccessAssignments, updateScreenAccessAssignment } from '../../lib/api'
-import type { Page, Role, ScreenAccessResponse, ScreenAccessRole } from '../../types/app'
+import type { Role, ScreenAccessResponse, ScreenAccessRole, ScreenPermissionCode } from '../../types/app'
 
 
 type AccessTab = 'roles' | 'summary'
-type AssignmentMap = Partial<Record<Role, Page[]>>
+type AssignmentMap = Partial<Record<Role, ScreenPermissionCode[]>>
 
 const LEGACY_STORAGE_KEY = 'intec:user-type-screen-access:v1'
 const SCREEN_ACCESS_SYNC_KEY = 'intec:screen-access-updated:v2'
-const ADMIN_ONLY_PAGES = new Set<Page>(['sistema-academico', 'asignacion-pantallas'])
-const ROLE_DENIED_PAGES: Partial<Record<Role, Set<Page>>> = {
-  ESTUDIANTE: new Set<Page>(['expedientes-documentales']),
+const ADMIN_ONLY_PAGES = new Set<ScreenPermissionCode>(['sistema-academico', 'asignacion-pantallas'])
+const ROLE_DENIED_PAGES: Partial<Record<Role, Set<ScreenPermissionCode>>> = {
+  ESTUDIANTE: new Set<ScreenPermissionCode>(['expedientes-documentales']),
 }
 
-function screenAvailableForRole(role: Role | null, page: Page) {
+function isPageOrFlowOf(page: ScreenPermissionCode, parent: ScreenPermissionCode) {
+  return page === parent || page.startsWith(`${parent}/`)
+}
+
+function screenAvailableForRole(role: Role | null, page: ScreenPermissionCode) {
   if (!role) return false
-  if (role !== 'ADMINISTRADOR' && ADMIN_ONLY_PAGES.has(page)) return false
-  return !ROLE_DENIED_PAGES[role]?.has(page)
+  if (role !== 'ADMINISTRADOR' && [...ADMIN_ONLY_PAGES].some((parent) => isPageOrFlowOf(page, parent))) return false
+  return ![...(ROLE_DENIED_PAGES[role] || [])].some((parent) => isPageOrFlowOf(page, parent))
 }
 
 function assignmentMap(roles: ScreenAccessRole[]): AssignmentMap {
@@ -43,6 +47,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   const [screenQuery, setScreenQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -105,20 +110,36 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   function openRole(role: ScreenAccessRole) {
     setSelectedRole(role.value)
     setAssignments((current) => ({ ...current, [role.value]: current[role.value] || role.pages }))
+    setCloseConfirmationOpen(false)
+    setScreenQuery('')
+    setMessage('')
+    setError('')
+  }
+
+  function finishClosingRole() {
+    setSelectedRole(null)
+    setCloseConfirmationOpen(false)
     setScreenQuery('')
     setMessage('')
     setError('')
   }
 
   function closeRole() {
-    if (hasChanges && !globalThis.confirm('Hay cambios sin guardar. ¿Desea cerrar la asignacion?')) return
-    setSelectedRole(null)
-    setScreenQuery('')
-    setMessage('')
-    setError('')
+    if (hasChanges) {
+      setCloseConfirmationOpen(true)
+      return
+    }
+    finishClosingRole()
   }
 
-  function togglePage(page: Page) {
+  function closeRoleWithoutSaving() {
+    if (selectedRole && selectedRoleMeta) {
+      setAssignments((current) => ({ ...current, [selectedRole]: selectedRoleMeta.pages }))
+    }
+    finishClosingRole()
+  }
+
+  function togglePage(page: ScreenPermissionCode) {
     if (!selectedRole || selectedRoleMeta?.protected) return
     setAssignments((current) => {
       const pages = new Set(current[selectedRole] || [])
@@ -338,6 +359,40 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   <p className="screen-access-empty">No hay pantallas que coincidan con la busqueda.</p>
                 ) : null}
               </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {closeConfirmationOpen ? (
+        <div
+          className="screen-access-confirm-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCloseConfirmationOpen(false)
+          }}
+        >
+          <section
+            className="screen-access-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="screen-access-confirm-title"
+            aria-describedby="screen-access-confirm-description"
+          >
+            <header>
+              <span>Cambios pendientes</span>
+              <h2 id="screen-access-confirm-title">¿Cerrar esta asignación?</h2>
+            </header>
+            <p id="screen-access-confirm-description">
+              Los cambios realizados para {selectedRoleMeta?.label || 'este perfil'} todavía no se han guardado.
+            </p>
+            <div className="screen-access-confirm-actions">
+              <button type="button" onClick={() => setCloseConfirmationOpen(false)} autoFocus>
+                Seguir editando
+              </button>
+              <button type="button" className="screen-access-confirm-discard" onClick={closeRoleWithoutSaving}>
+                Cerrar sin guardar
+              </button>
             </div>
           </section>
         </div>

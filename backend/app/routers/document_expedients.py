@@ -23,6 +23,7 @@ from app.services.graph_documents import (
     complete_upload_session,
     create_upload_session,
     document_record,
+    ensure_folder,
     item_by_id,
     item_by_path,
     list_documents,
@@ -30,6 +31,7 @@ from app.services.graph_documents import (
     prepare_expedient,
     register_upload_session,
     safe_filename,
+    safe_folder_part,
     set_document_origin,
     upload_session,
 )
@@ -618,7 +620,22 @@ def start_document_upload(
             audit_user=current_user.login,
         )
         cloud_name = f"{type_code}-{str(session_id)[:8]}-{filename}"
-        graph_path = f"{graph_expedient['folder_path']}/{cloud_name}"
+        type_name = next(
+            (
+                _clean(item.get("name"))
+                for item in expedient.get("document_types", [])
+                if _clean(item.get("code")).upper() == type_code
+            ),
+            type_code,
+        )
+        document_folder = safe_folder_part(
+            f"{type_code} - {type_name}",
+            type_code,
+            max_length=80,
+        )
+        upload_folder = f"{graph_expedient['folder_path']}/{document_folder}"
+        ensure_folder(upload_folder)
+        graph_path = f"{upload_folder}/{cloud_name}"
         graph_session = create_upload_session(graph_path)
         upload_url = _clean(graph_session.get("uploadUrl"))
         if not upload_url:

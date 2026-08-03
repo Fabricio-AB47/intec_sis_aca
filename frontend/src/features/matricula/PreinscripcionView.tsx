@@ -54,6 +54,7 @@ type PreinscripcionViewProps = {
   role?: string
   activeStage: PreinscriptionStage
   onStageChange: (stage: PreinscriptionStage) => void
+  allowedStages?: PreinscriptionStage[]
 }
 
 type DocumentFilter = 'ALL' | 'PENDIENTES' | 'COMPLETOS' | 'CON_CABECERA' | 'SIN_CABECERA'
@@ -161,7 +162,13 @@ function documentStatus(item: PreinscriptionItem): string {
   return `${total}/${required}`
 }
 
-export function PreinscripcionView({ displayName, role = '', activeStage, onStageChange }: Readonly<PreinscripcionViewProps>) {
+export function PreinscripcionView({
+  displayName,
+  role = '',
+  activeStage,
+  onStageChange,
+  allowedStages,
+}: Readonly<PreinscripcionViewProps>) {
   const [catalog, setCatalog] = useState<PreinscriptionCatalogResponse | null>(null)
   const [catalogError, setCatalogError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -377,8 +384,9 @@ export function PreinscripcionView({ displayName, role = '', activeStage, onStag
         matches: ['materias'],
       })
     }
-    return steps
-  }, [canManageAcademicEnrollment, documentsComplete, hasCabecera, isAdmissionsRole, scholarshipNeedsApproval, selectedItem])
+    if (!allowedStages?.length) return steps
+    return steps.filter((step) => step.matches.some((stage) => allowedStages.includes(stage)))
+  }, [allowedStages, canManageAcademicEnrollment, documentsComplete, hasCabecera, isAdmissionsRole, scholarshipNeedsApproval, selectedItem])
   const completedJourneySteps = admissionJourney.filter((step) => step.complete).length
   const journeyProgress = Math.round((completedJourneySteps / Math.max(admissionJourney.length, 1)) * 100)
 

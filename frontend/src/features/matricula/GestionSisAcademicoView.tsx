@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import {
   applyAcademicPeriodChange,
   createSisAcademicoRecord,
+  fetchAcademicEnrollmentDetail,
   fetchAcademicPeriodChangeCatalog,
   fetchSisAcademicoCatalog,
   fetchSisAcademicoRecord,
@@ -12,6 +13,7 @@ import {
   updateSisAcademicoRecord,
 } from '../../lib/api'
 import type {
+  AcademicEnrollmentDetailResponse,
   AcademicPeriodChangeCatalogResponse,
   AcademicPeriodChangePreviewResponse,
   AcademicPeriodOption,
@@ -23,6 +25,8 @@ import type {
 type GestionSisAcademicoViewProps = {
   displayName: string
   initialSectionKey?: string
+  allowedSectionKeys?: string[]
+  onSectionChange?: (sectionKey: string) => void
 }
 
 type FormValue = string | number | boolean | null | undefined
@@ -342,6 +346,26 @@ function todayIsoDate(): string {
   return `${year}-${month}-${day}`
 }
 
+function valueOrDash(value: unknown): string {
+  const normalized = String(value ?? '').trim()
+  return normalized || '-'
+}
+
+function maskedStudentDocument(value: unknown): string {
+  const normalized = String(value ?? '').replace(/\s+/g, '').trim()
+  if (!normalized) return '-'
+  const visible = normalized.slice(-4)
+  return normalized.length > 4 ? `**** ${visible}` : visible
+}
+
+function formatAcademicGrade(value?: number | null): string {
+  if (value === null || value === undefined) return '-'
+  return value.toLocaleString('es-EC', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
 function shouldRenderSelect(sectionKey: string, field: SisAcademicoField, options: OptionItem[]): boolean {
   if (options.length === 0) return false
   if (['login', 'password', 'nombres', 'email', 'cedula'].includes(field.name)) {
@@ -351,7 +375,13 @@ function shouldRenderSelect(sectionKey: string, field: SisAcademicoField, option
   return true
 }
 
-export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }: Readonly<GestionSisAcademicoViewProps>) {
+export function GestionSisAcademicoView({
+  displayName,
+  initialSectionKey = '',
+  allowedSectionKeys,
+  onSectionChange,
+}: Readonly<GestionSisAcademicoViewProps>) {
+  const allowedSectionSignature = [...(allowedSectionKeys || [])].sort().join('|')
   const [sections, setSections] = useState<SisAcademicoSection[]>([])
   const [selectedSectionKey, setSelectedSectionKey] = useState('')
   const [appliedInitialSection, setAppliedInitialSection] = useState('')
@@ -367,6 +397,10 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [studentAcademicHistory, setStudentAcademicHistory] = useState<AcademicEnrollmentDetailResponse | null>(null)
+  const [studentAcademicHistoryLoading, setStudentAcademicHistoryLoading] = useState(false)
+  const [studentAcademicHistoryError, setStudentAcademicHistoryError] = useState('')
+  const [studentProfileEditing, setStudentProfileEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [inlineSavingKey, setInlineSavingKey] = useState('')
   const [inlineEstadoValues, setInlineEstadoValues] = useState<InlineEstadoValues>({})
@@ -454,6 +488,18 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   const tableFields = isEstadoInlineSection ? listFields.filter((field) => field.name !== 'estado_nombre') : listFields
   const hasIndexColumn = !isEstadoInlineSection
   const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isStudentEstadoSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
+  const isStudentProfileSection = selectedSectionKey === 'estudiantes'
+  const academicHistory = studentAcademicHistory?.historial_academico || []
+  const studentProfileName = valueOrDash(
+    studentAcademicHistory?.student?.nombre_estudiante
+    ?? formValues.Apellidos_nombre
+    ?? formValues.apellidos_nombre,
+  )
+  const studentProfileDocument = maskedStudentDocument(
+    studentAcademicHistory?.student?.cedula
+    ?? formValues.Cedula_Est
+    ?? formValues.cedula,
+  )
   const isMateriaHomoTextSection = selectedSection?.key === 'materia_homo_textof'
   const isPeriodChangeSection = selectedSection?.key === 'cambio_periodo_hr'
   const homoMateriaOptions = useMemo(
@@ -593,6 +639,9 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       setInlineEstadoValues({})
       setSelectedRecordKey('')
       setFormValues({})
+      setStudentAcademicHistory(null)
+      setStudentAcademicHistoryError('')
+      setStudentProfileEditing(false)
       setMode('edit')
       return
     }
@@ -605,6 +654,9 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       setInlineEstadoValues({})
       setSelectedRecordKey('')
       setFormValues({})
+      setStudentAcademicHistory(null)
+      setStudentAcademicHistoryError('')
+      setStudentProfileEditing(false)
       setMode('edit')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar la seccion')
@@ -619,11 +671,39 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setError('')
     setMessage('')
     setDetailLoading(true)
+    setStudentAcademicHistory(null)
+    setStudentAcademicHistoryError('')
+    setStudentProfileEditing(false)
     setMode('edit')
     try {
       const payload = await fetchSisAcademicoRecord(sectionKey, nextRecordKey)
       setSelectedRecordKey(nextRecordKey)
       setFormValues(payload.record || {})
+      if (sectionKey === 'estudiantes') {
+        const studentCode = String(
+          payload.record?.codigo_estud
+          ?? payload.record?.CodigoEstud
+          ?? payload.record?.Codigo_Estud
+          ?? '',
+        ).trim()
+        if (studentCode) {
+          setStudentAcademicHistoryLoading(true)
+          try {
+            const academicDetail = await fetchAcademicEnrollmentDetail(studentCode)
+            setStudentAcademicHistory(academicDetail)
+          } catch (academicError) {
+            setStudentAcademicHistoryError(
+              academicError instanceof Error
+                ? academicError.message
+                : 'No se pudo consultar la trayectoria academica del estudiante.',
+            )
+          } finally {
+            setStudentAcademicHistoryLoading(false)
+          }
+        } else {
+          setStudentAcademicHistoryError('El registro no contiene el codigo academico necesario para consultar la trayectoria.')
+        }
+      }
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo abrir el registro')
       setSelectedRecordKey('')
@@ -635,6 +715,8 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
 
   async function saveRecord() {
     if (!selectedSection) return
+    const savedRecordKey = selectedRecordKey
+    const returnToStudentProfile = isStudentProfileSection && mode !== 'create' && Boolean(savedRecordKey)
     setError('')
     setMessage('')
     setSaving(true)
@@ -650,8 +732,12 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
         mode === 'create'
           ? await createSisAcademicoRecord(selectedSection.key, valuesToSave)
           : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, valuesToSave)
-      setMessage(payload.message || 'Cambios guardados')
+      const successMessage = payload.message || 'Cambios guardados'
       await loadRows(selectedSection.key)
+      if (returnToStudentProfile) {
+        await openRecord(selectedSection.key, savedRecordKey)
+      }
+      setMessage(successMessage)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo guardar')
     } finally {
@@ -719,6 +805,9 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     if (!selectedSection) return
     setMode('create')
     setSelectedRecordKey('')
+    setStudentProfileEditing(false)
+    setStudentAcademicHistory(null)
+    setStudentAcademicHistoryError('')
     setFormValues({
       ...emptyValues(createFields),
       ...(selectedSection.key === 'usuarios'
@@ -738,6 +827,10 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
   }
 
   function openSection(sectionKey: string, processKey?: string) {
+    if (onSectionChange) {
+      onSectionChange(sectionKey)
+      return
+    }
     setSelectedSectionKey(sectionKey)
     setSelectedProcessKey(processKey || processKeyForSection(sectionKey))
     setQuery('')
@@ -746,6 +839,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setTableFilter('')
     setSelectedRecordKey('')
     setFormValues({})
+    setStudentProfileEditing(false)
     setMode('edit')
     void loadRows(sectionKey, '', '')
   }
@@ -934,7 +1028,10 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
       try {
         const payload = await fetchSisAcademicoCatalog()
         if (cancelled) return
-        const nextSections = payload.sections || []
+        const allowedSectionSet = new Set(allowedSectionSignature ? allowedSectionSignature.split('|') : [])
+        const nextSections = allowedSectionSet.size
+          ? (payload.sections || []).filter((section) => allowedSectionSet.has(section.key))
+          : payload.sections || []
         setSections(nextSections)
         const requestedSection = nextSections.find((section) => section.key === initialSectionKey)?.key || ''
         const firstSection = requestedSection || nextSections[0]?.key || ''
@@ -964,7 +1061,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     return () => {
       cancelled = true
     }
-  }, [initialSectionKey])
+  }, [allowedSectionSignature, initialSectionKey])
 
   useEffect(() => {
     if (!initialSectionKey || initialSectionKey === appliedInitialSection) return
@@ -979,6 +1076,9 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
     setTableFilter('')
     setSelectedRecordKey('')
     setFormValues({})
+    setStudentAcademicHistory(null)
+    setStudentAcademicHistoryError('')
+    setStudentProfileEditing(false)
     setMode('edit')
     if (['cambio_periodo_hr', 'menu_general', 'menu_usuarios'].includes(initialSectionKey)) {
       setRows([])
@@ -1729,7 +1829,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                           {isStudentEstadoSection && field.name === 'Estado' ? <th>Documento de respaldo</th> : null}
                         </Fragment>
                       ))}
-                      <th>{isEstadoInlineSection ? 'Guardar' : 'Editar'}</th>
+                      <th>{isEstadoInlineSection ? 'Guardar' : isStudentProfileSection ? 'Ficha' : 'Editar'}</th>
                       {isDocenteEstadoSection ? <th>Observar</th> : null}
                     </tr>
                   </thead>
@@ -1820,7 +1920,7 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                                 className="reporteria-row-action"
                                 onClick={() => void openRecord(selectedSectionKey, recordKey(row))}
                               >
-                                Actualizar
+                                {isStudentProfileSection ? 'Ver ficha' : 'Actualizar'}
                               </button>
                             )}
                           </td>
@@ -1852,17 +1952,29 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
 
       {(mode === 'create' || selectedRecordKey) && selectedSection ? (
         <div className="matricula-modal-overlay">
-          <article className="matricula-modal gestion-sis-modal">
+          <article className={`matricula-modal gestion-sis-modal${isStudentProfileSection && mode !== 'create' ? ' gestion-sis-student-modal' : ''}`}>
             <div className="matricula-modal-head">
               <div className="matricula-modal-title">
                 <h3>
                   {isDocenteEstadoSection && mode !== 'create'
                     ? `Observar: ${formValues.apellidos_nombre || selectedSection.title}`
+                    : isStudentProfileSection && mode !== 'create'
+                      ? studentProfileEditing
+                        ? `Actualizar estudiante: ${studentProfileName}`
+                        : `Ficha estudiantil: ${studentProfileName}`
                     : mode === 'create'
                       ? `Nuevo registro: ${selectedSection.title}`
                       : `Editar: ${selectedSection.title}`}
                 </h3>
-                <span>{detailLoading ? 'Cargando registro...' : selectedSection.table}</span>
+                <span>
+                  {detailLoading
+                    ? 'Cargando registro...'
+                    : isStudentProfileSection && mode !== 'create'
+                      ? studentProfileEditing
+                        ? 'Actualizacion de datos'
+                        : 'Consulta academica'
+                      : selectedSection.table}
+                </span>
               </div>
               <button
                 type="button"
@@ -1870,6 +1982,9 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                 onClick={() => {
                   setSelectedRecordKey('')
                   setFormValues({})
+                  setStudentAcademicHistory(null)
+                  setStudentAcademicHistoryError('')
+                  setStudentProfileEditing(false)
                   setMode('edit')
                 }}
               >
@@ -1935,13 +2050,37 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
               </>
             ) : (
               <>
-                <div className="gestion-sis-form-helper">
-                  <strong>{mode === 'create' ? 'Nuevo registro' : 'Edicion del registro'}</strong>
-                  <span>Completa los campos requeridos y guarda los cambios para actualizar la tabla.</span>
-                </div>
+                {isStudentProfileSection && mode !== 'create' && !studentProfileEditing ? (
+                  <section className="gestion-sis-student-summary" aria-label="Datos basicos del estudiante">
+                    <article>
+                      <span>Nombre del estudiante</span>
+                      <strong>{studentProfileName}</strong>
+                    </article>
+                    <article>
+                      <span>Numero de cedula</span>
+                      <strong>{studentProfileDocument}</strong>
+                      <small>Documento protegido: se muestran solo los ultimos 4 digitos.</small>
+                    </article>
+                  </section>
+                ) : (
+                  <>
+                    <div className="gestion-sis-form-helper">
+                      <strong>
+                        {mode === 'create'
+                          ? 'Nuevo registro'
+                          : isStudentProfileSection
+                            ? 'Actualizar informacion del estudiante'
+                            : 'Edicion del registro'}
+                      </strong>
+                      <span>
+                        {isStudentProfileSection && mode !== 'create'
+                          ? 'Complete los campos necesarios y guarde para regresar a la ficha estudiantil.'
+                          : 'Completa los campos requeridos y guarda los cambios para actualizar la tabla.'}
+                      </span>
+                    </div>
 
-                <div className="matricula-acad-form gestion-sis-edit-form">
-                  {currentFields.map((field) => {
+                    <div className="matricula-acad-form gestion-sis-edit-form">
+                      {currentFields.map((field) => {
                     if (mode === 'create' && selectedSection.key === 'usuarios' && field.name === 'fecha_ingreso') {
                       return null
                     }
@@ -2026,15 +2165,148 @@ export function GestionSisAcademicoView({ displayName, initialSectionKey = '' }:
                         )}
                       </label>
                     )
-                  })}
-                </div>
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {isStudentProfileSection && mode !== 'create' && !studentProfileEditing ? (
+                  <section className="gestion-sis-student-history">
+                    <div className="section-title">
+                      <div>
+                        <span>Trayectoria academica</span>
+                        <h2>Periodos cursados y materias</h2>
+                      </div>
+                      <span>{academicHistory.length} periodo(s)</span>
+                    </div>
+
+                    {studentAcademicHistoryLoading ? (
+                      <p className="empty-block">Consultando matriculas y materias cursadas...</p>
+                    ) : studentAcademicHistoryError ? (
+                      <div className="status-message status-message--error">{studentAcademicHistoryError}</div>
+                    ) : academicHistory.length === 0 ? (
+                      <p className="empty-block">No hay periodos ni materias registradas en CABECERA_MATRICULA y CARRERAXESTUD.</p>
+                    ) : (
+                      <div className="matricula-acad-history">
+                        {academicHistory.map((period, index) => (
+                          <details
+                            className="matricula-acad-history-period"
+                            open={index === 0 ? true : undefined}
+                            key={`${period.codigo_periodo}-${period.cod_anio_basica}`}
+                          >
+                            <summary>
+                              <div>
+                                <strong>{period.periodo || period.codigo_periodo}</strong>
+                                <span>{period.carrera || period.cod_anio_basica}</span>
+                              </div>
+                              <div className="matricula-acad-history-summary-meta">
+                                <span>{valueOrDash(period.tipo_periodo)}</span>
+                                <em>{period.total_materias || 0} materia(s)</em>
+                              </div>
+                            </summary>
+                            <div className="matricula-acad-history-meta">
+                              <div>
+                                <span>Codigo de periodo</span>
+                                <strong>{period.codigo_periodo}</strong>
+                              </div>
+                              <div>
+                                <span>Fechas</span>
+                                <strong>{valueOrDash(period.fecha_inicio)} a {valueOrDash(period.fecha_fin)}</strong>
+                              </div>
+                              <div>
+                                <span>Num. matricula</span>
+                                <strong>{valueOrDash(period.num_matricula)}</strong>
+                              </div>
+                              <div>
+                                <span>Jornada</span>
+                                <strong>{valueOrDash(period.jornada)}</strong>
+                              </div>
+                            </div>
+                            <div className="matricula-table-wrap matricula-acad-history-table">
+                              <table className="matricula-table">
+                                <thead>
+                                  <tr>
+                                    <th>Nivel</th>
+                                    <th>Codigo</th>
+                                    <th>Materia cursada</th>
+                                    <th>Paralelo</th>
+                                    <th>Tipo</th>
+                                    <th>Nota final</th>
+                                    <th>Resultado</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(period.materias || []).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={7}>La matricula no tiene materias asociadas en CARRERAXESTUD.</td>
+                                    </tr>
+                                  ) : (
+                                    (period.materias || []).map((subject) => (
+                                      <tr key={`${period.codigo_periodo}-${period.cod_anio_basica}-${subject.codigo_materia}`}>
+                                        <td>{valueOrDash(subject.semestre)}</td>
+                                        <td><strong>{subject.cod_materia || subject.codigo_materia}</strong></td>
+                                        <td>{subject.nombre_materia}</td>
+                                        <td>{valueOrDash(subject.paralelo)}</td>
+                                        <td>{valueOrDash(subject.tipo_matricula)}</td>
+                                        <td>{formatAcademicGrade(subject.promedio_final)}</td>
+                                        <td>
+                                          <span
+                                            className={`status-pill ${
+                                              subject.estado === 'Aprobada'
+                                                ? 'is-ok'
+                                                : subject.estado === 'Reprobada'
+                                                  ? 'is-warning'
+                                                  : 'is-muted'
+                                            }`}
+                                          >
+                                            {subject.estado || 'Sin calificar'}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
               </>
             )}
 
             <div className="teams-actions gestion-sis-modal-actions">
-              <button type="button" onClick={() => void saveRecord()} disabled={saving || detailLoading}>
-                {saving ? 'Guardando...' : isDocenteEstadoSection && mode !== 'create' ? 'Guardar estado' : 'Guardar cambios'}
-              </button>
+              {isStudentProfileSection && mode !== 'create' ? (
+                studentProfileEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      className="gestion-sis-modal-actions__secondary"
+                      onClick={() => void openRecord(selectedSection.key, selectedRecordKey)}
+                      disabled={saving || detailLoading}
+                    >
+                      Volver a ficha
+                    </button>
+                    <button type="button" onClick={() => void saveRecord()} disabled={saving || detailLoading}>
+                      {saving ? 'Guardando...' : 'Guardar cambios'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setStudentProfileEditing(true)}
+                    disabled={detailLoading}
+                  >
+                    Actualizar
+                  </button>
+                )
+              ) : (
+                <button type="button" onClick={() => void saveRecord()} disabled={saving || detailLoading}>
+                  {saving ? 'Guardando...' : isDocenteEstadoSection && mode !== 'create' ? 'Guardar estado' : 'Guardar cambios'}
+                </button>
+              )}
             </div>
           </article>
         </div>
