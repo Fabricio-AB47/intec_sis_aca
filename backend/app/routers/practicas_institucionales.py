@@ -113,7 +113,38 @@ def _has_column(cursor: pyodbc.Cursor, table_name: str, column_name: str) -> boo
 
 
 def _use_legacy_schema(cursor: pyodbc.Cursor) -> bool:
-    return _has_object(cursor, "cat.tipo_proceso") and not _has_object(cursor, "cat.TipoProceso")
+    legacy_ready = all(
+        _has_object(cursor, object_name)
+        for object_name in (
+            "cat.tipo_proceso",
+            "cat.tipo_documento_practica",
+            "pp.expediente_practica",
+            "pp.responsable_proceso",
+        )
+    )
+    modern_ready = all(
+        _has_object(cursor, object_name)
+        for object_name in (
+            "cat.TipoProceso",
+            "cat.TipoDocumento",
+            "exp.Expediente",
+            "resp.ResponsableProceso",
+        )
+    )
+
+    # Algunas instalaciones contienen los catálogos V4 y el módulo operativo
+    # completo V6 simultáneamente. La selección depende de la estructura entera,
+    # no solo de la capitalización del catálogo.
+    if legacy_ready and not modern_ready:
+        return True
+    if modern_ready:
+        return False
+    if legacy_ready:
+        return True
+    raise RuntimeError(
+        "La base de prácticas no contiene una estructura operativa completa "
+        "(pp.* ni exp./resp.*)."
+    )
 
 
 def _ensure_period_designation_table(cursor: pyodbc.Cursor) -> None:

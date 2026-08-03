@@ -96,12 +96,194 @@ export type Page =
   | 'evaluacion-docente-avance'
   | 'evaluacion-docente-reportes'
   | 'portal-estudiante'
+  | 'ingles'
+  | 'expedientes-documentales'
   | 'portal-docente'
   | 'portal-docente-informe'
   | 'portal-docente-planificacion'
   | 'portal-docente-contratos'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
+
+export type EnglishExamFile = {
+  upload_id: string
+  name: string
+  content_type: string
+  size: number
+  version: number
+  uploaded_at: string | null
+  web_url: string
+}
+
+export type EnglishExamStudent = {
+  code: number
+  identification: string
+  name: string
+  career: string
+  career_code: string
+  period_code: string
+}
+
+export type EnglishExamComponent = {
+  component_id: number
+  code: 'P1' | 'P2' | 'P3' | string
+  number: number
+  label: string
+  evaluation_type: string
+  grade: number | null
+  result: 'APROBADO' | 'REPROBADO' | 'PENDIENTE' | string
+  status: string
+  observation: string
+  evaluator: string
+  graded_at: string | null
+  file: EnglishExamFile | null
+  can_edit: boolean
+  edit_deadline: string | null
+  seconds_remaining: number
+}
+
+export type EnglishEnrollment = {
+  enabled: boolean
+  enrollment_id: number
+  english_career_code: string
+  english_career: string
+  subject_code: string
+  subject: string
+  period_code: string
+  period: string
+  parallel: string
+}
+
+export type EnglishExam = {
+  exam_id: number | null
+  expedient_id: number | null
+  level: string
+  enrollment_type: 'R' | 'H' | string
+  scheme: string
+  status: string
+  grade: number | null
+  result: 'APROBADO' | 'REPROBADO' | 'PENDIENTE' | string
+  passing_grade: number
+  observation: string
+  evaluator: string
+  graded_at: string | null
+  file: EnglishExamFile | null
+  components: EnglishExamComponent[]
+  required_components: number
+  submitted_components: number
+  graded_components: number
+  can_edit: boolean
+  edit_deadline: string | null
+  seconds_remaining: number
+  edit_window_minutes: number
+  max_file_bytes: number
+  enrollment: EnglishEnrollment
+  student: EnglishExamStudent
+}
+
+export type EnglishUploadSessionResponse = {
+  upload_id: string
+  upload_url: string
+  expires_at: string
+  chunk_size: number
+  max_file_bytes: number
+  version: number
+}
+
+export type EnglishSubmissionsResponse = {
+  items: EnglishExam[]
+  enrolled: number
+  total: number
+  pending: number
+  approved: number
+  failed: number
+  periods: Array<{
+    code: string
+    name: string
+    label: string
+    student_count: number
+  }>
+  selected_period_code: string
+  reviewer: { name: string; role: string }
+}
+
+export type DocumentExpedientStudent = {
+  code: number
+  identification: string
+  name: string
+  email: string
+  career_code: string
+  career: string
+  period_code: string
+  status: string
+}
+
+export type DocumentExpedientStudentSearchItem = {
+  code: number
+  identification: string
+  name: string
+  status: string
+}
+
+export type DocumentExpedientStudentSearchResponse = {
+  items: DocumentExpedientStudentSearchItem[]
+  total: number
+}
+
+export type DocumentExpedientType = {
+  code: string
+  name: string
+}
+
+export type DocumentExpedientFile = {
+  document_graph_id: number
+  document_type_code: string
+  domain_document_id: string
+  name: string
+  content_type: string
+  size: number
+  version: number
+  status: string
+  uploaded_at: string | null
+  uploaded_by: string
+}
+
+export type DocumentExpedientModule = {
+  module_code: 'INGLES' | 'TITULACION' | 'PRACTICAS' | 'VINCULACION' | string
+  module_name: string
+  origin_id: string
+  domain_expedient_id: number | null
+  expedient_code: string
+  status: string
+  document_types: DocumentExpedientType[]
+  documents: DocumentExpedientFile[]
+  upload_enabled: boolean
+  upload_message: string
+}
+
+export type DocumentExpedientContext = {
+  student: DocumentExpedientStudent
+  expedients: DocumentExpedientModule[]
+  total_expedients: number
+  total_documents: number
+  max_file_bytes: number
+}
+
+export type DocumentExpedientUploadSessionResponse = {
+  upload_id: string
+  upload_url: string
+  expires_at: string
+  chunk_size: number
+  max_file_bytes: number
+}
+
+export type DocumentExpedientFinalizeResponse = {
+  ok: boolean
+  document_graph_id: number
+  domain_document_id: number
+  version: number
+  message: string
+}
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
@@ -3414,9 +3596,18 @@ export type PortalTeacherCourse = {
   jornada?: string
   semestre?: number | null
   unidad_curricular?: string
+  periodo_orden?: number
   period_count?: number
+  assignment_count?: number
+  regular_count?: number
+  homologation_count?: number
+  tiene_regular?: boolean
+  tiene_homologacion?: boolean
   total_estudiantes?: number
   estado_moodle_doc?: boolean
+  asignaciones?: PortalTeacherCourse[]
+  alcances_periodo?: PortalTeacherCourse[]
+  grade_group_key?: string
 }
 
 export type PortalTeacherCoursesResponse = {
@@ -3580,6 +3771,10 @@ export type PortalAcademicPlanningPayload = {
 export type PortalTeacherStudentsResponse = {
   total?: number
   items?: PortalAcademicRecordItem[]
+  codigo_materia?: string
+  tipo_periodo?: 'R' | 'H'
+  codigo_periodos?: number[]
+  asignaciones_consultadas?: number
   detail?: string
 }
 

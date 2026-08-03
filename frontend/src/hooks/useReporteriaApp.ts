@@ -41,11 +41,12 @@ import type {
 import { useInactivityLogout } from './useInactivityLogout'
 
 const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000
+const SCREEN_ACCESS_SYNC_KEY = 'intec:screen-access-updated:v2'
+const ADMIN_ONLY_PAGES = new Set<Page>(['sistema-academico', 'asignacion-pantallas'])
 const ADMISSIONS_ALLOWED_PAGES: Page[] = [
   'dashboard',
   'preinscripcion',
   'gestion-sisacademico',
-  'sisacademico-v1',
 ]
 const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'dashboard',
@@ -59,8 +60,6 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'admin-notas-asignatura',
   'reporteria-integral',
   'gestion-sisacademico',
-  'sisacademico-v1',
-  'asignacion-pantallas',
   'periodo-academico',
   'periodo-matriculados',
   'rango-edades',
@@ -76,13 +75,14 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'evaluacion-docente-reportes',
   'formato-informe-docente',
   'practicas-institucionales',
+  'ingles',
+  'expedientes-documentales',
 ])
 const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'dashboard',
   'preinscripcion',
   'ingreso-ventas',
   'gestion-sisacademico',
-  'sisacademico-v1',
   'reporteria-integral',
   'carnet-institucional',
 ])
@@ -94,6 +94,7 @@ const SECRETARIA_ALLOWED_PAGES = new Set<Page>([
   'titulacion-proceso',
   'titulacion-responsables',
   'titulos-registrados',
+  'expedientes-documentales',
 ])
 const DASHBOARD_ONLY_ROLES = new Set(['RECTOR', 'VICERRECTOR'])
 const ADMINISTRATOR_ROLE_ALIASES = new Set(['1', 'ADMIN', 'ADMINISTRADOR', 'ADMINISTRACION'])
@@ -143,9 +144,7 @@ function normalizedRoleKey(role?: string): string {
 
 function defaultPageForRole(role?: string, assignedPages: Page[] | null = null): Page {
   const normalizedRole = normalizedRoleKey(role)
-  const eligibleAssignedPages = assignedPages?.filter(
-    (page) => page !== 'sistema-academico' || normalizedRole === 'ADMINISTRADOR',
-  ) ?? null
+  const eligibleAssignedPages = assignedPages
   let preferredPage: Page = 'dashboard'
   if (normalizedRole === 'ESTUDIANTE') preferredPage = 'portal-estudiante'
   else if (normalizedRole === 'DOCENTE') preferredPage = 'portal-docente'
@@ -160,12 +159,13 @@ function defaultPageForRole(role?: string, assignedPages: Page[] | null = null):
 
 function pageAllowedForRole(role: string | undefined, page: Page, assignedPages: Page[] | null = null): boolean {
   const normalizedRole = normalizedRoleKey(role)
-  if (page === 'sistema-academico' && normalizedRole !== 'ADMINISTRADOR') return false
   if (assignedPages !== null) return assignedPages.includes(page)
+  if (ADMIN_ONLY_PAGES.has(page) && normalizedRole !== 'ADMINISTRADOR') return false
+  if (page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'].includes(normalizedRole)) return false
   if (normalizedRole === 'ESTUDIANTE') {
-    return page === 'portal-estudiante' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
+    return page === 'portal-estudiante' || page === 'ingles' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
   }
-  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'ingles' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (normalizedRole === 'SECRETARIA') return SECRETARIA_ALLOWED_PAGES.has(page)
   if (DASHBOARD_ONLY_ROLES.has(normalizedRole || '')) return page === 'dashboard'
@@ -437,14 +437,27 @@ export function useReporteriaApp() {
     }
 
     const handleAccessUpdate = () => void syncAccess(false)
+    const handleStorageUpdate = (event: StorageEvent) => {
+      if (event.key === SCREEN_ACCESS_SYNC_KEY) void syncAccess(false)
+    }
+    const handleWindowFocus = () => void syncAccess(false)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void syncAccess(false)
+    }
     void syncAccess(true)
     const refreshInterval = window.setInterval(() => void syncAccess(false), 60_000)
     window.addEventListener('intec-screen-access-updated', handleAccessUpdate)
+    window.addEventListener('storage', handleStorageUpdate)
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       cancelled = true
       window.clearInterval(refreshInterval)
       window.removeEventListener('intec-screen-access-updated', handleAccessUpdate)
+      window.removeEventListener('storage', handleStorageUpdate)
+      window.removeEventListener('focus', handleWindowFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [screenAccessRevision, session])
 
@@ -514,7 +527,7 @@ export function useReporteriaApp() {
     } else if (openPage === 'matricula-docente') {
       setActivePage('matricula-docente')
     } else if (openPage === 'evaluacion-docente-admin') {
-      setActivePage('evaluacion-docente-avance')
+      setActivePage('evaluacion-docente-admin')
     } else if (openPage === 'evaluacion-docente-avance') {
       setActivePage('evaluacion-docente-avance')
     } else if (openPage === 'evaluacion-docente-reportes') {
@@ -523,6 +536,8 @@ export function useReporteriaApp() {
       setActivePage('formato-informe-docente')
     } else if (openPage === 'practicas-institucionales' && pageAllowedForRole(session.rol, 'practicas-institucionales', screenAccessPages)) {
       setActivePage('practicas-institucionales')
+    } else if (openPage === 'expedientes-documentales' && pageAllowedForRole(session.rol, 'expedientes-documentales', screenAccessPages)) {
+      setActivePage('expedientes-documentales')
     } else if (openPage === 'estado-docente') {
       setActivePage('estado-docente')
     } else if (openPage === 'senescyt-estudiantes' && pageAllowedForRole(session.rol, 'senescyt-estudiantes', screenAccessPages)) {
@@ -1082,8 +1097,13 @@ export function useReporteriaApp() {
   const openPortalDocenteInformePage = () => {
     setActivePage('portal-docente-informe')
   }
+  const openInglesPage = () => {
+    setActivePage('ingles')
+  }
+  const openExpedientesDocumentalesPage = () => {
+    setActivePage('expedientes-documentales')
+  }
   const openSistemaAcademicoPage = () => {
-    if (normalizedRoleKey(session?.rol) !== 'ADMINISTRADOR') return
     setActivePage('sistema-academico')
     if (!dashboardMatricula && !dashboardMatriculaLoading) {
       void loadDashboardMatricula()
@@ -1099,7 +1119,7 @@ export function useReporteriaApp() {
     setActivePage('evaluacion-docente')
   }
   const openTeacherEvaluationAdminPage = () => {
-    setActivePage('evaluacion-docente-avance')
+    setActivePage('evaluacion-docente-admin')
   }
   const openTeacherEvaluationProgressPage = () => {
     setActivePage('evaluacion-docente-avance')
@@ -1320,6 +1340,8 @@ export function useReporteriaApp() {
     openDashboard,
     openSistemaAcademicoPage,
     openPortalEstudiantePage,
+    openInglesPage,
+    openExpedientesDocumentalesPage,
     setPortalStudentSection,
     openPortalDocentePage,
     openPortalDocenteInformePage,

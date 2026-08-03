@@ -22,6 +22,8 @@ const ExcelValidationView = lazyView(() => import('./features/cruce/ExcelValidat
 const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'), 'DashboardView')
 const SistemaAcademicoView = lazyView(() => import('./features/academico/SistemaAcademicoView'), 'SistemaAcademicoView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
+const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
+const InglesView = lazyView(() => import('./features/ingles/InglesView'), 'InglesView')
 const ActualizarDatosEstudianteView = lazyView(() => import('./features/matricula/ActualizarDatosEstudianteView'), 'ActualizarDatosEstudianteView')
 const CertificateRenamerView = lazyView(() => import('./features/matricula/CertificateRenamerView'), 'CertificateRenamerView')
 const CertificadosView = lazyView(() => import('./features/matricula/CertificadosView'), 'CertificadosView')
@@ -315,6 +317,10 @@ function App() {
           onSectionChange={app.setPortalStudentSection}
         />
       )
+    } else if (app.activePage === 'ingles') {
+      pageContent = <InglesView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'expedientes-documentales') {
+      pageContent = <ExpedientesDocumentalesView displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'portal-docente') {
       pageContent = <PortalDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'portal-docente-informe') {
@@ -392,6 +398,8 @@ function App() {
           onOpenDashboard={app.openDashboard}
           onOpenSistemaAcademico={app.openSistemaAcademicoPage}
           onOpenPortalEstudiante={app.openPortalEstudiantePage}
+          onOpenIngles={app.openInglesPage}
+          onOpenExpedientesDocumentales={app.openExpedientesDocumentalesPage}
           onOpenPortalDocente={app.openPortalDocentePage}
           onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}
           onOpenPortalDocentePlanificacion={app.openPortalDocentePlanificacionPage}
@@ -410,7 +418,6 @@ function App() {
           onOpenReportesIndividuales={app.openReportesIndividualesPage}
           onOpenAdminNotasAsignatura={app.openAdminNotasAsignaturaPage}
           onOpenGestionSisAcademico={app.openGestionSisAcademicoPage}
-          onOpenSisAcademicoV1={app.openSisAcademicoV1Page}
           onOpenAsignacionPantallas={app.openAsignacionPantallasPage}
           onOpenPeriodoAcademico={app.openPeriodoAcademicoPage}
           onOpenPeriodoMatriculados={app.openPeriodoMatriculadosPage}
@@ -430,6 +437,7 @@ function App() {
           onOpenMassEmail={app.openMassEmailPage}
           onOpenCarnetInstitucional={app.openCarnetInstitucionalPage}
           onOpenTeacherEvaluation={app.openTeacherEvaluationPage}
+          onOpenTeacherEvaluationAdmin={app.openTeacherEvaluationAdminPage}
           onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
           onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
           onOpenTeacherComplianceFormat={app.openTeacherComplianceFormatPage}

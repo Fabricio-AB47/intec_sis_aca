@@ -2,13 +2,7 @@ const { execFileSync } = require('node:child_process')
 const path = require('node:path')
 
 const port = '5174'
-const backendPort = '8007'
 const projectFrontend = path.resolve(__dirname, '..').toLowerCase()
-const repoRoot = path.resolve(__dirname, '..', '..')
-const backendDir = path.join(repoRoot, 'backend')
-const backendDevScript = path.join(backendDir, 'dev.ps1')
-const backendOutLog = path.join(backendDir, 'server-8007.out.log')
-const backendErrLog = path.join(backendDir, 'server-8007.err.log')
 
 function runPowerShell(script) {
   try {
@@ -59,28 +53,5 @@ if (process.platform === 'win32') {
       }
       console.log(`Puerto ${port}: proceso Vite anterior cerrado (${pid}).`)
     }
-  }
-
-  const backendOutput = runPowerShell(`
-    Get-NetTCPConnection -LocalPort ${backendPort} -State Listen -ErrorAction SilentlyContinue |
-      Select-Object -ExpandProperty OwningProcess -Unique
-  `)
-
-  const backendIsRunning = lines(backendOutput).some(Boolean)
-
-  if (!backendIsRunning) {
-    const escapedBackendDir = backendDir.replace(/'/g, "''")
-    const escapedBackendDevScript = backendDevScript.replace(/'/g, "''")
-    const escapedOutLog = backendOutLog.replace(/'/g, "''")
-    const escapedErrLog = backendErrLog.replace(/'/g, "''")
-    runPowerShell(`
-      Start-Process -FilePath powershell.exe \
-        -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedBackendDevScript}' \
-        -WorkingDirectory '${escapedBackendDir}' \
-        -RedirectStandardOutput '${escapedOutLog}' \
-        -RedirectStandardError '${escapedErrLog}' \
-        -WindowStyle Hidden
-    `)
-    console.log(`Backend iniciado en http://127.0.0.1:${backendPort}.`)
   }
 }

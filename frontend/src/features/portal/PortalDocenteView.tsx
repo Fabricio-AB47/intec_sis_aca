@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   downloadPortalTeacherComplianceReport,
@@ -7,6 +7,7 @@ import {
   fetchMyTeamRecordings,
   fetchMyTeamsCatalog,
   fetchPortalTeacherCourses,
+  fetchPortalTeacherSubjectStudents,
   fetchPortalTeacherStudents,
   savePortalTeacherGrades,
   signPortalTeacherComplianceReport,
@@ -28,6 +29,10 @@ type PortalDocenteViewProps = {
 
 type GradePartial = 'P1' | 'P2' | 'P3'
 type CoursePeriodFilter = 'TODOS' | 'R' | 'H'
+type GradePeriodOption = {
+  code: string
+  label: string
+}
 
 const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
   { value: 'P1', label: 'Primer parcial' },
@@ -66,6 +71,13 @@ type GradeDraft = {
 }
 
 function courseKey(course: PortalTeacherCourse) {
+  const subjectCode = (course.cod_materia || course.codigo_materia || '').trim().toUpperCase()
+  if (course.grade_group_key) {
+    return `BLOQUE|${subjectCode}|${course.grade_group_key}`
+  }
+  if (course.asignaciones?.length) {
+    return `MATERIA|${subjectCode}`
+  }
   const periodos = course.codigo_periodos?.length ? course.codigo_periodos.join(',') : course.codigo_periodo
   return [
     course.cod_anio_basica,
@@ -78,6 +90,155 @@ function courseKey(course: PortalTeacherCourse) {
 
 function coursePeriodKind(course: PortalTeacherCourse): 'R' | 'H' {
   return isHomologation(course) ? 'H' : 'R'
+}
+
+function courseAssignments(course: PortalTeacherCourse | null | undefined) {
+  if (!course) return []
+  return course.asignaciones?.length ? course.asignaciones : [course]
+}
+
+function courseHasPeriodKind(course: PortalTeacherCourse, kind: Exclude<CoursePeriodFilter, 'TODOS'>) {
+  if (kind === 'R' && course.tiene_regular !== undefined) return course.tiene_regular
+  if (kind === 'H' && course.tiene_homologacion !== undefined) return course.tiene_homologacion
+  return courseAssignments(course).some((assignment) => coursePeriodKind(assignment) === kind)
+}
+
+function teacherGradePeriodOptions(course: PortalTeacherCourse | null | undefined, kind: 'R' | 'H') {
+  const options = new Map<string, GradePeriodOption>()
+  for (const assignment of courseAssignments(course).filter((item) => coursePeriodKind(item) === kind)) {
+    const codes = assignment.codigo_periodos?.length
+      ? assignment.codigo_periodos
+      : assignment.codigo_periodo
+        ? [assignment.codigo_periodo]
+        : []
+    const labels = (assignment.detalle_periodos || assignment.detalle_periodo || '')
+      .split(/\s+\/\s+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    for (const [index, code] of codes.entries()) {
+      const normalizedCode = String(code || '').trim()
+      if (!normalizedCode || options.has(normalizedCode)) continue
+      options.set(normalizedCode, {
+        code: normalizedCode,
+        label: labels[index] || assignment.detalle_periodo || normalizedCode,
+      })
+    }
+  }
+  return Array.from(options.values()).sort((left, right) => {
+    const numericDifference = Number(right.code) - Number(left.code)
+    if (Number.isFinite(numericDifference) && numericDifference !== 0) return numericDifference
+    return right.label.localeCompare(left.label, 'es', { sensitivity: 'base' })
+  })
+}
+
+function defaultTeacherGradePeriods(course: PortalTeacherCourse | null | undefined, kind: 'R' | 'H') {
+  return teacherGradePeriodOptions(course, kind).slice(0, kind === 'R' ? 2 : 1).map((option) => option.code)
+}
+
+function assignmentForSelectedPeriods(assignment: PortalTeacherCourse, selectedCodes: string[]) {
+  if (selectedCodes.length === 0) return assignment
+  const codes = assignment.codigo_periodos?.length
+    ? assignment.codigo_periodos
+    : assignment.codigo_periodo
+      ? [assignment.codigo_periodo]
+      : []
+  const labels = (assignment.detalle_periodos || assignment.detalle_periodo || '')
+    .split(/\s+\/\s+/)
+    .map((item) => item.trim())
+  const selected = codes
+    .map((code, index) => ({ code: String(code || '').trim(), label: labels[index] || assignment.detalle_periodo || code }))
+    .filter((item) => item.code && selectedCodes.includes(item.code))
+  if (selected.length === 0) return null
+  return {
+    ...assignment,
+    codigo_periodo: selected[0].code,
+    codigo_periodos: selected.map((item) => item.code),
+    detalle_periodo: selected.map((item) => item.label).join(' / '),
+    detalle_periodos: selected.map((item) => item.label).join(' / '),
+    period_count: selected.length,
+  }
+}
+
+function teacherGradeCourseGroups(courses: PortalTeacherCourse[]) {
+  const groups: PortalTeacherCourse[] = []
+  for (const subject of courses) {
+    const exactScopes = subject.alcances_periodo?.length
+      ? subject.alcances_periodo
+      : courseAssignments(subject)
+
+    for (const kind of ['R', 'H'] as const) {
+      const periodOptions = teacherGradePeriodOptions(
+        { ...subject, asignaciones: exactScopes },
+        kind
+      )
+      const blockSize = kind === 'R' ? 2 : 1
+      for (let index = 0; index < periodOptions.length; index += blockSize) {
+        const blockOptions = periodOptions.slice(index, index + blockSize)
+        const periodCodes = blockOptions.map((option) => option.code)
+        const scopes = exactScopes.flatMap((scope) => {
+          if (coursePeriodKind(scope) !== kind) return []
+          const scoped = assignmentForSelectedPeriods(scope, periodCodes)
+          return scoped ? [scoped] : []
+        })
+        if (scopes.length === 0) continue
+
+        const careerCodes = Array.from(new Set(scopes.flatMap((scope) =>
+          scope.cod_anio_basicas?.length ? scope.cod_anio_basicas : scope.cod_anio_basica ? [scope.cod_anio_basica] : []
+        )))
+        const careerNames = Array.from(new Set(scopes.map((scope) => scope.nombre_carrera).filter(Boolean)))
+        const internalCodes = Array.from(new Set(scopes.flatMap((scope) => scope.codigo_materias || [])))
+        const parallels = Array.from(new Set(scopes.map((scope) => scope.paralelo).filter(Boolean)))
+        const journeys = Array.from(new Set(scopes.map((scope) => scope.jornada).filter(Boolean)))
+        const journeyCodes = Array.from(new Set(scopes.map((scope) => scope.cod_jornada).filter((value) => value !== null && value !== undefined)))
+        const periodLabels = blockOptions.map((option) => option.label)
+
+        groups.push({
+          ...subject,
+          grade_group_key: `${kind}|${periodCodes.join(',')}`,
+          codigo_periodo: periodCodes[0] || '',
+          codigo_periodos: periodCodes,
+          detalle_periodo: periodLabels.join(' / '),
+          detalle_periodos: periodLabels.join(' / '),
+          periodo_orden: Math.max(...periodCodes.map((code) => Number(code) || 0)),
+          period_count: periodCodes.length,
+          tipo_periodo: kind,
+          es_homologacion: kind === 'H',
+          tiene_regular: kind === 'R',
+          tiene_homologacion: kind === 'H',
+          regular_count: kind === 'R' ? scopes.length : 0,
+          homologation_count: kind === 'H' ? scopes.length : 0,
+          asignaciones: scopes,
+          alcances_periodo: scopes,
+          assignment_count: scopes.length,
+          cod_anio_basica: careerCodes.length === 1 ? careerCodes[0] : '',
+          cod_anio_basicas: careerCodes,
+          nombre_carrera: careerNames.length <= 2 ? careerNames.join(' / ') : `${careerNames.length} carreras`,
+          codigo_materias: internalCodes,
+          paralelo: parallels.length === 1 ? parallels[0] : 'Varios',
+          jornada: journeys.length === 1 ? journeys[0] : 'Varias jornadas',
+          cod_jornada: journeyCodes.length === 1 ? journeyCodes[0] : null,
+          total_estudiantes: scopes.reduce((total, scope) => total + (scope.total_estudiantes || 0), 0),
+        })
+      }
+    }
+  }
+
+  return groups.sort((left, right) => {
+    const subjectOrder = (left.nombre_materia || '').localeCompare(right.nombre_materia || '', 'es', { sensitivity: 'base' })
+    if (subjectOrder !== 0) return subjectOrder
+    const codeOrder = (left.cod_materia || left.codigo_materia || '').localeCompare(
+      right.cod_materia || right.codigo_materia || '',
+      'es',
+      { sensitivity: 'base' }
+    )
+    if (codeOrder !== 0) return codeOrder
+    return (right.periodo_orden || 0) - (left.periodo_orden || 0)
+  })
+}
+
+function preferredCoursePeriodKind(course: PortalTeacherCourse, filter: CoursePeriodFilter): 'R' | 'H' {
+  if (filter !== 'TODOS' && courseHasPeriodKind(course, filter)) return filter
+  return courseHasPeriodKind(course, 'R') ? 'R' : 'H'
 }
 
 function courseSubjectKey(course: PortalTeacherCourse) {
@@ -96,6 +257,13 @@ function courseJourneyLabel(course: PortalTeacherCourse) {
 }
 
 function courseOptionLabel(course: PortalTeacherCourse) {
+  if (course.asignaciones?.length) {
+    const kinds = [courseHasPeriodKind(course, 'R') ? 'REGULAR' : '', courseHasPeriodKind(course, 'H') ? 'HOMO' : '']
+      .filter(Boolean)
+      .join(' + ')
+    const period = course.detalle_periodos || course.detalle_periodo || course.codigo_periodo || 'Sin período'
+    return `${courseSubjectLabel(course)} - ${period} - ${course.cod_anio_basicas?.length || 1} carrera(s) - ${kinds}`
+  }
   const period = course.detalle_periodos || course.detalle_periodo || course.codigo_periodo || 'Sin período'
   const kind = coursePeriodKind(course) === 'H' ? 'HOMO' : 'REGULAR'
   const career = course.nombre_carrera || `Carrera ${course.cod_anio_basica || '-'}`
@@ -117,26 +285,17 @@ function studentKey(item: PortalAcademicRecordItem) {
 function uniqueStudents(items: PortalAcademicRecordItem[]) {
   const grouped = new Map<string, PortalAcademicRecordItem>()
   for (const item of items) {
-    const key = String(item.codigo_estud || item.cedula || '').trim()
+    const key = studentKey(item)
     if (!key) continue
-    const current = grouped.get(key)
-    if (!current) {
-      grouped.set(key, item)
-      continue
-    }
-    const currentPeriod = Number(current.codigo_periodo || 0)
-    const nextPeriod = Number(item.codigo_periodo || 0)
-    if (nextPeriod > currentPeriod) {
-      grouped.set(key, item)
-      continue
-    }
-    if (nextPeriod === currentPeriod && !hasFinalGrade(current) && hasFinalGrade(item)) {
-      grouped.set(key, item)
-    }
+    grouped.set(key, item)
   }
-  return Array.from(grouped.values()).sort((left, right) =>
-    (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
-  )
+  return Array.from(grouped.values()).sort((left, right) => {
+    const careerOrder = (left.nombre_carrera || '').localeCompare(right.nombre_carrera || '', 'es', { sensitivity: 'base' })
+    if (careerOrder !== 0) return careerOrder
+    const periodOrder = Number(right.codigo_periodo || 0) - Number(left.codigo_periodo || 0)
+    if (periodOrder !== 0) return periodOrder
+    return (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
+  })
 }
 
 function draftFromItem(item: PortalAcademicRecordItem): GradeDraft {
@@ -370,6 +529,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [courses, setCourses] = useState<PortalTeacherCourse[]>([])
   const [selectedCourseKey, setSelectedCourseKey] = useState('')
   const [periodFilter, setPeriodFilter] = useState<CoursePeriodFilter>('TODOS')
+  const [gradePeriodKind, setGradePeriodKind] = useState<'R' | 'H'>('R')
+  const [selectedGradePeriodCodes, setSelectedGradePeriodCodes] = useState<string[]>([])
   const [subjectFilter, setSubjectFilter] = useState('')
   const [courseSearch, setCourseSearch] = useState('')
   const [targetCourseKey, setTargetCourseKey] = useState('')
@@ -427,15 +588,40 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const selectedCourse = useMemo(
-    () => courses.find((course) => courseKey(course) === selectedCourseKey) || null,
-    [courses, selectedCourseKey]
+  const gradeCourseGroups = useMemo(() => teacherGradeCourseGroups(courses), [courses])
+  const exactCourses = useMemo(
+    () => courses.flatMap((course) => course.alcances_periodo?.length ? course.alcances_periodo : courseAssignments(course)),
+    [courses]
   )
+  const selectedCourse = useMemo(
+    () =>
+      gradeCourseGroups.find((course) => courseKey(course) === selectedCourseKey) ||
+      exactCourses.find((course) => courseKey(course) === selectedCourseKey) ||
+      courses.find((course) => courseKey(course) === selectedCourseKey) ||
+      null,
+    [courses, exactCourses, gradeCourseGroups, selectedCourseKey]
+  )
+  const gradePeriodOptions = useMemo(
+    () => teacherGradePeriodOptions(selectedCourse, gradePeriodKind),
+    [gradePeriodKind, selectedCourse]
+  )
+  const selectedGradeAssignments = useMemo(
+    () =>
+      courseAssignments(selectedCourse).flatMap((assignment) => {
+        if (coursePeriodKind(assignment) !== gradePeriodKind) return []
+        const scopedAssignment = assignmentForSelectedPeriods(assignment, selectedGradePeriodCodes)
+        return scopedAssignment ? [scopedAssignment] : []
+      }),
+    [gradePeriodKind, selectedCourse, selectedGradePeriodCodes]
+  )
+  const reportCourse = selectedGradeAssignments[0] || selectedCourse
   const subjectOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; label: string; count: number; regular: number; homo: number }>()
-    for (const course of courses) {
-      if (periodFilter !== 'TODOS' && coursePeriodKind(course) !== periodFilter) continue
+    for (const course of gradeCourseGroups) {
+      if (periodFilter !== 'TODOS' && !courseHasPeriodKind(course, periodFilter)) continue
       const key = courseSubjectKey(course)
+      const regular = coursePeriodKind(course) === 'R' ? 1 : 0
+      const homo = coursePeriodKind(course) === 'H' ? 1 : 0
       const current = grouped.get(key) || {
         key,
         label: courseSubjectLabel(course),
@@ -444,22 +630,54 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         homo: 0,
       }
       current.count += 1
-      if (coursePeriodKind(course) === 'H') {
-        current.homo += 1
-      } else {
-        current.regular += 1
-      }
+      current.regular += regular
+      current.homo += homo
       grouped.set(key, current)
     }
     return Array.from(grouped.values()).sort((a, b) => a.label.localeCompare(b.label, 'es'))
-  }, [courses, periodFilter])
+  }, [gradeCourseGroups, periodFilter])
   const filteredCourses = useMemo(() => {
     const query = courseSearch.trim().toUpperCase()
-    return courses.filter((course) => {
+    return gradeCourseGroups.filter((course) => {
+      if (periodFilter !== 'TODOS' && !courseHasPeriodKind(course, periodFilter)) return false
+      if (subjectFilter && courseSubjectKey(course) !== subjectFilter) return false
+      if (!query) return true
+      const searchable = [course, ...courseAssignments(course)]
+        .flatMap((item) => [
+          item.nombre_materia,
+          item.cod_materia,
+          item.codigo_materia,
+          item.nombre_carrera,
+          item.detalle_periodo,
+          item.detalle_periodos,
+          item.codigo_periodo,
+          item.paralelo,
+        ])
+        .filter(Boolean)
+        .join(' ')
+        .toUpperCase()
+      return searchable.includes(query)
+    })
+  }, [courseSearch, gradeCourseGroups, periodFilter, subjectFilter])
+  const filteredSummary = useMemo(() => {
+    return filteredCourses.reduce(
+      (summary, course) => {
+        summary.regular += coursePeriodKind(course) === 'R' ? 1 : 0
+        summary.homo += coursePeriodKind(course) === 'H' ? 1 : 0
+        summary.students += course.total_estudiantes || 0
+        return summary
+      },
+      { regular: 0, homo: 0, students: 0 }
+    )
+  }, [filteredCourses])
+  const totalAssignments = exactCourses.length
+  const filteredExactCourses = useMemo(() => {
+    const query = courseSearch.trim().toUpperCase()
+    return exactCourses.filter((course) => {
       if (periodFilter !== 'TODOS' && coursePeriodKind(course) !== periodFilter) return false
       if (subjectFilter && courseSubjectKey(course) !== subjectFilter) return false
       if (!query) return true
-      const searchable = [
+      return [
         course.nombre_materia,
         course.cod_materia,
         course.codigo_materia,
@@ -472,23 +690,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         .filter(Boolean)
         .join(' ')
         .toUpperCase()
-      return searchable.includes(query)
+        .includes(query)
     })
-  }, [courseSearch, courses, periodFilter, subjectFilter])
-  const filteredSummary = useMemo(() => {
-    return filteredCourses.reduce(
-      (summary, course) => {
-        if (coursePeriodKind(course) === 'H') summary.homo += 1
-        else summary.regular += 1
-        summary.students += course.total_estudiantes || 0
-        return summary
-      },
-      { regular: 0, homo: 0, students: 0 }
-    )
-  }, [filteredCourses])
+  }, [courseSearch, exactCourses, periodFilter, subjectFilter])
   const complianceCourseOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; label: string; course: PortalTeacherCourse; periods: number }>()
-    for (const course of filteredCourses) {
+    for (const course of filteredExactCourses) {
       const key = [
         (course.cod_anio_basica || '').trim(),
         courseSubjectKey(course),
@@ -509,10 +716,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       })
     }
     return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, 'es'))
-  }, [filteredCourses])
+  }, [filteredExactCourses])
   const targetCourse = useMemo(
-    () => courses.find((item) => courseKey(item) === targetCourseKey) || complianceCourseOptions[0]?.course || filteredCourses[0] || null,
-    [complianceCourseOptions, courses, filteredCourses, targetCourseKey]
+    () =>
+      exactCourses.find((item) => courseKey(item) === targetCourseKey) ||
+      gradeCourseGroups.find((item) => courseKey(item) === targetCourseKey) ||
+      courses.find((item) => courseKey(item) === targetCourseKey) ||
+      complianceCourseOptions[0]?.course ||
+      filteredCourses[0] ||
+      null,
+    [complianceCourseOptions, courses, exactCourses, filteredCourses, gradeCourseGroups, targetCourseKey]
   )
   const targetCoursePeriodOptions = useMemo(() => {
     if (!targetCourse) return []
@@ -521,7 +734,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const selectedParallel = (targetCourse.paralelo || '').trim().toUpperCase()
     const selectedJourney = targetCourse.cod_jornada ?? null
     const options = new Map<string, { code: string; label: string }>()
-    for (const course of courses) {
+    for (const course of exactCourses) {
       if ((course.cod_anio_basica || '').trim() !== selectedCareer) continue
       if (courseSubjectKey(course) !== selectedSubject) continue
       if ((course.paralelo || '').trim().toUpperCase() !== selectedParallel) continue
@@ -544,7 +757,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       }
     }
     return Array.from(options.values()).sort((left, right) => right.label.localeCompare(left.label, 'es'))
-  }, [courses, targetCourse])
+  }, [exactCourses, targetCourse])
   const availableCompliancePeriodOptions = useMemo(
     () => targetCoursePeriodOptions.filter((option) => !compliancePeriodCodes.includes(option.code)),
     [compliancePeriodCodes, targetCoursePeriodOptions]
@@ -576,60 +789,83 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     () => teamsRecordingPayload(selectedComplianceTeam, selectedComplianceRecordings),
     [selectedComplianceRecordings, selectedComplianceTeam]
   )
-  const courseUsesHomologation = useMemo(
-    () => students.some((item) => isHomologation(item)) || isHomologation(selectedCourse),
-    [selectedCourse, students]
-  )
-  const gradeTableColumnCount = courseUsesHomologation ? 6 : gradePartial === 'P3' ? 10 : 8
+  const courseUsesHomologation = gradePeriodKind === 'H'
+  const gradeTableColumnCount = (courseUsesHomologation ? 6 : gradePartial === 'P3' ? 10 : 8) + 2
 
-  async function loadCourses() {
+  const loadCourses = useCallback(async () => {
     setLoadingCourses(true)
     setError('')
     try {
       const payload = await fetchPortalTeacherCourses()
       const items = payload.items || []
       setCourses(items)
-      const firstCourse = items[0]
+      const firstSubject = items[0]
+      const firstGradeCourse = teacherGradeCourseGroups(items)[0]
+      const firstCourse = initialMode === 'compliance' ? firstSubject : firstGradeCourse
       if (firstCourse) {
+        const firstKind = preferredCoursePeriodKind(firstCourse, 'TODOS')
         setSelectedCourseKey(courseKey(firstCourse))
-        setTargetCourseKey(courseKey(firstCourse))
+        setGradePeriodKind(firstKind)
+        setSelectedGradePeriodCodes(defaultTeacherGradePeriods(firstCourse, firstKind))
+        const firstTarget = initialMode === 'compliance'
+          ? firstSubject?.alcances_periodo?.[0] || courseAssignments(firstSubject)[0] || firstSubject || firstCourse
+          : firstGradeCourse
+        setTargetCourseKey(courseKey(firstTarget))
         setGradeScreenOpen(false)
         setStudents([])
         setDrafts({})
       } else {
         setGradeScreenOpen(false)
         setTargetCourseKey('')
+        setSelectedGradePeriodCodes([])
         setStudents([])
         setDrafts({})
       }
     } catch (apiError) {
       setCourses([])
+      setSelectedGradePeriodCodes([])
       setStudents([])
       setDrafts({})
       setError(apiError instanceof Error ? apiError.message : 'No se pudieron consultar las materias asignadas')
     } finally {
       setLoadingCourses(false)
     }
-  }
+  }, [initialMode])
 
-  async function loadStudents(course: PortalTeacherCourse | null = selectedCourse) {
-    const periodos = course?.codigo_periodos?.length ? course.codigo_periodos : course?.codigo_periodo ? [course.codigo_periodo] : []
+  async function loadStudents(
+    course: PortalTeacherCourse | null = selectedCourse,
+    kind: 'R' | 'H' = gradePeriodKind,
+    periodCodes: string[] = selectedGradePeriodCodes,
+  ) {
     const subjectCode = course?.cod_materia || course?.codigo_materia || ''
-    if (!periodos.length || !subjectCode || !course?.paralelo) {
+    if (!subjectCode) {
       setStudents([])
       setDrafts({})
       return
     }
+    const availableCodes = new Set(teacherGradePeriodOptions(course, kind).map((option) => option.code))
+    const selectedCodes = Array.from(
+      new Set(periodCodes.map((code) => String(code || '').trim()).filter((code) => availableCodes.has(code)))
+    ).slice(0, kind === 'R' ? 2 : 1)
+    if (selectedCodes.length === 0) {
+      setStudents([])
+      setDrafts({})
+      setError(
+        kind === 'R'
+          ? 'Seleccione uno o máximo dos períodos regulares.'
+          : 'Seleccione un período de homologación.'
+      )
+      return
+    }
+    setSelectedGradePeriodCodes(selectedCodes)
     setLoadingStudents(true)
     setError('')
     setMessage('')
     try {
-      const payload = await fetchPortalTeacherStudents({
-        codigoPeriodos: periodos,
-        codAnioBasica: course.cod_anio_basica,
+      const payload = await fetchPortalTeacherSubjectStudents({
         codigoMateria: subjectCode,
-        paralelo: course.paralelo,
-        codJornada: course.cod_jornada ?? null,
+        tipoPeriodo: kind,
+        codigoPeriodos: selectedCodes,
       })
       const items = uniqueStudents(payload.items || [])
       setStudents(items)
@@ -644,11 +880,35 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   function selectCourse(course: PortalTeacherCourse) {
+    const kind = preferredCoursePeriodKind(course, periodFilter)
+    const periodCodes = defaultTeacherGradePeriods(course, kind)
     setSelectedCourseKey(courseKey(course))
     setTargetCourseKey(courseKey(course))
+    setGradePeriodKind(kind)
+    setSelectedGradePeriodCodes(periodCodes)
     setGradePartial('P1')
     setGradeScreenOpen(true)
-    void loadStudents(course)
+    void loadStudents(course, kind, periodCodes)
+  }
+
+  function selectGradePeriod(code: string) {
+    if (!selectedCourse || loadingStudents) return
+    let nextCodes: string[]
+    if (gradePeriodKind === 'H') {
+      nextCodes = [code]
+    } else if (selectedGradePeriodCodes.includes(code)) {
+      if (selectedGradePeriodCodes.length === 1) return
+      nextCodes = selectedGradePeriodCodes.filter((selectedCode) => selectedCode !== code)
+    } else {
+      if (selectedGradePeriodCodes.length >= 2) {
+        setError('Solo puede unir hasta dos períodos regulares distintos.')
+        return
+      }
+      nextCodes = [...selectedGradePeriodCodes, code]
+    }
+    setError('')
+    setSelectedGradePeriodCodes(nextCodes)
+    void loadStudents(selectedCourse, gradePeriodKind, nextCodes)
   }
 
   function openTargetCourse() {
@@ -714,7 +974,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setPeriodFilter('TODOS')
     setSubjectFilter('')
     setCourseSearch('')
-    const firstCourse = courses[0]
+    const firstCourse = initialMode === 'compliance' ? exactCourses[0] : gradeCourseGroups[0]
     setTargetCourseKey(firstCourse ? courseKey(firstCourse) : '')
   }
 
@@ -796,7 +1056,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           ? `Calificaciones actualizadas para ${saved} estudiante(s).`
           : 'No hay calificaciones nuevas para guardar.'
       )
-      await loadStudents(selectedCourse)
+      await loadStudents(selectedCourse, gradePeriodKind, selectedGradePeriodCodes)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudieron guardar las notas')
     } finally {
@@ -804,7 +1064,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
-  function reportRequestParams(course: PortalTeacherCourse | null = selectedCourse, selectedPeriodos: string[] = []) {
+  function reportRequestParams(course: PortalTeacherCourse | null = reportCourse, selectedPeriodos: string[] = []) {
     if (!course) return
     const periodos = selectedPeriodos.length
       ? selectedPeriodos
@@ -903,14 +1163,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   async function downloadCourseReport() {
-    if (!selectedCourse) return
-    const periodos = selectedCourse.codigo_periodos?.length
-      ? selectedCourse.codigo_periodos
-      : selectedCourse.codigo_periodo
-        ? [selectedCourse.codigo_periodo]
+    if (!reportCourse) return
+    const periodos = reportCourse.codigo_periodos?.length
+      ? reportCourse.codigo_periodos
+      : reportCourse.codigo_periodo
+        ? [reportCourse.codigo_periodo]
         : []
-    const subjectCode = selectedCourse.cod_materia || selectedCourse.codigo_materia || ''
-    if (!periodos.length || !subjectCode || !selectedCourse.paralelo) {
+    const subjectCode = reportCourse.cod_materia || reportCourse.codigo_materia || ''
+    if (!periodos.length || !subjectCode || !reportCourse.paralelo) {
       setError('Seleccione una materia con periodo y paralelo para descargar el reporte.')
       return
     }
@@ -921,8 +1181,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       if (!blob) return
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const subject = safeFilenamePart(selectedCourse.nombre_materia || subjectCode)
-      const period = safeFilenamePart(selectedCourse.detalle_periodos || selectedCourse.detalle_periodo || periodos.join('-'))
+      const subject = safeFilenamePart(reportCourse.nombre_materia || subjectCode)
+      const period = safeFilenamePart(reportCourse.detalle_periodos || reportCourse.detalle_periodo || periodos.join('-'))
       link.href = url
       link.download = `notas-docente-${subject}-${period}.pdf`
       document.body.appendChild(link)
@@ -952,22 +1212,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   async function downloadSecretaryReport() {
-    if (!selectedCourse) return
+    if (!reportCourse) return
     setDownloadingSecretaryReport(true)
     setError('')
     try {
       const blob = await buildSecretaryReportBlob()
       if (!blob) return
-      const periodos = selectedCourse.codigo_periodos?.length
-        ? selectedCourse.codigo_periodos
-        : selectedCourse.codigo_periodo
-          ? [selectedCourse.codigo_periodo]
+      const periodos = reportCourse.codigo_periodos?.length
+        ? reportCourse.codigo_periodos
+        : reportCourse.codigo_periodo
+          ? [reportCourse.codigo_periodo]
           : []
-      const subjectCode = selectedCourse.cod_materia || selectedCourse.codigo_materia || ''
+      const subjectCode = reportCourse.cod_materia || reportCourse.codigo_materia || ''
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const subject = safeFilenamePart(selectedCourse.nombre_materia || subjectCode)
-      const period = safeFilenamePart(selectedCourse.detalle_periodos || selectedCourse.detalle_periodo || periodos.join('-'))
+      const subject = safeFilenamePart(reportCourse.nombre_materia || subjectCode)
+      const period = safeFilenamePart(reportCourse.detalle_periodos || reportCourse.detalle_periodo || periodos.join('-'))
       link.href = url
       link.download = `reporte-notas-secretaria-${subject}-${period}.pdf`
       document.body.appendChild(link)
@@ -1124,7 +1384,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
 
   useEffect(() => {
     void loadCourses()
-  }, [])
+  }, [loadCourses])
 
   useEffect(() => {
     if (!reportPreviewUrl) return
@@ -1154,14 +1414,15 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }, [subjectFilter, subjectOptions])
 
   useEffect(() => {
-    if (filteredCourses.length === 0) {
+    const targetPool = initialMode === 'compliance' ? filteredExactCourses : filteredCourses
+    if (targetPool.length === 0) {
       setTargetCourseKey('')
       return
     }
-    if (!filteredCourses.some((course) => courseKey(course) === targetCourseKey)) {
-      setTargetCourseKey(courseKey(filteredCourses[0]))
+    if (!targetPool.some((course) => courseKey(course) === targetCourseKey)) {
+      setTargetCourseKey(courseKey(targetPool[0]))
     }
-  }, [filteredCourses, targetCourseKey])
+  }, [filteredCourses, filteredExactCourses, initialMode, targetCourseKey])
 
   useEffect(() => {
     const codes = targetCoursePeriodOptions.map((option) => option.code)
@@ -1274,9 +1535,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           <p>{displayName}</p>
         </div>
         <div className="student-user-pill">
-          <span>Materias filtradas</span>
+          <span>Bloques por período</span>
           <strong>{filteredCourses.length}</strong>
-          <small>{courses.length} asignada(s)</small>
+          <small>{totalAssignments} alcance(s) exacto(s)</small>
         </div>
       </header>
 
@@ -1311,7 +1572,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <option value="">Todas las materias</option>
                 {subjectOptions.map((option) => (
                   <option key={option.key} value={option.key}>
-                    {option.label} - {option.count} curso(s)
+                    {option.label} - {option.count} bloque(s)
                   </option>
                 ))}
               </select>
@@ -1868,10 +2129,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           {initialMode !== 'compliance' ? (
             <>
               <div className="portal-course-filter-summary">
-                <span>{filteredCourses.length} curso(s) visible(s)</span>
-                <span>{filteredSummary.regular} regular(es)</span>
-                <span>{filteredSummary.homo} homologación</span>
-                <span>{filteredSummary.students} estudiante(s)</span>
+                <span>{filteredCourses.length} bloque(s) por período</span>
+                <span>{filteredSummary.regular} bloque(s) regular(es)</span>
+                <span>{filteredSummary.homo} bloque(s) de homologación</span>
+                <span>{filteredSummary.students} matrícula(s)</span>
               </div>
 
               <div className="portal-course-stack">
@@ -1883,14 +2144,17 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     onClick={() => selectCourse(course)}
                   >
                     <strong>{course.nombre_materia || course.codigo_materia}</strong>
-                    <span>{course.nombre_carrera || course.cod_anio_basicas?.join(', ') || '-'}</span>
+                    <span>Código único: {course.cod_materia || course.codigo_materia || '-'}</span>
+                    <small>{course.detalle_periodos || course.detalle_periodo || 'Período no informado'}</small>
                     <small>
-                      {course.detalle_periodos || course.detalle_periodo || course.codigo_periodo} | Paralelo {course.paralelo || '-'} | {courseJourneyLabel(course)}
+                      {course.cod_anio_basicas?.length || 0} carrera(s) | {course.period_count || 0} período(s) | {course.assignment_count || courseAssignments(course).length} alcance(s)
                     </small>
                     <small>
-                      {course.es_homologacion ? 'HOMO independiente' : `${course.period_count || 1} periodo(s) regular(es)`}
+                      {courseHasPeriodKind(course, 'R') ? 'Regular' : ''}
+                      {courseHasPeriodKind(course, 'R') && courseHasPeriodKind(course, 'H') ? ' + ' : ''}
+                      {courseHasPeriodKind(course, 'H') ? 'Homologación' : ''}
                     </small>
-                    <b>{course.total_estudiantes || 0} estudiante(s)</b>
+                    <b>{course.total_estudiantes || 0} matrícula(s)</b>
                   </button>
                 ))}
                 {!loadingCourses && courses.length === 0 ? (
@@ -1913,6 +2177,25 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <h2>{selectedCourse?.nombre_materia || 'Sin curso seleccionado'}</h2>
             </div>
             <div className="portal-grade-screen-actions">
+              {selectedCourse && courseHasPeriodKind(selectedCourse, 'R') && courseHasPeriodKind(selectedCourse, 'H') ? (
+                <label className="portal-grade-partial-filter">
+                  <span>Tipo de período</span>
+                  <select
+                    value={gradePeriodKind}
+                    onChange={(event) => {
+                      const kind = event.target.value as 'R' | 'H'
+                      const periodCodes = defaultTeacherGradePeriods(selectedCourse, kind)
+                      setGradePeriodKind(kind)
+                      setSelectedGradePeriodCodes(periodCodes)
+                      setGradePartial('P1')
+                      void loadStudents(selectedCourse, kind, periodCodes)
+                    }}
+                  >
+                    <option value="R">Regular</option>
+                    <option value="H">Homologación</option>
+                  </select>
+                </label>
+              ) : null}
               {!courseUsesHomologation ? (
                 <label className="portal-grade-partial-filter">
                   <span>Filtrar parcial</span>
@@ -1933,7 +2216,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <button
                 type="button"
                 className="ghost-button"
-                onClick={() => void loadStudents(selectedCourse)}
+                onClick={() => void loadStudents(selectedCourse, gradePeriodKind, selectedGradePeriodCodes)}
                 disabled={loadingStudents || !selectedCourse}
               >
                 {loadingStudents ? 'Consultando...' : 'Actualizar estudiantes'}
@@ -1942,7 +2225,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void previewCourseReport()}
-                disabled={previewingReport || !selectedCourse}
+                disabled={previewingReport || !reportCourse}
               >
                 {previewingReport ? 'Generando vista...' : 'Vista previa PDF'}
               </button>
@@ -1950,7 +2233,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void downloadCourseReport()}
-                disabled={downloadingReport || !selectedCourse}
+                disabled={downloadingReport || !reportCourse}
               >
                 {downloadingReport ? 'Generando PDF...' : 'Descargar PDF'}
               </button>
@@ -1958,7 +2241,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void previewSecretaryReport()}
-                disabled={previewingSecretaryReport || !selectedCourse}
+                disabled={previewingSecretaryReport || !reportCourse}
               >
                 {previewingSecretaryReport ? 'Generando vista...' : 'Vista formato Secretaría'}
               </button>
@@ -1966,7 +2249,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void downloadSecretaryReport()}
-                disabled={downloadingSecretaryReport || !selectedCourse}
+                disabled={downloadingSecretaryReport || !reportCourse}
               >
                 {downloadingSecretaryReport ? 'Generando...' : 'Descargar formato Secretaría'}
               </button>
@@ -1982,8 +2265,42 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           </div>
 
           {selectedCourse ? (
+            <section className="portal-grade-period-selector" aria-label="Períodos de calificación">
+              <div className="portal-grade-period-copy">
+                <strong>Período(s) a calificar</strong>
+                <span>
+                  {gradePeriodKind === 'R'
+                    ? 'Seleccione uno o máximo dos períodos regulares distintos.'
+                    : 'La homologación se consulta en un período independiente.'}
+                </span>
+              </div>
+              <div className="portal-grade-period-options">
+                {gradePeriodOptions.map((option) => {
+                  const selected = selectedGradePeriodCodes.includes(option.code)
+                  return (
+                    <label
+                      key={`${gradePeriodKind}-${option.code}`}
+                      className={`portal-grade-period-option ${selected ? 'portal-grade-period-option--active' : ''}`}
+                    >
+                      <input
+                        type={gradePeriodKind === 'H' ? 'radio' : 'checkbox'}
+                        name={gradePeriodKind === 'H' ? 'teacher-homologation-period' : undefined}
+                        checked={selected}
+                        disabled={loadingStudents}
+                        onChange={() => selectGradePeriod(option.code)}
+                      />
+                      <span>{option.label}</span>
+                      <small>Código {option.code}</small>
+                    </label>
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          {selectedCourse ? (
             <p className="portal-course-context">
-              {selectedCourse.nombre_carrera} | {selectedCourse.detalle_periodos || selectedCourse.detalle_periodo} | Paralelo {selectedCourse.paralelo}
+              Código único {selectedCourse.cod_materia || selectedCourse.codigo_materia} | {selectedGradePeriodCodes.length} período(s) seleccionado(s) | {selectedGradeAssignments.length} asignación(es) {gradePeriodKind === 'H' ? 'de homologación' : 'regulares'}
             </p>
           ) : null}
           {error ? <p className="form-error">{error}</p> : null}
@@ -1995,6 +2312,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <tr>
                   <th>Estudiante</th>
                   <th>Cedula</th>
+                  <th>Carrera</th>
+                  <th>Periodo</th>
                   {courseUsesHomologation ? (
                     <>
                       <th>Teoria 40%</th>
@@ -2040,7 +2359,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 {students.map((item) => {
                   const key = studentKey(item)
                   const draft = drafts[key] || draftFromItem(item)
-                  const homo = courseUsesHomologation || isHomologation(item)
+                  const homo = courseUsesHomologation
                   const teoriaHomo = toNumberOrNull(draft.teoria_homo)
                   const practicaHomo = toNumberOrNull(draft.practica_homo)
                   const calculatedHomoFinal = weightedHomologationFinal(teoriaHomo, practicaHomo)
@@ -2054,6 +2373,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         <small>{item.correo_intec || item.correo_personal || ''}</small>
                       </td>
                       <td>{item.cedula || '-'}</td>
+                      <td>
+                        <strong>{item.nombre_carrera || item.cod_anio_basica || '-'}</strong>
+                        <small>Paralelo {item.paralelo || '-'}</small>
+                      </td>
+                      <td>
+                        <strong>{item.detalle_periodo || item.codigo_periodo || '-'}</strong>
+                        <small>Código {item.codigo_periodo || '-'}</small>
+                      </td>
                       {homo ? (
                         <>
                           <td>

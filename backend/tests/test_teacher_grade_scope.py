@@ -29,6 +29,7 @@ from app.routers.portal_academico import (
     _resolve_admin_grade_course_selections,
     _student_grade_report_pdf,
     _weighted_regular_partial,
+    teacher_subject_students,
     teacher_save_grades,
 )
 from app.services.grade_calculation import calculate_regular_grade_with_recovery, regular_final_with_recovery
@@ -131,15 +132,18 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertEqual(len(courses), 1)
         self.assertEqual(courses[0]["codigo_periodo"], "1031")
 
-    def test_teacher_courses_do_not_merge_different_careers(self):
+    def test_teacher_courses_merge_careers_by_common_subject_code(self):
         grouped = _group_teacher_courses([
             _course("10", "1030", 12),
             _course("20", "1030", 18),
         ])
 
-        self.assertEqual(len(grouped), 2)
-        self.assertEqual({item["cod_anio_basica"] for item in grouped}, {"10", "20"})
-        self.assertEqual(sorted(item["total_estudiantes"] for item in grouped), [12, 18])
+        self.assertEqual(len(grouped), 1)
+        self.assertEqual(set(grouped[0]["cod_anio_basicas"]), {"10", "20"})
+        self.assertEqual(grouped[0]["cod_materia"], "VGA-CG-2023-06")
+        self.assertEqual(grouped[0]["total_estudiantes"], 30)
+        self.assertEqual(len(grouped[0]["asignaciones"]), 2)
+        self.assertEqual(len(grouped[0]["alcances_periodo"]), 2)
 
     def test_regular_periods_only_group_inside_same_career(self):
         grouped = _group_teacher_courses([
@@ -150,6 +154,188 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertEqual(len(grouped), 1)
         self.assertEqual(grouped[0]["codigo_periodos"], ["1030", "1029"])
         self.assertEqual(grouped[0]["total_estudiantes"], 17)
+        self.assertEqual(len(grouped[0]["asignaciones"]), 1)
+        self.assertEqual(grouped[0]["asignaciones"][0]["codigo_periodos"], ["1030", "1029"])
+        self.assertEqual(
+            {scope["codigo_periodo"] for scope in grouped[0]["alcances_periodo"]},
+            {"1029", "1030"},
+        )
+
+    def test_teacher_courses_keep_different_common_subject_codes_separate(self):
+        first = _course("10", "1030", 12)
+        second = _course("20", "1030", 18)
+        second["cod_materia"] = "VGA-CG-2023-07"
+
+        grouped = _group_teacher_courses([first, second])
+
+        self.assertEqual(len(grouped), 2)
+        self.assertEqual(
+            {item["cod_materia"] for item in grouped},
+            {"VGA-CG-2023-06", "VGA-CG-2023-07"},
+        )
+
+    @patch("app.routers.portal_academico.teacher_course_students")
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_subject_students_queries_every_career_scope(
+        self,
+        teacher_courses_mock: MagicMock,
+        course_students_mock: MagicMock,
+    ):
+        grouped = _group_teacher_courses([
+            _course("10", "1030", 12),
+            _course("20", "1030", 18),
+        ])
+        teacher_courses_mock.return_value = {"total": 1, "items": grouped}
+
+        def student_response(**kwargs):
+            career = kwargs["cod_anio_basica"]
+            return {
+                "items": [{
+                    "codigo_estud": career,
+                    "codigo_periodo": 1030,
+                    "cod_anio_basica": career,
+                    "codigo_materia": 101,
+                    "paralelo": "A",
+                    "num_matricula": 1,
+                    "num_grupo": 1,
+                    "nombre_carrera": f"Carrera {career}",
+                    "nombre_estudiante": f"Estudiante {career}",
+                }]
+            }
+
+        course_students_mock.side_effect = student_response
+        result = teacher_subject_students(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            codigo_materia="VGA-CG-2023-06",
+            tipo_periodo="R",
+            codigo_periodo=[1030],
+        )
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["asignaciones_consultadas"], 2)
+        self.assertEqual(
+            {call.kwargs["cod_anio_basica"] for call in course_students_mock.call_args_list},
+            {10, 20},
+        )
+        self.assertTrue(
+            all(call.kwargs["codigo_materia"] == "VGA-CG-2023-06" for call in course_students_mock.call_args_list)
+        )
+        self.assertTrue(all(call.kwargs["codigo_periodo"] == [1030] for call in course_students_mock.call_args_list))
+
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_regular_subject_accepts_at_most_two_periods(self, teacher_courses_mock: MagicMock):
+        user = SessionUser(
+            login="docente@intec.edu.ec",
+            nombres="Docente prueba",
+            rol="DOCENTE",
+            codigo_doc=31,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            teacher_subject_students(
+                current_user=user,
+                codigo_materia="VGA-CG-2023-06",
+                tipo_periodo="R",
+                codigo_periodo=[1028, 1029, 1030],
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("dos periodos regulares", context.exception.detail)
+        teacher_courses_mock.assert_not_called()
+
+    @patch("app.routers.portal_academico.teacher_course_students")
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_regular_subject_combines_two_selected_periods_by_unique_code(
+        self,
+        teacher_courses_mock: MagicMock,
+        course_students_mock: MagicMock,
+    ):
+        grouped = _group_teacher_courses([
+            _course("10", "1029", 8),
+            _course("10", "1030", 9),
+            _course("20", "1029", 7),
+            _course("20", "1030", 6),
+        ])
+        teacher_courses_mock.return_value = {"total": 1, "items": grouped}
+        course_students_mock.return_value = {"items": []}
+
+        result = teacher_subject_students(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            codigo_materia="VGA-CG-2023-06",
+            tipo_periodo="R",
+            codigo_periodo=[1029, 1030],
+        )
+
+        self.assertEqual(result["codigo_periodos"], [1029, 1030])
+        self.assertEqual(result["asignaciones_consultadas"], 2)
+        self.assertEqual(course_students_mock.call_count, 2)
+        self.assertTrue(
+            all(set(call.kwargs["codigo_periodo"]) == {1029, 1030} for call in course_students_mock.call_args_list)
+        )
+
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_homologation_subject_requires_one_independent_period(self, teacher_courses_mock: MagicMock):
+        user = SessionUser(
+            login="docente@intec.edu.ec",
+            nombres="Docente prueba",
+            rol="DOCENTE",
+            codigo_doc=31,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            teacher_subject_students(
+                current_user=user,
+                codigo_materia="VGA-CG-2023-06",
+                tipo_periodo="H",
+                codigo_periodo=[1029, 1030],
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("un solo periodo", context.exception.detail)
+        teacher_courses_mock.assert_not_called()
+
+    @patch("app.routers.portal_academico.teacher_course_students")
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_homologation_subject_only_queries_selected_period(
+        self,
+        teacher_courses_mock: MagicMock,
+        course_students_mock: MagicMock,
+    ):
+        first = _course("10", "1029", 8)
+        second = _course("10", "1030", 9)
+        for course in (first, second):
+            course["es_homologacion"] = True
+            course["tipo_periodo"] = "H"
+        grouped = _group_teacher_courses([first, second])
+        teacher_courses_mock.return_value = {"total": 1, "items": grouped}
+        course_students_mock.return_value = {"items": []}
+
+        result = teacher_subject_students(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            codigo_materia="VGA-CG-2023-06",
+            tipo_periodo="H",
+            codigo_periodo=[1030],
+        )
+
+        self.assertEqual(result["codigo_periodos"], [1030])
+        self.assertEqual(result["asignaciones_consultadas"], 1)
+        course_students_mock.assert_called_once()
+        self.assertEqual(course_students_mock.call_args.kwargs["codigo_periodo"], [1030])
 
     def test_admin_grade_query_uses_exact_course_and_teacher(self):
         sql, params = _notas_carrera_materia_query(

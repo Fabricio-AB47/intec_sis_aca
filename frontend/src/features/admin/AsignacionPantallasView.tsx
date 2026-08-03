@@ -8,14 +8,24 @@ type AccessTab = 'roles' | 'summary'
 type AssignmentMap = Partial<Record<Role, Page[]>>
 
 const LEGACY_STORAGE_KEY = 'intec:user-type-screen-access:v1'
-const ADMIN_ONLY_PAGES = new Set<Page>(['sistema-academico'])
+const SCREEN_ACCESS_SYNC_KEY = 'intec:screen-access-updated:v2'
+const ADMIN_ONLY_PAGES = new Set<Page>(['sistema-academico', 'asignacion-pantallas'])
+const ROLE_DENIED_PAGES: Partial<Record<Role, Set<Page>>> = {
+  ESTUDIANTE: new Set<Page>(['expedientes-documentales']),
+}
+
+function screenAvailableForRole(role: Role | null, page: Page) {
+  if (!role) return false
+  if (role !== 'ADMINISTRADOR' && ADMIN_ONLY_PAGES.has(page)) return false
+  return !ROLE_DENIED_PAGES[role]?.has(page)
+}
 
 function assignmentMap(roles: ScreenAccessRole[]): AssignmentMap {
   return Object.fromEntries(roles.map((role) => [role.value, role.pages])) as AssignmentMap
 }
 
 function formatUpdate(value?: string | null) {
-  if (!value) return 'Configuracion recomendada'
+  if (!value) return 'Sin cambios registrados'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('es-EC', {
@@ -30,6 +40,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   const [selectedRole, setSelectedRole] = useState<Role | null>(null)
   const [activeTab, setActiveTab] = useState<AccessTab>('roles')
   const [query, setQuery] = useState('')
+  const [screenQuery, setScreenQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -64,21 +75,45 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
 
   const groupedScreens = useMemo(() => {
     const groups = new Map<string, NonNullable<ScreenAccessResponse['screens']>>()
+    const needle = screenQuery.trim().toLocaleLowerCase('es')
     ;(data?.screens || [])
-      .filter((screen) => selectedRole === 'ADMINISTRADOR' || !ADMIN_ONLY_PAGES.has(screen.page))
+      .filter((screen) => screenAvailableForRole(selectedRole, screen.page))
+      .filter((screen) => !needle || `${screen.label} ${screen.description} ${screen.group} ${screen.page}`.toLocaleLowerCase('es').includes(needle))
       .forEach((screen) => {
-      groups.set(screen.group, [...(groups.get(screen.group) || []), screen])
-    })
+        groups.set(screen.group, [...(groups.get(screen.group) || []), screen])
+      })
     return Array.from(groups.entries())
-  }, [data?.screens, selectedRole])
+  }, [data?.screens, screenQuery, selectedRole])
 
   const selectedRoleMeta = data?.roles.find((role) => role.value === selectedRole) || null
   const selectedPages = selectedRole ? assignments[selectedRole] || [] : []
   const selectedSet = new Set(selectedPages)
+  const visiblePages = groupedScreens.flatMap(([, items]) => items.map((screen) => screen.page))
+  const assignedPages = new Set(selectedRoleMeta?.pages || [])
+  const hasChanges = selectedPages.length !== assignedPages.size || selectedPages.some((page) => !assignedPages.has(page))
+  const canSave = Boolean(
+    selectedRoleMeta
+    && !selectedRoleMeta.protected
+    && selectedPages.length > 0
+    && (hasChanges || !selectedRoleMeta.configured),
+  )
+
+  function availableScreenCount(role: Role) {
+    return (data?.screens || []).filter((screen) => screenAvailableForRole(role, screen.page)).length
+  }
 
   function openRole(role: ScreenAccessRole) {
     setSelectedRole(role.value)
     setAssignments((current) => ({ ...current, [role.value]: current[role.value] || role.pages }))
+    setScreenQuery('')
+    setMessage('')
+    setError('')
+  }
+
+  function closeRole() {
+    if (hasChanges && !globalThis.confirm('Hay cambios sin guardar. ¿Desea cerrar la asignacion?')) return
+    setSelectedRole(null)
+    setScreenQuery('')
     setMessage('')
     setError('')
   }
@@ -94,16 +129,11 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
     setMessage('')
   }
 
-  function applyPreset() {
+  function discardChanges() {
     if (!selectedRole || !selectedRoleMeta || selectedRoleMeta.protected) return
-    setAssignments((current) => ({ ...current, [selectedRole]: selectedRoleMeta.default_pages }))
-    setMessage('Se cargo la configuracion recomendada. Guarde para aplicarla a todos los usuarios del perfil.')
-  }
-
-  function clearRole() {
-    if (!selectedRole || selectedRoleMeta?.protected) return
-    setAssignments((current) => ({ ...current, [selectedRole]: [] }))
-    setMessage('Se desmarcaron todas las pantallas. Guarde para confirmar el cambio.')
+    setAssignments((current) => ({ ...current, [selectedRole]: selectedRoleMeta.pages }))
+    setMessage('')
+    setError('')
   }
 
   async function save() {
@@ -120,6 +150,10 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       } : current)
       setAssignments((current) => ({ ...current, [savedRole.value]: savedRole.pages }))
       window.localStorage.removeItem(LEGACY_STORAGE_KEY)
+      window.localStorage.setItem(SCREEN_ACCESS_SYNC_KEY, JSON.stringify({
+        role: savedRole.value,
+        updatedAt: Date.now(),
+      }))
       window.dispatchEvent(new CustomEvent('intec-screen-access-updated'))
       setMessage(`Asignacion sincronizada para ${savedRole.label}.`)
     } catch (apiError) {
@@ -135,7 +169,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
         <div>
           <p className="eyebrow">Administracion</p>
           <h1>Asignacion de pantallas</h1>
-          <p>{displayName} · Los cambios se aplican a todos los usuarios del perfil administrativo.</p>
+          <p>{displayName} · Configure las pantallas que utilizaran todos los usuarios de cada tipo.</p>
         </div>
         <div className="screen-access-source">
           <span>Fuente central</span>
@@ -182,12 +216,12 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 <button key={role.value} type="button" className="screen-access-role-card" onClick={() => openRole(role)}>
                   <span className="screen-access-role-card__head">
                     <strong>{role.label}</strong>
-                    <small>{role.configured ? 'Personalizado' : 'Recomendado'}</small>
+                    <small>{role.protected ? 'Protegido' : role.configured ? 'Asignacion guardada' : 'Sin asignar'}</small>
                   </span>
                   <span>{role.description}</span>
                   <span className="screen-access-role-card__footer">
                     <b>{pages.length} pantalla(s)</b>
-                    <small>{role.updated_by ? `Por ${role.updated_by}` : 'Abrir subpantalla'}</small>
+                    <small>{role.protected ? 'Acceso institucional protegido' : role.updated_by ? `Por ${role.updated_by}` : 'Configurar pantallas'}</small>
                   </span>
                 </button>
               )
@@ -210,11 +244,11 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 {filteredRoles.map((role) => (
                   <tr key={role.value}>
                     <td><strong>{role.label}</strong><small>{role.value}</small></td>
-                    <td>{(assignments[role.value] || role.pages).length} de {data?.screens.length || 0} pantallas</td>
-                    <td><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.configured ? 'Personalizada' : 'Recomendada'}</span></td>
+                    <td>{(assignments[role.value] || role.pages).length} de {availableScreenCount(role.value)} disponibles</td>
+                    <td><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.protected ? 'Protegida' : role.configured ? 'Guardada' : 'Sin asignar'}</span></td>
                     <td>{formatUpdate(role.updated_at)}</td>
                     <td>{role.updated_by || 'Sistema'}</td>
-                    <td><button type="button" onClick={() => openRole(role)}>Ver</button></td>
+                    <td><button type="button" onClick={() => openRole(role)}>{role.protected ? 'Ver acceso' : 'Asignar'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -233,52 +267,77 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
               </div>
               <div className="senescyt-update-subscreen__actions">
                 <span>{selectedPages.length} pantalla(s)</span>
-                <button type="button" onClick={() => setSelectedRole(null)} disabled={saving}>Cerrar</button>
+                <button type="button" onClick={closeRole} disabled={saving}>Cerrar</button>
               </div>
             </div>
 
-            <div className="matricula-acad-preview senescyt-update-summary">
-              <div><span>Perfil</span><strong>{selectedRole}</strong></div>
-              <div><span>Alcance</span><strong>{selectedPages.length} / {data?.screens.length || 0}</strong></div>
-              <div><span>Configuracion</span><strong>{selectedRoleMeta.configured ? 'Personalizada' : 'Recomendada'}</strong></div>
-              <div><span>Ultimo cambio</span><strong>{formatUpdate(selectedRoleMeta.updated_at)}</strong></div>
-            </div>
+            <div className="screen-access-subscreen__body" tabIndex={0}>
+              <div className="matricula-acad-preview senescyt-update-summary">
+                <div><span>Perfil</span><strong>{selectedRole}</strong></div>
+                <div><span>Alcance</span><strong>{selectedPages.length} / {availableScreenCount(selectedRole)}</strong></div>
+                <div><span>Configuracion</span><strong>{selectedRoleMeta.protected ? 'Protegida' : selectedRoleMeta.configured ? 'Guardada' : 'Sin asignar'}</strong></div>
+                <div><span>Ultimo cambio</span><strong>{formatUpdate(selectedRoleMeta.updated_at)}</strong></div>
+              </div>
 
-            {selectedRoleMeta.protected ? (
-              <div className="status-message status-message--info">El perfil Administrador conserva acceso total para evitar el bloqueo de la configuracion institucional.</div>
-            ) : null}
+              {selectedRoleMeta.protected ? (
+                <div className="status-message status-message--info">El perfil Administrador conserva acceso total para evitar el bloqueo de la configuracion institucional.</div>
+              ) : null}
 
-            <div className="screen-access-actions">
-              <button type="button" onClick={applyPreset} disabled={saving || selectedRoleMeta.protected}>Cargar recomendado</button>
-              <button type="button" onClick={clearRole} disabled={saving || selectedRoleMeta.protected}>Limpiar seleccion</button>
-              <button type="button" className="primary-action" onClick={() => void save()} disabled={saving || selectedPages.length === 0}>
-                {saving ? 'Guardando...' : 'Guardar y sincronizar'}
-              </button>
-            </div>
+              <div className="screen-access-editor-toolbar">
+                <label>
+                  Buscar pantalla
+                  <input
+                    value={screenQuery}
+                    onChange={(event) => setScreenQuery(event.target.value)}
+                    placeholder="Nombre, grupo o funcion de la pantalla"
+                  />
+                </label>
+                <div>
+                  <strong>{visiblePages.length} visible(s)</strong>
+                  <span>{selectedPages.length} asignada(s)</span>
+                </div>
+              </div>
 
-            {selectedPages.length === 0 ? <div className="status-message status-message--info">Seleccione al menos una pantalla antes de guardar.</div> : null}
-            {message ? <div className="status-message status-message--success">{message}</div> : null}
-            {error ? <div className="status-message status-message--error">{error}</div> : null}
+              <div className="screen-access-actions">
+                <div className="screen-access-actions__status" aria-live="polite">
+                  <strong>{hasChanges ? 'Cambios pendientes' : 'Asignacion sincronizada'}</strong>
+                  <span>Marque o desmarque cada pantalla y guarde una sola vez.</span>
+                </div>
+                <button type="button" onClick={discardChanges} disabled={saving || selectedRoleMeta.protected || !hasChanges}>Deshacer cambios</button>
+                <button type="button" className="primary-action" onClick={() => void save()} disabled={saving || !canSave}>
+                  {saving ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
 
-            <div className="screen-access-groups">
-              {groupedScreens.map(([group, items]) => (
-                <section key={group} className="screen-access-group">
-                  <h4>{group}<span>{items.filter((screen) => selectedSet.has(screen.page)).length} / {items.length}</span></h4>
-                  <div className="screen-access-grid">
-                    {items.map((screen) => (
-                      <label key={screen.page} className={selectedSet.has(screen.page) ? 'screen-access-item screen-access-item--checked' : 'screen-access-item'}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSet.has(screen.page)}
-                          disabled={saving || selectedRoleMeta.protected}
-                          onChange={() => togglePage(screen.page)}
-                        />
-                        <span><strong>{screen.label}</strong><small>{screen.description}</small></span>
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              ))}
+              {selectedPages.length === 0 ? <div className="status-message status-message--info">Seleccione al menos una pantalla antes de guardar.</div> : null}
+              {message ? <div className="status-message status-message--success">{message}</div> : null}
+              {error ? <div className="status-message status-message--error">{error}</div> : null}
+
+              <div className="screen-access-groups">
+                {groupedScreens.map(([group, items]) => (
+                  <section key={group} className="screen-access-group">
+                    <div className="screen-access-group__head">
+                      <h4>{group}<span>{items.filter((screen) => selectedSet.has(screen.page)).length} / {items.length}</span></h4>
+                    </div>
+                    <div className="screen-access-grid">
+                      {items.map((screen) => (
+                        <label key={screen.page} className={selectedSet.has(screen.page) ? 'screen-access-item screen-access-item--checked' : 'screen-access-item'}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.has(screen.page)}
+                            disabled={saving || selectedRoleMeta.protected}
+                            onChange={() => togglePage(screen.page)}
+                          />
+                          <span><strong>{screen.label}</strong><small>{screen.description}</small></span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+                {groupedScreens.length === 0 ? (
+                  <p className="screen-access-empty">No hay pantallas que coincidan con la busqueda.</p>
+                ) : null}
+              </div>
             </div>
           </section>
         </div>

@@ -11,7 +11,9 @@ from app.routers.carnet import router as carnet_router
 from app.routers.certificados import router as certificados_router
 from app.routers.certificate_renamer import router as certificate_renamer_router
 from app.routers.credential_generator import router as credential_generator_router
+from app.routers.document_expedients import router as document_expedients_router
 from app.routers.excel_validator import router as excel_validator_router
+from app.routers.english_exams import router as english_exams_router
 from app.routers.health import router as health_router
 from app.routers.legacy_reports import router as legacy_reports_router
 from app.routers.mass_email import router as mass_email_router
@@ -54,6 +56,8 @@ app.include_router(certificate_renamer_router)
 app.include_router(credential_generator_router)
 app.include_router(mass_email_router)
 app.include_router(excel_validator_router)
+app.include_router(english_exams_router)
+app.include_router(document_expedients_router)
 app.include_router(students_router)
 app.include_router(age_ranges_router)
 app.include_router(academic_enrollment_router)

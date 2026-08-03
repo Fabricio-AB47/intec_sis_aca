@@ -53,8 +53,15 @@ import type {
   AcademicSystemIntegrationResponse,
   DashboardMatriculaResponse,
   DashboardMatriculaTrendStudentsResponse,
+  DocumentExpedientContext,
+  DocumentExpedientFinalizeResponse,
+  DocumentExpedientStudentSearchResponse,
+  DocumentExpedientUploadSessionResponse,
   ExcelSqlCrossResponse,
   ExcelValidationResponse,
+  EnglishExam,
+  EnglishSubmissionsResponse,
+  EnglishUploadSessionResponse,
   FechaGradoCatalogResponse,
   FechaGradoImportResponse,
   FechaGradoSavePayload,
@@ -1961,6 +1968,23 @@ export async function fetchPortalTeacherStudents(params: {
   return request<PortalTeacherStudentsResponse>(`/api/portal/teacher/course-students?${query.toString()}`)
 }
 
+export async function fetchPortalTeacherSubjectStudents(params: {
+  codigoMateria: string
+  tipoPeriodo: 'R' | 'H'
+  codigoPeriodos: string[]
+}): Promise<PortalTeacherStudentsResponse> {
+  const query = new URLSearchParams({
+    codigo_materia: params.codigoMateria,
+    tipo_periodo: params.tipoPeriodo,
+  })
+  for (const codigoPeriodo of params.codigoPeriodos) {
+    query.append('codigo_periodo', codigoPeriodo)
+  }
+  return request<PortalTeacherStudentsResponse>(`/api/portal/teacher/subject-students?${query.toString()}`, {
+    cache: 'no-store',
+  })
+}
+
 export async function savePortalTeacherGrades(
   payload: PortalTeacherGradePayload
 ): Promise<PortalTeacherGradeSaveResponse> {
@@ -2957,4 +2981,157 @@ export async function deleteTituloRegistrado(itemId: string): Promise<TituloRegi
   return request<TituloRegistradoSaveResponse>(`/api/titulos-registrados/${encodeURIComponent(itemId)}`, {
     method: 'DELETE',
   })
+}
+
+export async function fetchEnglishStudentExam(): Promise<EnglishExam> {
+  return request<EnglishExam>('/api/english/student')
+}
+
+export async function createEnglishUploadSession(file: File, componentCode: string): Promise<EnglishUploadSessionResponse> {
+  return request<EnglishUploadSessionResponse>('/api/english/student/upload-session', {
+    method: 'POST',
+    body: {
+      filename: file.name,
+      size: file.size,
+      content_type: file.type || 'application/octet-stream',
+      component_code: componentCode,
+    },
+  })
+}
+
+export async function uploadGraphFileChunks(
+  uploadUrl: string,
+  file: File,
+  chunkSize: number,
+  onProgress?: (percentage: number) => void,
+): Promise<void> {
+  let offset = 0
+  while (offset < file.size) {
+    const endExclusive = Math.min(offset + chunkSize, file.size)
+    const chunk = file.slice(offset, endExclusive)
+    let response: Response | null = null
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        response = await fetch(uploadUrl, {
+          method: 'PUT',
+          credentials: 'omit',
+          headers: {
+            'Content-Range': `bytes ${offset}-${endExclusive - 1}/${file.size}`,
+          },
+          body: chunk,
+        })
+        if (response.ok) break
+        if (response.status < 500 && response.status !== 429) break
+      } catch {
+        response = null
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, attempt * 750))
+    }
+
+    if (!response?.ok) {
+      let detail = 'Microsoft Graph rechazó una parte del archivo.'
+      if (response) {
+        try {
+          const payload = await response.json() as { error?: { message?: string } }
+          detail = payload.error?.message || detail
+        } catch {
+          // Graph puede responder sin cuerpo en errores transitorios.
+        }
+      }
+      throw new ApiError(detail, response?.status || 502)
+    }
+
+    offset = endExclusive
+    onProgress?.(Math.round((offset / file.size) * 100))
+  }
+}
+
+export async function uploadEnglishFileChunks(
+  uploadUrl: string,
+  file: File,
+  chunkSize: number,
+  onProgress?: (percentage: number) => void,
+): Promise<void> {
+  return uploadGraphFileChunks(uploadUrl, file, chunkSize, onProgress)
+}
+
+export async function finalizeEnglishUpload(uploadId: string): Promise<EnglishExam> {
+  return request<EnglishExam>('/api/english/student/finalize', {
+    method: 'POST',
+    body: { upload_id: uploadId },
+  })
+}
+
+export async function fetchEnglishSubmissions(filters: {
+  search?: string
+  state?: string
+  periodCode?: string
+} = {}): Promise<EnglishSubmissionsResponse> {
+  const params = new URLSearchParams()
+  if (filters.search?.trim()) params.set('search', filters.search.trim())
+  if (filters.state) params.set('state', filters.state)
+  if (filters.periodCode?.trim()) params.set('period_code', filters.periodCode.trim())
+  return request<EnglishSubmissionsResponse>(`/api/english/submissions?${params.toString()}`)
+}
+
+export async function gradeEnglishSubmission(
+  examId: number,
+  payload: { grade: number; observation?: string; period_code: string; component_code: string },
+): Promise<EnglishExam> {
+  return request<EnglishExam>(`/api/english/submissions/${examId}/grade`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export function englishExamFileUrl(uploadId: string, action: 'open' | 'download'): string {
+  return resolveApiPath(`/api/english/files/${encodeURIComponent(uploadId)}/${action}`)
+}
+
+export async function fetchDocumentExpedientContext(identification = ''): Promise<DocumentExpedientContext> {
+  const params = new URLSearchParams()
+  if (identification.trim()) params.set('identification', identification.trim())
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return request<DocumentExpedientContext>(`/api/document-expedients/context${suffix}`)
+}
+
+export async function searchDocumentExpedientStudents(search: string): Promise<DocumentExpedientStudentSearchResponse> {
+  const params = new URLSearchParams({ search: search.trim() })
+  return request<DocumentExpedientStudentSearchResponse>(`/api/document-expedients/students?${params.toString()}`)
+}
+
+export async function createDocumentExpedientUploadSession(payload: {
+  identification: string
+  moduleCode: string
+  originId: string
+  documentTypeCode: string
+  file: File
+}): Promise<DocumentExpedientUploadSessionResponse> {
+  return request<DocumentExpedientUploadSessionResponse>('/api/document-expedients/upload-session', {
+    method: 'POST',
+    body: {
+      identification: payload.identification,
+      module_code: payload.moduleCode,
+      origin_id: payload.originId,
+      document_type_code: payload.documentTypeCode,
+      filename: payload.file.name,
+      size: payload.file.size,
+      content_type: payload.file.type || 'application/octet-stream',
+    },
+  })
+}
+
+export async function finalizeDocumentExpedientUpload(uploadId: string): Promise<DocumentExpedientFinalizeResponse> {
+  return request<DocumentExpedientFinalizeResponse>('/api/document-expedients/finalize', {
+    method: 'POST',
+    body: { upload_id: uploadId },
+  })
+}
+
+export function documentExpedientFileUrl(
+  documentGraphId: number,
+  action: 'open' | 'download',
+): string {
+  return resolveApiPath(`/api/document-expedients/files/${documentGraphId}/${action}`)
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -36,7 +37,6 @@ SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("estado-docente", "Estado docente", "Activacion, inactivacion y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualizacion de datos", "Datos personales de estudiantes y docentes.", "Personas"),
     _screen("gestion-sisacademico", "Gestion operativa", "Tablas y procesos modernizados de SisAcademicoV1.", "Operacion"),
-    _screen("sisacademico-v1", "Mapa SisAcademicoV1", "Inventario y cobertura de la clonacion funcional.", "Operacion"),
     _screen("asignacion-pantallas", "Asignacion de pantallas", "Permisos de navegacion por tipo de usuario.", "Administracion"),
     _screen("periodo-academico", "Periodo academico", "Resumen por periodo y estudiantes.", "Academico"),
     _screen("periodo-matriculados", "Matriculados por periodo", "Detalle de matriculados por periodo academico.", "Academico"),
@@ -69,6 +69,8 @@ SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("evaluacion-docente-reportes", "Reportes de evaluacion", "Documentos y resultados de evaluacion docente.", "Evaluacion"),
     _screen("formato-informe-docente", "Formato de informe docente", "Configuracion institucional del informe docente.", "Evaluacion"),
     _screen("portal-estudiante", "Portal estudiante", "Malla, notas y estado academico del estudiante.", "Portales"),
+    _screen("ingles", "Evaluacion de Ingles", "Entrega, expediente y calificacion del examen de Ingles.", "Portales"),
+    _screen("expedientes-documentales", "Expedientes documentales", "Documentos de Ingles, titulacion, practicas y vinculacion almacenados en Microsoft 365.", "Documentos"),
     _screen("portal-docente", "Portal docente", "Cursos, estudiantes y registro de notas.", "Portales"),
     _screen("portal-docente-informe", "Informe docente", "Informe de cumplimiento y firma electronica.", "Portales"),
     _screen("portal-docente-planificacion", "Silabo y PEA", "Planificacion academica y firma electronica.", "Portales"),
@@ -77,18 +79,22 @@ SCREEN_CATALOG: tuple[dict[str, str], ...] = (
 
 
 ALL_PAGES: tuple[str, ...] = tuple(screen["page"] for screen in SCREEN_CATALOG)
-ADMIN_ONLY_PAGES = frozenset({"sistema-academico"})
+ADMIN_ONLY_PAGES = frozenset({"sistema-academico", "asignacion-pantallas"})
+ROLE_DENIED_PAGES: dict[str, frozenset[str]] = {
+    "ESTUDIANTE": frozenset({"expedientes-documentales"}),
+}
 
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
     "matricula-docente", "estado-docente", "actualizar-datos-estudiante",
     "reportes-individuales", "admin-notas-asignatura", "reporteria-integral",
-    "gestion-sisacademico", "sisacademico-v1", "periodo-academico",
+    "gestion-sisacademico", "periodo-academico",
     "periodo-matriculados", "rango-edades", "certificados", "fecha-grado",
     "titulacion", "titulacion-proceso", "titulacion-responsables",
     "matricula-excel-certificados", "renombrar-certificados", "carnet-institucional",
     "evaluacion-docente-avance", "evaluacion-docente-reportes",
     "formato-informe-docente", "practicas-institucionales",
+    "ingles", "expedientes-documentales",
 )
 
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
@@ -99,44 +105,88 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
         "admin-notas-asignatura", "reportes-individuales", "reporteria-integral",
         "carnet-institucional",
     ),
-    "ADMISIONES": ("dashboard", "preinscripcion", "gestion-sisacademico", "sisacademico-v1"),
+    "ADMISIONES": ("dashboard", "preinscripcion", "gestion-sisacademico"),
     "FINANCIERO": (
         "dashboard", "preinscripcion", "ingreso-ventas",
-        "gestion-sisacademico", "sisacademico-v1", "reporteria-integral",
+        "gestion-sisacademico", "reporteria-integral",
         "carnet-institucional",
     ),
     "SECRETARIA": (
         "practicas-institucionales", "fecha-grado",
         "senescyt-estudiantes", "titulacion", "titulacion-proceso",
-        "titulacion-responsables", "titulos-registrados",
+        "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
     ),
     "SOPORTE": tuple(
         page for page in ALL_PAGES
         if page not in ADMIN_ONLY_PAGES
         and not page.startswith("portal-")
-        and page not in {"evaluacion-docente", "asignacion-pantallas"}
+        and page not in {"evaluacion-docente", "asignacion-pantallas", "expedientes-documentales"}
     ),
     "INVITADO_SOP": ("dashboard", "teams"),
     "RECTOR": ("dashboard",),
     "VICERRECTOR": ("dashboard",),
     "DOCENTE": (
         "portal-docente", "portal-docente-informe", "portal-docente-planificacion",
-        "portal-docente-contratos", "carnet-institucional",
+        "portal-docente-contratos", "ingles", "carnet-institucional",
     ),
-    "ESTUDIANTE": ("portal-estudiante", "evaluacion-docente", "practicas-institucionales", "carnet-institucional"),
+    "ESTUDIANTE": ("portal-estudiante", "ingles", "evaluacion-docente", "practicas-institucionales", "carnet-institucional"),
+}
+
+_TP_US_ROLE_CATALOG = {
+    "1": "ADMINISTRADOR",
+    "2": "FINANCIERO",
+    "3": "BIENESTAR",
+    "4": "ACADEMICO",
+    "5": "ADMISIONES",
+    "6": "RECTOR",
+    "7": "VICERRECTOR",
+    "8": "SOPORTE",
+    "9": "INVITADO_SOP",
+    "10": "SECRETARIA",
 }
 
 _ROLE_ALIASES = {
-    "1": "ADMINISTRADOR",
+    **_TP_US_ROLE_CATALOG,
+    "ADM": "ADMINISTRADOR",
     "ADMIN": "ADMINISTRADOR",
     "ADMINISTRACION": "ADMINISTRADOR",
+    "ADMINISTRADOR": "ADMINISTRADOR",
+    "ACA": "ACADEMICO",
     "ACADEMICA": "ACADEMICO",
     "ACADEMICO": "ACADEMICO",
+    "ADMISION": "ADMISIONES",
+    "ADMISIONES": "ADMISIONES",
+    "BIENESTAR": "BIENESTAR",
+    "BIENESTAR ESTUDIANTIL": "BIENESTAR",
+    "DOC": "DOCENTE",
+    "DOCENTE": "DOCENTE",
+    "EST": "ESTUDIANTE",
+    "ESTUDIANTE": "ESTUDIANTE",
+    "FIN": "FINANCIERO",
+    "FINANCIERO": "FINANCIERO",
+    "INVITADO": "INVITADO_SOP",
+    "INVITADO DE SOPORTE": "INVITADO_SOP",
+    "INVITADO SOP": "INVITADO_SOP",
+    "REC": "RECTOR",
+    "RECTOR": "RECTOR",
+    "SECRETARIA": "SECRETARIA",
+    "SECRETARIA ACADEMICA": "SECRETARIA",
+    "SOPORTE": "SOPORTE",
+    "SOPORTE TECNICO": "SOPORTE",
+    "TECNOLOGIA": "SOPORTE",
+    "TI": "SOPORTE",
+    "VICERRECTOR": "VICERRECTOR",
 }
 
 
 def normalize_role(value: Any) -> str:
-    role = str(value or "").strip().upper()
+    role = str(value or "").strip().upper().replace("_", " ").replace("-", " ")
+    role = "".join(
+        character
+        for character in unicodedata.normalize("NFD", role)
+        if unicodedata.category(character) != "Mn"
+    )
+    role = " ".join(role.split())
     return _ROLE_ALIASES.get(role, role)
 
 
@@ -216,6 +266,58 @@ def _sync_catalog(cursor: Any) -> None:
         *ALL_PAGES,
     )
 
+    # Los expedientes institucionales contienen documentos internos. Aunque
+    # exista una asignacion historica, nunca se exponen al perfil estudiante.
+    for role, denied_pages in ROLE_DENIED_PAGES.items():
+        for page in denied_pages:
+            cursor.execute(
+                """
+                UPDATE cfg.AccesoPantallaRol
+                   SET Activo = 0,
+                       FechaActualizacion = SYSDATETIME(),
+                       UsuarioActualizacion = N'SISTEMA'
+                 WHERE RolCodigo = ? AND PantallaCodigo = ? AND Activo <> 0
+                """,
+                role,
+                page,
+            )
+
+
+def _initialize_role_assignments(cursor: Any) -> None:
+    """Materializa una sola vez la configuracion inicial de cada perfil."""
+    cursor.execute("SELECT DISTINCT RolCodigo FROM cfg.AccesoPantallaRol")
+    configured_roles: set[str] = set()
+    for row in cursor.fetchall():
+        role_value = getattr(row, "RolCodigo", None)
+        configured_roles.add(normalize_role(role_value if role_value is not None else row[0]))
+
+    for role_meta in ROLE_CATALOG:
+        role = role_meta["value"]
+        if role == "ADMINISTRADOR" or role in configured_roles:
+            continue
+
+        denied_pages = ROLE_DENIED_PAGES.get(role, frozenset())
+        initial_pages = {
+            page
+            for page in DEFAULT_ACCESS.get(role, ())
+            if page not in ADMIN_ONLY_PAGES and page not in denied_pages
+        }
+        for page in ALL_PAGES:
+            cursor.execute(
+                """
+                MERGE cfg.AccesoPantallaRol AS target
+                USING (SELECT ? AS RolCodigo, ? AS PantallaCodigo, ? AS Activo) AS source
+                   ON target.RolCodigo = source.RolCodigo
+                  AND target.PantallaCodigo = source.PantallaCodigo
+                WHEN NOT MATCHED THEN
+                    INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+                    VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, N'SISTEMA_INICIAL');
+                """,
+                role,
+                page,
+                int(page in initial_pages),
+            )
+
 
 def _as_iso(value: Any) -> str | None:
     if isinstance(value, datetime):
@@ -256,11 +358,18 @@ def _role_payloads(cursor: Any, roles: Iterable[str]) -> list[dict[str, Any]]:
     for role in role_codes:
         meta = metadata[role]
         configured = role in stored and stored[role]["rows"] > 0
-        pages = _ordered_pages(stored[role]["pages"]) if configured else list(DEFAULT_ACCESS.get(role, ()))
+        # La navegacion efectiva siempre sale de cfg.AccesoPantallaRol. Los
+        # valores recomendados solo se usan al inicializar un perfil nuevo.
+        pages = _ordered_pages(stored[role]["pages"]) if configured else []
         if role == "ADMINISTRADOR":
             pages = list(ALL_PAGES)
         else:
-            pages = [page for page in pages if page not in ADMIN_ONLY_PAGES]
+            denied_pages = ROLE_DENIED_PAGES.get(role, frozenset())
+            pages = [
+                page
+                for page in pages
+                if page not in ADMIN_ONLY_PAGES and page not in denied_pages
+            ]
         result.append(
             {
                 **meta,
@@ -286,6 +395,7 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
         cursor = conn.cursor()
         _ensure_tables(cursor)
         _sync_catalog(cursor)
+        _initialize_role_assignments(cursor)
         roles = _role_payloads(cursor, requested_roles)
         conn.commit()
 
@@ -308,6 +418,11 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
     invalid_pages = sorted({page for page in requested_pages if page not in ALL_PAGES})
     if invalid_pages:
         raise ValueError(f"Pantallas no reconocidas: {', '.join(invalid_pages)}")
+    denied_pages = sorted(set(requested_pages) & ROLE_DENIED_PAGES.get(role_code, frozenset()))
+    if denied_pages:
+        raise ValueError(
+            f"El perfil {role_code} no puede acceder a: {', '.join(denied_pages)}"
+        )
     allowed_requested_pages = [
         page
         for page in requested_pages
@@ -323,6 +438,7 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
         cursor = conn.cursor()
         _ensure_tables(cursor)
         _sync_catalog(cursor)
+        _initialize_role_assignments(cursor)
         cursor.execute(
             "UPDATE cfg.AccesoPantallaRol SET Activo = 0, FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ? WHERE RolCodigo = ?",
             audit_user,

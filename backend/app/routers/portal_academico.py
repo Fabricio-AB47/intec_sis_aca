@@ -1931,11 +1931,11 @@ def _group_teacher_courses(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         bucket["nombre_carrera"] = " / ".join(career_names) if len(career_names) <= 2 else f"{len(career_names)} carreras"
         normalized_items.append(bucket)
 
-    grouped: list[dict[str, Any]] = []
+    assignments: list[dict[str, Any]] = []
     regular_groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for item in normalized_items:
         if item.get("es_homologacion"):
-            grouped.append(item)
+            assignments.append(item)
             continue
         key = (
             _clean(item.get("cod_anio_basica")),
@@ -1963,17 +1963,124 @@ def _group_teacher_courses(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             base["detalle_periodo"] = base["detalle_periodos"]
             base["period_count"] = len(chunk)
             base["total_estudiantes"] = sum(_int(item.get("total_estudiantes")) or 0 for item in chunk)
-            grouped.append(base)
+            assignments.append(base)
+
+    # El codigo comun de PENSUM identifica una sola asignatura aunque exista en
+    # varias carreras, periodos o paralelos. Se conserva cada alcance exacto en
+    # ``asignaciones`` para consultar y actualizar la matricula correcta.
+    subject_groups: dict[str, dict[str, Any]] = {}
+    for assignment in assignments:
+        common_code = _clean(assignment.get("cod_materia") or assignment.get("codigo_materia"))
+        subject_key = common_code.upper()
+        bucket = subject_groups.get(subject_key)
+        if not bucket:
+            bucket = assignment.copy()
+            bucket["codigo_materia"] = common_code
+            bucket["cod_materia"] = common_code
+            bucket["asignaciones"] = []
+            bucket["alcances_periodo"] = []
+            bucket["cod_anio_basicas"] = []
+            bucket["nombre_carreras"] = []
+            bucket["codigo_materias"] = []
+            bucket["codigo_periodos"] = []
+            bucket["detalle_periodos_lista"] = []
+            bucket["total_estudiantes"] = 0
+            bucket["regular_count"] = 0
+            bucket["homologation_count"] = 0
+            subject_groups[subject_key] = bucket
+
+        scope = assignment.copy()
+        bucket["asignaciones"].append(scope)
+
+        for career_code in assignment.get("cod_anio_basicas") or [assignment.get("cod_anio_basica")]:
+            career_code = _clean(career_code)
+            if career_code and career_code not in bucket["cod_anio_basicas"]:
+                bucket["cod_anio_basicas"].append(career_code)
+
+        career_name = _clean(assignment.get("nombre_carrera"))
+        if career_name and career_name not in bucket["nombre_carreras"]:
+            bucket["nombre_carreras"].append(career_name)
+
+        for internal_code in assignment.get("codigo_materias") or []:
+            internal_code = _clean(internal_code)
+            if internal_code and internal_code not in bucket["codigo_materias"]:
+                bucket["codigo_materias"].append(internal_code)
+
+        period_codes = assignment.get("codigo_periodos") or [assignment.get("codigo_periodo")]
+        for period_code in period_codes:
+            period_code = _clean(period_code)
+            if period_code and period_code not in bucket["codigo_periodos"]:
+                bucket["codigo_periodos"].append(period_code)
+
+        period_labels = [
+            label.strip()
+            for label in _clean(assignment.get("detalle_periodos") or assignment.get("detalle_periodo")).split(" / ")
+            if label.strip()
+        ]
+        for period_label in period_labels:
+            if period_label not in bucket["detalle_periodos_lista"]:
+                bucket["detalle_periodos_lista"].append(period_label)
+
+        bucket["total_estudiantes"] += _int(assignment.get("total_estudiantes")) or 0
+        if assignment.get("es_homologacion"):
+            bucket["homologation_count"] += 1
+        else:
+            bucket["regular_count"] += 1
+
+    # Preserve the exact period/career scopes so clients can present the same
+    # common subject code in separate period blocks without duplicating careers.
+    for exact_scope in normalized_items:
+        subject_key = _clean(exact_scope.get("cod_materia") or exact_scope.get("codigo_materia")).upper()
+        bucket = subject_groups.get(subject_key)
+        if bucket is not None:
+            bucket["alcances_periodo"].append(exact_scope.copy())
+
+    grouped: list[dict[str, Any]] = []
+    for bucket in subject_groups.values():
+        career_names = bucket.pop("nombre_carreras", [])
+        period_labels = bucket.pop("detalle_periodos_lista", [])
+        assignments_for_subject = bucket.get("asignaciones") or []
+        regular_count = _int(bucket.get("regular_count")) or 0
+        homologation_count = _int(bucket.get("homologation_count")) or 0
+
+        bucket["cod_anio_basica"] = bucket["cod_anio_basicas"][0] if len(bucket["cod_anio_basicas"]) == 1 else ""
+        bucket["nombre_carrera"] = (
+            " / ".join(career_names)
+            if len(career_names) <= 2
+            else f"{len(career_names)} carreras"
+        )
+        bucket["codigo_periodo"] = bucket["codigo_periodos"][0] if len(bucket["codigo_periodos"]) == 1 else ""
+        bucket["detalle_periodos"] = (
+            " / ".join(period_labels)
+            if len(period_labels) <= 2
+            else f"{len(period_labels)} periodos"
+        )
+        bucket["detalle_periodo"] = bucket["detalle_periodos"]
+        bucket["period_count"] = len(bucket["codigo_periodos"])
+        bucket["assignment_count"] = len(assignments_for_subject)
+        bucket["tiene_regular"] = regular_count > 0
+        bucket["tiene_homologacion"] = homologation_count > 0
+        bucket["es_homologacion"] = homologation_count > 0 and regular_count == 0
+        bucket["tipo_periodo"] = "MIXTO" if regular_count and homologation_count else ("H" if homologation_count else "R")
+
+        parallels = {_clean(scope.get("paralelo")) for scope in assignments_for_subject if _clean(scope.get("paralelo"))}
+        journeys = {_clean(scope.get("jornada")) for scope in assignments_for_subject if _clean(scope.get("jornada"))}
+        journey_codes = {
+            _int(scope.get("cod_jornada"))
+            for scope in assignments_for_subject
+            if _int(scope.get("cod_jornada")) is not None
+        }
+        bucket["paralelo"] = next(iter(parallels)) if len(parallels) == 1 else "Varios"
+        bucket["jornada"] = next(iter(journeys)) if len(journeys) == 1 else "Varias jornadas"
+        bucket["cod_jornada"] = next(iter(journey_codes)) if len(journey_codes) == 1 else None
+        grouped.append(bucket)
 
     return sorted(
         grouped,
         key=lambda item: (
-            _int(item.get("periodo_orden")) or 0,
-            0 if item.get("es_homologacion") else 1,
-            _clean(item.get("nombre_carrera")),
             _clean(item.get("nombre_materia")),
+            _clean(item.get("cod_materia") or item.get("codigo_materia")),
         ),
-        reverse=True,
     )
 
 
@@ -2497,6 +2604,131 @@ def teacher_course_students(
         return {"total": len(rows), "items": [_teacher_student_item(row) for row in rows]}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando estudiantes del curso: {exc}") from exc
+
+
+@router.get("/teacher/subject-students")
+def teacher_subject_students(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_materia: Annotated[str, Query(min_length=1)],
+    tipo_periodo: Annotated[Literal["R", "H"], Query()],
+    codigo_periodo: Annotated[list[int], Query(min_length=1)],
+) -> dict[str, Any]:
+    """Return every exact enrolment assigned to a teacher for one common subject code."""
+    selected_periods = list(dict.fromkeys(codigo_periodo))
+    if not selected_periods:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo academico.")
+    period_limit = 2 if tipo_periodo == "R" else 1
+    if len(selected_periods) > period_limit:
+        detail = (
+            "Solo se pueden unir hasta dos periodos regulares."
+            if tipo_periodo == "R"
+            else "La homologacion debe consultarse en un solo periodo independiente."
+        )
+        raise HTTPException(status_code=400, detail=detail)
+
+    subject_filter = _clean(codigo_materia).upper()
+    catalog = teacher_courses(current_user=current_user)
+    subject = next(
+        (
+            item
+            for item in catalog.get("items") or []
+            if subject_filter
+            in {
+                _clean(item.get("cod_materia") or item.get("codigo_materia")).upper(),
+                *{
+                    _clean(code).upper()
+                    for code in item.get("codigo_materias") or []
+                    if _clean(code)
+                },
+            }
+        ),
+        None,
+    )
+    if not subject:
+        raise HTTPException(status_code=404, detail="La materia no esta asignada al docente autenticado")
+
+    scopes = [
+        scope
+        for scope in subject.get("asignaciones") or [subject]
+        if ("H" if scope.get("es_homologacion") else "R") == tipo_periodo
+    ]
+    if not scopes:
+        return {
+            "total": 0,
+            "items": [],
+            "codigo_materia": _clean(subject.get("cod_materia") or subject.get("codigo_materia")),
+            "tipo_periodo": tipo_periodo,
+            "codigo_periodos": selected_periods,
+            "asignaciones_consultadas": 0,
+        }
+
+    available_periods = {
+        period_code
+        for scope in scopes
+        for period_code in (
+            _int(value)
+            for value in scope.get("codigo_periodos") or [scope.get("codigo_periodo")]
+        )
+        if period_code is not None
+    }
+    missing_periods = [period_code for period_code in selected_periods if period_code not in available_periods]
+    if missing_periods:
+        raise HTTPException(
+            status_code=404,
+            detail="Uno o mas periodos no pertenecen a la materia y tipo seleccionados.",
+        )
+
+    students_by_key: dict[str, dict[str, Any]] = {}
+    consulted_scopes = 0
+    for scope in scopes:
+        period_codes = [
+            code
+            for code in (_int(value) for value in scope.get("codigo_periodos") or [scope.get("codigo_periodo")])
+            if code is not None and code in selected_periods
+        ]
+        career_code = _int(scope.get("cod_anio_basica"))
+        parallel = _clean(scope.get("paralelo"))
+        if not period_codes or career_code is None or not parallel:
+            continue
+        consulted_scopes += 1
+        payload = teacher_course_students(
+            current_user=current_user,
+            codigo_periodo=period_codes,
+            codigo_materia=_clean(subject.get("cod_materia") or subject.get("codigo_materia")),
+            paralelo=parallel,
+            cod_anio_basica=career_code,
+            cod_jornada=_int(scope.get("cod_jornada")),
+        )
+        for item in payload.get("items") or []:
+            key = "|".join(
+                [
+                    _clean(item.get("codigo_estud")),
+                    _clean(item.get("codigo_periodo")),
+                    _clean(item.get("cod_anio_basica")),
+                    _clean(item.get("codigo_materia")),
+                    _clean(item.get("paralelo")),
+                    _clean(item.get("num_matricula")),
+                    _clean(item.get("num_grupo")),
+                ]
+            )
+            students_by_key[key] = item
+
+    students = sorted(
+        students_by_key.values(),
+        key=lambda item: (
+            _clean(item.get("nombre_carrera")),
+            -(_int(item.get("codigo_periodo")) or 0),
+            _clean(item.get("nombre_estudiante")),
+        ),
+    )
+    return {
+        "total": len(students),
+        "items": students,
+        "codigo_materia": _clean(subject.get("cod_materia") or subject.get("codigo_materia")),
+        "tipo_periodo": tipo_periodo,
+        "codigo_periodos": selected_periods,
+        "asignaciones_consultadas": consulted_scopes,
+    }
 
 
 def _admin_grade_completion(item: dict[str, Any]) -> str:
