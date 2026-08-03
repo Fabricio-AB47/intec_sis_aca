@@ -123,3 +123,22 @@ npm run build
 - `backend/requirements.txt` es la fuente de dependencias Python.
 - `frontend/package.json` y `frontend/package-lock.json` son la fuente real de dependencias del frontend.
 - `frontend/requirements.txt` queda como referencia rapida de entorno y paquetes npm principales.
+
+## Bases complementarias
+
+El backend utiliza las bases `INTEC_EXPEDIENTE_ESTUDIANTIL`,
+`INTEC_FINANZAS_INSTITUCIONAL`, `INTEC_GRAPH_INTEGRACION` e
+`INTEC_INTEGRACION_CONTROL`. Su instalacion idempotente esta en:
+
+```text
+backend/sql/2026_07_22_install_complement_databases.sql
+```
+
+Despues de instalar el esquema y aplicar los parches SQL posteriores, carga las
+referencias desde la base academica autoritativa y verifica la integracion:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\sync_complement_references.py
+.\.venv\Scripts\python.exe scripts\check_complement_databases.py
+```

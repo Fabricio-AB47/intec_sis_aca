@@ -14,6 +14,47 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'doc')
     EXEC(N'CREATE SCHEMA doc AUTHORIZATION dbo');
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'cat')
+    EXEC(N'CREATE SCHEMA cat AUTHORIZATION dbo');
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'app')
+    EXEC(N'CREATE SCHEMA app AUTHORIZATION dbo');
+GO
+
+IF OBJECT_ID(N'cat.TipoOperacionGraph', N'U') IS NULL
+BEGIN
+    CREATE TABLE cat.TipoOperacionGraph
+    (
+        TipoOperacionCodigo VARCHAR(40) COLLATE Modern_Spanish_CI_AS NOT NULL
+            CONSTRAINT PK_TipoOperacionGraph PRIMARY KEY,
+        Nombre NVARCHAR(300) COLLATE Modern_Spanish_CI_AS NOT NULL,
+        HttpMethod VARCHAR(10) COLLATE Modern_Spanish_CI_AS NOT NULL,
+        EndpointBase NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
+        Descripcion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
+        Activo BIT NOT NULL CONSTRAINT DF_TipoOperacionGraph_Activo DEFAULT 1,
+        FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_TipoOperacionGraph_Fecha DEFAULT SYSUTCDATETIME()
+    );
+END;
+GO
+
+IF OBJECT_ID(N'app.PermisoGraphRequerido', N'U') IS NULL
+BEGIN
+    CREATE TABLE app.PermisoGraphRequerido
+    (
+        PermisoGraphRequeridoId BIGINT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_PermisoGraphRequerido PRIMARY KEY,
+        TipoOperacionCodigo VARCHAR(40) COLLATE Modern_Spanish_CI_AS NOT NULL,
+        Permiso NVARCHAR(200) COLLATE Modern_Spanish_CI_AS NOT NULL,
+        TipoPermiso VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL,
+        EsPrivilegioMinimo BIT NOT NULL CONSTRAINT DF_PermisoGraphRequerido_Minimo DEFAULT 0,
+        RequiereConsentimientoAdmin BIT NOT NULL CONSTRAINT DF_PermisoGraphRequerido_Consentimiento DEFAULT 0,
+        Justificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
+        Activo BIT NOT NULL CONSTRAINT DF_PermisoGraphRequerido_Activo DEFAULT 1,
+        FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_PermisoGraphRequerido_Fecha DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT FK_PermisoGraphRequerido_TipoOperacion FOREIGN KEY(TipoOperacionCodigo)
+            REFERENCES cat.TipoOperacionGraph(TipoOperacionCodigo),
+        CONSTRAINT UQ_PermisoGraphRequerido UNIQUE(TipoOperacionCodigo, Permiso)
+    );
+END;
 GO
 
 IF OBJECT_ID(N'cat.TipoExpedienteGraph', N'U') IS NULL

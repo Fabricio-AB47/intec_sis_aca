@@ -6094,7 +6094,7 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
-  padding: 16px;
+  padding: clamp(12px, 1.4vw, 18px);
   box-shadow: var(--card-shadow-soft);
 }
 
@@ -6336,11 +6336,38 @@
   color: #086b66;
 }
 
+.senescyt-update-subscreen-backdrop.screen-access-subscreen-backdrop {
+  z-index: 240;
+  padding: clamp(10px, 2vw, 24px);
+  overscroll-behavior: contain;
+}
+
 .senescyt-update-subscreen.screen-access-subscreen {
-  width: min(1500px, calc(100vw - 28px));
-  height: min(92vh, 920px);
-  max-height: 92vh;
+  width: min(1480px, 100%);
+  max-width: 100%;
+  height: min(900px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
   grid-template-rows: auto minmax(0, 1fr);
+  border-radius: 12px;
+}
+
+.screen-access-subscreen .senescyt-update-subscreen__head > div:first-child {
+  min-width: 0;
+}
+
+.screen-access-subscreen .senescyt-update-subscreen__head h2 {
+  overflow-wrap: anywhere;
+}
+
+.screen-access-subscreen .senescyt-update-subscreen__actions > span {
+  flex: 0 0 auto;
+  border: 1px solid rgba(141, 187, 199, 0.5);
+  border-radius: 999px;
+  background: rgba(141, 187, 199, 0.12);
+  padding: 8px 11px;
+  color: #45516d;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .screen-access-subscreen__body {
@@ -6349,7 +6376,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 12px 18px 18px;
+  padding: clamp(10px, 1.4vw, 18px) clamp(12px, 1.7vw, 22px) clamp(14px, 1.7vw, 22px);
 }
 
 .screen-access-subscreen__body:focus-visible {
@@ -6532,10 +6559,13 @@
 
 .screen-access-groups {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .screen-access-group {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
@@ -6566,7 +6596,7 @@
 
 .screen-access-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -6609,6 +6639,16 @@
   background: rgba(15, 130, 124, 0.08);
 }
 
+@media (max-width: 1180px) {
+  .screen-access-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-access-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .screen-access-layout {
     grid-template-columns: 1fr;
@@ -6643,6 +6683,117 @@
   .screen-access-editor-toolbar > div {
     justify-items: start;
   }
+
+  .senescyt-update-subscreen.screen-access-subscreen {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .screen-access-subscreen__body > .senescyt-update-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .screen-access-source {
+    width: 100%;
+    min-width: 0;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .senescyt-update-subscreen-backdrop.screen-access-subscreen-backdrop {
+    padding: 6px;
+  }
+
+  .senescyt-update-subscreen.screen-access-subscreen {
+    height: calc(100dvh - 12px);
+    max-height: calc(100dvh - 12px);
+    border-radius: 10px;
+  }
+
+  .screen-access-subscreen .senescyt-update-subscreen__head {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .screen-access-subscreen .senescyt-update-subscreen__actions {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .screen-access-subscreen .senescyt-update-subscreen__actions button {
+    min-height: 38px;
+  }
+
+  .screen-access-subscreen__body {
+    scrollbar-gutter: auto;
+    padding: 10px;
+  }
+
+  .screen-access-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .screen-access-actions__status {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .screen-access-actions button {
+    width: 100%;
+  }
+
+  .screen-access-summary-table {
+    min-width: 0;
+  }
+
+  .screen-access-summary-table thead {
+    display: none;
+  }
+
+  .screen-access-summary-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .screen-access-summary-table tr {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .screen-access-summary-table td,
+  .screen-access-summary-table tr:last-child td {
+    display: grid;
+    grid-template-columns: minmax(112px, 0.42fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+    padding: 9px 10px;
+  }
+
+  .screen-access-summary-table td::before {
+    content: attr(data-label);
+    color: #66708a;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .screen-access-summary-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .screen-access-summary-table td:last-child button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 560px) {
@@ -6651,6 +6802,39 @@
     flex-direction: column;
   }
 
+  .screen-access-subscreen__body > .senescyt-update-summary,
+  .screen-access-grid,
+  .screen-access-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-access-toolbar label,
+  .screen-access-sync-copy {
+    grid-column: auto;
+  }
+
+  .screen-access-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-access-actions__status {
+    grid-column: auto;
+  }
+
+  .screen-access-item {
+    min-height: 68px;
+  }
+
+  .screen-access-role-card__head,
+  .screen-access-role-card__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .screen-access-role-card__head small,
+  .screen-access-role-card__footer small {
+    text-align: left;
+  }
 }
 
 .gestion-sis-homo-bulk {

@@ -243,12 +243,12 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
               <tbody>
                 {filteredRoles.map((role) => (
                   <tr key={role.value}>
-                    <td><strong>{role.label}</strong><small>{role.value}</small></td>
-                    <td>{(assignments[role.value] || role.pages).length} de {availableScreenCount(role.value)} disponibles</td>
-                    <td><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.protected ? 'Protegida' : role.configured ? 'Guardada' : 'Sin asignar'}</span></td>
-                    <td>{formatUpdate(role.updated_at)}</td>
-                    <td>{role.updated_by || 'Sistema'}</td>
-                    <td><button type="button" onClick={() => openRole(role)}>{role.protected ? 'Ver acceso' : 'Asignar'}</button></td>
+                    <td data-label="Tipo de usuario"><strong>{role.label}</strong><small>{role.value}</small></td>
+                    <td data-label="Alcance">{(assignments[role.value] || role.pages).length} de {availableScreenCount(role.value)} disponibles</td>
+                    <td data-label="Configuracion"><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.protected ? 'Protegida' : role.configured ? 'Guardada' : 'Sin asignar'}</span></td>
+                    <td data-label="Ultima actualizacion">{formatUpdate(role.updated_at)}</td>
+                    <td data-label="Responsable">{role.updated_by || 'Sistema'}</td>
+                    <td data-label="Accion"><button type="button" onClick={() => openRole(role)}>{role.protected ? 'Ver acceso' : 'Asignar'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -258,7 +258,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       </section>
 
       {selectedRole && selectedRoleMeta ? (
-        <div className="senescyt-update-subscreen-backdrop" role="presentation">
+        <div className="senescyt-update-subscreen-backdrop screen-access-subscreen-backdrop" role="presentation">
           <section className="senescyt-update-subscreen screen-access-subscreen" role="dialog" aria-modal="true" aria-label="Subpantalla de asignacion de pantallas">
             <div className="senescyt-update-subscreen__head">
               <div>
