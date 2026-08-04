@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   fetchAcademicEnrollmentCatalog,
@@ -81,6 +81,7 @@ export function MatriculaIndividualView({
   const [paymentDate, setPaymentDate] = useState('')
 
   const [preview, setPreview] = useState<AcademicEnrollmentPreviewResponse | null>(null)
+  const [previewDirty, setPreviewDirty] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saveLoading, setSaveLoading] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -88,6 +89,7 @@ export function MatriculaIndividualView({
   const [exceptionCodes, setExceptionCodes] = useState<number[]>([])
   const [exceptionReason, setExceptionReason] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const exceptionReasonRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -128,6 +130,7 @@ export function MatriculaIndividualView({
       setWorkspaceLoading(true)
       setWorkspaceError('')
       setPreview(null)
+      setPreviewDirty(false)
       setExceptionCodes([])
       try {
         const [detailResponse, pensumResponse] = await Promise.all([
@@ -179,6 +182,13 @@ export function MatriculaIndividualView({
     [preview],
   )
   const blockedPrerequisites = Number(preview?.summary?.bloqueadas_por_prerrequisito || 0)
+  const blockedExceptionCodes = useMemo(
+    () => (preview?.items || [])
+      .filter((item) => String(item.accion || '') === 'BLOQUEADA_PRERREQUISITO')
+      .map((item) => Number(item.codigo_materia))
+      .filter((code) => Number.isFinite(code) && selectedCodes.includes(code)),
+    [preview, selectedCodes],
+  )
   const selectedCareer = careers.find((career) => career.cod_anio_basica === careerCode)
   const selectedPeriod = periods.find((period) => period.codigo_periodo === periodCode)
 
@@ -228,6 +238,7 @@ export function MatriculaIndividualView({
     ))
     setExceptionCodes((current) => current.filter((item) => item !== code))
     setPreview(null)
+    setPreviewDirty(false)
     setActionMessage('')
   }
 
@@ -273,6 +284,7 @@ export function MatriculaIndividualView({
     try {
       const response = await previewAcademicEnrollment(payload)
       setPreview(response)
+      setPreviewDirty(false)
       setActionMessage(
         Number(response.summary?.bloqueadas_por_prerrequisito || 0) > 0
           ? 'La validación encontró materias con prerrequisitos pendientes.'
@@ -281,6 +293,7 @@ export function MatriculaIndividualView({
     } catch (error) {
       setActionError(errorMessage(error, 'No se pudo validar la matrícula.'))
       setPreview(null)
+      setPreviewDirty(false)
     } finally {
       setPreviewLoading(false)
     }
@@ -289,15 +302,48 @@ export function MatriculaIndividualView({
   function authorizeException(code: number) {
     if (exceptionReason.trim().length < 10) {
       setActionError('Escriba primero una justificación de al menos 10 caracteres.')
+      exceptionReasonRef.current?.focus()
       return
     }
     setExceptionCodes((current) => current.includes(code) ? current : [...current, code])
-    setPreview(null)
+    setPreviewDirty(true)
     setActionError('')
     setActionMessage('Matrícula desbloqueada para esta materia. Vuelva a validar antes de guardar.')
   }
 
+  function authorizeBlockedExceptions() {
+    if (exceptionReason.trim().length < 10) {
+      setActionError('Complete un motivo de al menos 10 caracteres para aplicar el permiso.')
+      exceptionReasonRef.current?.focus()
+      return
+    }
+    if (!blockedExceptionCodes.length) {
+      setActionError('No existen materias bloqueadas pendientes de autorización.')
+      return
+    }
+    setExceptionCodes((current) => (
+      [...new Set([...current, ...blockedExceptionCodes])].sort((left, right) => left - right)
+    ))
+    setPreviewDirty(true)
+    setActionError('')
+    setActionMessage(
+      `${blockedExceptionCodes.length} materia(s) autorizada(s). Vuelva a validar antes de guardar.`,
+    )
+  }
+
+  function revokeException(code: number) {
+    setExceptionCodes((current) => current.filter((item) => item !== code))
+    setPreviewDirty(true)
+    setActionError('')
+    setActionMessage('Permiso revocado. Vuelva a validar la matrícula antes de guardar.')
+  }
+
   async function saveEnrollment() {
+    if (previewDirty) {
+      setConfirmOpen(false)
+      setActionError('Debe volver a validar la matrícula después de modificar los permisos.')
+      return
+    }
     const payload = buildPayload()
     if (!payload) return
     setSaveLoading(true)
@@ -307,6 +353,7 @@ export function MatriculaIndividualView({
       setConfirmOpen(false)
       setActionMessage(response.message || 'Matrícula guardada correctamente.')
       setPreview(response.preview || null)
+      setPreviewDirty(false)
       const refreshed = await fetchAcademicEnrollmentDetail(student!.codigo_estud, careerCode, periodCode)
       setSelectedCodes(
         (refreshed.materias_actuales || [])
@@ -484,7 +531,7 @@ export function MatriculaIndividualView({
                 <button type="button" className="ghost-button" onClick={() => setSelectedCodes(pensum.map(subjectCode).filter(Number.isFinite))}>
                   Seleccionar pensum
                 </button>
-                <button type="button" className="ghost-button" onClick={() => { setSelectedCodes([]); setExceptionCodes([]); setPreview(null) }}>
+                <button type="button" className="ghost-button" onClick={() => { setSelectedCodes([]); setExceptionCodes([]); setPreview(null); setPreviewDirty(false) }}>
                   Limpiar
                 </button>
               </div>
@@ -510,9 +557,9 @@ export function MatriculaIndividualView({
                       const validation = previewByCode.get(code)
                       const action = String(validation?.accion || '')
                       const blocked = action === 'BLOQUEADA_PRERREQUISITO'
-                      const excepted = action === 'EXCEPCION_PRERREQUISITO' || exceptionCodes.includes(code)
+                      const excepted = exceptionCodes.includes(code)
                       return (
-                        <tr key={subject.codigo_materia} className={blocked ? 'matricula-subject-row--blocked' : excepted ? 'matricula-subject-row--excepted' : ''}>
+                        <tr key={subject.codigo_materia} className={excepted ? 'matricula-subject-row--excepted' : blocked ? 'matricula-subject-row--blocked' : ''}>
                           <td>
                             <input
                               type="checkbox"
@@ -535,12 +582,17 @@ export function MatriculaIndividualView({
                           </td>
                           <td>
                             {blocked && !excepted ? (
-                              <button type="button" className="ghost-button" onClick={() => authorizeException(code)}>
+                              <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={() => authorizeException(code)}
+                                title={exceptionReason.trim().length < 10 ? 'Escriba un motivo de al menos 10 caracteres.' : undefined}
+                              >
                                 Permitir matrícula
                               </button>
                             ) : null}
                             {excepted ? (
-                              <button type="button" className="ghost-button" onClick={() => { setExceptionCodes((current) => current.filter((item) => item !== code)); setPreview(null) }}>
+                              <button type="button" className="ghost-button" onClick={() => revokeException(code)}>
                                 Revocar permiso
                               </button>
                             ) : null}
@@ -564,13 +616,33 @@ export function MatriculaIndividualView({
               <label>
                 Motivo obligatorio
                 <textarea
+                  ref={exceptionReasonRef}
+                  id="matricula-exception-reason"
                   value={exceptionReason}
-                  onChange={(event) => { setExceptionReason(event.target.value); setPreview(null) }}
+                  onChange={(event) => {
+                    setExceptionReason(event.target.value)
+                    if (exceptionCodes.length > 0) setPreviewDirty(true)
+                    setActionError('')
+                  }}
                   rows={3}
                   maxLength={1000}
                   placeholder="Explique por qué se permite matricular la materia sin cumplir el prerrequisito."
+                  aria-describedby="matricula-exception-help"
                 />
               </label>
+              <div id="matricula-exception-help" className={`matricula-exception-guidance${exceptionReason.trim().length >= 10 ? ' is-ready' : ''}`}>
+                <strong>
+                  {exceptionReason.trim().length >= 10
+                    ? 'Motivo listo para autorizar.'
+                    : `Faltan ${10 - exceptionReason.trim().length} caracteres para habilitar el permiso.`}
+                </strong>
+                <span>Use el botón siguiente para aplicar el permiso y después valide nuevamente.</span>
+              </div>
+              <div className="matricula-exception-actions">
+                <button type="button" className="primary-action" onClick={authorizeBlockedExceptions}>
+                  Permitir {blockedExceptionCodes.length} materia(s) bloqueada(s)
+                </button>
+              </div>
               <p>El permiso se aplica solo a este estudiante y queda auditado con período, materia, usuario y fecha.</p>
             </section>
           ) : null}
@@ -591,6 +663,7 @@ export function MatriculaIndividualView({
             ) : <p>Ejecute la validación para revisar duplicados, prerrequisitos y permisos antes de guardar.</p>}
             {actionError ? <div className="inline-error">{actionError}</div> : null}
             {actionMessage ? <div className="inline-success">{actionMessage}</div> : null}
+            {previewDirty ? <div className="inline-warning">Los permisos cambiaron. Valide nuevamente antes de guardar.</div> : null}
             <div className="matricula-individual-actions">
               <button type="button" className="ghost-button" onClick={() => void validateEnrollment()} disabled={previewLoading || workspaceLoading}>
                 {previewLoading ? 'Validando...' : 'Validar matrícula'}
@@ -599,7 +672,7 @@ export function MatriculaIndividualView({
                 type="button"
                 className="primary-action"
                 onClick={() => setConfirmOpen(true)}
-                disabled={!preview || blockedPrerequisites > 0 || saveLoading}
+                disabled={!preview || previewDirty || blockedPrerequisites > 0 || saveLoading}
               >
                 Guardar matrícula
               </button>

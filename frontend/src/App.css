@@ -14411,6 +14411,13 @@
   text-align: center;
 }
 
+.portal-compliance-students-table th:nth-child(2),
+.portal-compliance-students-table td:nth-child(2),
+.portal-compliance-students-table th:nth-child(4),
+.portal-compliance-students-table td:nth-child(4) {
+  text-transform: uppercase;
+}
+
 .portal-signature-panel {
   display: grid;
   gap: 14px;
@@ -17675,6 +17682,18 @@
   text-align: left;
   color: inherit;
   font-weight: 400;
+}
+
+.portal-grade-table thead th {
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.portal-grade-table th:first-child,
+.portal-grade-table td:first-child > strong,
+.portal-grade-table th:nth-child(3),
+.portal-grade-table td:nth-child(3) > strong {
+  text-transform: uppercase;
 }
 
 .portal-grade-input,
@@ -32984,7 +33003,53 @@ body .student-sidebar .logout-button {
 }
 
 .matricula-exception-panel textarea {
+  position: relative;
+  z-index: 1;
+  min-height: 96px;
+  pointer-events: auto;
+  user-select: text;
   resize: vertical;
+}
+
+.matricula-exception-panel textarea:focus {
+  border-color: #157f88;
+  box-shadow: 0 0 0 3px rgba(21, 127, 136, 0.14);
+  outline: none;
+}
+
+.matricula-exception-guidance {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  margin-top: 8px;
+  color: #a14b13;
+  font-size: 12px;
+}
+
+.matricula-exception-guidance.is-ready {
+  color: #176b4d;
+}
+
+.matricula-exception-guidance span {
+  color: #627087;
+}
+
+.matricula-exception-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.matricula-individual-review .inline-warning {
+  margin-top: 10px;
+  border: 1px solid #efd59c;
+  border-radius: 8px;
+  background: #fff8e7;
+  color: #7a4a00;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .matricula-exception-panel p,

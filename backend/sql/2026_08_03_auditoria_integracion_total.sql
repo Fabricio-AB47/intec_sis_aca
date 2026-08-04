@@ -23,6 +23,8 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'rpt')
     EXEC(N'CREATE SCHEMA rpt AUTHORIZATION dbo');
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'util')
+    EXEC(N'CREATE SCHEMA util AUTHORIZATION dbo');
 GO
 
 IF OBJECT_ID(N'aud.BaseAuditada', N'U') IS NULL
