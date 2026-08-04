@@ -165,7 +165,7 @@ def _require_teacher_exam_scope(
         SELECT TOP (1) 1
         FROM ing.ExamenIngles e
         INNER JOIN exp.ExpedienteEstudiantil ex
-            ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
+            ON ex.ExpedienteId = e.ExpedienteEstudiantilId
         WHERE e.ExamenInglesId = ?
           AND e.Activo = 1
           AND {_TEACHER_ENROLLMENT_SCOPE_SQL}
@@ -802,7 +802,7 @@ def _ensure_schema(cursor: Any) -> None:
                 FechaActualizacion DATETIME2 NULL,
                 UsuarioActualizacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
                 CONSTRAINT FK_ExamenIngles_Expediente FOREIGN KEY (ExpedienteEstudiantilId)
-                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteEstudiantilId),
+                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteId),
                 CONSTRAINT CK_ExamenIngles_Nota CHECK (NotaFinal IS NULL OR (NotaFinal >= 0 AND NotaFinal <= 10))
             );
             EXEC(N'CREATE UNIQUE INDEX UX_ExamenIngles_MatriculaActiva
@@ -833,7 +833,7 @@ def _ensure_schema(cursor: Any) -> None:
                    CodigoPeriodo = COALESCE(e.CodigoPeriodo, TRY_CONVERT(INT, ex.CodigoPeriodo))
             FROM ing.ExamenIngles e
             INNER JOIN exp.ExpedienteEstudiantil ex
-                ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
+                ON ex.ExpedienteId = e.ExpedienteEstudiantilId
             WHERE e.CodigoCarrera IS NULL OR e.CodigoPeriodo IS NULL;
         ');
 
@@ -976,7 +976,7 @@ def _ensure_schema(cursor: Any) -> None:
                 CONSTRAINT FK_CargaExamenIngles_Componente FOREIGN KEY (ComponenteExamenInglesId)
                     REFERENCES ing.ComponenteExamenIngles(ComponenteExamenInglesId),
                 CONSTRAINT FK_CargaExamenIngles_Documento FOREIGN KEY (DocumentoExpedienteId)
-                    REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId),
+                    REFERENCES doc.DocumentoExpediente(DocumentoId),
                 CONSTRAINT CK_CargaExamenIngles_Tamano_V3 CHECK (TamanoEsperado > 0 AND TamanoEsperado <= 2147483648)
             );
             CREATE UNIQUE INDEX UX_CargaExamenIngles_Version
@@ -1066,15 +1066,55 @@ def _ensure_schema(cursor: Any) -> None:
         END;
 
         IF NOT EXISTS (SELECT 1 FROM cat.TipoExpediente WHERE Codigo = 'INGLES')
-            INSERT INTO cat.TipoExpediente(Codigo, Nombre, Descripcion)
-            VALUES('INGLES', N'Expediente de evaluación de Inglés', N'Evidencia, versiones y calificación del examen de Inglés.');
+            INSERT INTO cat.TipoExpediente(Codigo, Nombre)
+            VALUES('INGLES', N'Expediente de evaluación de Inglés');
 
-        IF NOT EXISTS (SELECT 1 FROM cat.TipoDocumento WHERE Codigo = 'EVIDENCIA_EXAMEN_INGLES')
-            INSERT INTO cat.TipoDocumento(Codigo, Nombre, GrupoDocumento, Descripcion, PermiteMultiples, Versionable)
-            VALUES('EVIDENCIA_EXAMEN_INGLES', N'Evidencia del examen de Inglés', 'ACADEMICO', N'Archivo entregado por el estudiante para evaluación de Inglés.', 1, 1);
-        ELSE
-            UPDATE cat.TipoDocumento SET PermiteMultiples = 1, Versionable = 1
-            WHERE Codigo = 'EVIDENCIA_EXAMEN_INGLES';
+        MERGE cat.EstadoExpediente AS target
+        USING
+        (
+            VALUES
+                ('BORRADOR', N'Borrador'),
+                ('EN_REVISION', N'En revisión'),
+                ('VALIDADO', N'Validado'),
+                ('OBSERVADO', N'Observado')
+        ) AS source(Codigo, Nombre)
+        ON target.Codigo = source.Codigo
+        WHEN MATCHED THEN UPDATE SET Nombre = source.Nombre, Activo = 1
+        WHEN NOT MATCHED THEN INSERT(Codigo, Nombre) VALUES(source.Codigo, source.Nombre);
+
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'TamanoBytes') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD TamanoBytes BIGINT NULL;
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'VersionActual') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD VersionActual INT NOT NULL
+                CONSTRAINT DF_DocumentoExpediente_VersionActual DEFAULT 1 WITH VALUES;
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'OrigenCarga') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD OrigenCarga VARCHAR(40) NULL;
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'ObservacionActual') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD ObservacionActual NVARCHAR(1500) NULL;
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'FechaRevision') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD FechaRevision DATETIME2 NULL;
+        IF COL_LENGTH(N'doc.DocumentoExpediente', N'UsuarioRevision') IS NULL
+            ALTER TABLE doc.DocumentoExpediente ADD UsuarioRevision NVARCHAR(256) NULL;
+
+        IF OBJECT_ID(N'doc.DocumentoVersion', N'U') IS NULL
+        BEGIN
+            CREATE TABLE doc.DocumentoVersion
+            (
+                DocumentoVersionId BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_DocumentoVersion PRIMARY KEY,
+                DocumentoExpedienteId BIGINT NOT NULL,
+                NumeroVersion INT NOT NULL,
+                NombreArchivo NVARCHAR(520) NOT NULL,
+                RutaNube NVARCHAR(2000) NULL,
+                ContentType NVARCHAR(300) NULL,
+                TamanoBytes BIGINT NULL,
+                Observacion NVARCHAR(1500) NULL,
+                UsuarioCarga NVARCHAR(256) NULL,
+                FechaCarga DATETIME2 NOT NULL CONSTRAINT DF_DocumentoVersion_Fecha DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_DocumentoVersion_Documento FOREIGN KEY (DocumentoExpedienteId)
+                    REFERENCES doc.DocumentoExpediente(DocumentoId),
+                CONSTRAINT UQ_DocumentoVersion_Numero UNIQUE (DocumentoExpedienteId, NumeroVersion)
+            );
+        END;
         """
     )
 
@@ -1334,19 +1374,19 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
     draft_state_id = _catalog_id(cursor, "cat.EstadoExpediente", "BORRADOR", "EstadoExpedienteId")
     cursor.execute(
         """
-        SELECT TOP (1) ExpedienteEstudiantilId
+        SELECT TOP (1) ExpedienteId
         FROM exp.ExpedienteEstudiantil
         WHERE TipoExpedienteId = ? AND PersonaId = ? AND Activo = 1
           AND TRY_CONVERT(INT, CodigoCarrera) = ?
           AND TRY_CONVERT(INT, CodigoPeriodo) = ?
-          AND TRY_CONVERT(INT, CodigoCurso) = ?
-        ORDER BY ExpedienteEstudiantilId DESC
+          AND TipoOferta = ?
+        ORDER BY ExpedienteId DESC
         """,
         type_id,
         person_id,
         profile["codigo_carrera"],
         profile["codigo_periodo"],
-        profile["codigo_materia"],
+        f"INGLES:{profile['codigo_materia']}",
     )
     expediente = cursor.fetchone()
     if expediente:
@@ -1354,15 +1394,15 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
         cursor.execute(
             """
             UPDATE exp.ExpedienteEstudiantil
-               SET CodigoEstud = ?, NumeroIdentificacion = ?, CodigoCarrera = ?, CodigoPeriodo = ?, CodigoCurso = ?,
+               SET CodigoEstud = ?, NumeroIdentificacion = ?, CodigoCarrera = ?, CodigoPeriodo = ?, TipoOferta = ?,
                    FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
-             WHERE ExpedienteEstudiantilId = ?
+             WHERE ExpedienteId = ?
             """,
             profile["codigo_estud"],
             profile["cedula"],
             profile["codigo_carrera"],
             profile["codigo_periodo"],
-            profile["codigo_materia"],
+            f"INGLES:{profile['codigo_materia']}",
             audit_user,
             expediente_id,
         )
@@ -1370,12 +1410,11 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
         cursor.execute(
             """
             INSERT INTO exp.ExpedienteEstudiantil
-                (CodigoExpediente, TipoExpedienteId, EstadoExpedienteId, PersonaId, CodigoEstud,
-                 NumeroIdentificacion, CodigoCarrera, CodigoPeriodo, CodigoCurso, Observacion, UsuarioApertura)
-            OUTPUT INSERTED.ExpedienteEstudiantilId
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, N'Expediente automático para evaluación de Inglés.', ?)
+                (TipoExpedienteId, EstadoExpedienteId, PersonaId, CodigoEstud,
+                 NumeroIdentificacion, CodigoCarrera, CodigoPeriodo, TipoOferta, UsuarioApertura)
+            OUTPUT INSERTED.ExpedienteId
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            f"ING-{profile['codigo_estud']}-{profile['codigo_periodo']}-{profile['codigo_materia']}",
             type_id,
             draft_state_id,
             person_id,
@@ -1383,7 +1422,7 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
             profile["cedula"],
             profile["codigo_carrera"],
             profile["codigo_periodo"],
-            profile["codigo_materia"],
+            f"INGLES:{profile['codigo_materia']}",
             audit_user,
         )
         expediente_id = int(cursor.fetchone()[0])
@@ -1764,7 +1803,7 @@ def _exam_select(where_clause: str) -> str:
             COALESCE(pensum.Nomb_Materia, e.Nivel, N'{_LEVEL_NAME}') AS materia,
             periodo.Detalle_Periodo AS detalle_periodo
         FROM ing.ExamenIngles e
-        INNER JOIN exp.ExpedienteEstudiantil ex ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
+        INNER JOIN exp.ExpedienteEstudiantil ex ON ex.ExpedienteId = e.ExpedienteEstudiantilId
         INNER JOIN core.Persona p ON p.PersonaId = ex.PersonaId
         LEFT JOIN INTECBDD.dbo.CARRERAS c
             ON TRY_CONVERT(INT, c.Cod_AnioBasica) = TRY_CONVERT(INT, e.CodigoCarrera)
@@ -2539,7 +2578,7 @@ def confirm_student_delivery(
             UPDATE exp.ExpedienteEstudiantil
                SET EstadoExpedienteId = ?, FechaActualizacion = SYSUTCDATETIME(),
                    UsuarioActualizacion = ?
-             WHERE ExpedienteEstudiantilId = ?
+             WHERE ExpedienteId = ?
             """,
             review_state_id,
             current_user.login,
@@ -2926,7 +2965,7 @@ def publish_rubric_grade(
                    ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
             INNER JOIN ing.ExamenIngles e
-                ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
+                ON e.ExpedienteEstudiantilId = ex.ExpedienteId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,
@@ -3086,7 +3125,7 @@ def grade_submission(
             UPDATE ex
                SET ex.EstadoExpedienteId = ?, ex.FechaActualizacion = SYSUTCDATETIME(), ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
-            INNER JOIN ing.ExamenIngles e ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
+            INNER JOIN ing.ExamenIngles e ON e.ExpedienteEstudiantilId = ex.ExpedienteId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,
