@@ -1,21 +1,28 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import {
   confirmEnglishDelivery,
   createEnglishUploadSession,
   englishExamFileUrl,
+  fetchEnglishActivitySchedules,
   fetchEnglishStudentExam,
   fetchEnglishSubmissions,
   finalizeEnglishUpload,
+  prepareEnglishSubmission,
   publishEnglishRubricGrade,
+  reopenEnglishSubmission,
   saveEnglishRubricDraft,
+  updateEnglishActivitySchedule,
   uploadEnglishFileChunks,
 } from '../../lib/api'
 import type {
+  EnglishActivitySchedule,
+  EnglishActivitySchedulesResponse,
   EnglishExam,
   EnglishExamComponent,
   EnglishExamFile,
   EnglishSubmissionsResponse,
+  EnglishUploadSessionResponse,
 } from '../../types/app'
 import { CalificacionesTabs } from '../admin/CalificacionesTabs'
 
@@ -25,10 +32,16 @@ type InglesViewProps = {
   onOpenSubjectGrades?: () => void
 }
 
-const MIN_FILE_BYTES = 50 * 1024 * 1024
+const MIN_FILE_BYTES = 40 * 1024 * 1024
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 const ACCEPTED_VIDEOS = 'video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm'
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.webm'])
+
+type PendingEnglishUpload = {
+  fingerprint: string
+  session: EnglishUploadSessionResponse
+  uploaded: boolean
+}
 
 function normalizedRole(value: string) {
   return value.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -36,6 +49,10 @@ function normalizedRole(value: string) {
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
+function uploadFingerprint(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`
 }
 
 function isAcceptedVideo(file: File) {
@@ -62,6 +79,23 @@ function dateTime(value: string | null) {
     timeStyle: 'medium',
     timeZone: 'America/Guayaquil',
   }).format(date)
+}
+
+function datetimeLocal(value: string | null) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    timeZone: 'America/Guayaquil',
+  }).formatToParts(parsed)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || ''
+  return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`
+}
+
+function guayaquilIso(value: string) {
+  return value ? `${value}:00-05:00` : ''
 }
 
 function secondsUntil(deadline: string | null, now: number) {
@@ -127,6 +161,15 @@ function rubricGrade(rubric: RubricForm) {
   return RUBRIC_FIELDS.reduce((total, field) => total + (values[field.key] * field.weight / 100), 0)
 }
 
+function rubricFromGrade(value: string): RubricForm {
+  return {
+    language_mastery: value,
+    fluency_pronunciation: value,
+    content_coherence: value,
+    instruction_compliance: value,
+  }
+}
+
 function FileActions({
   file,
   viewLabel = 'Ver video',
@@ -140,6 +183,13 @@ function FileActions({
   )
 }
 
+function videoAccessUrl(file: EnglishExamFile) {
+  const graphUrl = file.web_url.trim()
+  if (graphUrl) return graphUrl
+  const internalUrl = englishExamFileUrl(file.upload_id, 'open')
+  return new URL(internalUrl, window.location.origin).toString()
+}
+
 function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) {
   const [exam, setExam] = useState<EnglishExam | null>(null)
   const [selectedComponentCode, setSelectedComponentCode] = useState('P1')
@@ -151,6 +201,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
   const [message, setMessage] = useState('')
   const [now, setNow] = useState(Date.now())
   const [fileInputKeys, setFileInputKeys] = useState<Record<string, number>>({})
+  const pendingUploads = useRef<Record<string, PendingEnglishUpload>>({})
 
   const loadExam = useCallback(async () => {
     setLoading(true)
@@ -174,6 +225,16 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    if (!uploadingCode) return
+    const preventReload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', preventReload)
+    return () => window.removeEventListener('beforeunload', preventReload)
+  }, [uploadingCode])
+
   const components = useMemo(() => exam ? sortedComponents(exam) : [], [exam])
   const selectedComponent = useMemo(
     () => components.find((component) => component.code === selectedComponentCode) || components[0] || null,
@@ -190,6 +251,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
     setError('')
     setMessage('')
     if (!file) {
+      delete pendingUploads.current[componentCode]
       setSelectedFiles((current) => ({ ...current, [componentCode]: null }))
       return
     }
@@ -202,7 +264,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
     if (file.size < (exam?.min_file_bytes || MIN_FILE_BYTES)) {
       setSelectedFiles((current) => ({ ...current, [componentCode]: null }))
       setFileInputKeys((current) => ({ ...current, [componentCode]: (current[componentCode] || 0) + 1 }))
-      setError('El video debe tener al menos 50 MB.')
+      setError('El video debe tener al menos 40 MB.')
       return
     }
     if (file.size > (exam?.max_file_bytes || MAX_FILE_BYTES)) {
@@ -210,6 +272,10 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
       setFileInputKeys((current) => ({ ...current, [componentCode]: (current[componentCode] || 0) + 1 }))
       setError('El video supera el límite máximo de 2 GB.')
       return
+    }
+    const pending = pendingUploads.current[componentCode]
+    if (pending && pending.fingerprint !== uploadFingerprint(file)) {
+      delete pendingUploads.current[componentCode]
     }
     setSelectedFiles((current) => ({ ...current, [componentCode]: file }))
   }
@@ -226,14 +292,39 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
     setError('')
     setMessage('')
     try {
-      const session = await createEnglishUploadSession(selectedFile, component.code)
+      const fingerprint = uploadFingerprint(selectedFile)
+      let pending = pendingUploads.current[component.code]
+      if (!pending || pending.fingerprint !== fingerprint) {
+        const session = await createEnglishUploadSession(selectedFile, component.code)
+        pending = { fingerprint, session, uploaded: false }
+        pendingUploads.current[component.code] = pending
+      }
+      const { session } = pending
       if (!session.upload_url) throw new Error('Microsoft Graph no devolvió una sesión válida de carga.')
-      await uploadEnglishFileChunks(session.upload_url, selectedFile, session.chunk_size, (progress) => {
-        setProgressByCode((current) => ({ ...current, [component.code]: progress }))
-      })
-      const updatedExam = await finalizeEnglishUpload(session.upload_id)
+      if (!pending.uploaded) {
+        await uploadEnglishFileChunks(session.upload_url, selectedFile, session.chunk_size, (progress) => {
+          setProgressByCode((current) => ({ ...current, [component.code]: progress }))
+        })
+        pending.uploaded = true
+      }
+
+      let updatedExam: EnglishExam | null = null
+      let finalizeError: unknown = null
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        try {
+          updatedExam = await finalizeEnglishUpload(session.upload_id)
+          break
+        } catch (requestError) {
+          finalizeError = requestError
+          if (attempt < 4) {
+            await new Promise((resolve) => window.setTimeout(resolve, attempt * 1000))
+          }
+        }
+      }
+      if (!updatedExam) throw finalizeError || new Error('No se pudo validar el archivo cargado.')
       const updatedComponent = updatedExam.components.find((item) => item.code === component.code)
       setExam(updatedExam)
+      delete pendingUploads.current[component.code]
       setSelectedFiles((current) => ({ ...current, [component.code]: null }))
       setFileInputKeys((current) => ({ ...current, [component.code]: (current[component.code] || 0) + 1 }))
       setProgressByCode((current) => ({ ...current, [component.code]: 100 }))
@@ -241,8 +332,8 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
         ? `${component.label} cargado y validado. Revise la vista previa y confirme la entrega definitiva.`
         : `${component.label} reemplazado. Revise el video y confirme la entrega definitiva.`)
     } catch (requestError) {
-      setError(errorMessage(requestError, 'No se pudo completar la carga del video.'))
-      await loadExam()
+      const detail = errorMessage(requestError, 'No se pudo completar la carga del video.')
+      setError(`${detail} El video permanece seleccionado; vuelva a pulsar el botón para continuar desde el último bloque recibido.`)
     } finally {
       setUploadingCode('')
     }
@@ -307,7 +398,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
           <div>
             <span>Entrega estudiantil</span>
             <h3>Evidencias por parcial</h3>
-            <p>Cargue un video de 50 MB a 2 GB, revise la vista previa y confirme la entrega definitiva antes del cierre.</p>
+            <p>Cargue un video de 40 MB a 2 GB, revise la vista previa y confirme la entrega definitiva antes del cierre.</p>
           </div>
           <span className={resultClass(exam.result)}>{exam.result}</span>
         </div>
@@ -337,12 +428,22 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
 
         {component ? (
           <article className="english-partial-card english-partial-card--single">
-            <header>
-              <div><span>{component.code}</span><h4>{component.label}</h4></div>
-              <i className={resultClass(component.result)}>{component.result}</i>
-            </header>
+             <header>
+               <div><span>{component.code}</span><h4>{component.label}</h4></div>
+               <i className={resultClass(component.result)}>{component.result}</i>
+             </header>
 
-            {component.file ? (
+             <div className="english-activity-instructions">
+               <span>Instrucciones de la actividad</span>
+               <p>{component.activity_instructions || `Entregue el video correspondiente a ${component.label}.`}</p>
+             </div>
+             {component.reopen_count > 0 ? (
+               <div className="english-alert english-alert--warning">
+                 Entrega reabierta el {dateTime(component.last_reopened_at)}. Motivo: {component.last_reopen_reason || 'Reapertura autorizada.'}
+               </div>
+             ) : null}
+
+             {component.file ? (
               <>
                 <div className="english-partial-file">
                   <div>
@@ -382,7 +483,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
                     onChange={(event) => selectFile(component.code, event.target.files?.[0] || null)}
                   />
                 </label>
-                <small>{selectedFile ? `${selectedFile.name} · ${fileSize(selectedFile.size)}` : 'Video MP4, MOV, MKV o WEBM. Entre 50 MB y 2 GB.'}</small>
+                <small>{selectedFile ? `${selectedFile.name} · ${fileSize(selectedFile.size)}` : 'Video MP4, MOV, MKV o WEBM. Entre 40 MB y 2 GB.'}</small>
                 <button type="button" className="primary-action" onClick={() => void uploadFile(component)} disabled={!selectedFile || Boolean(uploadingCode)}>
                   {uploading ? `Subiendo ${progress}%` : component.file ? 'Reemplazar carga temporal' : `Cargar ${component.label}`}
                 </button>
@@ -434,6 +535,216 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
   )
 }
 
+type ActivityScheduleDraft = {
+  instructions: string
+  activityStart: string
+  activityDeadline: string
+}
+
+function ActivityScheduleCard({
+  component,
+  saving,
+  onSave,
+}: Readonly<{
+  component: EnglishActivitySchedule
+  saving: boolean
+  onSave: (component: EnglishActivitySchedule, draft: ActivityScheduleDraft) => Promise<void>
+}>) {
+  const [draft, setDraft] = useState<ActivityScheduleDraft>({
+    instructions: component.instructions,
+    activityStart: datetimeLocal(component.activity_start),
+    activityDeadline: datetimeLocal(component.activity_deadline),
+  })
+
+  return (
+    <form
+      className="english-schedule-card"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void onSave(component, draft)
+      }}
+    >
+      <header>
+        <div><span>{component.code}</span><h4>{component.label}</h4></div>
+        <span className={component.activity_open ? 'english-badge english-badge--ok' : 'english-badge english-badge--locked'}>
+          {component.activity_open ? 'Abierta' : component.activity_status === 'AUN_NO_INICIA' ? 'Programada' : 'Cerrada'}
+        </span>
+      </header>
+      <label>
+        <span>Instrucciones para el estudiante</span>
+        <textarea
+          rows={3}
+          maxLength={1500}
+          required
+          disabled={saving}
+          value={draft.instructions}
+          onChange={(event) => setDraft((current) => ({ ...current, instructions: event.target.value }))}
+        />
+      </label>
+      <div className="english-schedule-card__dates">
+        <label>
+          <span>Fecha y hora de inicio</span>
+          <input
+            type="datetime-local"
+            required
+            disabled={saving}
+            value={draft.activityStart}
+            onChange={(event) => setDraft((current) => ({ ...current, activityStart: event.target.value }))}
+          />
+        </label>
+        <label>
+          <span>Fecha y hora de cierre</span>
+          <input
+            type="datetime-local"
+            required
+            disabled={saving}
+            value={draft.activityDeadline}
+            onChange={(event) => setDraft((current) => ({ ...current, activityDeadline: event.target.value }))}
+          />
+        </label>
+      </div>
+      <footer>
+        <small>
+          {component.configured
+            ? `Último cambio: ${dateTime(component.updated_at)}${component.updated_by ? ` · ${component.updated_by}` : ''}`
+            : 'Usa inicialmente las fechas del período académico.'}
+        </small>
+        <button type="submit" className="primary-action" disabled={saving}>
+          {saving ? 'Guardando...' : `Actualizar ${component.code}`}
+        </button>
+      </footer>
+    </form>
+  )
+}
+
+function AdminEnglishActivitySchedules() {
+  const [data, setData] = useState<EnglishActivitySchedulesResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [savingCode, setSavingCode] = useState('')
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  const loadSchedules = useCallback(async (periodCode = '', subjectCode = '') => {
+    setLoading(true)
+    setError('')
+    try {
+      const response = await fetchEnglishActivitySchedules({ periodCode, subjectCode })
+      setData(response)
+    } catch (requestError) {
+      setError(errorMessage(requestError, 'No se pudo cargar la configuración de fechas de Idiomas.'))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadSchedules()
+  }, [loadSchedules])
+
+  async function saveSchedule(component: EnglishActivitySchedule, draft: ActivityScheduleDraft) {
+    if (!data?.selected_period_code || !data.selected_subject_code) return
+    if (!draft.instructions.trim() || !draft.activityStart || !draft.activityDeadline) {
+      setError('Complete las instrucciones, la fecha de inicio y la fecha de cierre.')
+      return
+    }
+    const start = new Date(guayaquilIso(draft.activityStart)).getTime()
+    const deadline = new Date(guayaquilIso(draft.activityDeadline)).getTime()
+    if (!Number.isFinite(start) || !Number.isFinite(deadline) || deadline <= start) {
+      setError('La fecha de cierre debe ser posterior a la fecha de inicio.')
+      return
+    }
+    setSavingCode(component.code)
+    setError('')
+    setMessage('')
+    try {
+      const response = await updateEnglishActivitySchedule({
+        period_code: data.selected_period_code,
+        subject_code: data.selected_subject_code,
+        component_code: component.code,
+        instructions: draft.instructions.trim(),
+        activity_start: guayaquilIso(draft.activityStart),
+        activity_deadline: guayaquilIso(draft.activityDeadline),
+      })
+      setData(response)
+      const updated = response.updated_components || 0
+      const skipped = response.skipped_published || 0
+      setMessage(
+        `${component.label}: fechas actualizadas para ${updated} actividad(es)`
+        + (skipped ? `; ${skipped} calificación(es) publicada(s) se conservaron sin cambios.` : '.'),
+      )
+    } catch (requestError) {
+      setError(errorMessage(requestError, `No se pudieron actualizar las fechas de ${component.label}.`))
+    } finally {
+      setSavingCode('')
+    }
+  }
+
+  return (
+    <>
+      {error ? <div className="english-alert english-alert--error" role="alert">{error}</div> : null}
+      {message ? <div className="english-alert english-alert--success" role="status">{message}</div> : null}
+      <section className="english-schedule-panel">
+        <div className="card-head">
+          <div><span>Administración</span><h3>Fechas de actividades por período</h3></div>
+          <span>{data?.administrator.name || ''}</span>
+        </div>
+        <p className="report-description">
+          Defina el inicio y cierre de cada parcial. El cambio se aplica a todas las matrículas de la asignatura y también a expedientes que se creen posteriormente.
+        </p>
+        <div className="english-schedule-filters">
+          <label>
+            <span>Período de Idiomas</span>
+            <select
+              value={data?.selected_period_code || ''}
+              disabled={loading || (data?.periods.length || 0) === 0}
+              onChange={(event) => void loadSchedules(event.target.value, '')}
+            >
+              {(data?.periods.length || 0) === 0 ? <option value="">Sin períodos disponibles</option> : null}
+              {(data?.periods || []).map((period) => (
+                <option key={period.code} value={period.code}>{period.label} · {period.student_count} estudiante(s)</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Asignatura de Idiomas</span>
+            <select
+              value={data?.selected_subject_code || ''}
+              disabled={loading || (data?.subjects.length || 0) === 0}
+              onChange={(event) => void loadSchedules(data?.selected_period_code || '', event.target.value)}
+            >
+              {(data?.subjects.length || 0) === 0 ? <option value="">Sin asignaturas disponibles</option> : null}
+              {(data?.subjects || []).map((subject) => (
+                <option key={subject.code} value={subject.code}>{subject.label} · {subject.student_count} estudiante(s)</option>
+              ))}
+            </select>
+          </label>
+          <div className="english-schedule-scope">
+            <span>Alcance del cambio</span>
+            <strong>{data?.affected_students || 0} estudiante(s)</strong>
+            <small>P1, P2 y P3 se administran por separado.</small>
+          </div>
+        </div>
+        {loading ? <div className="english-loading">Cargando fechas...</div> : null}
+        {!loading && (data?.components.length || 0) === 0 ? (
+          <div className="english-alert english-alert--warning">No existen matrículas de Idiomas para configurar en el período seleccionado.</div>
+        ) : null}
+        {!loading && (data?.components.length || 0) > 0 ? (
+          <div className="english-schedule-grid">
+            {(data?.components || []).map((component) => (
+              <ActivityScheduleCard
+                key={`${component.code}-${component.activity_start || ''}-${component.activity_deadline || ''}-${component.updated_at || ''}`}
+                component={component}
+                saving={savingCode === component.code}
+                onSave={saveSchedule}
+              />
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </>
+  )
+}
+
 function ReviewerEnglishExams() {
   const [data, setData] = useState<EnglishSubmissionsResponse | null>(null)
   const [search, setSearch] = useState('')
@@ -447,7 +758,10 @@ function ReviewerEnglishExams() {
   const [selected, setSelected] = useState<EnglishExam | null>(null)
   const [selectedComponentCode, setSelectedComponentCode] = useState('')
   const [rubric, setRubric] = useState<RubricForm>(EMPTY_RUBRIC)
+  const [partialGrade, setPartialGrade] = useState('')
   const [observation, setObservation] = useState('')
+  const [reopenReason, setReopenReason] = useState('')
+  const [reopenDeadline, setReopenDeadline] = useState('')
 
   const loadSubmissions = useCallback(async (
     currentSearch: string,
@@ -502,6 +816,7 @@ function ReviewerEnglishExams() {
     [selected, selectedComponentCode],
   )
   const calculatedRubricGrade = rubricGrade(rubric)
+  const canReopen = ['ACADEMICO', 'ADMINISTRADOR'].includes(normalizedRole(data?.reviewer.role || ''))
   const counters = useMemo(() => ({
     enrolled: data?.enrolled || 0,
     total: data?.total || 0,
@@ -509,6 +824,18 @@ function ReviewerEnglishExams() {
     approved: data?.approved || 0,
     failed: data?.failed || 0,
   }), [data])
+
+  async function copySelectedVideoUrl() {
+    if (!selectedComponent?.file) return
+    setError('')
+    setMessage('')
+    try {
+      await navigator.clipboard.writeText(videoAccessUrl(selectedComponent.file))
+      setMessage(`${selectedComponent.label}: URL del video copiado.`)
+    } catch {
+      setError('No se pudo copiar automáticamente. Seleccione el URL mostrado y cópielo manualmente.')
+    }
+  }
 
   function submitFilters(event: FormEvent) {
     event.preventDefault()
@@ -518,7 +845,7 @@ function ReviewerEnglishExams() {
   function selectComponent(component: EnglishExamComponent) {
     setSelectedComponentCode(component.code)
     const source = component.draft_rubric
-    setRubric(source ? {
+    const nextRubric: RubricForm = source ? {
       language_mastery: String(source.language_mastery),
       fluency_pronunciation: String(source.fluency_pronunciation),
       content_coherence: String(source.content_coherence),
@@ -528,18 +855,59 @@ function ReviewerEnglishExams() {
       fluency_pronunciation: String(component.grade),
       content_coherence: String(component.grade),
       instruction_compliance: String(component.grade),
-    } : EMPTY_RUBRIC)
+    } : EMPTY_RUBRIC
+    setRubric(nextRubric)
+    const nextGrade = rubricGrade(nextRubric)
+    setPartialGrade(nextGrade === null ? '' : nextGrade.toFixed(2))
     setObservation(component.draft_observation || component.observation || '')
+    setReopenReason('')
+    setReopenDeadline(datetimeLocal(component.activity_deadline))
   }
 
-  function openGrade(exam: EnglishExam) {
-    const component = sortedComponents(exam).find((item) => item.file && item.grade === null)
-      || sortedComponents(exam).find((item) => item.file)
-      || sortedComponents(exam)[0]
-    setSelected(exam)
-    if (component) selectComponent(component)
+  function updatePartialGrade(value: string) {
+    setPartialGrade(value)
+    if (!value.trim()) {
+      setRubric(EMPTY_RUBRIC)
+      return
+    }
+    const grade = Number(value.replace(',', '.'))
+    if (!Number.isFinite(grade) || grade < 0 || grade > 10) return
+    setRubric(rubricFromGrade(value.replace(',', '.')))
+  }
+
+  function updateRubricCriterion(key: keyof RubricForm, value: string) {
+    const nextRubric = { ...rubric, [key]: value }
+    setRubric(nextRubric)
+    const nextGrade = rubricGrade(nextRubric)
+    setPartialGrade(nextGrade === null ? '' : nextGrade.toFixed(2))
+  }
+
+  async function openGrade(exam: EnglishExam) {
+    setSaving(true)
     setError('')
     setMessage('')
+    try {
+      const prepared = exam.exam_id === null
+        ? await prepareEnglishSubmission({
+            enrollment_id: exam.enrollment.enrollment_id,
+            period_code: selectedPeriod,
+            subject_code: selectedSubject,
+          })
+        : exam
+      const component = sortedComponents(prepared).find((item) => item.file && item.grade === null)
+        || sortedComponents(prepared).find((item) => item.file)
+        || sortedComponents(prepared)[0]
+      setSelected(prepared)
+      if (component) selectComponent(component)
+      if (exam.exam_id === null) {
+        setMessage('Actividad preparada. Puede configurar las instrucciones y fechas de cada parcial.')
+        await loadSubmissions(search, state, selectedPeriod, selectedSubject, true)
+      }
+    } catch (requestError) {
+      setError(errorMessage(requestError, 'No se pudo preparar la actividad de Idiomas.'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function saveDraft(event: FormEvent) {
@@ -593,6 +961,39 @@ function ReviewerEnglishExams() {
       await loadSubmissions(search, state, selectedPeriod, selectedSubject)
     } catch (requestError) {
       setError(errorMessage(requestError, 'No se pudo publicar la calificación.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function reopenDelivery(event: FormEvent) {
+    event.preventDefault()
+    if (!selected || selected.exam_id === null || !selectedComponent || !canReopen) return
+    if (reopenReason.trim().length < 10) {
+      setError('Registre un motivo de reapertura de al menos 10 caracteres.')
+      return
+    }
+    if (!reopenDeadline || new Date(guayaquilIso(reopenDeadline)).getTime() <= Date.now()) {
+      setError('Seleccione una nueva fecha límite posterior a la fecha y hora actuales.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const updated = await reopenEnglishSubmission(selected.exam_id, {
+        period_code: selectedPeriod,
+        component_code: selectedComponent.code,
+        reason: reopenReason.trim(),
+        new_deadline: guayaquilIso(reopenDeadline),
+      })
+      setSelected(updated)
+      const updatedComponent = updated.components.find((item) => item.code === selectedComponent.code)
+      if (updatedComponent) selectComponent(updatedComponent)
+      setMessage(`${selectedComponent.label}: entrega reabierta con trazabilidad y nuevo plazo.`)
+      await loadSubmissions(search, state, selectedPeriod, selectedSubject)
+    } catch (requestError) {
+      setError(errorMessage(requestError, 'No se pudo reabrir la entrega.'))
     } finally {
       setSaving(false)
     }
@@ -683,13 +1084,13 @@ function ReviewerEnglishExams() {
                   <td>{exam.grade === null ? '-' : <><strong>{exam.grade.toFixed(2)} / 10</strong><small><span className={resultClass(exam.result)}>{exam.result}</span></small></>}</td>
                   <td>
                     <button
-                      type="button"
-                      className="primary-action"
-                      onClick={() => openGrade(exam)}
-                      disabled={exam.exam_id === null || exam.submitted_components === 0}
-                    >
-                      {exam.submitted_components > 0 ? 'Ver entrega' : 'Sin entrega'}
-                    </button>
+                       type="button"
+                       className="primary-action"
+                       onClick={() => void openGrade(exam)}
+                       disabled={saving}
+                     >
+                       {exam.submitted_components > 0 ? 'Ver entrega' : 'Configurar'}
+                     </button>
                   </td>
                 </tr>
               ))}
@@ -721,13 +1122,50 @@ function ReviewerEnglishExams() {
               ))}
             </div>
 
-            {selectedComponent ? (
-              <>
-                <div className="english-modal-file">
-                  <div><span>Video de {selectedComponent.label}</span><strong>{selectedComponent.file?.name || 'Sin video entregado'}</strong><small>{selectedComponent.file ? fileSize(selectedComponent.file.size) : '-'}</small></div>
-                  <FileActions file={selectedComponent.file} viewLabel="Ver entrega" />
-                </div>
-                {selectedComponent.file ? (
+             {selectedComponent ? (
+               <>
+                 <div className="english-modal-file">
+                   <div><span>Video de {selectedComponent.label}</span><strong>{selectedComponent.file?.name || 'Sin video entregado'}</strong><small>{selectedComponent.file ? fileSize(selectedComponent.file.size) : '-'}</small></div>
+                   <FileActions file={selectedComponent.file} viewLabel="Ver entrega" />
+                 </div>
+                 {selectedComponent.file ? (
+                   <section className="english-video-url" aria-label={`URL del video de ${selectedComponent.label}`}>
+                     <div className="english-video-url__heading">
+                       <div><span>Ubicación del video</span><strong>URL para revisión docente</strong></div>
+                       <small>{selectedComponent.file.web_url ? 'Microsoft 365' : 'Acceso interno autenticado'}</small>
+                     </div>
+                     <div className="english-video-url__controls">
+                       <input
+                         type="url"
+                         aria-label="URL del video entregado"
+                         readOnly
+                         value={videoAccessUrl(selectedComponent.file)}
+                         onFocus={(event) => event.currentTarget.select()}
+                       />
+                       <a
+                         className="ghost-button"
+                         href={videoAccessUrl(selectedComponent.file)}
+                         target="_blank"
+                         rel="noreferrer"
+                       >
+                         Abrir URL
+                       </a>
+                       <button type="button" className="ghost-button" onClick={() => void copySelectedVideoUrl()}>
+                         Copiar URL
+                       </button>
+                     </div>
+                     <small>El acceso está sujeto a los permisos institucionales del docente autenticado.</small>
+                   </section>
+                 ) : null}
+                 {canReopen && selectedComponent.confirmed && selectedComponent.grade === null ? (
+                   <form className="english-reopen-form" onSubmit={reopenDelivery}>
+                     <div><span>Reapertura excepcional</span><strong>Autorizar una nueva versión del video</strong><small>La entrega actual se conserva en el historial y deja de ser la versión vigente.</small></div>
+                     <label><span>Nueva fecha límite</span><input type="datetime-local" required value={reopenDeadline} disabled={saving} onChange={(event) => setReopenDeadline(event.target.value)} /></label>
+                     <label><span>Motivo</span><input required minLength={10} maxLength={1000} value={reopenReason} disabled={saving} onChange={(event) => setReopenReason(event.target.value)} placeholder="Justificación de la reapertura" /></label>
+                     <button type="submit" className="ghost-button" disabled={saving || reopenReason.trim().length < 10 || !reopenDeadline}>Reabrir entrega</button>
+                   </form>
+                 ) : null}
+                 {selectedComponent.file ? (
                   <>
                     <video
                       className="english-review-video"
@@ -738,8 +1176,35 @@ function ReviewerEnglishExams() {
                       Su navegador no puede reproducir este video.
                     </video>
                     <form className="english-grade-form" onSubmit={saveDraft}>
+                      <section className="english-exam-grade-entry" aria-label={`Calificación de ${selectedComponent.label}`}>
+                        <div>
+                          <span>Calificación de {selectedComponent.label}</span>
+                          <strong>Nota del examen · 40% del parcial</strong>
+                          <small>
+                            Registre la nota sobre 10. Se guarda en {selectedComponent.code}Examen y el promedio académico aplica automáticamente su ponderación del 40%.
+                          </small>
+                        </div>
+                        <label>
+                          <span>Nota sobre 10</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="10"
+                            step="0.01"
+                            required
+                            value={partialGrade}
+                            disabled={saving || selectedComponent.review_state === 'PUBLICADO'}
+                            onChange={(event) => updatePartialGrade(event.target.value)}
+                            aria-label={`Nota de ${selectedComponent.label} sobre 10`}
+                          />
+                        </label>
+                        <div className="english-exam-grade-entry__contribution">
+                          <span>Aporte al promedio del parcial</span>
+                          <strong>{calculatedRubricGrade === null ? '-' : `${(calculatedRubricGrade * 0.4).toFixed(2)} / 4`}</strong>
+                        </div>
+                      </section>
                       <fieldset className="english-rubric" disabled={saving || selectedComponent.review_state === 'PUBLICADO'}>
-                        <legend>Rúbrica de evaluación · nota máxima 10</legend>
+                        <legend>Desglose de la rúbrica · nota máxima 10</legend>
                         {RUBRIC_FIELDS.map((field) => (
                           <label key={field.key}>
                             <span>{field.label} ({field.weight}%)</span>
@@ -750,7 +1215,7 @@ function ReviewerEnglishExams() {
                               step="0.01"
                               required
                               value={rubric[field.key]}
-                              onChange={(event) => setRubric((current) => ({ ...current, [field.key]: event.target.value }))}
+                              onChange={(event) => updateRubricCriterion(field.key, event.target.value)}
                             />
                           </label>
                         ))}
@@ -791,7 +1256,7 @@ function ReviewerEnglishExams() {
                       </div>
                     </form>
                   </>
-                ) : <div className="english-alert english-alert--warning">El estudiante todavía no ha entregado el video de este parcial.</div>}
+                ) : <div className="english-alert english-alert--warning">El estudiante todavía no ha entregado el video de este parcial. La calificación del examen (40%) se habilitará cuando confirme la entrega definitiva.</div>}
               </>
             ) : null}
           </section>
@@ -802,25 +1267,55 @@ function ReviewerEnglishExams() {
 }
 
 export function InglesView({ displayName, role, onOpenSubjectGrades }: Readonly<InglesViewProps>) {
-  const isStudent = normalizedRole(role) === 'ESTUDIANTE'
+  const currentRole = normalizedRole(role)
+  const isStudent = currentRole === 'ESTUDIANTE'
+  const isAdministrator = currentRole === 'ADMINISTRADOR'
+  const [adminSection, setAdminSection] = useState<'reviews' | 'schedules'>('reviews')
+  const managingSchedules = isAdministrator && adminSection === 'schedules'
   return (
     <section className="english-page">
       <header className="student-topbar english-hero">
         <div>
           <p className="eyebrow">Escuela de Idiomas</p>
-          <h2>{isStudent ? 'Evaluación de idiomas' : 'Calificaciones de idiomas'}</h2>
+          <h2>{isStudent ? 'Evaluación de idiomas' : managingSchedules ? 'Fechas de actividades de idiomas' : 'Calificaciones de idiomas'}</h2>
           <p className="report-description">
             {isStudent
               ? 'Entregue los videos de P1, P2 y P3 únicamente para la asignatura y el período en que se encuentra matriculado.'
-              : 'Revise estudiantes con matrícula vigente y registre la nota de examen de cada parcial, de 0 a 10.'}
+              : managingSchedules
+                ? 'Actualice el inicio y cierre de P1, P2 y P3 por período y asignatura para cualquier situación administrativa.'
+                : 'Revise estudiantes con matrícula vigente y registre la nota de examen de cada parcial, de 0 a 10.'}
           </p>
         </div>
-        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isStudent ? 'Portal estudiante' : 'Revisión docente'}</span></div></div>
+        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isStudent ? 'Portal estudiante' : managingSchedules ? 'Administración de fechas' : 'Revisión docente'}</span></div></div>
       </header>
       {!isStudent && onOpenSubjectGrades ? (
         <CalificacionesTabs active="idiomas" onOpenSubjects={onOpenSubjectGrades} />
       ) : null}
-      {isStudent ? <StudentEnglishExam displayName={displayName} /> : <ReviewerEnglishExams />}
+      {isAdministrator ? (
+        <nav className="english-admin-tabs" aria-label="Administración de la Escuela de Idiomas">
+          <button
+            type="button"
+            className={adminSection === 'reviews' ? 'is-active' : ''}
+            onClick={() => setAdminSection('reviews')}
+          >
+            <span>Entregas y calificaciones</span>
+            <small>Revisión de estudiantes matriculados</small>
+          </button>
+          <button
+            type="button"
+            className={adminSection === 'schedules' ? 'is-active' : ''}
+            onClick={() => setAdminSection('schedules')}
+          >
+            <span>Fechas de actividades</span>
+            <small>Inicio y cierre de P1, P2 y P3</small>
+          </button>
+        </nav>
+      ) : null}
+      {isStudent
+        ? <StudentEnglishExam displayName={displayName} />
+        : managingSchedules
+          ? <AdminEnglishActivitySchedules />
+          : <ReviewerEnglishExams />}
     </section>
   )
 }

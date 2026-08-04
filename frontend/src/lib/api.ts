@@ -62,6 +62,7 @@ import type {
   DocumentExpedientUploadSessionResponse,
   ExcelSqlCrossResponse,
   ExcelValidationResponse,
+  EnglishActivitySchedulesResponse,
   EnglishExam,
   EnglishSubmissionsResponse,
   EnglishUploadSessionResponse,
@@ -3045,35 +3046,94 @@ export async function uploadGraphFileChunks(
   chunkSize: number,
   onProgress?: (percentage: number) => void,
 ): Promise<void> {
-  let offset = 0
-  while (offset < file.size) {
-    const endExclusive = Math.min(offset + chunkSize, file.size)
-    const chunk = file.slice(offset, endExclusive)
-    let response: Response | null = null
+  type UploadStatus = {
+    nextExpectedRanges?: string[]
+    error?: { message?: string }
+  }
 
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const nextOffset = (payload: UploadStatus | null, fallback: number) => {
+    const range = payload?.nextExpectedRanges?.[0] || ''
+    const match = /^(\d+)/.exec(range)
+    if (!match) return fallback
+    return Math.min(file.size, Math.max(0, Number(match[1])))
+  }
+
+  const sessionOffset = async () => {
+    try {
+      const response = await fetch(uploadUrl, { method: 'GET', credentials: 'omit' })
+      if (!response.ok) return null
+      const payload = await response.json() as UploadStatus
+      return nextOffset(payload, file.size)
+    } catch {
+      return null
+    }
+  }
+
+  const waitBeforeRetry = async (attempt: number, response: Response | null) => {
+    const retryAfter = Number(response?.headers.get('Retry-After') || 0)
+    const delay = retryAfter > 0
+      ? Math.min(retryAfter * 1000, 15_000)
+      : Math.min(750 * (2 ** (attempt - 1)), 8_000)
+    await new Promise((resolve) => window.setTimeout(resolve, delay))
+  }
+
+  let offset = await sessionOffset() ?? 0
+  onProgress?.(Math.round((offset / file.size) * 100))
+  while (offset < file.size) {
+    const chunkStart = offset
+    const endExclusive = Math.min(chunkStart + chunkSize, file.size)
+    const chunk = file.slice(chunkStart, endExclusive)
+    let response: Response | null = null
+    let advanced = false
+
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
       try {
         response = await fetch(uploadUrl, {
           method: 'PUT',
           credentials: 'omit',
           headers: {
-            'Content-Range': `bytes ${offset}-${endExclusive - 1}/${file.size}`,
+            'Content-Range': `bytes ${chunkStart}-${endExclusive - 1}/${file.size}`,
           },
           body: chunk,
         })
-        if (response.ok) break
-        if (response.status < 500 && response.status !== 429) break
+        if (response.ok) {
+          let payload: UploadStatus | null = null
+          try {
+            payload = await response.json() as UploadStatus
+          } catch {
+            // La respuesta final de Graph puede no incluir JSON utilizable.
+          }
+          offset = response.status === 200 || response.status === 201
+            ? file.size
+            : nextOffset(payload, endExclusive)
+          advanced = offset > chunkStart
+          if (advanced) break
+        }
       } catch {
         response = null
       }
-      await new Promise((resolve) => window.setTimeout(resolve, attempt * 750))
+
+      const recoveredOffset = await sessionOffset()
+      if (recoveredOffset !== null && recoveredOffset > chunkStart) {
+        offset = recoveredOffset
+        advanced = true
+        break
+      }
+
+      const transient = !response
+        || response.status === 408
+        || response.status === 416
+        || response.status === 429
+        || response.status >= 500
+      if (!transient || attempt === 6) break
+      await waitBeforeRetry(attempt, response)
     }
 
-    if (!response?.ok) {
+    if (!advanced) {
       let detail = 'Microsoft Graph rechazó una parte del archivo.'
       if (response) {
         try {
-          const payload = await response.json() as { error?: { message?: string } }
+          const payload = await response.json() as UploadStatus
           detail = payload.error?.message || detail
         } catch {
           // Graph puede responder sin cuerpo en errores transitorios.
@@ -3082,7 +3142,6 @@ export async function uploadGraphFileChunks(
       throw new ApiError(detail, response?.status || 502)
     }
 
-    offset = endExclusive
     onProgress?.(Math.round((offset / file.size) * 100))
   }
 }
@@ -3124,12 +3183,39 @@ export async function fetchEnglishSubmissions(filters: {
   return request<EnglishSubmissionsResponse>(`/api/english/submissions?${params.toString()}`, { cache: 'no-store' })
 }
 
-export async function gradeEnglishSubmission(
-  examId: number,
-  payload: { grade: number; observation?: string; period_code: string; component_code: string },
-): Promise<EnglishExam> {
-  return request<EnglishExam>(`/api/english/submissions/${examId}/grade`, {
+export async function fetchEnglishActivitySchedules(filters: {
+  periodCode?: string
+  subjectCode?: string
+} = {}): Promise<EnglishActivitySchedulesResponse> {
+  const params = new URLSearchParams()
+  if (filters.periodCode?.trim()) params.set('period_code', filters.periodCode.trim())
+  if (filters.subjectCode?.trim()) params.set('subject_code', filters.subjectCode.trim())
+  return request<EnglishActivitySchedulesResponse>(`/api/english/activity-schedules?${params.toString()}`, {
+    cache: 'no-store',
+  })
+}
+
+export async function updateEnglishActivitySchedule(payload: {
+  period_code: string
+  subject_code: string
+  component_code: string
+  instructions: string
+  activity_start: string
+  activity_deadline: string
+}): Promise<EnglishActivitySchedulesResponse> {
+  return request<EnglishActivitySchedulesResponse>('/api/english/activity-schedules', {
     method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function prepareEnglishSubmission(payload: {
+  enrollment_id: number
+  period_code: string
+  subject_code: string
+}): Promise<EnglishExam> {
+  return request<EnglishExam>('/api/english/submissions/prepare', {
+    method: 'POST',
     body: payload,
   })
 }
@@ -3157,6 +3243,37 @@ export async function publishEnglishRubricGrade(
   payload: { period_code: string; component_code: string },
 ): Promise<EnglishExam> {
   return request<EnglishExam>(`/api/english/submissions/${examId}/publish`, {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function updateEnglishActivity(
+  examId: number,
+  payload: {
+    period_code: string
+    component_code: string
+    instructions: string
+    activity_start: string
+    activity_deadline: string
+  },
+): Promise<EnglishExam> {
+  return request<EnglishExam>(`/api/english/submissions/${examId}/activity`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function reopenEnglishSubmission(
+  examId: number,
+  payload: {
+    period_code: string
+    component_code: string
+    reason: string
+    new_deadline: string
+  },
+): Promise<EnglishExam> {
+  return request<EnglishExam>(`/api/english/submissions/${examId}/reopen`, {
     method: 'POST',
     body: payload,
   })

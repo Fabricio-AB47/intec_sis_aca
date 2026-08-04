@@ -163,6 +163,7 @@ export type EnglishExamComponent = {
   seconds_remaining: number
   activity_start: string | null
   activity_deadline: string | null
+  activity_instructions: string
   activity_open: boolean
   activity_status: string
   review_state: string
@@ -174,6 +175,10 @@ export type EnglishExamComponent = {
   published_at: string | null
   published_by: string
   notification_state: string
+  reopen_count: number
+  last_reopened_at: string | null
+  last_reopen_reason: string
+  last_reopened_by: string
 }
 
 export type EnglishEnrollment = {
@@ -250,6 +255,42 @@ export type EnglishSubmissionsResponse = {
   }>
   selected_subject_code: string
   reviewer: { name: string; role: string }
+}
+
+export type EnglishActivitySchedule = {
+  code: 'P1' | 'P2' | 'P3' | string
+  number: number
+  label: string
+  instructions: string
+  activity_start: string | null
+  activity_deadline: string | null
+  activity_open: boolean
+  activity_status: string
+  configured: boolean
+  updated_at: string | null
+  updated_by: string
+}
+
+export type EnglishActivitySchedulesResponse = {
+  periods: Array<{
+    code: string
+    name: string
+    label: string
+    student_count: number
+  }>
+  selected_period_code: string
+  subjects: Array<{
+    code: string
+    name: string
+    label: string
+    student_count: number
+  }>
+  selected_subject_code: string
+  components: EnglishActivitySchedule[]
+  affected_students: number
+  administrator: { name: string }
+  updated_components?: number
+  skipped_published?: number
 }
 
 export type DocumentExpedientStudent = {

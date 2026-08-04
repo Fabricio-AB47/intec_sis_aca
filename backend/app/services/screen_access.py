@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any, Iterable
 
 import pyodbc
@@ -11,6 +12,10 @@ from app.services.db import get_integration_control_connection
 
 class ScreenAccessUnavailableError(RuntimeError):
     """Raised when the central screen assignment cannot be consulted."""
+
+
+_catalog_bootstrap_lock = Lock()
+_catalog_bootstrapped = False
 
 
 ROLE_CATALOG: tuple[dict[str, str], ...] = (
@@ -493,11 +498,27 @@ def _ensure_tables(cursor: Any) -> None:
 
 
 def _sync_catalog(cursor: Any) -> None:
-    for order, screen in enumerate(SCREEN_CATALOG, start=1):
+    catalog_rows = [
+        (
+            screen["page"],
+            screen["label"],
+            screen["description"],
+            screen["group"],
+            order,
+        )
+        for order, screen in enumerate(SCREEN_CATALOG, start=1)
+    ]
+    if catalog_rows:
+        row_sql = (
+            "(CAST(? AS VARCHAR(80)), CAST(? AS NVARCHAR(160)), "
+            "CAST(? AS NVARCHAR(500)), CAST(? AS NVARCHAR(100)), CAST(? AS INT))"
+        )
+        values_sql = ", ".join(row_sql for _ in catalog_rows)
+        params = [value for row in catalog_rows for value in row]
         cursor.execute(
-            """
+            f"""
             MERGE cfg.PantallaPortal AS target
-            USING (SELECT ? AS Codigo, ? AS Nombre, ? AS Descripcion, ? AS Grupo, ? AS Orden) AS source
+            USING (VALUES {values_sql}) AS source (Codigo, Nombre, Descripcion, Grupo, Orden)
                ON target.Codigo = source.Codigo
             WHEN MATCHED AND
             (
@@ -517,11 +538,7 @@ def _sync_catalog(cursor: Any) -> None:
                 INSERT (Codigo, Nombre, Descripcion, Grupo, Orden, Activo)
                 VALUES (source.Codigo, source.Nombre, source.Descripcion, source.Grupo, source.Orden, 1);
             """,
-            screen["page"],
-            screen["label"],
-            screen["description"],
-            screen["group"],
-            order,
+            *params,
         )
 
     placeholders = ", ".join("?" for _ in KNOWN_PAGES)
@@ -565,6 +582,37 @@ def _deactivate_container_assignments(cursor: Any) -> None:
            AND PantallaCodigo IN ({placeholders})
         """,
         *sorted(CONTAINER_PAGES),
+    )
+
+
+def _materialize_role_screen_matrix(cursor: Any) -> None:
+    """Create missing role/screen rows without changing saved assignments."""
+    role_codes = tuple(role["value"] for role in ROLE_CATALOG)
+    if not role_codes or not ALL_PAGES:
+        return
+
+    role_values = ", ".join("(?)" for _ in role_codes)
+    page_values = ", ".join("(?)" for _ in ALL_PAGES)
+    cursor.execute(
+        f"""
+        MERGE cfg.AccesoPantallaRol AS target
+        USING
+        (
+            SELECT
+                roles.RolCodigo,
+                screens.PantallaCodigo,
+                CAST(CASE WHEN roles.RolCodigo = 'ADMINISTRADOR' THEN 1 ELSE 0 END AS BIT) AS Activo
+            FROM (VALUES {role_values}) AS roles(RolCodigo)
+            CROSS JOIN (VALUES {page_values}) AS screens(PantallaCodigo)
+        ) AS source
+           ON target.RolCodigo = source.RolCodigo
+          AND target.PantallaCodigo = source.PantallaCodigo
+        WHEN NOT MATCHED THEN
+            INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+            VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, N'SISTEMA_CATALOGO');
+        """,
+        *role_codes,
+        *ALL_PAGES,
     )
 
 
@@ -685,6 +733,60 @@ def _migrate_flow_screen_assignments(cursor: Any) -> None:
             )
 
 
+def _role_screen_matrix_is_complete(cursor: Any) -> bool:
+    role_codes = tuple(role["value"] for role in ROLE_CATALOG)
+    if not role_codes or not ALL_PAGES:
+        return True
+
+    role_placeholders = ", ".join("?" for _ in role_codes)
+    page_placeholders = ", ".join("?" for _ in ALL_PAGES)
+    cursor.execute(
+        f"""
+        SELECT COUNT_BIG(*) AS Total
+        FROM cfg.AccesoPantallaRol
+        WHERE RolCodigo IN ({role_placeholders})
+          AND PantallaCodigo IN ({page_placeholders})
+        """,
+        *role_codes,
+        *ALL_PAGES,
+    )
+    row = cursor.fetchone()
+    if row is None:
+        total = 0
+    else:
+        value = getattr(row, "Total", None)
+        total = int(value if value is not None else row[0])
+    return total == len(role_codes) * len(ALL_PAGES)
+
+
+def _synchronize_screen_catalog(cursor: Any) -> None:
+    """Installs and migrates the catalog before normal permission reads."""
+    _ensure_tables(cursor)
+    _sync_catalog(cursor)
+    if not _role_screen_matrix_is_complete(cursor):
+        _initialize_role_assignments(cursor)
+        _migrate_split_screen_assignments(cursor)
+        _migrate_flow_screen_assignments(cursor)
+        _materialize_role_screen_matrix(cursor)
+    _deactivate_container_assignments(cursor)
+
+
+def _ensure_screen_catalog_ready() -> None:
+    """Runs static catalog synchronization once per application process."""
+    global _catalog_bootstrapped
+    if _catalog_bootstrapped:
+        return
+
+    with _catalog_bootstrap_lock:
+        if _catalog_bootstrapped:
+            return
+        with get_integration_control_connection() as conn:
+            cursor = conn.cursor()
+            _synchronize_screen_catalog(cursor)
+            conn.commit()
+        _catalog_bootstrapped = True
+
+
 def _as_iso(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -801,16 +903,10 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
         raise ValueError("El tipo de usuario no forma parte del catalogo de accesos.")
 
     requested_roles = [item["value"] for item in ROLE_CATALOG] if include_all else [current_role]
+    _ensure_screen_catalog_ready()
     with get_integration_control_connection() as conn:
         cursor = conn.cursor()
-        _ensure_tables(cursor)
-        _sync_catalog(cursor)
-        _initialize_role_assignments(cursor)
-        _migrate_split_screen_assignments(cursor)
-        _migrate_flow_screen_assignments(cursor)
-        _deactivate_container_assignments(cursor)
         roles = _role_payloads(cursor, requested_roles)
-        conn.commit()
 
     return {
         "source": "INTEC_INTEGRACION_CONTROL.cfg",
@@ -840,50 +936,52 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
         raise ValueError(
             f"El perfil {role_code} no puede acceder a: {', '.join(denied_pages)}"
         )
+    administrator_pages = sorted(
+        page
+        for page in set(requested_pages)
+        if role_code != "ADMINISTRADOR" and _is_restricted_page(page, ADMIN_ONLY_PAGES)
+    )
+    if administrator_pages:
+        raise ValueError(
+            f"Solo el perfil ADMINISTRADOR puede acceder a: {', '.join(administrator_pages)}"
+        )
     allowed_requested_pages = [
         page
         for page in requested_pages
         if role_code == "ADMINISTRADOR" or not _is_restricted_page(page, ADMIN_ONLY_PAGES)
     ]
-    if role_code != "ADMINISTRADOR" and not allowed_requested_pages:
-        raise ValueError("Debe asignar al menos una pantalla al tipo de usuario.")
-
     selected_pages = set(ALL_PAGES if role_code == "ADMINISTRADOR" else allowed_requested_pages)
     audit_user = str(updated_by or "SISTEMA").strip()[:128] or "SISTEMA"
 
+    _ensure_screen_catalog_ready()
     with get_integration_control_connection() as conn:
         cursor = conn.cursor()
-        _ensure_tables(cursor)
-        _sync_catalog(cursor)
-        _initialize_role_assignments(cursor)
-        _migrate_split_screen_assignments(cursor)
-        _migrate_flow_screen_assignments(cursor)
-        _deactivate_container_assignments(cursor)
-        cursor.execute(
-            "UPDATE cfg.AccesoPantallaRol SET Activo = 0, FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ? WHERE RolCodigo = ?",
-            audit_user,
-            role_code,
-        )
-        for page in ALL_PAGES:
+        ordered_selected_pages = [page for page in ALL_PAGES if page in selected_pages]
+        if ordered_selected_pages:
+            placeholders = ", ".join("?" for _ in ordered_selected_pages)
+            cursor.execute(
+                f"""
+                UPDATE cfg.AccesoPantallaRol
+                   SET Activo = CASE WHEN PantallaCodigo IN ({placeholders}) THEN 1 ELSE 0 END,
+                       FechaActualizacion = SYSDATETIME(),
+                       UsuarioActualizacion = ?
+                 WHERE RolCodigo = ?
+                """,
+                *ordered_selected_pages,
+                audit_user,
+                role_code,
+            )
+        else:
             cursor.execute(
                 """
-                MERGE cfg.AccesoPantallaRol AS target
-                USING (SELECT ? AS RolCodigo, ? AS PantallaCodigo, ? AS Activo) AS source
-                   ON target.RolCodigo = source.RolCodigo
-                  AND target.PantallaCodigo = source.PantallaCodigo
-                WHEN MATCHED THEN
-                    UPDATE SET Activo = source.Activo,
-                               FechaActualizacion = SYSDATETIME(),
-                               UsuarioActualizacion = ?
-                WHEN NOT MATCHED THEN
-                    INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
-                    VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, ?);
+                UPDATE cfg.AccesoPantallaRol
+                   SET Activo = 0,
+                       FechaActualizacion = SYSDATETIME(),
+                       UsuarioActualizacion = ?
+                 WHERE RolCodigo = ?
                 """,
+                audit_user,
                 role_code,
-                page,
-                int(page in selected_pages),
-                audit_user,
-                audit_user,
             )
         role_payload = _role_payloads(cursor, [role_code])[0]
         conn.commit()

@@ -6721,6 +6721,13 @@
   line-height: 1.35;
 }
 
+.screen-access-item .screen-access-item__code {
+  color: #14798a;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
 .screen-access-item--checked {
   border-color: rgba(15, 130, 124, 0.42);
   background: rgba(15, 130, 124, 0.08);
@@ -31737,6 +31744,187 @@ body .student-sidebar .logout-button {
   gap: 14px;
 }
 
+.english-admin-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #c9d9df;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: var(--card-shadow-soft);
+}
+
+.english-admin-tabs button {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 0;
+  border-right: 1px solid #c9d9df;
+  border-radius: 0;
+  background: #fff;
+  color: #526078;
+  text-align: left;
+  cursor: pointer;
+}
+
+.english-admin-tabs button:last-child {
+  border-right: 0;
+}
+
+.english-admin-tabs button.is-active {
+  box-shadow: inset 0 -4px 0 #177b89;
+  background: #eef7f8;
+  color: #125f6b;
+}
+
+.english-admin-tabs span {
+  color: inherit;
+  font-weight: 900;
+}
+
+.english-admin-tabs small {
+  color: #667187;
+  font-weight: 700;
+}
+
+.english-schedule-panel {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 14px;
+  padding: 18px;
+  border-top: 1px solid #d4dde2;
+  border-bottom: 1px solid #d4dde2;
+  background: #fff;
+}
+
+.english-schedule-panel > .report-description {
+  margin: -5px 0 0;
+}
+
+.english-schedule-filters {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr) minmax(220px, 0.45fr);
+  align-items: stretch;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #bdd6dc;
+  border-radius: 7px;
+  background: #f5fafb;
+}
+
+.english-schedule-filters label,
+.english-schedule-card label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #526078;
+  font-weight: 800;
+}
+
+.english-schedule-filters select,
+.english-schedule-card input,
+.english-schedule-card textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c8d5dc;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #17213d;
+  font: inherit;
+}
+
+.english-schedule-card textarea {
+  resize: vertical;
+}
+
+.english-schedule-scope {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  gap: 4px;
+  padding: 10px 13px;
+  border-left: 4px solid #177b89;
+  background: #fff;
+}
+
+.english-schedule-scope span,
+.english-schedule-card label > span,
+.english-schedule-card header span:first-child {
+  color: #667187;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.english-schedule-scope strong {
+  color: #17213d;
+  font-size: 1.25rem;
+}
+
+.english-schedule-scope small {
+  color: #667187;
+  font-weight: 700;
+}
+
+.english-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.english-schedule-card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid #cbd9df;
+  border-top: 4px solid #177b89;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.english-schedule-card > header,
+.english-schedule-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.english-schedule-card > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.english-schedule-card h4 {
+  margin: 0;
+  color: #17213d;
+  font-size: 1.05rem;
+}
+
+.english-schedule-card__dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.english-schedule-card > footer {
+  align-items: end;
+  margin-top: auto;
+  padding-top: 11px;
+  border-top: 1px solid #e0e7ea;
+}
+
+.english-schedule-card > footer small {
+  color: #667187;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .english-hero {
   width: 100%;
 }
@@ -31926,6 +32114,75 @@ body .student-sidebar .logout-button {
   display: grid;
   min-width: 0;
   gap: 4px;
+}
+
+.english-video-url {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #bdd6dc;
+  border-radius: 7px;
+  background: #f5fafb;
+}
+
+.english-video-url__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 16px;
+}
+
+.english-video-url__heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.english-video-url__heading span {
+  color: #667187;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.english-video-url__heading strong {
+  color: #17213d;
+}
+
+.english-video-url__heading small,
+.english-video-url > small {
+  color: #667187;
+  font-weight: 700;
+}
+
+.english-video-url__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.english-video-url__controls input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #c8d5dc;
+  border-radius: 7px;
+  background: #fff;
+  color: #17213d;
+}
+
+.english-video-url__controls .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .english-file-actions,
@@ -32279,6 +32536,124 @@ body .student-sidebar .logout-button {
 .english-activity-window > span:last-child { border-right: 0; }
 .english-activity-window strong { color: #17213d; overflow-wrap: anywhere; }
 
+.english-activity-instructions {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #c9dde2;
+  border-left: 5px solid #177b89;
+  border-radius: 7px;
+  background: #f3f9fa;
+}
+
+.english-activity-instructions span,
+.english-section-heading span,
+.english-reopen-form > div > span {
+  color: #667187;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.english-activity-instructions p {
+  margin: 0;
+  color: #25324c;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.english-activity-admin {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(190px, 1fr) auto;
+  align-items: end;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid #bdd6dc;
+  border-radius: 7px;
+  background: #f5fafb;
+}
+
+.english-section-heading,
+.english-activity-admin__instructions {
+  grid-column: 1 / -1;
+}
+
+.english-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #d5e4e8;
+}
+
+.english-section-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.english-section-heading strong,
+.english-reopen-form > div > strong {
+  color: #17213d;
+}
+
+.english-section-heading small {
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #e4f2f4;
+  color: #116978;
+  font-weight: 850;
+}
+
+.english-activity-admin label,
+.english-reopen-form label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #526078;
+  font-weight: 800;
+}
+
+.english-activity-admin input,
+.english-activity-admin textarea,
+.english-reopen-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c8d5dc;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #17213d;
+  font: inherit;
+}
+
+.english-activity-admin textarea {
+  resize: vertical;
+}
+
+.english-reopen-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(180px, 0.6fr) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid #e0bd78;
+  border-left: 5px solid #b77913;
+  border-radius: 7px;
+  background: #fff8e8;
+}
+
+.english-reopen-form > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.english-reopen-form > div > small {
+  color: #78510a;
+  line-height: 1.4;
+}
+
 .english-grade-result {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -32480,6 +32855,52 @@ body .student-sidebar .logout-button {
   resize: vertical;
 }
 
+.english-exam-grade-entry {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(150px, 0.28fr) minmax(190px, 0.34fr);
+  align-items: end;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #8fc5ce;
+  border-left: 4px solid #177b89;
+  border-radius: 7px;
+  background: #eef8f9;
+}
+
+.english-exam-grade-entry > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.english-exam-grade-entry > div:first-child > span,
+.english-exam-grade-entry__contribution > span {
+  color: #526078;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.english-exam-grade-entry > div:first-child > strong,
+.english-exam-grade-entry__contribution > strong {
+  color: #17213d;
+}
+
+.english-exam-grade-entry > div:first-child > small {
+  color: #667187;
+  line-height: 1.4;
+}
+
+.english-exam-grade-entry__contribution {
+  display: grid;
+  min-height: 44px;
+  align-content: center;
+  gap: 4px;
+  padding: 9px 12px;
+  border-left: 1px solid #c7dfe3;
+}
+
 .english-rubric {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -32545,6 +32966,8 @@ body .student-sidebar .logout-button {
 }
 
 @media (max-width: 980px) {
+  .english-schedule-filters,
+  .english-schedule-grid { grid-template-columns: 1fr; }
   .english-summary,
   .english-review-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .english-summary > div:nth-child(2),
@@ -32555,6 +32978,13 @@ body .student-sidebar .logout-button {
   .english-review-summary > div:nth-child(-n + 4) { border-bottom: 1px solid #dce3e7; }
   .english-upload-zone,
   .english-review-filters { grid-template-columns: 1fr; }
+  .english-exam-grade-entry { grid-template-columns: 1fr 1fr; }
+  .english-exam-grade-entry > div:first-child { grid-column: 1 / -1; }
+  .english-activity-admin,
+  .english-reopen-form { grid-template-columns: 1fr 1fr; }
+  .english-activity-admin__instructions,
+  .english-section-heading,
+  .english-reopen-form > div { grid-column: 1 / -1; }
   .english-partial-selector,
   .english-partial-upload--single { grid-template-columns: 1fr; }
   .english-confirm-delivery,
@@ -32574,11 +33004,25 @@ body .student-sidebar .logout-button {
 }
 
 @media (max-width: 650px) {
+  .english-admin-tabs,
+  .english-schedule-card__dates { grid-template-columns: 1fr; }
+  .english-admin-tabs button { border-right: 0; border-bottom: 1px solid #c9d9df; }
+  .english-admin-tabs button:last-child { border-bottom: 0; }
+  .english-schedule-panel { padding: 14px 10px; }
+  .english-schedule-card > header,
+  .english-schedule-card > footer { align-items: stretch; flex-direction: column; }
+  .english-schedule-card > footer .primary-action { width: 100%; }
   .english-summary,
   .english-review-summary,
   .english-grade-result,
   .english-grade-form { grid-template-columns: 1fr; }
   .english-grade-weight-summary { grid-template-columns: 1fr; }
+  .english-exam-grade-entry { grid-template-columns: 1fr; }
+  .english-exam-grade-entry > div:first-child { grid-column: auto; }
+  .english-exam-grade-entry__contribution {
+    border-top: 1px solid #c7dfe3;
+    border-left: 0;
+  }
   .english-rubric { grid-template-columns: 1fr; }
   .english-grade-weight-summary > div {
     border-right: 0;
@@ -32592,6 +33036,8 @@ body .student-sidebar .logout-button {
   .english-current-file,
   .english-modal-file,
   .english-grade-modal > header { align-items: stretch; flex-direction: column; }
+  .english-video-url__heading { align-items: stretch; flex-direction: column; gap: 5px; }
+  .english-video-url__controls { grid-template-columns: 1fr; }
   .english-file-actions > *,
   .english-grade-actions > * { flex: 1; }
   .english-grade-result > p,
@@ -32599,6 +33045,9 @@ body .student-sidebar .logout-button {
   .english-modal-backdrop { padding: 10px; }
   .english-grade-modal { max-height: calc(100vh - 20px); padding: 15px; }
   .english-component-tabs { grid-template-columns: 1fr; }
+  .english-activity-admin,
+  .english-reopen-form { grid-template-columns: 1fr; }
+  .english-section-heading { align-items: stretch; flex-direction: column; }
 }
 .matricula-acad-shell {
   display: grid;

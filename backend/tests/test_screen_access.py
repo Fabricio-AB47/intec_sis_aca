@@ -17,9 +17,12 @@ from app.services.screen_access import (
     ROLE_DENIED_PAGES,
     SCREEN_CATALOG,
     _deactivate_container_assignments,
+    _ensure_screen_catalog_ready,
     _initialize_role_assignments,
+    _materialize_role_screen_matrix,
     _migrate_flow_screen_assignments,
     _migrate_split_screen_assignments,
+    _role_screen_matrix_is_complete,
     _role_payloads,
     _sync_catalog,
     normalize_role,
@@ -167,10 +170,6 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_screen_access("ACADEMICO", ["pantalla-inexistente"], updated_by="prueba")
 
-    def test_rejects_empty_assignment_before_opening_database(self) -> None:
-        with self.assertRaises(ValueError):
-            save_screen_access("BIENESTAR", [], updated_by="prueba")
-
     def test_rejects_assignment_with_only_administrator_screen(self) -> None:
         with self.assertRaises(ValueError):
             save_screen_access("ACADEMICO", ["sistema-academico"], updated_by="prueba")
@@ -190,12 +189,61 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         cursor = RecordingCursor()
         _sync_catalog(cursor)
 
+        catalog_merges = [
+            statement
+            for statement in cursor.statements
+            if "MERGE CFG.PANTALLAPORTAL" in statement
+        ]
+        self.assertEqual(len(catalog_merges), 1)
+        self.assertIn("USING (VALUES", catalog_merges[0])
+
         implicit_grants = [
             statement
             for statement in cursor.statements
             if "INSERT INTO CFG.ACCESOPANTALLAROL" in statement
         ]
         self.assertEqual(implicit_grants, [])
+
+    @patch("app.services.screen_access._synchronize_screen_catalog")
+    @patch("app.services.screen_access.get_integration_control_connection")
+    def test_catalog_bootstrap_runs_once_per_process(
+        self,
+        get_connection: MagicMock,
+        synchronize_catalog: MagicMock,
+    ) -> None:
+        connection = get_connection.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value
+
+        with patch("app.services.screen_access._catalog_bootstrapped", False):
+            _ensure_screen_catalog_ready()
+            _ensure_screen_catalog_ready()
+
+        get_connection.assert_called_once_with()
+        synchronize_catalog.assert_called_once_with(cursor)
+        connection.commit.assert_called_once_with()
+
+    @patch("app.services.screen_access._role_payloads", return_value=[{"pages": ["dashboard"]}])
+    @patch("app.services.screen_access.get_integration_control_connection")
+    @patch("app.services.screen_access._ensure_screen_catalog_ready")
+    def test_save_updates_the_complete_role_in_one_statement(
+        self,
+        ensure_catalog: MagicMock,
+        get_connection: MagicMock,
+        role_payloads: MagicMock,
+    ) -> None:
+        connection = get_connection.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value
+
+        result = save_screen_access("ACADEMICO", ["dashboard"], updated_by="prueba")
+
+        self.assertEqual(result, {"pages": ["dashboard"]})
+        ensure_catalog.assert_called_once_with()
+        self.assertEqual(cursor.execute.call_count, 1)
+        statement = " ".join(cursor.execute.call_args.args[0].split()).upper()
+        self.assertIn("UPDATE CFG.ACCESOPANTALLAROL", statement)
+        self.assertIn("CASE WHEN PANTALLACODIGO IN", statement)
+        role_payloads.assert_called_once_with(cursor, ["ACADEMICO"])
+        connection.commit.assert_called_once_with()
 
     def test_initial_assignments_are_materialized_only_for_missing_roles(self) -> None:
         class ExistingRole:
@@ -300,6 +348,56 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertIn("UPDATE CFG.ACCESOPANTALLAROL", statement)
         self.assertIn("SISTEMA_CONTENEDORES", statement)
         self.assertEqual(set(map(str, params)), set(CONTAINER_PAGES))
+
+    def test_role_screen_matrix_materializes_every_catalog_option_once(self) -> None:
+        class RecordingCursor:
+            def __init__(self) -> None:
+                self.executions: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, statement: str, *params: object) -> None:
+                self.executions.append((" ".join(statement.split()).upper(), params))
+
+        cursor = RecordingCursor()
+        _materialize_role_screen_matrix(cursor)
+
+        self.assertEqual(len(cursor.executions), 1)
+        statement, params = cursor.executions[0]
+        role_codes = tuple(role["value"] for role in ROLE_CATALOG)
+        self.assertEqual(params[:len(role_codes)], role_codes)
+        self.assertEqual(params[len(role_codes):], ALL_PAGES)
+        self.assertIn("CROSS JOIN", statement)
+        self.assertIn("WHEN NOT MATCHED THEN INSERT", statement)
+        self.assertNotIn("WHEN MATCHED THEN", statement)
+        self.assertIn("SISTEMA_CATALOGO", statement)
+
+    def test_complete_role_screen_matrix_avoids_repeating_migrations(self) -> None:
+        class CountRow:
+            def __init__(self, total: int) -> None:
+                self.Total = total
+
+        class CountCursor:
+            def __init__(self, total: int) -> None:
+                self.total = total
+                self.params: tuple[object, ...] = ()
+
+            def execute(self, statement: str, *params: object) -> None:
+                self.asserted_statement = " ".join(statement.split()).upper()
+                self.params = params
+
+            def fetchone(self) -> CountRow:
+                return CountRow(self.total)
+
+        expected_total = len(ROLE_CATALOG) * len(ALL_PAGES)
+        complete_cursor = CountCursor(expected_total)
+        incomplete_cursor = CountCursor(expected_total - 1)
+
+        self.assertTrue(_role_screen_matrix_is_complete(complete_cursor))
+        self.assertFalse(_role_screen_matrix_is_complete(incomplete_cursor))
+        self.assertIn("COUNT_BIG(*)", complete_cursor.asserted_statement)
+        self.assertEqual(
+            complete_cursor.params,
+            tuple(role["value"] for role in ROLE_CATALOG) + ALL_PAGES,
+        )
 
     def test_unconfigured_role_fails_closed_without_runtime_defaults(self) -> None:
         class EmptyCursor:

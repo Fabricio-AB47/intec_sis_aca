@@ -1,7 +1,8 @@
 import unittest
 from decimal import Decimal
+from inspect import getsource
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
@@ -11,6 +12,9 @@ from app.routers.english_exams import (
     _TEACHER_ENROLLMENT_SCOPE_SQL,
     _aggregate_component_grade,
     _component_specs,
+    _default_component_instructions,
+    _ensure_components,
+    _ensure_exam,
     _require_teacher_exam_scope,
     _reviewer_enrollments,
     _reviewer_periods,
@@ -19,10 +23,62 @@ from app.routers.english_exams import (
     _select_reviewer_period,
     _select_reviewer_subject,
     _virtual_exam_payload,
+    finalize_student_upload,
 )
 
 
 class EnglishTeacherScopeTests(unittest.TestCase):
+    @patch("app.routers.english_exams._audit_event")
+    @patch("app.routers.english_exams._ensure_components")
+    @patch("app.routers.english_exams._catalog_id", side_effect=[1, 2])
+    @patch("app.routers.english_exams._ensure_schema")
+    def test_exam_creation_uses_trigger_safe_identity_output(
+        self,
+        _ensure_schema_mock,
+        _catalog_id_mock,
+        _ensure_components_mock,
+        _audit_event_mock,
+    ) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [None, (10,), None, (20,), None, (30,)]
+        profile = {
+            "codigo_estud": 800,
+            "cedula": "1106128380",
+            "estudiante": "ESTUDIANTE PRUEBA",
+            "correo": "estudiante@intec.edu.ec",
+            "carrera_x_estud_num": 5001,
+            "codigo_carrera": 22,
+            "codigo_materia": 901,
+            "codigo_periodo": 1060,
+            "paralelo": "A",
+            "nivel": "A2+ - INTERMEDIATE",
+            "tipo_matricula": "R",
+            "fecha_inicio_periodo": None,
+            "fecha_fin_periodo": None,
+        }
+
+        exam_id = _ensure_exam(cursor, profile, "academico")
+
+        self.assertEqual(exam_id, 30)
+        insert_queries = [
+            " ".join(call.args[0].split())
+            for call in cursor.execute.call_args_list
+            if "INSERT INTO core.Persona" in call.args[0]
+            or "INSERT INTO exp.ExpedienteEstudiantil" in call.args[0]
+            or "INSERT INTO ing.ExamenIngles" in call.args[0]
+        ]
+        self.assertEqual(len(insert_queries), 3)
+        for query in insert_queries:
+            self.assertIn("SET NOCOUNT ON", query)
+            self.assertIn("OUTPUT INSERTED.", query)
+            self.assertIn(" INTO @", query)
+
+    def test_document_creation_uses_trigger_safe_identity_output(self) -> None:
+        source = getsource(finalize_student_upload)
+
+        self.assertIn("OUTPUT INSERTED.DocumentoExpedienteId", source)
+        self.assertIn("INTO @DocumentoCreado", source)
+
     def test_teacher_scope_requires_assignment_and_real_student_enrollment(self):
         sql = " ".join(_TEACHER_ENROLLMENT_SCOPE_SQL.split())
 
@@ -53,6 +109,58 @@ class EnglishTeacherScopeTests(unittest.TestCase):
     def test_all_enrollment_types_require_three_partials(self):
         self.assertEqual([item["code"] for item in _component_specs("R")], ["P1", "P2", "P3"])
         self.assertEqual([item["code"] for item in _component_specs("H")], ["P1", "P2", "P3"])
+
+    def test_component_creation_always_persists_default_instructions(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [None, None, None]
+        start = SimpleNamespace()
+        deadline = SimpleNamespace()
+
+        _ensure_components(cursor, 77, "R", "academico", start, deadline)
+
+        insert_calls = [
+            call
+            for call in cursor.execute.call_args_list
+            if "INSERT INTO ing.ComponenteExamenIngles" in call.args[0]
+        ]
+        self.assertEqual(len(insert_calls), 3)
+        for number, call in enumerate(insert_calls, start=1):
+            self.assertEqual(call.args[2], f"P{number}")
+            self.assertEqual(
+                call.args[-2],
+                _default_component_instructions(f"Parcial {number}"),
+            )
+
+    def test_component_schedule_sync_preserves_published_partials(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [(101,), (102,), (103,)]
+        schedule = {
+            code: {
+                "activity_start": SimpleNamespace(),
+                "activity_deadline": SimpleNamespace(),
+                "instructions": f"Instrucciones {code}",
+            }
+            for code in ("P1", "P2", "P3")
+        }
+
+        _ensure_components(
+            cursor,
+            77,
+            "R",
+            "administrador",
+            activity_schedules=schedule,
+        )
+
+        update_queries = [
+            " ".join(call.args[0].split())
+            for call in cursor.execute.call_args_list
+            if "UPDATE ing.ComponenteExamenIngles" in call.args[0]
+            and "WHERE ComponenteExamenInglesId" in call.args[0]
+        ]
+        self.assertEqual(len(update_queries), 3)
+        for query in update_queries:
+            self.assertIn("FechaPublicacion IS NOT NULL", query)
+            self.assertIn("EstadoRevision = 'PUBLICADO'", query)
 
     def test_final_grade_requires_all_three_partials(self):
         self.assertIsNone(_aggregate_component_grade("R", {"P1": 8, "P2": 9}))

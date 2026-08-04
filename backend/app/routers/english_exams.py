@@ -14,10 +14,10 @@ import httpx
 import pyodbc
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import get_settings
-from app.core.security import SessionUser, get_current_user, require_roles
+from app.core.security import SessionUser, get_current_user, require_roles, require_screen_access
 from app.services.db import get_connection, get_expedient_connection, get_titulation_connection
 from app.services.graph import get_graph_token
 from app.services.graph_documents import (
@@ -30,9 +30,13 @@ from app.services.graph_documents import (
 from app.services.grade_calculation import calculate_regular_grade_with_recovery
 
 
-router = APIRouter(prefix="/api/english", tags=["english"])
+router = APIRouter(
+    prefix="/api/english",
+    tags=["english"],
+    dependencies=[Depends(require_screen_access("ingles"))],
+)
 
-_MIN_FILE_BYTES = 50 * 1024 * 1024
+_MIN_FILE_BYTES = 40 * 1024 * 1024
 _MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 _EDIT_WINDOW_MINUTES = 15
 _PASSING_GRADE = Decimal("7.00")
@@ -53,6 +57,8 @@ _ALLOWED_VIDEO_EXTENSIONS = {
 
 _STUDENT_ACCESS = require_roles("ESTUDIANTE")
 _REVIEWER_ACCESS = require_roles("DOCENTE", "ACADEMICO", "ADMINISTRADOR")
+_REOPEN_ACCESS = require_roles("ACADEMICO", "ADMINISTRADOR")
+_ADMIN_ACCESS = require_roles("ADMINISTRADOR")
 
 _TEACHER_ENROLLMENT_SCOPE_SQL = """
     EXISTS
@@ -117,13 +123,6 @@ class UploadConfirmPayload(BaseModel):
     component_code: str = Field(default="P1", min_length=1, max_length=20)
 
 
-class GradePayload(BaseModel):
-    grade: Decimal = Field(ge=0, le=10, max_digits=4, decimal_places=2)
-    observation: str = Field(default="", max_length=1500)
-    component_code: str = Field(default="P1", min_length=1, max_length=20)
-    period_code: str = Field(min_length=1, max_length=100)
-
-
 class RubricDraftPayload(BaseModel):
     language_mastery: Decimal = Field(ge=0, le=10, max_digits=4, decimal_places=2)
     fluency_pronunciation: Decimal = Field(ge=0, le=10, max_digits=4, decimal_places=2)
@@ -137,6 +136,47 @@ class RubricDraftPayload(BaseModel):
 class PublishGradePayload(BaseModel):
     component_code: str = Field(default="P1", min_length=1, max_length=20)
     period_code: str = Field(min_length=1, max_length=100)
+
+
+class ActivitySettingsPayload(BaseModel):
+    component_code: str = Field(default="P1", min_length=1, max_length=20)
+    period_code: str = Field(min_length=1, max_length=100)
+    instructions: str = Field(min_length=1, max_length=1500)
+    activity_start: datetime
+    activity_deadline: datetime
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Las instrucciones de la actividad son obligatorias.")
+        return normalized
+
+
+class ActivitySchedulePayload(ActivitySettingsPayload):
+    subject_code: str = Field(min_length=1, max_length=100)
+
+
+class PrepareSubmissionPayload(BaseModel):
+    enrollment_id: int = Field(gt=0)
+    period_code: str = Field(min_length=1, max_length=100)
+    subject_code: str = Field(min_length=1, max_length=100)
+
+
+class ReopenSubmissionPayload(BaseModel):
+    component_code: str = Field(default="P1", min_length=1, max_length=20)
+    period_code: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=10, max_length=1000)
+    new_deadline: datetime
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 10:
+            raise ValueError("El motivo debe contener al menos 10 caracteres.")
+        return normalized
 
 
 def _clean(value: Any) -> str:
@@ -165,7 +205,7 @@ def _require_teacher_exam_scope(
         SELECT TOP (1) 1
         FROM ing.ExamenIngles e
         INNER JOIN exp.ExpedienteEstudiantil ex
-            ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+            ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
         WHERE e.ExamenInglesId = ?
           AND e.Activo = 1
           AND {_TEACHER_ENROLLMENT_SCOPE_SQL}
@@ -188,7 +228,12 @@ def _period_label(code: str, detail: str) -> str:
     return f"{code} - {detail}"
 
 
-def _reviewer_periods(cursor: Any, current_user: SessionUser) -> list[dict[str, Any]]:
+def _reviewer_periods(
+    cursor: Any,
+    current_user: SessionUser,
+    *,
+    include_closed: bool = False,
+) -> list[dict[str, Any]]:
     if current_user.rol == "DOCENTE" and current_user.codigo_doc is None:
         return []
 
@@ -197,10 +242,15 @@ def _reviewer_periods(cursor: Any, current_user: SessionUser) -> list[dict[str, 
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.Estado)))) = N'A'",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.tp_escuela)))) = N'IDIOMA'",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), periodo.Estado)))) = N'A'",
-        "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
-        "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
         "TRY_CONVERT(BIGINT, cx.num) IS NOT NULL",
     ]
+    if not include_closed:
+        enrollment_filters.extend(
+            [
+                "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
+                "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
+            ]
+        )
     enrollment_params: list[Any] = []
     if current_user.rol == "DOCENTE":
         enrollment_filters.append(_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL)
@@ -279,6 +329,8 @@ def _reviewer_subjects(
     cursor: Any,
     selected_period: str,
     current_user: SessionUser,
+    *,
+    include_closed: bool = False,
 ) -> list[dict[str, Any]]:
     if not selected_period:
         return []
@@ -290,11 +342,16 @@ def _reviewer_subjects(
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.Estado)))) = N'A'",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.tp_escuela)))) = N'IDIOMA'",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), periodo.Estado)))) = N'A'",
-        "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
-        "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
         "TRY_CONVERT(BIGINT, cx.num) IS NOT NULL",
         "LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), cx.codigo_periodo))) = ?",
     ]
+    if not include_closed:
+        filters.extend(
+            [
+                "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
+                "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
+            ]
+        )
     params: list[Any] = [selected_period]
     if current_user.rol == "DOCENTE":
         filters.append(_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL)
@@ -351,6 +408,85 @@ def _select_reviewer_subject(
             )
         return requested
     return _clean(subjects[0].get("code")) if subjects else ""
+
+
+def _period_activity_window(cursor: Any, period_code: str) -> tuple[datetime | None, datetime | None]:
+    if not period_code:
+        return None, None
+    cursor.execute(
+        """
+        SELECT TOP (1)
+            TRY_CONVERT(DATE, fechain) AS fecha_inicio,
+            TRY_CONVERT(DATE, fechafin) AS fecha_fin
+        FROM INTECBDD.dbo.PERIODO
+        WHERE LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), cod_periodo))) = ?
+        """,
+        period_code,
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None, None
+    return (
+        _period_boundary_utc(getattr(row, "fecha_inicio", None)),
+        _period_boundary_utc(getattr(row, "fecha_fin", None), end=True),
+    )
+
+
+def _activity_schedules_response(
+    cursor: Any,
+    current_user: SessionUser,
+    requested_period: str = "",
+    requested_subject: str = "",
+) -> dict[str, Any]:
+    periods = _reviewer_periods(cursor, current_user, include_closed=True)
+    selected_period = _select_reviewer_period(periods, requested_period, current_user)
+    subjects = _reviewer_subjects(
+        cursor,
+        selected_period,
+        current_user,
+        include_closed=True,
+    )
+    selected_subject = _select_reviewer_subject(subjects, requested_subject, current_user)
+    subject_info = next(
+        (item for item in subjects if _clean(item.get("code")) == selected_subject),
+        None,
+    )
+    default_start, default_deadline = _period_activity_window(cursor, selected_period)
+    schedules = _activity_schedule_map(cursor, selected_period, selected_subject)
+    components: list[dict[str, Any]] = []
+    for spec in _component_specs("R"):
+        configured = schedules.get(spec["code"])
+        activity_start = configured.get("activity_start") if configured else default_start
+        activity_deadline = configured.get("activity_deadline") if configured else default_deadline
+        is_open, activity_status = _activity_state(activity_start, activity_deadline)
+        components.append(
+            {
+                "code": spec["code"],
+                "number": spec["number"],
+                "label": spec["label"],
+                "instructions": (
+                    _clean(configured.get("instructions"))
+                    if configured
+                    else _default_component_instructions(spec["label"])
+                ),
+                "activity_start": _iso_utc(activity_start),
+                "activity_deadline": _iso_utc(activity_deadline),
+                "activity_open": is_open,
+                "activity_status": activity_status,
+                "configured": configured is not None,
+                "updated_at": _iso_utc(configured.get("updated_at")) if configured else None,
+                "updated_by": _clean(configured.get("updated_by")) if configured else "",
+            }
+        )
+    return {
+        "periods": periods,
+        "selected_period_code": selected_period,
+        "subjects": subjects,
+        "selected_subject_code": selected_subject,
+        "components": components,
+        "affected_students": int(subject_info.get("student_count") or 0) if subject_info else 0,
+        "administrator": {"name": current_user.nombres or current_user.login},
+    }
 
 
 def _reviewer_enrollments(
@@ -498,6 +634,10 @@ def _component_specs(enrollment_type: str) -> list[dict[str, Any]]:
     ]
 
 
+def _default_component_instructions(label: str) -> str:
+    return f"Entregue el video correspondiente a {label}."
+
+
 def _aggregate_component_grade(enrollment_type: str, grades: dict[str, Any]) -> Decimal | None:
     required_codes = [item["code"] for item in _component_specs(enrollment_type)]
     normalized_grades: list[Decimal] = []
@@ -548,6 +688,32 @@ def _activity_window(profile: dict[str, Any]) -> tuple[datetime | None, datetime
         _period_boundary_utc(profile.get("fecha_inicio_periodo")),
         _period_boundary_utc(profile.get("fecha_fin_periodo"), end=True),
     )
+
+
+def _activity_datetime_utc(value: datetime) -> datetime:
+    localized = value if value.tzinfo is not None else value.replace(tzinfo=_LOCAL_TIMEZONE)
+    return localized.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _validated_activity_window(start: datetime, deadline: datetime) -> tuple[datetime, datetime]:
+    start_utc = _activity_datetime_utc(start)
+    deadline_utc = _activity_datetime_utc(deadline)
+    if deadline_utc <= start_utc:
+        raise HTTPException(
+            status_code=422,
+            detail="La fecha límite debe ser posterior al inicio de la actividad.",
+        )
+    return start_utc, deadline_utc
+
+
+def _validated_reopen_deadline(deadline: datetime, *, now: datetime | None = None) -> datetime:
+    deadline_utc = _activity_datetime_utc(deadline)
+    if deadline_utc <= (now or _utc_now_naive()):
+        raise HTTPException(
+            status_code=422,
+            detail="La nueva fecha límite debe ser posterior a la fecha y hora actuales.",
+        )
+    return deadline_utc
 
 
 def _activity_state(start: Any, deadline: Any, *, now: datetime | None = None) -> tuple[bool, str]:
@@ -771,6 +937,86 @@ def _delete_graph_item(item_id: str) -> None:
 
 
 def _ensure_schema(cursor: Any) -> None:
+    # SQL Server compila un lote antes de ejecutar sus ALTER TABLE. Las
+    # ampliaciones de instalaciones existentes deben terminar en un lote
+    # separado antes de que el esquema completo referencie las columnas.
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'ing.ExamenIngles', N'U') IS NOT NULL
+        BEGIN
+            IF COL_LENGTH(N'ing.ExamenIngles', N'TipoMatricula') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD TipoMatricula CHAR(1) COLLATE Modern_Spanish_CI_AS NOT NULL
+                    CONSTRAINT DF_ExamenIngles_TipoMatricula_Migracion DEFAULT ''R'' WITH VALUES;');
+            IF COL_LENGTH(N'ing.ExamenIngles', N'CarreraXEstudNum') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD CarreraXEstudNum BIGINT NULL;');
+            IF COL_LENGTH(N'ing.ExamenIngles', N'CodigoCarrera') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD CodigoCarrera INT NULL;');
+            IF COL_LENGTH(N'ing.ExamenIngles', N'CodigoMateria') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD CodigoMateria INT NULL;');
+            IF COL_LENGTH(N'ing.ExamenIngles', N'CodigoPeriodo') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD CodigoPeriodo INT NULL;');
+            IF COL_LENGTH(N'ing.ExamenIngles', N'Paralelo') IS NULL
+                EXEC(N'ALTER TABLE ing.ExamenIngles ADD Paralelo NVARCHAR(20) COLLATE Modern_Spanish_CI_AS NULL;');
+        END;
+
+        IF OBJECT_ID(N'ing.ComponenteExamenIngles', N'U') IS NOT NULL
+        BEGIN
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaInicioActividad') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaInicioActividad DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaLimiteActividad') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaLimiteActividad DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'InstruccionesActividad') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD InstruccionesActividad NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'EstadoRevision') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD EstadoRevision VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL
+                    CONSTRAINT DF_ComponenteExamenIngles_Revision_Migracion DEFAULT ''PENDIENTE_ENTREGA'' WITH VALUES;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'NotaBorrador') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD NotaBorrador DECIMAL(4,2) NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'ObservacionBorrador') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD ObservacionBorrador NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'RubricaBorradorJson') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD RubricaBorradorJson NVARCHAR(MAX) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaBorrador') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaBorrador DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'UsuarioBorrador') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD UsuarioBorrador NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaPublicacion') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaPublicacion DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'UsuarioPublicacion') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD UsuarioPublicacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaNotificacionDocente') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaNotificacionDocente DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'EstadoNotificacion') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD EstadoNotificacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'DetalleNotificacion') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD DetalleNotificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'NumeroReaperturas') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD NumeroReaperturas INT NOT NULL
+                    CONSTRAINT DF_ComponenteExamenIngles_Reaperturas_Migracion DEFAULT 0 WITH VALUES;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaUltimaReapertura') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD FechaUltimaReapertura DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'MotivoUltimaReapertura') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD MotivoUltimaReapertura NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'UsuarioUltimaReapertura') IS NULL
+                EXEC(N'ALTER TABLE ing.ComponenteExamenIngles ADD UsuarioUltimaReapertura NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL;');
+        END;
+
+        IF OBJECT_ID(N'ing.CargaExamenIngles', N'U') IS NOT NULL
+        BEGIN
+            IF COL_LENGTH(N'ing.CargaExamenIngles', N'ComponenteExamenInglesId') IS NULL
+                EXEC(N'ALTER TABLE ing.CargaExamenIngles ADD ComponenteExamenInglesId BIGINT NULL;');
+            IF COL_LENGTH(N'ing.CargaExamenIngles', N'FechaConfirmacion') IS NULL
+                EXEC(N'ALTER TABLE ing.CargaExamenIngles ADD FechaConfirmacion DATETIME2 NULL;');
+            IF COL_LENGTH(N'ing.CargaExamenIngles', N'UsuarioConfirmacion') IS NULL
+                EXEC(N'ALTER TABLE ing.CargaExamenIngles ADD UsuarioConfirmacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL;');
+            IF COL_LENGTH(N'ing.CargaExamenIngles', N'IntegridadValidada') IS NULL
+                EXEC(N'ALTER TABLE ing.CargaExamenIngles ADD IntegridadValidada BIT NOT NULL
+                    CONSTRAINT DF_CargaExamenIngles_Integridad_Migracion DEFAULT 0 WITH VALUES;');
+            IF COL_LENGTH(N'ing.CargaExamenIngles', N'HashIntegridad') IS NULL
+                EXEC(N'ALTER TABLE ing.CargaExamenIngles ADD HashIntegridad NVARCHAR(300) COLLATE Modern_Spanish_CI_AS NULL;');
+        END;
+        """
+    )
     cursor.execute(
         """
         IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'ing')
@@ -802,7 +1048,7 @@ def _ensure_schema(cursor: Any) -> None:
                 FechaActualizacion DATETIME2 NULL,
                 UsuarioActualizacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
                 CONSTRAINT FK_ExamenIngles_Expediente FOREIGN KEY (ExpedienteEstudiantilId)
-                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteId),
+                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteEstudiantilId),
                 CONSTRAINT CK_ExamenIngles_Nota CHECK (NotaFinal IS NULL OR (NotaFinal >= 0 AND NotaFinal <= 10))
             );
             EXEC(N'CREATE UNIQUE INDEX UX_ExamenIngles_MatriculaActiva
@@ -833,7 +1079,7 @@ def _ensure_schema(cursor: Any) -> None:
                    CodigoPeriodo = COALESCE(e.CodigoPeriodo, TRY_CONVERT(INT, ex.CodigoPeriodo))
             FROM ing.ExamenIngles e
             INNER JOIN exp.ExpedienteEstudiantil ex
-                ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+                ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
             WHERE e.CodigoCarrera IS NULL OR e.CodigoPeriodo IS NULL;
         ');
 
@@ -845,9 +1091,9 @@ def _ensure_schema(cursor: Any) -> None:
         )
             DROP INDEX UX_ExamenIngles_EstudianteActivo ON ing.ExamenIngles;
 
-        IF NOT EXISTS
-        (
-            SELECT 1 FROM sys.indexes
+         IF NOT EXISTS
+         (
+             SELECT 1 FROM sys.indexes
             WHERE name = N'UX_ExamenIngles_MatriculaActiva'
               AND object_id = OBJECT_ID(N'ing.ExamenIngles')
         )
@@ -864,6 +1110,66 @@ def _ensure_schema(cursor: Any) -> None:
             EXEC(N'CREATE INDEX IX_ExamenIngles_PeriodoMateria
                 ON ing.ExamenIngles(CodigoPeriodo, CodigoMateria, Paralelo, Activo);');
 
+        IF OBJECT_ID(N'ing.ConfiguracionActividadIngles', N'U') IS NULL
+        BEGIN
+            CREATE TABLE ing.ConfiguracionActividadIngles
+            (
+                ConfiguracionActividadInglesId BIGINT IDENTITY(1,1) NOT NULL
+                    CONSTRAINT PK_ConfiguracionActividadIngles PRIMARY KEY,
+                CodigoPeriodo NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                CodigoMateria NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                CodigoComponente VARCHAR(20) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                NumeroParcial TINYINT NOT NULL,
+                Nombre NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                Instrucciones NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                FechaInicioActividad DATETIME2 NOT NULL,
+                FechaLimiteActividad DATETIME2 NOT NULL,
+                Activo BIT NOT NULL CONSTRAINT DF_ConfiguracionActividadIngles_Activo DEFAULT 1,
+                FechaCreacion DATETIME2 NOT NULL
+                    CONSTRAINT DF_ConfiguracionActividadIngles_Fecha DEFAULT SYSUTCDATETIME(),
+                FechaActualizacion DATETIME2 NULL,
+                UsuarioActualizacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                CONSTRAINT UQ_ConfiguracionActividadIngles_Alcance
+                    UNIQUE (CodigoPeriodo, CodigoMateria, CodigoComponente),
+                CONSTRAINT CK_ConfiguracionActividadIngles_Componente
+                    CHECK (CodigoComponente IN ('P1', 'P2', 'P3')),
+                CONSTRAINT CK_ConfiguracionActividadIngles_Fechas
+                    CHECK (FechaLimiteActividad > FechaInicioActividad)
+            );
+            CREATE INDEX IX_ConfiguracionActividadIngles_Consulta
+                ON ing.ConfiguracionActividadIngles(CodigoPeriodo, CodigoMateria, Activo, NumeroParcial);
+        END;
+
+        IF OBJECT_ID(N'ing.AuditoriaConfiguracionActividadIngles', N'U') IS NULL
+        BEGIN
+            CREATE TABLE ing.AuditoriaConfiguracionActividadIngles
+            (
+                AuditoriaConfiguracionActividadInglesId BIGINT IDENTITY(1,1) NOT NULL
+                    CONSTRAINT PK_AuditoriaConfiguracionActividadIngles PRIMARY KEY,
+                ConfiguracionActividadInglesId BIGINT NOT NULL,
+                CodigoPeriodo NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                CodigoMateria NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                CodigoComponente VARCHAR(20) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                InstruccionesAnteriores NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL,
+                InstruccionesNuevas NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                FechaInicioAnterior DATETIME2 NULL,
+                FechaLimiteAnterior DATETIME2 NULL,
+                FechaInicioNueva DATETIME2 NOT NULL,
+                FechaLimiteNueva DATETIME2 NOT NULL,
+                ComponentesActualizados INT NOT NULL,
+                ComponentesOmitidos INT NOT NULL,
+                Usuario NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                FechaEvento DATETIME2 NOT NULL
+                    CONSTRAINT DF_AuditoriaConfiguracionActividadIngles_Fecha DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_AuditoriaConfiguracionActividadIngles_Configuracion
+                    FOREIGN KEY (ConfiguracionActividadInglesId)
+                    REFERENCES ing.ConfiguracionActividadIngles(ConfiguracionActividadInglesId)
+            );
+            CREATE INDEX IX_AuditoriaConfiguracionActividadIngles_AlcanceFecha
+                ON ing.AuditoriaConfiguracionActividadIngles
+                    (CodigoPeriodo, CodigoMateria, CodigoComponente, FechaEvento DESC);
+        END;
+
         IF OBJECT_ID(N'ing.ComponenteExamenIngles', N'U') IS NULL
         BEGIN
             CREATE TABLE ing.ComponenteExamenIngles
@@ -873,10 +1179,11 @@ def _ensure_schema(cursor: Any) -> None:
                 Codigo VARCHAR(20) COLLATE Modern_Spanish_CI_AS NOT NULL,
                 NumeroParcial TINYINT NOT NULL,
                 Nombre NVARCHAR(100) COLLATE Modern_Spanish_CI_AS NOT NULL,
-                TipoEvaluacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL,
-                FechaInicioActividad DATETIME2 NULL,
-                FechaLimiteActividad DATETIME2 NULL,
-                Nota DECIMAL(4,2) NULL,
+                 TipoEvaluacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                 FechaInicioActividad DATETIME2 NULL,
+                 FechaLimiteActividad DATETIME2 NULL,
+                 InstruccionesActividad NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL,
+                 Nota DECIMAL(4,2) NULL,
                 Estado VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL CONSTRAINT DF_ComponenteExamenIngles_Estado DEFAULT 'PENDIENTE',
                 EstadoRevision VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL CONSTRAINT DF_ComponenteExamenIngles_Revision DEFAULT 'PENDIENTE_ENTREGA',
                 Observacion NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL,
@@ -887,10 +1194,14 @@ def _ensure_schema(cursor: Any) -> None:
                 UsuarioBorrador NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
                 FechaPublicacion DATETIME2 NULL,
                 UsuarioPublicacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
-                FechaNotificacionDocente DATETIME2 NULL,
-                EstadoNotificacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NULL,
-                DetalleNotificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
-                CodigoDocEvaluador BIGINT NULL,
+                 FechaNotificacionDocente DATETIME2 NULL,
+                 EstadoNotificacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NULL,
+                 DetalleNotificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
+                 NumeroReaperturas INT NOT NULL CONSTRAINT DF_ComponenteExamenIngles_Reaperturas DEFAULT 0,
+                 FechaUltimaReapertura DATETIME2 NULL,
+                 MotivoUltimaReapertura NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL,
+                 UsuarioUltimaReapertura NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
+                 CodigoDocEvaluador BIGINT NULL,
                 NombreEvaluador NVARCHAR(300) COLLATE Modern_Spanish_CI_AS NULL,
                 FechaCalificacion DATETIME2 NULL,
                 Activo BIT NOT NULL CONSTRAINT DF_ComponenteExamenIngles_Activo DEFAULT 1,
@@ -909,8 +1220,10 @@ def _ensure_schema(cursor: Any) -> None:
 
         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaInicioActividad') IS NULL
             ALTER TABLE ing.ComponenteExamenIngles ADD FechaInicioActividad DATETIME2 NULL;
-        IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaLimiteActividad') IS NULL
-            ALTER TABLE ing.ComponenteExamenIngles ADD FechaLimiteActividad DATETIME2 NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaLimiteActividad') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD FechaLimiteActividad DATETIME2 NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'InstruccionesActividad') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD InstruccionesActividad NVARCHAR(1500) COLLATE Modern_Spanish_CI_AS NULL;
         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'EstadoRevision') IS NULL
             ALTER TABLE ing.ComponenteExamenIngles ADD EstadoRevision VARCHAR(30) COLLATE Modern_Spanish_CI_AS NOT NULL
                 CONSTRAINT DF_ComponenteExamenIngles_Revision_Migracion DEFAULT 'PENDIENTE_ENTREGA' WITH VALUES;
@@ -932,8 +1245,17 @@ def _ensure_schema(cursor: Any) -> None:
             ALTER TABLE ing.ComponenteExamenIngles ADD FechaNotificacionDocente DATETIME2 NULL;
         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'EstadoNotificacion') IS NULL
             ALTER TABLE ing.ComponenteExamenIngles ADD EstadoNotificacion VARCHAR(30) COLLATE Modern_Spanish_CI_AS NULL;
-        IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'DetalleNotificacion') IS NULL
-            ALTER TABLE ing.ComponenteExamenIngles ADD DetalleNotificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'DetalleNotificacion') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD DetalleNotificacion NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'NumeroReaperturas') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD NumeroReaperturas INT NOT NULL
+                 CONSTRAINT DF_ComponenteExamenIngles_Reaperturas_Migracion DEFAULT 0 WITH VALUES;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'FechaUltimaReapertura') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD FechaUltimaReapertura DATETIME2 NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'MotivoUltimaReapertura') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD MotivoUltimaReapertura NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NULL;
+         IF COL_LENGTH(N'ing.ComponenteExamenIngles', N'UsuarioUltimaReapertura') IS NULL
+             ALTER TABLE ing.ComponenteExamenIngles ADD UsuarioUltimaReapertura NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL;
         IF NOT EXISTS
         (
             SELECT 1 FROM sys.check_constraints
@@ -976,7 +1298,7 @@ def _ensure_schema(cursor: Any) -> None:
                 CONSTRAINT FK_CargaExamenIngles_Componente FOREIGN KEY (ComponenteExamenInglesId)
                     REFERENCES ing.ComponenteExamenIngles(ComponenteExamenInglesId),
                 CONSTRAINT FK_CargaExamenIngles_Documento FOREIGN KEY (DocumentoExpedienteId)
-                    REFERENCES doc.DocumentoExpediente(DocumentoId),
+                    REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId),
                 CONSTRAINT CK_CargaExamenIngles_Tamano_V3 CHECK (TamanoEsperado > 0 AND TamanoEsperado <= 2147483648)
             );
             CREATE UNIQUE INDEX UX_CargaExamenIngles_Version
@@ -1039,10 +1361,156 @@ def _ensure_schema(cursor: Any) -> None:
             WHERE name = N'IX_CargaExamenIngles_ComponenteActual'
               AND object_id = OBJECT_ID(N'ing.CargaExamenIngles')
         )
-            EXEC(N'CREATE INDEX IX_CargaExamenIngles_ComponenteActual
-                ON ing.CargaExamenIngles(ComponenteExamenInglesId, Activo, FechaCarga DESC);');
+             EXEC(N'CREATE INDEX IX_CargaExamenIngles_ComponenteActual
+                 ON ing.CargaExamenIngles(ComponenteExamenInglesId, Activo, FechaCarga DESC);');
 
-        IF OBJECT_ID(N'ing.AuditoriaExamenIngles', N'U') IS NULL
+         INSERT INTO ing.ComponenteExamenIngles
+             (ExamenInglesId, Codigo, NumeroParcial, Nombre, TipoEvaluacion,
+              FechaInicioActividad, FechaLimiteActividad, InstruccionesActividad,
+              UsuarioActualizacion)
+         SELECT
+             examen.ExamenInglesId,
+             parcial.Codigo,
+             parcial.NumeroParcial,
+             parcial.Nombre,
+             'VIDEO',
+             referencia.FechaInicioActividad,
+             referencia.FechaLimiteActividad,
+             referencia.InstruccionesActividad,
+             N'migracion-idiomas-p1-p3'
+         FROM ing.ExamenIngles examen
+         CROSS JOIN
+         (
+             VALUES
+                 ('P1', CONVERT(TINYINT, 1), N'Parcial 1'),
+                 ('P2', CONVERT(TINYINT, 2), N'Parcial 2'),
+                 ('P3', CONVERT(TINYINT, 3), N'Parcial 3')
+         ) parcial(Codigo, NumeroParcial, Nombre)
+         OUTER APPLY
+         (
+             SELECT TOP (1)
+                 componente.FechaInicioActividad,
+                 componente.FechaLimiteActividad,
+                 componente.InstruccionesActividad
+             FROM ing.ComponenteExamenIngles componente
+             WHERE componente.ExamenInglesId = examen.ExamenInglesId
+             ORDER BY CASE WHEN componente.Codigo = 'P1' THEN 0 ELSE 1 END,
+                      componente.ComponenteExamenInglesId
+         ) referencia
+         WHERE examen.Activo = 1
+           AND NOT EXISTS
+           (
+               SELECT 1
+               FROM ing.ComponenteExamenIngles existente
+               WHERE existente.ExamenInglesId = examen.ExamenInglesId
+                 AND existente.Codigo = parcial.Codigo
+           );
+
+         UPDATE componente
+            SET componente.InstruccionesActividad = COALESCE(
+                    NULLIF(LTRIM(RTRIM(componente.InstruccionesActividad)), N''),
+                    CONCAT(N'Entregue el video correspondiente a ', componente.Nombre, N'.')
+                ),
+                componente.FechaInicioActividad = COALESCE(
+                    componente.FechaInicioActividad,
+                    DATEADD(HOUR, 5, TRY_CONVERT(DATETIME2, periodo.fechain))
+                ),
+                componente.FechaLimiteActividad = COALESCE(
+                    componente.FechaLimiteActividad,
+                    DATEADD(
+                        MILLISECOND,
+                        -1,
+                        DATEADD(HOUR, 5, DATEADD(DAY, 1, TRY_CONVERT(DATETIME2, periodo.fechafin)))
+                    )
+                ),
+                componente.FechaActualizacion = SYSUTCDATETIME(),
+                componente.UsuarioActualizacion = N'migracion-idiomas-p1-p3'
+         FROM ing.ComponenteExamenIngles componente
+         INNER JOIN ing.ExamenIngles examen
+             ON examen.ExamenInglesId = componente.ExamenInglesId
+         LEFT JOIN INTECBDD.dbo.PERIODO periodo
+             ON TRY_CONVERT(INT, periodo.cod_periodo) = TRY_CONVERT(INT, examen.CodigoPeriodo)
+         WHERE componente.Activo = 1
+           AND componente.Codigo IN ('P1', 'P2', 'P3')
+           AND
+           (
+               NULLIF(LTRIM(RTRIM(componente.InstruccionesActividad)), N'') IS NULL
+               OR (componente.FechaInicioActividad IS NULL AND periodo.fechain IS NOT NULL)
+               OR (componente.FechaLimiteActividad IS NULL AND periodo.fechafin IS NOT NULL)
+           );
+
+         UPDATE carga
+            SET carga.ComponenteExamenInglesId = parcial_uno.ComponenteExamenInglesId
+         FROM ing.CargaExamenIngles carga
+         INNER JOIN ing.ComponenteExamenIngles legado
+             ON legado.ComponenteExamenInglesId = carga.ComponenteExamenInglesId
+         INNER JOIN ing.ComponenteExamenIngles parcial_uno
+             ON parcial_uno.ExamenInglesId = carga.ExamenInglesId AND parcial_uno.Codigo = 'P1'
+         WHERE legado.Codigo NOT IN ('P1', 'P2', 'P3');
+
+         UPDATE ing.ComponenteExamenIngles
+            SET Activo = 0, FechaActualizacion = SYSUTCDATETIME(),
+                UsuarioActualizacion = N'migracion-idiomas-p1-p3'
+         WHERE Codigo NOT IN ('P1', 'P2', 'P3') AND Activo = 1;
+
+         ;WITH configuraciones_origen AS
+         (
+             SELECT
+                 TRY_CONVERT(NVARCHAR(100), examen.CodigoPeriodo) AS CodigoPeriodo,
+                 TRY_CONVERT(NVARCHAR(100), examen.CodigoMateria) AS CodigoMateria,
+                 componente.Codigo AS CodigoComponente,
+                 componente.NumeroParcial,
+                 componente.Nombre,
+                 componente.InstruccionesActividad,
+                 componente.FechaInicioActividad,
+                 componente.FechaLimiteActividad,
+                 ROW_NUMBER() OVER
+                 (
+                     PARTITION BY examen.CodigoPeriodo, examen.CodigoMateria, componente.Codigo
+                     ORDER BY COALESCE(componente.FechaActualizacion, componente.FechaCreacion) DESC,
+                              componente.ComponenteExamenInglesId DESC
+                 ) AS orden
+             FROM ing.ExamenIngles examen
+             INNER JOIN ing.ComponenteExamenIngles componente
+                 ON componente.ExamenInglesId = examen.ExamenInglesId
+             WHERE examen.Activo = 1
+               AND componente.Activo = 1
+               AND componente.Codigo IN ('P1', 'P2', 'P3')
+               AND examen.CodigoPeriodo IS NOT NULL
+               AND examen.CodigoMateria IS NOT NULL
+               AND componente.FechaInicioActividad IS NOT NULL
+               AND componente.FechaLimiteActividad IS NOT NULL
+         )
+         INSERT INTO ing.ConfiguracionActividadIngles
+             (CodigoPeriodo, CodigoMateria, CodigoComponente, NumeroParcial, Nombre,
+              Instrucciones, FechaInicioActividad, FechaLimiteActividad,
+              UsuarioActualizacion)
+         SELECT
+             origen.CodigoPeriodo,
+             origen.CodigoMateria,
+             origen.CodigoComponente,
+             origen.NumeroParcial,
+             origen.Nombre,
+             COALESCE(
+                 NULLIF(LTRIM(RTRIM(origen.InstruccionesActividad)), N''),
+                 CONCAT(N'Entregue el video correspondiente a ', origen.Nombre, N'.')
+             ),
+             origen.FechaInicioActividad,
+             origen.FechaLimiteActividad,
+             N'migracion-configuracion-idiomas'
+         FROM configuraciones_origen origen
+         WHERE origen.orden = 1
+           AND origen.FechaLimiteActividad > origen.FechaInicioActividad
+           AND NOT EXISTS
+           (
+               SELECT 1
+               FROM ing.ConfiguracionActividadIngles configuracion
+               WHERE configuracion.CodigoPeriodo = origen.CodigoPeriodo
+                 AND configuracion.CodigoMateria = origen.CodigoMateria
+                 AND configuracion.CodigoComponente = origen.CodigoComponente
+           );
+
+         IF OBJECT_ID(N'ing.AuditoriaExamenIngles', N'U') IS NULL
         BEGIN
             CREATE TABLE ing.AuditoriaExamenIngles
             (
@@ -1063,11 +1531,43 @@ def _ensure_schema(cursor: Any) -> None:
             );
             CREATE INDEX IX_AuditoriaExamenIngles_ExamenFecha
                 ON ing.AuditoriaExamenIngles(ExamenInglesId, FechaEvento DESC);
-        END;
+         END;
+
+         IF OBJECT_ID(N'ing.ReaperturaExamenIngles', N'U') IS NULL
+         BEGIN
+             CREATE TABLE ing.ReaperturaExamenIngles
+             (
+                 ReaperturaExamenInglesId BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_ReaperturaExamenIngles PRIMARY KEY,
+                 ExamenInglesId BIGINT NOT NULL,
+                 ComponenteExamenInglesId BIGINT NOT NULL,
+                 CargaExamenInglesId UNIQUEIDENTIFIER NULL,
+                 EstadoAnterior VARCHAR(30) COLLATE Modern_Spanish_CI_AS NULL,
+                 FechaLimiteAnterior DATETIME2 NULL,
+                 NuevaFechaLimite DATETIME2 NOT NULL,
+                 Motivo NVARCHAR(1000) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                 UsuarioResponsable NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NOT NULL,
+                 FechaReapertura DATETIME2 NOT NULL CONSTRAINT DF_ReaperturaExamenIngles_Fecha DEFAULT SYSUTCDATETIME(),
+                 CONSTRAINT FK_ReaperturaExamenIngles_Examen FOREIGN KEY (ExamenInglesId)
+                     REFERENCES ing.ExamenIngles(ExamenInglesId),
+                 CONSTRAINT FK_ReaperturaExamenIngles_Componente FOREIGN KEY (ComponenteExamenInglesId)
+                     REFERENCES ing.ComponenteExamenIngles(ComponenteExamenInglesId),
+                 CONSTRAINT FK_ReaperturaExamenIngles_Carga FOREIGN KEY (CargaExamenInglesId)
+                     REFERENCES ing.CargaExamenIngles(CargaExamenInglesId)
+             );
+             CREATE INDEX IX_ReaperturaExamenIngles_ComponenteFecha
+                 ON ing.ReaperturaExamenIngles(ComponenteExamenInglesId, FechaReapertura DESC);
+         END;
 
         IF NOT EXISTS (SELECT 1 FROM cat.TipoExpediente WHERE Codigo = 'INGLES')
-            INSERT INTO cat.TipoExpediente(Codigo, Nombre)
-            VALUES('INGLES', N'Expediente de evaluación de Inglés');
+            INSERT INTO cat.TipoExpediente(Codigo, Nombre, Descripcion)
+            VALUES('INGLES', N'Expediente de evaluación de Inglés', N'Evidencia, versiones y calificación del examen de Inglés.');
+
+        IF NOT EXISTS (SELECT 1 FROM cat.TipoDocumento WHERE Codigo = 'EVIDENCIA_EXAMEN_INGLES')
+            INSERT INTO cat.TipoDocumento(Codigo, Nombre, GrupoDocumento, Descripcion, PermiteMultiples, Versionable)
+            VALUES('EVIDENCIA_EXAMEN_INGLES', N'Evidencia del examen de Inglés', 'ACADEMICO', N'Archivo entregado por el estudiante para evaluación de Inglés.', 1, 1);
+        ELSE
+            UPDATE cat.TipoDocumento SET PermiteMultiples = 1, Versionable = 1
+            WHERE Codigo = 'EVIDENCIA_EXAMEN_INGLES';
 
         MERGE cat.EstadoExpediente AS target
         USING
@@ -1111,7 +1611,7 @@ def _ensure_schema(cursor: Any) -> None:
                 UsuarioCarga NVARCHAR(256) NULL,
                 FechaCarga DATETIME2 NOT NULL CONSTRAINT DF_DocumentoVersion_Fecha DEFAULT SYSUTCDATETIME(),
                 CONSTRAINT FK_DocumentoVersion_Documento FOREIGN KEY (DocumentoExpedienteId)
-                    REFERENCES doc.DocumentoExpediente(DocumentoId),
+                    REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId),
                 CONSTRAINT UQ_DocumentoVersion_Numero UNIQUE (DocumentoExpedienteId, NumeroVersion)
             );
         END;
@@ -1247,6 +1747,42 @@ def _catalog_id(cursor: Any, table: str, code: str, id_column: str) -> int:
     return int(row[0])
 
 
+def _activity_schedule_map(
+    cursor: Any,
+    period_code: Any,
+    subject_code: Any,
+) -> dict[str, dict[str, Any]]:
+    period = _clean(period_code)
+    subject = _clean(subject_code)
+    if not period or not subject:
+        return {}
+    cursor.execute(
+        """
+        SELECT
+            CodigoComponente, NumeroParcial, Nombre, Instrucciones,
+            FechaInicioActividad, FechaLimiteActividad,
+            FechaActualizacion, UsuarioActualizacion
+        FROM ing.ConfiguracionActividadIngles
+        WHERE CodigoPeriodo = ? AND CodigoMateria = ? AND Activo = 1
+        ORDER BY NumeroParcial
+        """,
+        period,
+        subject,
+    )
+    return {
+        _clean(row.CodigoComponente).upper(): {
+            "number": int(row.NumeroParcial),
+            "name": _clean(row.Nombre),
+            "instructions": _clean(row.Instrucciones),
+            "activity_start": row.FechaInicioActividad,
+            "activity_deadline": row.FechaLimiteActividad,
+            "updated_at": getattr(row, "FechaActualizacion", None),
+            "updated_by": _clean(getattr(row, "UsuarioActualizacion", None)),
+        }
+        for row in cursor.fetchall()
+    }
+
+
 def _ensure_components(
     cursor: Any,
     exam_id: int,
@@ -1254,10 +1790,20 @@ def _ensure_components(
     audit_user: str,
     activity_start: datetime | None = None,
     activity_deadline: datetime | None = None,
+    activity_schedules: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     specs = _component_specs(enrollment_type)
     required_codes = {item["code"] for item in specs}
     for spec in specs:
+        schedule = (activity_schedules or {}).get(spec["code"])
+        configured = schedule is not None
+        component_start = schedule.get("activity_start") if schedule else activity_start
+        component_deadline = schedule.get("activity_deadline") if schedule else activity_deadline
+        default_instructions = (
+            _clean(schedule.get("instructions"))
+            if schedule
+            else _default_component_instructions(spec["label"])
+        ) or _default_component_instructions(spec["label"])
         cursor.execute(
             """
             SELECT ComponenteExamenInglesId
@@ -1271,18 +1817,41 @@ def _ensure_components(
         if existing:
             cursor.execute(
                 """
-                UPDATE ing.ComponenteExamenIngles
-                   SET NumeroParcial = ?, Nombre = ?, TipoEvaluacion = ?, Activo = 1,
-                       FechaInicioActividad = COALESCE(?, FechaInicioActividad),
-                       FechaLimiteActividad = COALESCE(?, FechaLimiteActividad),
-                       FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
+                 UPDATE ing.ComponenteExamenIngles
+                    SET NumeroParcial = ?, Nombre = ?, TipoEvaluacion = ?, Activo = 1,
+                        FechaInicioActividad = CASE
+                            WHEN FechaPublicacion IS NOT NULL OR EstadoRevision = 'PUBLICADO'
+                                THEN FechaInicioActividad
+                            WHEN ? = 1 THEN ?
+                            ELSE COALESCE(FechaInicioActividad, ?)
+                        END,
+                        FechaLimiteActividad = CASE
+                            WHEN FechaPublicacion IS NOT NULL OR EstadoRevision = 'PUBLICADO'
+                                THEN FechaLimiteActividad
+                            WHEN ? = 1 THEN ?
+                            ELSE COALESCE(FechaLimiteActividad, ?)
+                        END,
+                        InstruccionesActividad = CASE
+                            WHEN FechaPublicacion IS NOT NULL OR EstadoRevision = 'PUBLICADO'
+                                THEN InstruccionesActividad
+                            WHEN ? = 1 THEN ?
+                            ELSE COALESCE(NULLIF(LTRIM(RTRIM(InstruccionesActividad)), N''), ?)
+                        END,
+                        FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
                  WHERE ComponenteExamenInglesId = ?
                 """,
                 spec["number"],
                 spec["label"],
                 spec["evaluation_type"],
+                1 if configured else 0,
+                component_start,
                 activity_start,
+                1 if configured else 0,
+                component_deadline,
                 activity_deadline,
+                1 if configured else 0,
+                default_instructions,
+                default_instructions,
                 audit_user,
                 int(existing[0]),
             )
@@ -1291,16 +1860,18 @@ def _ensure_components(
                 """
                 INSERT INTO ing.ComponenteExamenIngles
                     (ExamenInglesId, Codigo, NumeroParcial, Nombre, TipoEvaluacion,
-                     FechaInicioActividad, FechaLimiteActividad, UsuarioActualizacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     FechaInicioActividad, FechaLimiteActividad, InstruccionesActividad,
+                     UsuarioActualizacion)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 exam_id,
                 spec["code"],
                 spec["number"],
                 spec["label"],
                 spec["evaluation_type"],
-                activity_start,
-                activity_deadline,
+                component_start,
+                component_deadline,
+                default_instructions,
                 audit_user,
             )
 
@@ -1333,6 +1904,11 @@ def _ensure_components(
 def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
     _ensure_schema(cursor)
     activity_start, activity_deadline = _activity_window(profile)
+    activity_schedules = _activity_schedule_map(
+        cursor,
+        profile.get("codigo_periodo"),
+        profile.get("codigo_materia"),
+    )
     cursor.execute(
         "SELECT PersonaId FROM core.Persona WHERE NumeroIdentificacion = ?",
         profile["cedula"],
@@ -1358,10 +1934,15 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
     else:
         cursor.execute(
             """
+            SET NOCOUNT ON;
+            DECLARE @PersonaCreada TABLE (PersonaId BIGINT NOT NULL);
+
             INSERT INTO core.Persona
                 (NumeroIdentificacion, CodigoEstud, ApellidosNombres, CorreoPersonal, FuenteUltimaActualizacion)
-            OUTPUT INSERTED.PersonaId
+            OUTPUT INSERTED.PersonaId INTO @PersonaCreada (PersonaId)
             VALUES (?, ?, ?, ?, 'INTECBDD')
+
+            SELECT PersonaId FROM @PersonaCreada;
             """,
             profile["cedula"],
             profile["codigo_estud"],
@@ -1374,19 +1955,19 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
     draft_state_id = _catalog_id(cursor, "cat.EstadoExpediente", "BORRADOR", "EstadoExpedienteId")
     cursor.execute(
         """
-        SELECT TOP (1) ExpedienteId
+        SELECT TOP (1) ExpedienteEstudiantilId
         FROM exp.ExpedienteEstudiantil
         WHERE TipoExpedienteId = ? AND PersonaId = ? AND Activo = 1
           AND TRY_CONVERT(INT, CodigoCarrera) = ?
           AND TRY_CONVERT(INT, CodigoPeriodo) = ?
-          AND TipoOferta = ?
-        ORDER BY ExpedienteId DESC
+          AND TRY_CONVERT(INT, CodigoCurso) = ?
+        ORDER BY ExpedienteEstudiantilId DESC
         """,
         type_id,
         person_id,
         profile["codigo_carrera"],
         profile["codigo_periodo"],
-        f"INGLES:{profile['codigo_materia']}",
+        profile["codigo_materia"],
     )
     expediente = cursor.fetchone()
     if expediente:
@@ -1394,27 +1975,34 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
         cursor.execute(
             """
             UPDATE exp.ExpedienteEstudiantil
-               SET CodigoEstud = ?, NumeroIdentificacion = ?, CodigoCarrera = ?, CodigoPeriodo = ?, TipoOferta = ?,
+               SET CodigoEstud = ?, NumeroIdentificacion = ?, CodigoCarrera = ?, CodigoPeriodo = ?, CodigoCurso = ?,
                    FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
-             WHERE ExpedienteId = ?
+             WHERE ExpedienteEstudiantilId = ?
             """,
             profile["codigo_estud"],
             profile["cedula"],
             profile["codigo_carrera"],
             profile["codigo_periodo"],
-            f"INGLES:{profile['codigo_materia']}",
+            profile["codigo_materia"],
             audit_user,
             expediente_id,
         )
     else:
         cursor.execute(
             """
+            SET NOCOUNT ON;
+            DECLARE @ExpedienteCreado TABLE (ExpedienteEstudiantilId BIGINT NOT NULL);
+
             INSERT INTO exp.ExpedienteEstudiantil
-                (TipoExpedienteId, EstadoExpedienteId, PersonaId, CodigoEstud,
-                 NumeroIdentificacion, CodigoCarrera, CodigoPeriodo, TipoOferta, UsuarioApertura)
-            OUTPUT INSERTED.ExpedienteId
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (CodigoExpediente, TipoExpedienteId, EstadoExpedienteId, PersonaId, CodigoEstud,
+                 NumeroIdentificacion, CodigoCarrera, CodigoPeriodo, CodigoCurso, Observacion, UsuarioApertura)
+            OUTPUT INSERTED.ExpedienteEstudiantilId
+                INTO @ExpedienteCreado (ExpedienteEstudiantilId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, N'Expediente automático para evaluación de Inglés.', ?)
+
+            SELECT ExpedienteEstudiantilId FROM @ExpedienteCreado;
             """,
+            f"ING-{profile['codigo_estud']}-{profile['codigo_periodo']}-{profile['codigo_materia']}",
             type_id,
             draft_state_id,
             person_id,
@@ -1422,7 +2010,7 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
             profile["cedula"],
             profile["codigo_carrera"],
             profile["codigo_periodo"],
-            f"INGLES:{profile['codigo_materia']}",
+            profile["codigo_materia"],
             audit_user,
         )
         expediente_id = int(cursor.fetchone()[0])
@@ -1467,15 +2055,21 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
             audit_user,
             activity_start,
             activity_deadline,
+            activity_schedules,
         )
         return exam_id
     cursor.execute(
         """
+        SET NOCOUNT ON;
+        DECLARE @ExamenCreado TABLE (ExamenInglesId BIGINT NOT NULL);
+
         INSERT INTO ing.ExamenIngles
             (ExpedienteEstudiantilId, CodigoEstud, NumeroIdentificacion, CarreraXEstudNum,
              CodigoCarrera, CodigoMateria, CodigoPeriodo, Paralelo, Nivel, TipoMatricula, UsuarioActualizacion)
-        OUTPUT INSERTED.ExamenInglesId
+        OUTPUT INSERTED.ExamenInglesId INTO @ExamenCreado (ExamenInglesId)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+        SELECT ExamenInglesId FROM @ExamenCreado;
         """,
         expediente_id,
         profile["codigo_estud"],
@@ -1497,6 +2091,7 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
         audit_user,
         activity_start,
         activity_deadline,
+        activity_schedules,
     )
     _audit_event(
         cursor,
@@ -1557,10 +2152,11 @@ def _component_payload(row: Any) -> dict[str, Any]:
         "can_edit": bool(file_payload and delivery_state == "PENDIENTE_CONFIRMACION" and seconds_remaining > 0 and grade is None),
         "edit_deadline": _iso_utc(deadline),
         "seconds_remaining": seconds_remaining,
-        "activity_start": _iso_utc(activity_start),
-        "activity_deadline": _iso_utc(activity_deadline),
-        "activity_open": activity_open,
-        "activity_status": activity_status,
+         "activity_start": _iso_utc(activity_start),
+         "activity_deadline": _iso_utc(activity_deadline),
+         "activity_instructions": _clean(getattr(row, "instrucciones_actividad", None)),
+         "activity_open": activity_open,
+         "activity_status": activity_status,
         "review_state": _clean(getattr(row, "estado_revision", None)) or "PENDIENTE_ENTREGA",
         "draft_grade": draft_grade,
         "draft_observation": _clean(getattr(row, "observacion_borrador", None)),
@@ -1568,9 +2164,13 @@ def _component_payload(row: Any) -> dict[str, Any]:
         "drafted_at": _iso_utc(getattr(row, "fecha_borrador", None)),
         "drafted_by": _clean(getattr(row, "usuario_borrador", None)),
         "published_at": _iso_utc(getattr(row, "fecha_publicacion", None)),
-        "published_by": _clean(getattr(row, "usuario_publicacion", None)),
-        "notification_state": _clean(getattr(row, "estado_notificacion", None)),
-    }
+         "published_by": _clean(getattr(row, "usuario_publicacion", None)),
+         "notification_state": _clean(getattr(row, "estado_notificacion", None)),
+         "reopen_count": int(getattr(row, "numero_reaperturas", 0) or 0),
+         "last_reopened_at": _iso_utc(getattr(row, "fecha_ultima_reapertura", None)),
+         "last_reopen_reason": _clean(getattr(row, "motivo_ultima_reapertura", None)),
+         "last_reopened_by": _clean(getattr(row, "usuario_ultima_reapertura", None)),
+     }
 
 
 def _load_component_rows(
@@ -1591,9 +2191,10 @@ def _load_component_rows(
             componente.NumeroParcial AS numero_parcial,
             componente.Nombre AS nombre,
             componente.TipoEvaluacion AS tipo_evaluacion,
-            componente.FechaInicioActividad AS fecha_inicio_actividad,
-            componente.FechaLimiteActividad AS fecha_limite_actividad,
-            componente.Nota AS nota,
+             componente.FechaInicioActividad AS fecha_inicio_actividad,
+             componente.FechaLimiteActividad AS fecha_limite_actividad,
+             componente.InstruccionesActividad AS instrucciones_actividad,
+             componente.Nota AS nota,
             componente.Estado AS estado,
             componente.EstadoRevision AS estado_revision,
             componente.Observacion AS observacion,
@@ -1604,8 +2205,12 @@ def _load_component_rows(
             componente.UsuarioBorrador AS usuario_borrador,
             componente.FechaPublicacion AS fecha_publicacion,
             componente.UsuarioPublicacion AS usuario_publicacion,
-            componente.EstadoNotificacion AS estado_notificacion,
-            componente.NombreEvaluador AS nombre_evaluador,
+             componente.EstadoNotificacion AS estado_notificacion,
+             componente.NumeroReaperturas AS numero_reaperturas,
+             componente.FechaUltimaReapertura AS fecha_ultima_reapertura,
+             componente.MotivoUltimaReapertura AS motivo_ultima_reapertura,
+             componente.UsuarioUltimaReapertura AS usuario_ultima_reapertura,
+             componente.NombreEvaluador AS nombre_evaluador,
             componente.FechaCalificacion AS fecha_calificacion,
             carga.CargaExamenInglesId AS upload_id,
             carga.NombreArchivoOriginal AS nombre_archivo,
@@ -1803,7 +2408,7 @@ def _exam_select(where_clause: str) -> str:
             COALESCE(pensum.Nomb_Materia, e.Nivel, N'{_LEVEL_NAME}') AS materia,
             periodo.Detalle_Periodo AS detalle_periodo
         FROM ing.ExamenIngles e
-        INNER JOIN exp.ExpedienteEstudiantil ex ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+        INNER JOIN exp.ExpedienteEstudiantil ex ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
         INNER JOIN core.Persona p ON p.PersonaId = ex.PersonaId
         LEFT JOIN INTECBDD.dbo.CARRERAS c
             ON TRY_CONVERT(INT, c.Cod_AnioBasica) = TRY_CONVERT(INT, e.CodigoCarrera)
@@ -2163,6 +2768,7 @@ def create_student_upload_session(
                 upload_url=_clean(graph_session.get("uploadUrl")),
                 expires_at=graph_session.get("expirationDateTime"),
                 audit_user=current_user.login,
+                max_expected_size=_MAX_FILE_BYTES,
             )
         except (RuntimeError, ValueError, pyodbc.Error) as exc:
             raise HTTPException(status_code=500, detail=f"No se pudo registrar la sesion documental: {exc}") from exc
@@ -2272,7 +2878,7 @@ def finalize_student_upload(
                 status_code=409,
                 detail=(
                     "La carga no superó la validación de integridad: debe ser un video completo "
-                    "de 50 MB a 2 GB y coincidir con el tamaño informado."
+                    "de 40 MB a 2 GB y coincidir con el tamaño informado."
                 ),
             )
         _safe_filename(_clean(upload.NombreArchivoOriginal))
@@ -2375,12 +2981,18 @@ def finalize_student_upload(
             document_version = 1
             cursor.execute(
                 """
+                SET NOCOUNT ON;
+                DECLARE @DocumentoCreado TABLE (DocumentoExpedienteId BIGINT NOT NULL);
+
                 INSERT INTO doc.DocumentoExpediente
                     (ExpedienteEstudiantilId, TipoDocumentoId, EstadoDocumentoId, NombreArchivo,
                      RutaNube, ContentType, TamanoBytes, OrigenCarga, VersionActual,
                      ObservacionActual, UsuarioCarga)
                 OUTPUT INSERTED.DocumentoExpedienteId
+                    INTO @DocumentoCreado (DocumentoExpedienteId)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'MICROSOFT_GRAPH', 1, ?, ?)
+
+                SELECT DocumentoExpedienteId FROM @DocumentoCreado;
                 """,
                 int(upload.ExpedienteEstudiantilId),
                 document_type_id,
@@ -2578,7 +3190,7 @@ def confirm_student_delivery(
             UPDATE exp.ExpedienteEstudiantil
                SET EstadoExpedienteId = ?, FechaActualizacion = SYSUTCDATETIME(),
                    UsuarioActualizacion = ?
-             WHERE ExpedienteId = ?
+             WHERE ExpedienteEstudiantilId = ?
             """,
             review_state_id,
             current_user.login,
@@ -2678,6 +3290,251 @@ def reviewer_submissions(
     }
 
 
+@router.get("/activity-schedules")
+def activity_schedules(
+    current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+    period_code: Annotated[str, Query(max_length=100)] = "",
+    subject_code: Annotated[str, Query(max_length=100)] = "",
+) -> dict[str, Any]:
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        conn.commit()
+        return _activity_schedules_response(
+            cursor,
+            current_user,
+            period_code,
+            subject_code,
+        )
+
+
+@router.put("/activity-schedules")
+def update_activity_schedule(
+    payload: ActivitySchedulePayload,
+    current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    period_code = _clean(payload.period_code)
+    subject_code = _clean(payload.subject_code)
+    component_code = _clean(payload.component_code).upper()
+    component_spec = next(
+        (item for item in _component_specs("R") if item["code"] == component_code),
+        None,
+    )
+    if component_spec is None:
+        raise HTTPException(status_code=422, detail="El parcial indicado no es válido.")
+    activity_start, activity_deadline = _validated_activity_window(
+        payload.activity_start,
+        payload.activity_deadline,
+    )
+    instructions = payload.instructions.strip()
+
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        periods = _reviewer_periods(cursor, current_user, include_closed=True)
+        selected_period = _select_reviewer_period(periods, period_code, current_user)
+        subjects = _reviewer_subjects(
+            cursor,
+            selected_period,
+            current_user,
+            include_closed=True,
+        )
+        selected_subject = _select_reviewer_subject(subjects, subject_code, current_user)
+
+        cursor.execute(
+            """
+            SELECT TOP (1)
+                ConfiguracionActividadInglesId, Instrucciones,
+                FechaInicioActividad, FechaLimiteActividad
+            FROM ing.ConfiguracionActividadIngles WITH (UPDLOCK, HOLDLOCK)
+            WHERE CodigoPeriodo = ? AND CodigoMateria = ? AND CodigoComponente = ?
+            """,
+            selected_period,
+            selected_subject,
+            component_code,
+        )
+        previous_config = cursor.fetchone()
+        if previous_config:
+            configuration_id = int(previous_config.ConfiguracionActividadInglesId)
+            cursor.execute(
+                """
+                UPDATE ing.ConfiguracionActividadIngles
+                   SET NumeroParcial = ?, Nombre = ?, Instrucciones = ?,
+                       FechaInicioActividad = ?, FechaLimiteActividad = ?, Activo = 1,
+                       FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
+                 WHERE ConfiguracionActividadInglesId = ?
+                """,
+                int(component_spec["number"]),
+                component_spec["label"],
+                instructions,
+                activity_start,
+                activity_deadline,
+                current_user.login,
+                configuration_id,
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO ing.ConfiguracionActividadIngles
+                    (CodigoPeriodo, CodigoMateria, CodigoComponente, NumeroParcial,
+                     Nombre, Instrucciones, FechaInicioActividad, FechaLimiteActividad,
+                     UsuarioActualizacion)
+                OUTPUT INSERTED.ConfiguracionActividadInglesId
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                selected_period,
+                selected_subject,
+                component_code,
+                int(component_spec["number"]),
+                component_spec["label"],
+                instructions,
+                activity_start,
+                activity_deadline,
+                current_user.login,
+            )
+            configuration_id = int(cursor.fetchone()[0])
+
+        cursor.execute(
+            """
+            SELECT
+                componente.ComponenteExamenInglesId,
+                componente.ExamenInglesId,
+                componente.EstadoRevision,
+                componente.FechaPublicacion,
+                componente.FechaInicioActividad,
+                componente.FechaLimiteActividad,
+                componente.InstruccionesActividad
+            FROM ing.ComponenteExamenIngles componente
+            INNER JOIN ing.ExamenIngles examen
+                ON examen.ExamenInglesId = componente.ExamenInglesId
+            WHERE examen.Activo = 1
+              AND componente.Activo = 1
+              AND componente.Codigo = ?
+              AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoPeriodo))) = ?
+              AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoMateria))) = ?
+            """,
+            component_code,
+            selected_period,
+            selected_subject,
+        )
+        existing_components = list(cursor.fetchall())
+        updated_components = 0
+        skipped_published = 0
+        for component in existing_components:
+            if _clean(component.EstadoRevision) == "PUBLICADO" or component.FechaPublicacion is not None:
+                skipped_published += 1
+                continue
+            cursor.execute(
+                """
+                UPDATE ing.ComponenteExamenIngles
+                   SET FechaInicioActividad = ?, FechaLimiteActividad = ?,
+                       InstruccionesActividad = ?, FechaActualizacion = SYSUTCDATETIME(),
+                       UsuarioActualizacion = ?
+                 WHERE ComponenteExamenInglesId = ?
+                """,
+                activity_start,
+                activity_deadline,
+                instructions,
+                current_user.login,
+                int(component.ComponenteExamenInglesId),
+            )
+            updated_components += 1
+            _audit_event(
+                cursor,
+                int(component.ExamenInglesId),
+                "ACTIVIDAD_MASIVA_CONFIGURADA",
+                current_user.login,
+                component_id=int(component.ComponenteExamenInglesId),
+                previous_state=_clean(component.EstadoRevision),
+                new_state=_clean(component.EstadoRevision),
+                detail={
+                    "component": component_code,
+                    "period": selected_period,
+                    "subject": selected_subject,
+                    "previous_start": component.FechaInicioActividad,
+                    "previous_deadline": component.FechaLimiteActividad,
+                    "previous_instructions": _clean(component.InstruccionesActividad),
+                    "activity_start": activity_start,
+                    "activity_deadline": activity_deadline,
+                    "instructions": instructions,
+                },
+            )
+
+        cursor.execute(
+            """
+            INSERT INTO ing.AuditoriaConfiguracionActividadIngles
+                (ConfiguracionActividadInglesId, CodigoPeriodo, CodigoMateria,
+                 CodigoComponente, InstruccionesAnteriores, InstruccionesNuevas,
+                 FechaInicioAnterior, FechaLimiteAnterior,
+                 FechaInicioNueva, FechaLimiteNueva,
+                 ComponentesActualizados, ComponentesOmitidos, Usuario)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            configuration_id,
+            selected_period,
+            selected_subject,
+            component_code,
+            _clean(previous_config.Instrucciones) if previous_config else None,
+            instructions,
+            previous_config.FechaInicioActividad if previous_config else None,
+            previous_config.FechaLimiteActividad if previous_config else None,
+            activity_start,
+            activity_deadline,
+            updated_components,
+            skipped_published,
+            current_user.login,
+        )
+        conn.commit()
+        result = _activity_schedules_response(
+            cursor,
+            current_user,
+            selected_period,
+            selected_subject,
+        )
+    result["updated_components"] = updated_components
+    result["skipped_published"] = skipped_published
+    return result
+
+
+@router.post("/submissions/prepare")
+def prepare_reviewer_submission(
+    payload: PrepareSubmissionPayload,
+    current_user: Annotated[SessionUser, Depends(_REVIEWER_ACCESS)],
+) -> dict[str, Any]:
+    period_code = _clean(payload.period_code)
+    subject_code = _clean(payload.subject_code)
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        periods = _reviewer_periods(cursor, current_user)
+        selected_period = _select_reviewer_period(periods, period_code, current_user)
+        subjects = _reviewer_subjects(cursor, selected_period, current_user)
+        selected_subject = _select_reviewer_subject(subjects, subject_code, current_user)
+        profiles = _reviewer_enrollments(
+            cursor,
+            selected_period,
+            selected_subject,
+            current_user,
+        )
+        profile = next(
+            (
+                item
+                for item in profiles
+                if int(item["carrera_x_estud_num"]) == payload.enrollment_id
+            ),
+            None,
+        )
+        if profile is None:
+            raise HTTPException(
+                status_code=403 if current_user.rol == "DOCENTE" else 404,
+                detail="La matrícula de Idiomas no está disponible para el perfil autenticado.",
+            )
+        exam_id = _ensure_exam(cursor, profile, current_user.login)
+        conn.commit()
+        _, result = _updated_exam_payload(cursor, exam_id)
+    return _apply_reviewer_profile(result, profile)
+
+
 def _authorize_file(cursor: Any, upload_id: UUID, current_user: SessionUser) -> Any:
     cursor.execute(
         """
@@ -2744,6 +3601,8 @@ def _review_component_target(
     component_code: str,
     period_code: str,
     current_user: SessionUser,
+    *,
+    require_confirmed_upload: bool = True,
 ) -> tuple[Any, Any]:
     _require_teacher_exam_scope(cursor, exam_id, current_user)
     cursor.execute(_exam_select("e.ExamenInglesId = ?"), exam_id)
@@ -2756,15 +3615,18 @@ def _review_component_target(
         """
         SELECT
             componente.ComponenteExamenInglesId, componente.Nombre,
-            componente.Nota, componente.Estado, componente.EstadoRevision,
-            componente.NotaBorrador, componente.ObservacionBorrador,
-            componente.RubricaBorradorJson, componente.FechaPublicacion,
-            carga.CargaExamenInglesId AS upload_id,
-            carga.DocumentoExpedienteId AS documento_id
+             componente.Nota, componente.Estado, componente.EstadoRevision,
+             componente.NotaBorrador, componente.ObservacionBorrador,
+             componente.RubricaBorradorJson, componente.FechaPublicacion,
+             componente.FechaInicioActividad, componente.FechaLimiteActividad,
+             componente.InstruccionesActividad, componente.NumeroReaperturas,
+             carga.CargaExamenInglesId AS upload_id,
+             carga.DocumentoExpedienteId AS documento_id,
+             carga.Estado AS upload_state
         FROM ing.ComponenteExamenIngles componente
         OUTER APPLY
         (
-            SELECT TOP (1) ce.CargaExamenInglesId, ce.DocumentoExpedienteId
+            SELECT TOP (1) ce.CargaExamenInglesId, ce.DocumentoExpedienteId, ce.Estado
             FROM ing.CargaExamenIngles ce
             WHERE ce.ComponenteExamenInglesId = componente.ComponenteExamenInglesId
               AND ce.Activo = 1 AND ce.Estado IN ('CONFIRMADO', 'CARGADO')
@@ -2778,7 +3640,7 @@ def _review_component_target(
     component = cursor.fetchone()
     if not component:
         raise HTTPException(status_code=400, detail="El parcial indicado no pertenece a esta matrícula de Idiomas.")
-    if not component.upload_id:
+    if require_confirmed_upload and not component.upload_id:
         raise HTTPException(status_code=409, detail="El estudiante todavía no confirmó la entrega definitiva de este parcial.")
     return exam_row, component
 
@@ -2794,6 +3656,178 @@ def _updated_exam_payload(cursor: Any, exam_id: int) -> tuple[Any, dict[str, Any
         include_pending_confirmation=False,
     ).get(exam_id, [])
     return row, _row_payload(row, component_rows, include_student=True)
+
+
+@router.put("/submissions/{exam_id}/activity")
+def update_activity_settings(
+    exam_id: int,
+    payload: ActivitySettingsPayload,
+    current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    component_code = _clean(payload.component_code).upper()
+    activity_start, activity_deadline = _validated_activity_window(
+        payload.activity_start,
+        payload.activity_deadline,
+    )
+    instructions = payload.instructions.strip()
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        _, component = _review_component_target(
+            cursor,
+            exam_id,
+            component_code,
+            payload.period_code,
+            current_user,
+            require_confirmed_upload=False,
+        )
+        if _clean(component.EstadoRevision) == "PUBLICADO" or component.FechaPublicacion is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede modificar una actividad cuya calificación ya fue publicada.",
+            )
+        cursor.execute(
+            """
+            UPDATE ing.ComponenteExamenIngles
+               SET FechaInicioActividad = ?, FechaLimiteActividad = ?,
+                   InstruccionesActividad = ?, FechaActualizacion = SYSUTCDATETIME(),
+                   UsuarioActualizacion = ?
+             WHERE ComponenteExamenInglesId = ?
+            """,
+            activity_start,
+            activity_deadline,
+            instructions,
+            current_user.login,
+            int(component.ComponenteExamenInglesId),
+        )
+        _audit_event(
+            cursor,
+            exam_id,
+            "ACTIVIDAD_CONFIGURADA",
+            current_user.login,
+            component_id=int(component.ComponenteExamenInglesId),
+            upload_id=component.upload_id,
+            previous_state=_clean(component.EstadoRevision),
+            new_state=_clean(component.EstadoRevision),
+            detail={
+                "component": component_code,
+                "previous_start": component.FechaInicioActividad,
+                "previous_deadline": component.FechaLimiteActividad,
+                "activity_start": activity_start,
+                "activity_deadline": activity_deadline,
+                "instructions": instructions,
+            },
+        )
+        conn.commit()
+        _, result = _updated_exam_payload(cursor, exam_id)
+    return result
+
+
+@router.post("/submissions/{exam_id}/reopen")
+def reopen_submission(
+    exam_id: int,
+    payload: ReopenSubmissionPayload,
+    current_user: Annotated[SessionUser, Depends(_REOPEN_ACCESS)],
+) -> dict[str, Any]:
+    component_code = _clean(payload.component_code).upper()
+    new_deadline = _validated_reopen_deadline(payload.new_deadline)
+    reason = payload.reason.strip()
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        _, component = _review_component_target(
+            cursor,
+            exam_id,
+            component_code,
+            payload.period_code,
+            current_user,
+        )
+        if _clean(component.EstadoRevision) == "PUBLICADO" or component.FechaPublicacion is not None or component.Nota is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="La nota ya fue publicada. Su corrección requiere el procedimiento académico de rectificación.",
+            )
+
+        previous_state = _clean(component.EstadoRevision)
+        cursor.execute(
+            """
+            INSERT INTO ing.ReaperturaExamenIngles
+                (ExamenInglesId, ComponenteExamenInglesId, CargaExamenInglesId,
+                 EstadoAnterior, FechaLimiteAnterior, NuevaFechaLimite, Motivo,
+                 UsuarioResponsable)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            exam_id,
+            int(component.ComponenteExamenInglesId),
+            str(component.upload_id),
+            previous_state,
+            component.FechaLimiteActividad,
+            new_deadline,
+            reason,
+            current_user.login,
+        )
+        cursor.execute(
+            """
+            UPDATE ing.CargaExamenIngles
+               SET Activo = 0, Estado = 'REABIERTO'
+             WHERE CargaExamenInglesId = ? AND Activo = 1
+            """,
+            str(component.upload_id),
+        )
+        cursor.execute(
+            """
+            UPDATE ing.ComponenteExamenIngles
+               SET Estado = 'REABIERTO', EstadoRevision = 'REABIERTO',
+                   FechaLimiteActividad = ?, NumeroReaperturas = NumeroReaperturas + 1,
+                   FechaUltimaReapertura = SYSUTCDATETIME(), MotivoUltimaReapertura = ?,
+                   UsuarioUltimaReapertura = ?, NotaBorrador = NULL,
+                   ObservacionBorrador = NULL, RubricaBorradorJson = NULL,
+                   FechaBorrador = NULL, UsuarioBorrador = NULL,
+                   EstadoNotificacion = 'REAPERTURA_NOTIFICADA',
+                   DetalleNotificacion = ?, FechaActualizacion = SYSUTCDATETIME(),
+                   UsuarioActualizacion = ?
+             WHERE ComponenteExamenInglesId = ?
+            """,
+            new_deadline,
+            reason,
+            current_user.login,
+            reason,
+            current_user.login,
+            int(component.ComponenteExamenInglesId),
+        )
+        if component.documento_id:
+            observed_state_id = _catalog_id(cursor, "cat.EstadoDocumento", "OBSERVADO", "EstadoDocumentoId")
+            cursor.execute(
+                """
+                UPDATE doc.DocumentoExpediente
+                   SET EstadoDocumentoId = ?, ObservacionActual = ?,
+                       FechaRevision = SYSUTCDATETIME(), UsuarioRevision = ?
+                 WHERE DocumentoExpedienteId = ?
+                """,
+                observed_state_id,
+                f"Entrega reabierta: {reason}",
+                current_user.login,
+                int(component.documento_id),
+            )
+        _audit_event(
+            cursor,
+            exam_id,
+            "ENTREGA_REABIERTA",
+            current_user.login,
+            component_id=int(component.ComponenteExamenInglesId),
+            upload_id=component.upload_id,
+            previous_state=previous_state,
+            new_state="REABIERTO",
+            detail={
+                "component": component_code,
+                "reason": reason,
+                "previous_deadline": component.FechaLimiteActividad,
+                "new_deadline": new_deadline,
+            },
+        )
+        conn.commit()
+        _, result = _updated_exam_payload(cursor, exam_id)
+    return result
 
 
 @router.put("/submissions/{exam_id}/draft")
@@ -2965,7 +3999,7 @@ def publish_rubric_grade(
                    ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
             INNER JOIN ing.ExamenIngles e
-                ON e.ExpedienteEstudiantilId = ex.ExpedienteId
+                ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,
@@ -2994,9 +4028,16 @@ def publish_rubric_grade(
 @router.put("/submissions/{exam_id}/grade")
 def grade_submission(
     exam_id: int,
-    payload: GradePayload,
+    payload: dict[str, Any],
     current_user: Annotated[SessionUser, Depends(_REVIEWER_ACCESS)],
 ) -> dict[str, Any]:
+    del exam_id, payload, current_user
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="La publicación directa fue retirada. Guarde la rúbrica y publique la calificación desde el flujo vigente.",
+    )
+
+    # Código histórico conservado temporalmente para facilitar la comparación de la migración.
     component_code = _clean(payload.component_code).upper()
     with get_expedient_connection() as conn:
         cursor = conn.cursor()
@@ -3125,7 +4166,7 @@ def grade_submission(
             UPDATE ex
                SET ex.EstadoExpedienteId = ?, ex.FechaActualizacion = SYSUTCDATETIME(), ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
-            INNER JOIN ing.ExamenIngles e ON e.ExpedienteEstudiantilId = ex.ExpedienteId
+            INNER JOIN ing.ExamenIngles e ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,

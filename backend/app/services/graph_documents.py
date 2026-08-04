@@ -231,6 +231,9 @@ def _ensure_person(
 ) -> int:
     cursor.execute(
         """
+        SET NOCOUNT ON;
+        DECLARE @PersonaResultado TABLE (PersonaGraphRefId BIGINT NOT NULL);
+
         MERGE core.PersonaGraphRef AS target
         USING (SELECT 'ESTUDIANTE' AS TipoPersonaCodigo, ? AS NumeroIdentificacion) AS source
            ON target.TipoPersonaCodigo = source.TipoPersonaCodigo
@@ -245,7 +248,9 @@ def _ensure_person(
             (TipoPersonaCodigo, NumeroIdentificacion, CodigoEstud, NombreCompleto,
              CorreoPersonal, OrigenFuente)
         VALUES ('ESTUDIANTE', ?, ?, ?, NULLIF(?, N''), 'EXPEDIENTE_DOCUMENTAL')
-        OUTPUT INSERTED.PersonaGraphRefId;
+        OUTPUT INSERTED.PersonaGraphRefId INTO @PersonaResultado (PersonaGraphRefId);
+
+        SELECT TOP (1) PersonaGraphRefId FROM @PersonaResultado;
         """,
         identification,
         student_code,
@@ -299,6 +304,9 @@ def prepare_expedient(
         )
         cursor.execute(
             """
+            SET NOCOUNT ON;
+            DECLARE @ExpedienteResultado TABLE (ExpedienteGraphId BIGINT NOT NULL);
+
             MERGE doc.ExpedienteGraph AS target
             USING (SELECT ? AS TipoCodigo, ? AS BaseOrigen, ? AS EsquemaOrigen,
                           ? AS TablaOrigen, ? AS OrigenId) AS source
@@ -319,7 +327,9 @@ def prepare_expedient(
                  UsuarioCreacion)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, N''), ?, NULLIF(?, N''),
                     NULLIF(?, N''), ?, NULLIF(?, N''), ?)
-            OUTPUT INSERTED.ExpedienteGraphId;
+            OUTPUT INSERTED.ExpedienteGraphId INTO @ExpedienteResultado (ExpedienteGraphId);
+
+            SELECT TOP (1) ExpedienteGraphId FROM @ExpedienteResultado;
             """,
             module,
             base_origin,
@@ -415,9 +425,14 @@ def register_upload_session(
     upload_url: str,
     expires_at: Any,
     audit_user: str,
+    max_expected_size: int = MAX_DOCUMENT_BYTES,
 ) -> None:
-    if expected_size <= 0 or expected_size > MAX_DOCUMENT_BYTES:
-        raise ValueError("El archivo debe pesar entre 1 byte y 1 GB.")
+    if max_expected_size <= 0:
+        raise ValueError("El limite documental configurado no es valido.")
+    if expected_size <= 0 or expected_size > max_expected_size:
+        max_gb = max_expected_size / (1024 * 1024 * 1024)
+        limit_label = f"{max_gb:g} GB"
+        raise ValueError(f"El archivo debe pesar entre 1 byte y {limit_label}.")
     with get_graph_database_connection() as conn:
         cursor = conn.cursor()
         _assert_schema(cursor)
@@ -611,14 +626,19 @@ def complete_upload_session(
         else:
             cursor.execute(
                 """
+                SET NOCOUNT ON;
+                DECLARE @DocumentoResultado TABLE (DocumentoGraphId BIGINT NOT NULL);
+
                 INSERT INTO doc.DocumentoGraph
                     (ExpedienteGraphId, TipoDocumentoCodigo, EstadoDocumentoGraphCodigo,
                      NombreArchivo, ContentType, TamanoBytes, VersionActual, GraphDriveId,
                      GraphItemId, GraphETag, GraphWebUrl, RutaGraph, FechaLimiteEdicion,
                      UsuarioCarga)
-                OUTPUT INSERTED.DocumentoGraphId
+                OUTPUT INSERTED.DocumentoGraphId INTO @DocumentoResultado (DocumentoGraphId)
                 VALUES (?, ?, 'CARGADO', ?, ?, ?, 1, NULLIF(?, N''), ?, NULLIF(?, N''),
                         NULLIF(?, N''), ?, ?, ?)
+
+                SELECT TOP (1) DocumentoGraphId FROM @DocumentoResultado;
                 """,
                 int(session.ExpedienteGraphId),
                 clean(session.TipoDocumentoCodigo),

@@ -99,7 +99,6 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   const canSave = Boolean(
     selectedRoleMeta
     && !selectedRoleMeta.protected
-    && selectedPages.length > 0
     && (hasChanges || !selectedRoleMeta.configured),
   )
 
@@ -330,7 +329,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 </button>
               </div>
 
-              {selectedPages.length === 0 ? <div className="status-message status-message--info">Seleccione al menos una pantalla antes de guardar.</div> : null}
+              {selectedPages.length === 0 ? <div className="status-message status-message--info">Este perfil quedara sin acceso al sistema cuando guarde la asignacion.</div> : null}
               {message ? <div className="status-message status-message--success">{message}</div> : null}
               {error ? <div className="status-message status-message--error">{error}</div> : null}
 
@@ -349,7 +348,11 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                             disabled={saving || selectedRoleMeta.protected}
                             onChange={() => togglePage(screen.page)}
                           />
-                          <span><strong>{screen.label}</strong><small>{screen.description}</small></span>
+                          <span>
+                            <strong>{screen.label}</strong>
+                            <small>{screen.description}</small>
+                            <small className="screen-access-item__code">{screen.page}</small>
+                          </span>
                         </label>
                       ))}
                     </div>
