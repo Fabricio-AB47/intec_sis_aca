@@ -561,6 +561,9 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertIn("Recuperacion = ?", update_sql)
         self.assertIn("INNER JOIN dbo.DATOS_ESTUD AS de_active", update_sql)
         self.assertIn("de_active.Estado", update_sql)
+        assignment_sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("cxd.cod_Anio_Basica", assignment_sql)
+        self.assertNotIn("cxd.cod_AnioBasica", assignment_sql)
         self.assertEqual(update_params[3], 9.3)
         self.assertEqual(update_params[7], 8.87)
         self.assertEqual(update_params[11], 10)

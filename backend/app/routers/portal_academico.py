@@ -6660,7 +6660,7 @@ def teacher_save_grades(
                   ON TRY_CONVERT(int, target_pensum.Cod_AnioBasica) = ?
                  AND TRY_CONVERT(int, target_pensum.codigo_materia) = ?
                 WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
-                  AND TRY_CONVERT(int, cxd.cod_AnioBasica) = ?
+                  AND TRY_CONVERT(int, cxd.cod_Anio_Basica) = ?
                   AND TRY_CONVERT(int, cxd.codigo_periodo) = ?
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
                   AND UPPER(LTRIM(RTRIM(COALESCE(
