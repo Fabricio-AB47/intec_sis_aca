@@ -1,15 +1,17 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from html import escape
+from hashlib import sha256
 from io import BytesIO
 import json
 import logging
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
+import textwrap
 import unicodedata
 from typing import Annotated, Any, Literal
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -20,11 +22,14 @@ from openpyxl import Workbook
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field, ValidationError
 import pyodbc
+from starlette.concurrency import run_in_threadpool
 from asn1crypto import pkcs12 as asn1_pkcs12
 from cryptography import x509 as crypto_x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12 as crypto_pkcs12
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+from pyhanko.pdf_utils.reader import PdfFileReader
+from pyhanko.pdf_utils.text import TextBoxStyle
 from pyhanko.sign import signers
 from pyhanko.sign.fields import SigFieldSpec, SigSeedSubFilter
 from pyhanko.stamp import QRStampStyle
@@ -36,11 +41,17 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Flowable, Image as PdfImage, Indenter, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image as PdfImage, Indenter, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
 from app.services.db import get_connection, get_finance_connection
+from app.services.graph_documents import (
+    delete_item as delete_graph_document_item,
+    ensure_folder as ensure_graph_document_folder,
+    safe_folder_part as graph_safe_folder_part,
+    upload_bytes as upload_graph_document_bytes,
+)
 from app.services.grade_calculation import (
     calculate_homologation_grade_with_recovery,
     calculate_regular_grade_with_recovery,
@@ -63,6 +74,41 @@ _ACADEMIC_PLANNING_PEA_BACKGROUND_PATH = _BACKEND_ROOT / "app" / "assets" / "aca
 _ACADEMIC_PLANNING_SYLLABUS_BACKGROUND_PATH = _BACKEND_ROOT / "app" / "assets" / "academic_planning_silabo_background.png"
 _PORTAL_CONFIG_ROOT = _BACKEND_ROOT / "data"
 _TEACHER_COMPLIANCE_FORMAT_PATH = _PORTAL_CONFIG_ROOT / "teacher_compliance_format.json"
+_TEACHER_CONTRACT_STORAGE_ROOT = _BACKEND_ROOT / "private_uploads" / "teacher_contracts"
+_TEACHER_CONTRACT_MAX_FILE_SIZE = 15 * 1024 * 1024
+_TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE = 2 * 1024 * 1024
+_TEACHER_CONTRACT_MAX_PAGES = 60
+_SIGNED_TEACHER_DOCUMENT_MAX_FILE_SIZE = 100 * 1024 * 1024
+_TEACHER_DOCUMENT_ONEDRIVE_ROOT = "DOCENTES"
+
+_CONTRACT_SPANISH_MONTHS = {
+    "ENE": 1,
+    "ENERO": 1,
+    "FEB": 2,
+    "FEBRERO": 2,
+    "MAR": 3,
+    "MARZO": 3,
+    "ABR": 4,
+    "ABRIL": 4,
+    "MAY": 5,
+    "MAYO": 5,
+    "JUN": 6,
+    "JUNIO": 6,
+    "JUL": 7,
+    "JULIO": 7,
+    "AGO": 8,
+    "AGOSTO": 8,
+    "SEP": 9,
+    "SEPT": 9,
+    "SEPTIEMBRE": 9,
+    "SETIEMBRE": 9,
+    "OCT": 10,
+    "OCTUBRE": 10,
+    "NOV": 11,
+    "NOVIEMBRE": 11,
+    "DIC": 12,
+    "DICIEMBRE": 12,
+}
 
 
 class TeacherGradePayload(BaseModel):
@@ -1875,6 +1921,8 @@ def _course_item(row: Any) -> dict[str, Any]:
         "detalle_periodos": detalle_periodo,
         "tipo_periodo": tipo_periodo,
         "es_homologacion": es_homologacion,
+        "fecha_inicio": _contract_value(getattr(row, "fecha_inicio", None)),
+        "fecha_fin": _contract_value(getattr(row, "fecha_fin", None)),
         "paralelo": _clean(row.paralelo),
         "cod_jornada": _int(row.cod_jornada),
         "jornada": _clean(getattr(row, "jornada", "")) or (
@@ -2103,6 +2151,8 @@ def teacher_profile(
                     TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) AS docente,
                     TRY_CONVERT(nvarchar(255), d.correo) AS correo,
                     TRY_CONVERT(nvarchar(255), d.correop) AS correo_personal,
+                    TRY_CONVERT(nvarchar(100), d.telefono) AS telefono,
+                    TRY_CONVERT(nvarchar(100), d.movil) AS movil,
                     TRY_CONVERT(nvarchar(255), d.TipoDocente) AS tipo_docente,
                     TRY_CONVERT(nvarchar(4000), d.Perfil) AS perfil
                 FROM dbo.DATOSDOCENTE d
@@ -2120,6 +2170,8 @@ def teacher_profile(
                 "docente": _clean(row.docente),
                 "correo": _clean(row.correo),
                 "correo_personal": _clean(row.correo_personal),
+                "telefono": _clean(row.telefono),
+                "movil": _clean(row.movil),
                 "tipo_docente": _clean(row.tipo_docente),
                 "perfil": _clean(row.perfil),
             }
@@ -2136,19 +2188,695 @@ def _contract_value(value: Any) -> Any:
     return value
 
 
+def _teacher_contract_identity(current_user: SessionUser) -> dict[str, Any]:
+    profile = teacher_profile(current_user).get("teacher", {})
+    cedula = _clean(profile.get("cedula") or current_user.cedula)
+    if not cedula:
+        raise HTTPException(status_code=403, detail="La sesión no tiene una identificación docente vinculada")
+    return {
+        "codigo_doc": _clean(profile.get("codigo_doc") or current_user.codigo_doc),
+        "cedula": cedula,
+        "nombre": _clean(profile.get("docente") or current_user.nombres or current_user.login),
+        "correo": _clean(profile.get("correo") or current_user.login),
+        "correo_personal": _clean(profile.get("correo_personal")),
+        "tipo_docente": _clean(profile.get("tipo_docente")),
+        "perfil": _clean(profile.get("perfil")),
+    }
+
+
+def _ensure_teacher_contract_document_schema(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'rrhh.ContratoDocenteDocumento', N'U') IS NULL
+        BEGIN
+            CREATE TABLE rrhh.ContratoDocenteDocumento
+            (
+                ContratoDocumentoId BIGINT IDENTITY(1,1) NOT NULL
+                    CONSTRAINT PK_ContratoDocenteDocumento PRIMARY KEY,
+                ContratoDocenteId BIGINT NOT NULL,
+                TipoDocumento VARCHAR(20) NOT NULL,
+                ModalidadAcademica VARCHAR(20) NOT NULL,
+                NombreArchivo NVARCHAR(260) NOT NULL,
+                RutaInterna NVARCHAR(1000) NOT NULL,
+                MimeType VARCHAR(100) NOT NULL
+                    CONSTRAINT DF_ContratoDocenteDocumento_MimeType DEFAULT ('application/pdf'),
+                TamanoBytes BIGINT NOT NULL,
+                HashSha256 CHAR(64) NOT NULL,
+                EsVigente BIT NOT NULL
+                    CONSTRAINT DF_ContratoDocenteDocumento_EsVigente DEFAULT (1),
+                UsuarioCarga NVARCHAR(256) NULL,
+                FechaCarga DATETIME2 NOT NULL
+                    CONSTRAINT DF_ContratoDocenteDocumento_FechaCarga DEFAULT (SYSDATETIME()),
+                FirmanteDocumento NVARCHAR(300) NULL,
+                FechaFirma DATETIME2 NULL,
+                FirmaMotivo NVARCHAR(500) NULL,
+                CONSTRAINT FK_ContratoDocenteDocumento_Contrato
+                    FOREIGN KEY (ContratoDocenteId)
+                    REFERENCES rrhh.ContratoDocente(ContratoDocenteId),
+                CONSTRAINT CK_ContratoDocenteDocumento_Tipo
+                    CHECK (TipoDocumento IN ('ORIGINAL', 'FIRMADO')),
+                CONSTRAINT CK_ContratoDocenteDocumento_Modalidad
+                    CHECK (ModalidadAcademica IN ('REGULAR', 'HOMOLOGACION')),
+                CONSTRAINT CK_ContratoDocenteDocumento_Tamano
+                    CHECK (TamanoBytes > 0)
+            );
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT 1 FROM sys.indexes
+            WHERE object_id = OBJECT_ID(N'rrhh.ContratoDocenteDocumento')
+              AND name = N'IX_ContratoDocenteDocumento_ContratoVigente'
+        )
+        BEGIN
+            CREATE INDEX IX_ContratoDocenteDocumento_ContratoVigente
+                ON rrhh.ContratoDocenteDocumento
+                (ContratoDocenteId, TipoDocumento, EsVigente, ContratoDocumentoId DESC);
+        END;
+        """
+    )
+
+
+def _sync_finance_teacher(cursor: pyodbc.Cursor, identity: dict[str, Any]) -> int:
+    cursor.execute(
+        """
+        SELECT TOP (1) DocenteId
+        FROM core.Docente
+        WHERE LTRIM(RTRIM(NumeroIdentificacion)) = ?
+        ORDER BY DocenteId DESC
+        """,
+        identity["cedula"],
+    )
+    row = cursor.fetchone()
+    if row:
+        teacher_id = int(row.DocenteId)
+        cursor.execute(
+            """
+            UPDATE core.Docente
+            SET CodigoDocente = TRY_CONVERT(decimal(18,0), ?),
+                NombreCompleto = ?,
+                Correo = NULLIF(?, N''),
+                TipoDocente = NULLIF(?, N''),
+                FuenteOrigen = 'INTECBDD',
+                FechaSincronizacion = SYSDATETIME()
+            WHERE DocenteId = ?
+            """,
+            identity.get("codigo_doc"),
+            identity["nombre"],
+            identity.get("correo"),
+            identity.get("tipo_docente"),
+            teacher_id,
+        )
+        return teacher_id
+
+    cursor.execute(
+        """
+        SET NOCOUNT ON;
+        DECLARE @DocenteCreado TABLE (DocenteId BIGINT NOT NULL);
+
+        INSERT INTO core.Docente
+        (
+            CodigoDocente, NumeroIdentificacion, NombreCompleto, Correo,
+            TipoDocente, FuenteOrigen, FechaSincronizacion
+        )
+        OUTPUT INSERTED.DocenteId INTO @DocenteCreado (DocenteId)
+        VALUES
+        (
+            TRY_CONVERT(decimal(18,0), ?), ?, ?, NULLIF(?, N''),
+            NULLIF(?, N''), 'INTECBDD', SYSDATETIME()
+        );
+
+        SELECT DocenteId FROM @DocenteCreado;
+        """,
+        identity.get("codigo_doc"),
+        identity["cedula"],
+        identity["nombre"],
+        identity.get("correo"),
+        identity.get("tipo_docente"),
+    )
+    created = cursor.fetchone()
+    if not created:
+        raise HTTPException(status_code=500, detail="No se pudo sincronizar el docente en la base financiera")
+    return int(created.DocenteId)
+
+
+def _teacher_contract_assignment(
+    current_user: SessionUser,
+    *,
+    cod_anio_basica: int,
+    codigo_periodo: int,
+    codigo_materia: str,
+    paralelo: str,
+    cod_jornada: int | None,
+) -> dict[str, Any]:
+    codigo_doc = _teacher_code(current_user)
+    subject_code = _clean(codigo_materia).upper()
+    parallel = _clean(paralelo).upper()
+    if not subject_code or not parallel:
+        raise HTTPException(status_code=400, detail="Seleccione una asignación académica válida")
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT TOP (1)
+                    TRY_CONVERT(nvarchar(100), cxd.cod_Anio_Basica) AS codigo_carrera,
+                    TRY_CONVERT(nvarchar(500), c.Nombre_Basica) AS nombre_carrera,
+                    TRY_CONVERT(nvarchar(100), cxd.codigo_materia) AS codigo_materia_interno,
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), p.cod_materia))), N''),
+                        TRY_CONVERT(nvarchar(100), cxd.codigo_materia)
+                    ) AS codigo_materia,
+                    TRY_CONVERT(nvarchar(500), p.Nomb_Materia) AS nombre_materia,
+                    TRY_CONVERT(nvarchar(100), cxd.codigo_periodo) AS codigo_periodo,
+                    TRY_CONVERT(nvarchar(500), pe.Detalle_Periodo) AS detalle_periodo,
+                    TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
+                    TRY_CONVERT(nvarchar(40), cxd.Paralelo) AS paralelo,
+                    TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
+                    TRY_CONVERT(nvarchar(100), j.DetalleJ) AS jornada,
+                    TRY_CONVERT(decimal(18,2), p.Horas) AS horas_planificadas
+                FROM dbo.CARRERAXDOCENTE cxd
+                LEFT JOIN dbo.CARRERAS c
+                  ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                LEFT JOIN dbo.PENSUM p
+                  ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                 AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
+                LEFT JOIN dbo.PERIODO pe
+                  ON TRY_CONVERT(int, pe.cod_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+                LEFT JOIN dbo.JORNADA j
+                  ON TRY_CONVERT(int, j.NumJ) = TRY_CONVERT(int, cxd.Cod_Jornada)
+                WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
+                  AND TRY_CONVERT(int, cxd.cod_Anio_Basica) = ?
+                  AND TRY_CONVERT(int, cxd.codigo_periodo) = ?
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(40), cxd.Paralelo)))) = ?
+                  AND (? IS NULL OR TRY_CONVERT(int, cxd.Cod_Jornada) = ?)
+                  AND
+                  (
+                      UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), cxd.codigo_materia)))) = ?
+                      OR UPPER(LTRIM(RTRIM(COALESCE(
+                          NULLIF(TRY_CONVERT(nvarchar(100), p.cod_materia), N''),
+                          TRY_CONVERT(nvarchar(100), cxd.codigo_materia)
+                      )))) = ?
+                  )
+                ORDER BY TRY_CONVERT(int, cxd.codigo_materia)
+                """,
+                codigo_doc,
+                cod_anio_basica,
+                codigo_periodo,
+                parallel,
+                cod_jornada,
+                cod_jornada,
+                subject_code,
+                subject_code,
+            )
+            row = cursor.fetchone()
+    except pyodbc.Error as exc:
+        logger.exception("No se pudo validar la asignación del contrato docente")
+        raise HTTPException(status_code=503, detail="No se pudo validar la asignación académica seleccionada") from exc
+
+    if not row:
+        raise HTTPException(
+            status_code=403,
+            detail="El curso seleccionado no pertenece al docente autenticado",
+        )
+    is_homologation = _is_homologation_type(row.tipo_periodo, row.detalle_periodo)
+    return {
+        "codigo_carrera": _clean(row.codigo_carrera),
+        "nombre_carrera": _clean(row.nombre_carrera),
+        "codigo_materia_interno": _clean(row.codigo_materia_interno),
+        "codigo_materia": _clean(row.codigo_materia),
+        "nombre_materia": _clean(row.nombre_materia),
+        "codigo_periodo": _clean(row.codigo_periodo),
+        "detalle_periodo": _clean(row.detalle_periodo),
+        "tipo_periodo": _clean(row.tipo_periodo),
+        "modalidad_academica": "HOMOLOGACION" if is_homologation else "REGULAR",
+        "paralelo": _clean(row.paralelo),
+        "cod_jornada": _int(row.cod_jornada),
+        "jornada": _clean(row.jornada),
+        "horas_planificadas": _number(row.horas_planificadas) or 0,
+    }
+
+
+def _validate_teacher_contract_pdf(filename: str | None, content: bytes) -> str:
+    original_name = Path(_clean(filename)).name
+    if not original_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="El contrato debe ser un archivo PDF")
+    if not content:
+        raise HTTPException(status_code=400, detail="El archivo PDF está vacío")
+    if len(content) > _TEACHER_CONTRACT_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="El contrato PDF debe pesar máximo 15 MB")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="El archivo seleccionado no contiene un PDF válido")
+    try:
+        IncrementalPdfFileWriter(BytesIO(content))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo abrir la estructura del PDF del contrato") from exc
+    return original_name[:260]
+
+
+def _validate_signed_teacher_document_pdf(content: bytes, label: str) -> None:
+    if not content:
+        raise HTTPException(status_code=400, detail=f"El PDF firmado de {label} está vacío")
+    if len(content) > _SIGNED_TEACHER_DOCUMENT_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"El PDF firmado de {label} excede 100 MB")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail=f"El archivo de {label} no contiene un PDF válido")
+
+
+def _signed_teacher_documents_archive(
+    compliance_pdf: bytes,
+    grades_pdf: bytes,
+    contract_pdf: bytes,
+) -> bytes:
+    documents = (
+        ("informe-cumplimiento-firmado.pdf", compliance_pdf, "informe de cumplimiento", "FirmaDocente"),
+        (
+            "reporte-notas-secretaria-firmado.pdf",
+            grades_pdf,
+            "reporte de notas",
+            "FirmaDocenteReporteNotas",
+        ),
+        (
+            "contrato-docente-firmado.pdf",
+            contract_pdf,
+            "contrato docente",
+            "FirmaDocenteContratoInforme",
+        ),
+    )
+    output = BytesIO()
+    with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+        for filename, content, label, signature_field in documents:
+            _validate_signed_teacher_document_pdf(content, label)
+            _assert_pdf_signature_field(content, signature_field)
+            archive.writestr(filename, content)
+    return output.getvalue()
+
+
+def _teacher_signed_documents_folder(
+    identity: dict[str, Any],
+    *,
+    subject_code: str = "",
+    subject_name: str = "",
+    period_codes: list[str] | None = None,
+    signed_at: datetime | None = None,
+) -> str:
+    teacher_document = re.sub(r"\D+", "", _clean(identity.get("cedula")))
+    teacher_document = teacher_document or _clean(identity.get("codigo_doc")) or "SIN-ID"
+    teacher_name = graph_safe_folder_part(
+        _clean(identity.get("nombre")),
+        f"DOCENTE {teacher_document}",
+        max_length=max(30, 100 - len(teacher_document) - 3),
+    )
+    teacher_folder = graph_safe_folder_part(
+        f"{teacher_name} - {teacher_document}",
+        teacher_document,
+        max_length=110,
+    )
+
+    normalized_subject_code = _clean(subject_code)
+    normalized_subject_name = _clean(subject_name)
+    subject_label = normalized_subject_name
+    if (
+        normalized_subject_code
+        and normalized_subject_code.upper() not in normalized_subject_name.upper()
+    ):
+        subject_label = (
+            f"{normalized_subject_name} - {normalized_subject_code}"
+            if normalized_subject_name
+            else normalized_subject_code
+        )
+    subject_folder = graph_safe_folder_part(subject_label, "ASIGNATURA", max_length=110)
+
+    unique_periods: list[str] = []
+    for period_code in period_codes or []:
+        normalized_period = _clean(period_code)
+        if normalized_period and normalized_period not in unique_periods:
+            unique_periods.append(normalized_period)
+    period_folder = graph_safe_folder_part(" - ".join(unique_periods), "SIN PERIODO", max_length=110)
+    operation_time = signed_at or datetime.now(timezone.utc)
+    operation_folder = operation_time.astimezone(timezone.utc).strftime("FIRMA %Y%m%d-%H%M%S-%f UTC")
+
+    return "/".join(
+        [
+            _TEACHER_DOCUMENT_ONEDRIVE_ROOT,
+            teacher_folder,
+            "DOCUMENTOS FIRMADOS",
+            subject_folder,
+            period_folder,
+            operation_folder,
+        ]
+    )
+
+
+def _store_signed_teacher_documents_onedrive(
+    *,
+    identity: dict[str, Any],
+    compliance_pdf: bytes,
+    grades_pdf: bytes,
+    contract_pdf: bytes,
+    archive_bytes: bytes,
+    subject_code: str = "",
+    subject_name: str = "",
+    period_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    folder_path = _teacher_signed_documents_folder(
+        identity,
+        subject_code=subject_code,
+        subject_name=subject_name,
+        period_codes=period_codes,
+    )
+    folder = ensure_graph_document_folder(folder_path)
+    documents = (
+        ("informe-cumplimiento-firmado.pdf", compliance_pdf, "application/pdf"),
+        ("reporte-notas-secretaria-firmado.pdf", grades_pdf, "application/pdf"),
+        ("contrato-docente-firmado.pdf", contract_pdf, "application/pdf"),
+        ("documentos-docente-firmados.zip", archive_bytes, "application/zip"),
+    )
+    uploaded_items: list[dict[str, Any]] = []
+    try:
+        for filename, content, content_type in documents:
+            item = upload_graph_document_bytes(
+                f"{folder_path}/{filename}",
+                content,
+                content_type,
+            )
+            if not _clean(item.get("id")):
+                raise RuntimeError(f"Microsoft Graph no confirmó el archivo {filename}.")
+            uploaded_items.append(item)
+    except Exception:
+        for item in reversed(uploaded_items):
+            try:
+                delete_graph_document_item(_clean(item.get("id")))
+            except Exception:
+                logger.warning(
+                    "No se pudo revertir el documento parcial %s en OneDrive.",
+                    _clean(item.get("id")),
+                    exc_info=True,
+                )
+        try:
+            delete_graph_document_item(_clean(folder.get("id")))
+        except Exception:
+            logger.warning(
+                "No se pudo eliminar la carpeta de operación incompleta %s en OneDrive.",
+                _clean(folder.get("id")),
+                exc_info=True,
+            )
+        raise
+
+    return {
+        "folder_path": folder_path,
+        "folder": folder,
+        "items": uploaded_items,
+    }
+
+
+def _contract_text_key(value: Any) -> str:
+    normalized = unicodedata.normalize("NFD", _clean(value)).upper()
+    return re.sub(r"[^A-Z0-9]", "", "".join(char for char in normalized if not unicodedata.combining(char)))
+
+
+def _contract_pdf_lines(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFC", value or "").replace("\x00", " ").replace("\u00a0", " ")
+    return [re.sub(r"\s+", " ", line).strip() for line in normalized.splitlines() if line.strip()]
+
+
+def _extract_teacher_contract_pdf_text(content: bytes) -> str:
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(content)
+        try:
+            if len(document) < 1:
+                raise HTTPException(status_code=400, detail="El contrato PDF no contiene páginas")
+            if len(document) > _TEACHER_CONTRACT_MAX_PAGES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El contrato supera el límite de {_TEACHER_CONTRACT_MAX_PAGES} páginas",
+                )
+            text_parts: list[str] = []
+            for page_index in range(len(document)):
+                page = document[page_index]
+                try:
+                    text_page = page.get_textpage()
+                    try:
+                        text_parts.append(text_page.get_text_range())
+                    finally:
+                        text_page.close()
+                finally:
+                    page.close()
+        finally:
+            document.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo analizar el texto del contrato PDF") from exc
+
+    extracted = "\n".join(text_parts).strip()
+    if not extracted:
+        raise HTTPException(
+            status_code=400,
+            detail="El contrato no contiene texto seleccionable para reconocer número, docente y fechas",
+        )
+    return extracted
+
+
+def _contract_date_from_parts(day: str, month: str, year: str) -> date | None:
+    month_key = _contract_text_key(month)
+    month_number = _CONTRACT_SPANISH_MONTHS.get(month_key)
+    if month_number is None and month_key.isdigit():
+        month_number = int(month_key)
+    try:
+        return date(int(year), int(month_number or 0), int(day))
+    except ValueError:
+        return None
+
+
+def _contract_labeled_date(text: str, labels: str) -> date | None:
+    match = re.search(
+        rf"(?:{labels})(?:\s+(?:EL|DEL|DE))?\s*[:.-]?\s*(\d{{1,2}})\s*[/.-]\s*([A-ZÁÉÍÓÚÑ]{{2,12}}|\d{{1,2}})\s*[/.-]\s*(\d{{4}})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return _contract_date_from_parts(match.group(1), match.group(2), match.group(3))
+
+
+def _contract_decimal(value: str) -> float | None:
+    cleaned = re.sub(r"[^0-9.,]", "", value or "")
+    if not cleaned:
+        return None
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        integer, decimal_part = cleaned.rsplit(",", 1)
+        cleaned = f"{integer.replace(',', '')}.{decimal_part}" if len(decimal_part) <= 2 else cleaned.replace(",", "")
+    try:
+        return round(float(cleaned), 2)
+    except ValueError:
+        return None
+
+
+def _parse_teacher_contract_text(text: str) -> dict[str, Any]:
+    lines = _contract_pdf_lines(text)
+    flat_text = " ".join(lines)
+    upper_text = flat_text.upper()
+
+    contract_number = ""
+    for line in lines:
+        number_match = re.search(r"\bCONTRATO\s*:\s*(.+)$", line, flags=re.IGNORECASE)
+        if number_match:
+            contract_number = re.sub(
+                r"^(?:N(?:O|º|°)?\.?\s*)",
+                "",
+                number_match.group(1).strip(),
+                flags=re.IGNORECASE,
+            ).strip(" .")
+            break
+    if not contract_number:
+        number_match = re.search(
+            r"\bCONTRATO\s*:\s*(?:N(?:O|º|°)?\.?\s*)?(.+?)(?=\s+CONTRATO\s+DE\b|\s+COMPARECIENTES\b)",
+            flat_text,
+            flags=re.IGNORECASE,
+        )
+        contract_number = number_match.group(1).strip(" .") if number_match else ""
+
+    identity_match = re.search(
+        r"(?:C[ÉE]DULA(?:\s+DE\s+CIUDADAN[IÍ]A)?|CIUDADAN[IÍ]A|IDENTIFICACI[ÓO]N)[^0-9]{0,45}([0-9]{10,13})",
+        flat_text,
+        flags=re.IGNORECASE,
+    )
+    subject_match = re.search(r"\b(VGA(?:-[A-Z0-9]+){2,5})\b", upper_text)
+    start_date = _contract_labeled_date(flat_text, r"INICIA|INICIO|FECHA\s+DE\s+INICIO")
+    end_date = _contract_labeled_date(flat_text, r"TERMINA|FINALIZA|FECHA\s+DE\s+FIN|FECHA\s+FINAL")
+
+    value_match = re.search(
+        r"VALOR\s+TOTAL.{0,300}?(?:US\$|USD|D[ÓO]LARES?)\s*[:.]?\s*([0-9][0-9.,]*)",
+        flat_text,
+        flags=re.IGNORECASE,
+    )
+    if not value_match:
+        value_match = re.search(r"\(\s*US\$\s*([0-9][0-9.,]*)\s*\)", flat_text, flags=re.IGNORECASE)
+    value_total = _contract_decimal(value_match.group(1)) if value_match else None
+    modality_source = f"{contract_number} {' '.join(lines[:12])}"
+    modality = "HOMOLOGACION" if re.search(r"\bHOMO(?:LOGACI[ÓO]N|LOGADO|LOGADA)?\b", modality_source, re.IGNORECASE) else "REGULAR"
+
+    analysis = {
+        "numero_contrato": contract_number,
+        "cedula": identity_match.group(1) if identity_match else "",
+        "codigo_materia": subject_match.group(1) if subject_match else "",
+        "modalidad_academica": modality,
+        "fecha_inicio": start_date.isoformat() if start_date else "",
+        "fecha_fin": end_date.isoformat() if end_date else "",
+        "valor_total": value_total,
+    }
+    missing_labels = {
+        "numero_contrato": "número de contrato",
+        "cedula": "cédula del docente",
+        "codigo_materia": "código de materia",
+        "fecha_inicio": "fecha de inicio",
+        "fecha_fin": "fecha de finalización",
+    }
+    analysis["campos_detectados"] = [key for key in missing_labels if analysis.get(key)]
+    analysis["advertencias"] = [
+        f"No se reconoció {label}; complete o verifique el dato antes de guardar."
+        for key, label in missing_labels.items()
+        if not analysis.get(key)
+    ]
+    return analysis
+
+
+def _validate_teacher_contract_analysis(
+    analysis: dict[str, Any],
+    identity: dict[str, Any],
+    assignment: dict[str, Any] | None = None,
+) -> None:
+    detected_identity = _contract_text_key(analysis.get("cedula"))
+    teacher_identity = _contract_text_key(identity.get("cedula"))
+    if detected_identity and detected_identity != teacher_identity:
+        raise HTTPException(
+            status_code=400,
+            detail="La cédula declarada en el contrato no corresponde al docente autenticado",
+        )
+    if assignment is None:
+        return
+    detected_subject = _contract_text_key(analysis.get("codigo_materia"))
+    accepted_subjects = {
+        _contract_text_key(assignment.get("codigo_materia")),
+        _contract_text_key(assignment.get("codigo_materia_interno")),
+    }
+    accepted_subjects.discard("")
+    if detected_subject and detected_subject not in accepted_subjects:
+        raise HTTPException(
+            status_code=400,
+            detail="El código de materia del contrato no corresponde al curso seleccionado",
+        )
+    if analysis.get("modalidad_academica") != assignment.get("modalidad_academica"):
+        raise HTTPException(
+            status_code=400,
+            detail="La modalidad reconocida en el contrato no corresponde al periodo seleccionado",
+        )
+
+
+def _teacher_contract_document_relative_path(
+    cedula: str,
+    contract_id: int,
+    document_type: str,
+    filename: str,
+) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    safe_name = _safe_filename(Path(filename).stem)[:100]
+    return Path(_safe_filename(cedula)) / str(contract_id) / document_type.lower() / f"{timestamp}-{safe_name}.pdf"
+
+
+def _teacher_contract_document_path(relative_path: str | Path) -> Path:
+    root = _TEACHER_CONTRACT_STORAGE_ROOT.resolve()
+    candidate = (root / Path(relative_path)).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="La ruta interna del contrato no es válida") from exc
+    return candidate
+
+
+def _teacher_contract_owned(
+    cursor: pyodbc.Cursor,
+    *,
+    contract_id: int,
+    teacher_id: int,
+) -> Any:
+    cursor.execute(
+        """
+        SELECT TOP (1)
+            c.ContratoDocenteId AS contrato_id,
+            c.NumeroContrato AS numero_contrato,
+            c.RutaContratoFirmado AS ruta_contrato_firmado
+        FROM rrhh.ContratoDocente c
+        WHERE c.ContratoDocenteId = ? AND c.DocenteId = ?
+        """,
+        contract_id,
+        teacher_id,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No se encontró el contrato para el docente autenticado")
+    return row
+
+
+def _teacher_contract_document(
+    cursor: pyodbc.Cursor,
+    *,
+    contract_id: int,
+    version: str,
+) -> Any:
+    requested_type = "ORIGINAL" if version == "original" else "FIRMADO" if version == "signed" else None
+    cursor.execute(
+        """
+        SELECT TOP (1)
+            ContratoDocumentoId AS documento_id,
+            TipoDocumento AS tipo_documento,
+            ModalidadAcademica AS modalidad_academica,
+            NombreArchivo AS nombre_archivo,
+            RutaInterna AS ruta_interna,
+            MimeType AS mime_type,
+            TamanoBytes AS tamano_bytes,
+            HashSha256 AS hash_sha256,
+            FechaCarga AS fecha_carga,
+            FirmanteDocumento AS firmante_documento,
+            FechaFirma AS fecha_firma
+        FROM rrhh.ContratoDocenteDocumento
+        WHERE ContratoDocenteId = ?
+          AND EsVigente = 1
+          AND (? IS NULL OR TipoDocumento = ?)
+        ORDER BY
+            CASE WHEN TipoDocumento = 'FIRMADO' THEN 0 ELSE 1 END,
+            ContratoDocumentoId DESC
+        """,
+        contract_id,
+        requested_type,
+        requested_type,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="El contrato todavía no tiene un documento disponible")
+    return row
+
+
 @router.get("/teacher/contracts")
 def teacher_contracts(
     current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
 ) -> dict[str, Any]:
-    cedula = _clean(current_user.cedula)
-    if not cedula:
-        cedula = _clean(teacher_profile(current_user).get("teacher", {}).get("cedula"))
-    if not cedula:
-        raise HTTPException(status_code=403, detail="La sesión no tiene una identificación docente vinculada")
+    identity = _teacher_contract_identity(current_user)
 
     try:
         with get_finance_connection() as conn:
             cursor = conn.cursor()
+            _ensure_teacher_contract_document_schema(cursor)
+            teacher_id = _sync_finance_teacher(cursor, identity)
+            conn.commit()
             cursor.execute(
                 """
                 SELECT TOP (1)
@@ -2160,21 +2888,14 @@ def teacher_contracts(
                     RelacionLaboral AS relacion_laboral,
                     TiempoDedicacion AS tiempo_dedicacion
                 FROM core.Docente
-                WHERE LTRIM(RTRIM(NumeroIdentificacion)) = ?
+                WHERE DocenteId = ?
                 ORDER BY FechaSincronizacion DESC
                 """,
-                cedula,
+                teacher_id,
             )
             teacher_row = cursor.fetchone()
             if not teacher_row:
-                return {
-                    "teacher": {
-                        "cedula": cedula,
-                        "nombre": current_user.nombres or current_user.login,
-                    },
-                    "contracts": [],
-                    "detail": "El docente aún no tiene información sincronizada en la base financiera.",
-                }
+                raise HTTPException(status_code=500, detail="No se pudo recuperar el docente sincronizado")
 
             cursor.execute(
                 """
@@ -2194,6 +2915,11 @@ def teacher_contracts(
                     c.ResponsableContratacion AS responsable_contratacion,
                     c.Observacion AS observacion,
                     c.RutaContratoFirmado AS ruta_contrato_firmado,
+                    COALESCE(doc_firmado.ModalidadAcademica, doc_original.ModalidadAcademica) AS modalidad_academica,
+                    doc_original.NombreArchivo AS nombre_documento_original,
+                    doc_original.FechaCarga AS fecha_documento_original,
+                    doc_firmado.NombreArchivo AS nombre_documento_firmado,
+                    doc_firmado.FechaFirma AS fecha_documento_firmado,
                     cc.ContratoClaseId AS clase_id,
                     cc.CodigoCarrera AS codigo_carrera,
                     cc.NombreCarrera AS nombre_carrera,
@@ -2215,6 +2941,30 @@ def teacher_contracts(
                     ON ec.EstadoContratoDocenteId = c.EstadoContratoDocenteId
                 LEFT JOIN rrhh.ContratoDocenteClase cc
                     ON cc.ContratoDocenteId = c.ContratoDocenteId
+                OUTER APPLY
+                (
+                    SELECT TOP (1)
+                        d.ModalidadAcademica,
+                        d.NombreArchivo,
+                        d.FechaCarga
+                    FROM rrhh.ContratoDocenteDocumento d
+                    WHERE d.ContratoDocenteId = c.ContratoDocenteId
+                      AND d.TipoDocumento = 'ORIGINAL'
+                      AND d.EsVigente = 1
+                    ORDER BY d.ContratoDocumentoId DESC
+                ) doc_original
+                OUTER APPLY
+                (
+                    SELECT TOP (1)
+                        d.ModalidadAcademica,
+                        d.NombreArchivo,
+                        d.FechaFirma
+                    FROM rrhh.ContratoDocenteDocumento d
+                    WHERE d.ContratoDocenteId = c.ContratoDocenteId
+                      AND d.TipoDocumento = 'FIRMADO'
+                      AND d.EsVigente = 1
+                    ORDER BY d.ContratoDocumentoId DESC
+                ) doc_firmado
                 WHERE c.DocenteId = ?
                 ORDER BY c.FechaInicio DESC, c.ContratoDocenteId DESC, cc.NombreMateria
                 """,
@@ -2243,6 +2993,13 @@ def teacher_contracts(
                     "responsable_contratacion": _clean(row.responsable_contratacion),
                     "observacion": _clean(row.observacion),
                     "ruta_contrato_firmado": _clean(row.ruta_contrato_firmado),
+                    "modalidad_academica": _clean(row.modalidad_academica),
+                    "tiene_documento_original": bool(_clean(row.nombre_documento_original)),
+                    "nombre_documento_original": _clean(row.nombre_documento_original),
+                    "fecha_documento_original": _contract_value(row.fecha_documento_original),
+                    "tiene_documento_firmado": bool(_clean(row.nombre_documento_firmado)),
+                    "nombre_documento_firmado": _clean(row.nombre_documento_firmado),
+                    "fecha_documento_firmado": _contract_value(row.fecha_documento_firmado),
                     "clases": [],
                 }
                 contracts_by_id[contract_id] = contract
@@ -2276,12 +3033,506 @@ def teacher_contracts(
             },
             "contracts": list(contracts_by_id.values()),
         }
-    except pyodbc.Error as exc:
+    except (pyodbc.Error, RuntimeError) as exc:
         logger.exception("No se pudieron consultar los contratos del docente")
         raise HTTPException(
             status_code=503,
             detail="No se pudo consultar la información contractual en este momento.",
         ) from exc
+
+
+@router.post("/teacher/contracts/analyze-document")
+async def teacher_analyze_contract_document(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    contrato: Annotated[UploadFile, File()],
+) -> dict[str, Any]:
+    pdf_bytes = await contrato.read()
+    original_name = _validate_teacher_contract_pdf(contrato.filename, pdf_bytes)
+    identity = _teacher_contract_identity(current_user)
+    analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(pdf_bytes))
+    _validate_teacher_contract_analysis(analysis, identity)
+    return {
+        "ok": True,
+        "nombre_archivo": original_name,
+        "docente_coincide": bool(analysis.get("cedula")),
+        **analysis,
+    }
+
+
+@router.post("/teacher/contracts/sign-uploaded")
+async def teacher_sign_uploaded_contract_document(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    contrato: Annotated[UploadFile, File()],
+    certificado: Annotated[UploadFile, File()],
+    contrasena_certificado: Annotated[str, Form(min_length=1, max_length=256)],
+    firma_motivo: Annotated[str, Form(max_length=200)] = "Aceptación y firma de contrato docente",
+    firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
+    firma_contacto: Annotated[str, Form(max_length=200)] = "",
+) -> StreamingResponse:
+    contract_bytes = await contrato.read()
+    original_name = _validate_teacher_contract_pdf(contrato.filename, contract_bytes)
+    identity = _teacher_contract_identity(current_user)
+    analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(contract_bytes))
+    _validate_teacher_contract_analysis(analysis, identity)
+
+    certificate_name = _clean(certificado.filename).lower()
+    if not certificate_name.endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
+    certificate_bytes = await certificado.read()
+    if not certificate_bytes:
+        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
+    if len(certificate_bytes) > _TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+
+    signed_pdf = await _sign_pdf_with_pkcs12(
+        pdf_bytes=contract_bytes,
+        pkcs12_bytes=certificate_bytes,
+        password=contrasena_certificado,
+        current_user=current_user,
+        reason=firma_motivo,
+        location=firma_ubicacion,
+        contact=firma_contacto,
+        signature_box=(335, 42, 565, 112),
+        field_name="FirmaDocenteContratoInforme",
+        readable_field_name="Firma electrónica del docente contratista",
+    )
+    filename = f"{_safe_filename(Path(original_name).stem)}-firmado-docente.pdf"
+    return StreamingResponse(
+        BytesIO(signed_pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/teacher/contracts/document")
+async def teacher_upload_contract_document(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    numero_contrato: Annotated[str, Form(min_length=1, max_length=100)],
+    cod_anio_basica: Annotated[int, Form(gt=0)],
+    codigo_periodo: Annotated[int, Form(gt=0)],
+    codigo_materia: Annotated[str, Form(min_length=1, max_length=100)],
+    paralelo: Annotated[str, Form(min_length=1, max_length=20)],
+    modalidad_academica: Annotated[Literal["REGULAR", "HOMOLOGACION"], Form()],
+    fecha_inicio: Annotated[str, Form(min_length=10, max_length=10)],
+    fecha_fin: Annotated[str, Form(min_length=10, max_length=10)],
+    horas_planificadas: Annotated[float, Form(ge=0, le=10000)],
+    valor_hora: Annotated[float, Form(ge=0, le=100000)],
+    valor_total: Annotated[float, Form(ge=0, le=10000000)],
+    contrato: Annotated[UploadFile, File()],
+    cod_jornada: Annotated[int | None, Form()] = None,
+    responsable_contratacion: Annotated[str, Form(max_length=200)] = "",
+    observacion: Annotated[str, Form(max_length=1000)] = "",
+) -> dict[str, Any]:
+    try:
+        start_date = date.fromisoformat(fecha_inicio)
+        end_date = date.fromisoformat(fecha_fin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Las fechas del contrato no tienen un formato válido") from exc
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="La fecha final no puede ser anterior a la fecha inicial")
+
+    identity = _teacher_contract_identity(current_user)
+    assignment = _teacher_contract_assignment(
+        current_user,
+        cod_anio_basica=cod_anio_basica,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        cod_jornada=cod_jornada,
+    )
+    if assignment["modalidad_academica"] != modalidad_academica:
+        expected = "homologación" if assignment["modalidad_academica"] == "HOMOLOGACION" else "regular"
+        raise HTTPException(
+            status_code=400,
+            detail=f"La modalidad del contrato debe ser {expected} según el periodo seleccionado",
+        )
+
+    pdf_bytes = await contrato.read()
+    original_name = _validate_teacher_contract_pdf(contrato.filename, pdf_bytes)
+    analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(pdf_bytes))
+    _validate_teacher_contract_analysis(analysis, identity, assignment)
+    if analysis.get("numero_contrato") and _contract_text_key(analysis["numero_contrato"]) != _contract_text_key(numero_contrato):
+        raise HTTPException(status_code=400, detail="El número ingresado no coincide con el contrato PDF")
+    if analysis.get("fecha_inicio") and analysis["fecha_inicio"] != start_date.isoformat():
+        raise HTTPException(status_code=400, detail="La fecha inicial ingresada no coincide con el contrato PDF")
+    if analysis.get("fecha_fin") and analysis["fecha_fin"] != end_date.isoformat():
+        raise HTTPException(status_code=400, detail="La fecha final ingresada no coincide con el contrato PDF")
+    contract_number = _clean(numero_contrato)
+    created_path: Path | None = None
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_teacher_contract_document_schema(cursor)
+            teacher_id = _sync_finance_teacher(cursor, identity)
+            cursor.execute(
+                """
+                SELECT TOP (1)
+                    c.ContratoDocenteId AS contrato_id,
+                    c.DocenteId AS docente_id,
+                    CASE WHEN EXISTS
+                    (
+                        SELECT 1 FROM rrhh.ContratoDocenteDocumento d
+                        WHERE d.ContratoDocenteId = c.ContratoDocenteId
+                          AND d.TipoDocumento = 'FIRMADO'
+                          AND d.EsVigente = 1
+                    ) THEN 1 ELSE 0 END AS tiene_firma
+                FROM rrhh.ContratoDocente c
+                WHERE LTRIM(RTRIM(c.NumeroContrato)) = ?
+                ORDER BY c.ContratoDocenteId DESC
+                """,
+                contract_number,
+            )
+            existing = cursor.fetchone()
+            if existing and int(existing.docente_id) != teacher_id:
+                raise HTTPException(status_code=409, detail="El número de contrato ya pertenece a otro docente")
+            if existing and bool(existing.tiene_firma):
+                raise HTTPException(
+                    status_code=409,
+                    detail="El contrato ya fue firmado y no puede reemplazarse sin una reapertura administrativa",
+                )
+
+            cursor.execute(
+                """
+                SELECT TOP (1) TipoContratoDocenteId
+                FROM cat.TipoContratoDocente
+                WHERE Codigo = 'POR_HORAS'
+                """
+            )
+            type_row = cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT TOP (1) EstadoContratoDocenteId
+                FROM cat.EstadoContratoDocente
+                WHERE Codigo = 'BORRADOR'
+                """
+            )
+            state_row = cursor.fetchone()
+            if not type_row or not state_row:
+                raise HTTPException(status_code=500, detail="Faltan catálogos contractuales en la base financiera")
+
+            if existing:
+                contract_id = int(existing.contrato_id)
+                cursor.execute(
+                    """
+                    UPDATE rrhh.ContratoDocente
+                    SET TipoContratoDocenteId = ?,
+                        EstadoContratoDocenteId = ?,
+                        CodigoPeriodo = ?,
+                        FechaInicio = ?,
+                        FechaFin = ?,
+                        ValorHoraClase = ?,
+                        ValorTotalContrato = ?,
+                        ResponsableContratacion = NULLIF(?, N''),
+                        Observacion = NULLIF(?, N''),
+                        RutaContratoFirmado = NULL
+                    WHERE ContratoDocenteId = ? AND DocenteId = ?
+                    """,
+                    int(type_row.TipoContratoDocenteId),
+                    int(state_row.EstadoContratoDocenteId),
+                    assignment["codigo_periodo"],
+                    start_date,
+                    end_date,
+                    valor_hora,
+                    valor_total,
+                    _clean(responsable_contratacion),
+                    _clean(observacion),
+                    contract_id,
+                    teacher_id,
+                )
+                cursor.execute("DELETE FROM rrhh.ContratoDocenteClase WHERE ContratoDocenteId = ?", contract_id)
+            else:
+                cursor.execute(
+                    """
+                    SET NOCOUNT ON;
+                    DECLARE @ContratoCreado TABLE (ContratoDocenteId BIGINT NOT NULL);
+
+                    INSERT INTO rrhh.ContratoDocente
+                    (
+                        DocenteId, TipoContratoDocenteId, EstadoContratoDocenteId,
+                        NumeroContrato, CodigoPeriodo, FechaInicio, FechaFin,
+                        ValorHoraClase, ValorTotalContrato, ResponsableContratacion,
+                        Observacion, UsuarioCreacion
+                    )
+                    OUTPUT INSERTED.ContratoDocenteId
+                        INTO @ContratoCreado (ContratoDocenteId)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, N''), NULLIF(?, N''), ?)
+
+                    SELECT ContratoDocenteId FROM @ContratoCreado;
+                    """,
+                    teacher_id,
+                    int(type_row.TipoContratoDocenteId),
+                    int(state_row.EstadoContratoDocenteId),
+                    contract_number,
+                    assignment["codigo_periodo"],
+                    start_date,
+                    end_date,
+                    valor_hora,
+                    valor_total,
+                    _clean(responsable_contratacion),
+                    _clean(observacion),
+                    _clean(current_user.login),
+                )
+                inserted = cursor.fetchone()
+                if not inserted:
+                    raise HTTPException(status_code=500, detail="No se pudo crear el registro contractual")
+                contract_id = int(inserted.ContratoDocenteId)
+
+            planned_hours = horas_planificadas or float(assignment["horas_planificadas"] or 0)
+            cursor.execute(
+                """
+                INSERT INTO rrhh.ContratoDocenteClase
+                (
+                    ContratoDocenteId, CodigoCarrera, NombreCarrera,
+                    CodigoMateria, NombreMateria, CodigoPeriodo, Paralelo, Jornada,
+                    HorasPlanificadas, HorasEjecutadas, ValorHora,
+                    EstadoClaseCodigo, Observacion
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PLANIFICADA', NULLIF(?, N''))
+                """,
+                contract_id,
+                assignment["codigo_carrera"],
+                assignment["nombre_carrera"],
+                assignment["codigo_materia"],
+                assignment["nombre_materia"],
+                assignment["codigo_periodo"],
+                assignment["paralelo"],
+                assignment["jornada"],
+                planned_hours,
+                valor_hora,
+                _clean(observacion),
+            )
+
+            relative_path = _teacher_contract_document_relative_path(
+                identity["cedula"],
+                contract_id,
+                "ORIGINAL",
+                original_name,
+            )
+            created_path = _teacher_contract_document_path(relative_path)
+            created_path.parent.mkdir(parents=True, exist_ok=True)
+            created_path.write_bytes(pdf_bytes)
+            cursor.execute(
+                """
+                UPDATE rrhh.ContratoDocenteDocumento
+                SET EsVigente = 0
+                WHERE ContratoDocenteId = ? AND TipoDocumento = 'ORIGINAL' AND EsVigente = 1;
+
+                INSERT INTO rrhh.ContratoDocenteDocumento
+                (
+                    ContratoDocenteId, TipoDocumento, ModalidadAcademica,
+                    NombreArchivo, RutaInterna, MimeType, TamanoBytes,
+                    HashSha256, EsVigente, UsuarioCarga
+                )
+                VALUES (?, 'ORIGINAL', ?, ?, ?, 'application/pdf', ?, ?, 1, ?);
+                """,
+                contract_id,
+                contract_id,
+                modalidad_academica,
+                original_name,
+                str(relative_path).replace("\\", "/"),
+                len(pdf_bytes),
+                sha256(pdf_bytes).hexdigest(),
+                _clean(current_user.login),
+            )
+            conn.commit()
+        return {
+            "ok": True,
+            "contrato_id": contract_id,
+            "message": "Contrato adjuntado y vinculado al curso del docente.",
+        }
+    except HTTPException:
+        if created_path and created_path.exists():
+            created_path.unlink(missing_ok=True)
+        raise
+    except (OSError, pyodbc.Error, RuntimeError) as exc:
+        if created_path and created_path.exists():
+            created_path.unlink(missing_ok=True)
+        logger.exception("No se pudo almacenar el contrato docente")
+        raise HTTPException(status_code=503, detail="No se pudo guardar el contrato docente") from exc
+
+
+@router.get("/teacher/contracts/{contract_id}/document")
+def teacher_contract_document(
+    contract_id: int,
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    version: Annotated[Literal["current", "original", "signed"], Query()] = "current",
+    download: Annotated[bool, Query()] = False,
+) -> StreamingResponse:
+    identity = _teacher_contract_identity(current_user)
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_teacher_contract_document_schema(cursor)
+            teacher_id = _sync_finance_teacher(cursor, identity)
+            _teacher_contract_owned(cursor, contract_id=contract_id, teacher_id=teacher_id)
+            document = _teacher_contract_document(cursor, contract_id=contract_id, version=version)
+            conn.commit()
+        path = _teacher_contract_document_path(_clean(document.ruta_interna))
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="El archivo físico del contrato no está disponible")
+        content = path.read_bytes()
+    except HTTPException:
+        raise
+    except (OSError, pyodbc.Error, RuntimeError) as exc:
+        logger.exception("No se pudo abrir el documento contractual")
+        raise HTTPException(status_code=503, detail="No se pudo abrir el documento contractual") from exc
+
+    disposition = "attachment" if download else "inline"
+    filename = f"contrato-{contract_id}-{_safe_filename(document.tipo_documento)}.pdf"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/teacher/contracts/{contract_id}/sign")
+async def teacher_sign_contract_document(
+    contract_id: int,
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    certificado: Annotated[UploadFile, File()],
+    contrasena_certificado: Annotated[str, Form(min_length=1, max_length=256)],
+    firma_motivo: Annotated[str, Form(max_length=200)] = "Aceptación y firma de contrato docente",
+    firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
+    firma_contacto: Annotated[str, Form(max_length=200)] = "",
+) -> StreamingResponse:
+    certificate_name = _clean(certificado.filename).lower()
+    if not certificate_name.endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
+    certificate_bytes = await certificado.read()
+    if not certificate_bytes:
+        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
+    if len(certificate_bytes) > _TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+
+    identity = _teacher_contract_identity(current_user)
+    created_path: Path | None = None
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_teacher_contract_document_schema(cursor)
+            teacher_id = _sync_finance_teacher(cursor, identity)
+            contract = _teacher_contract_owned(cursor, contract_id=contract_id, teacher_id=teacher_id)
+            cursor.execute(
+                """
+                SELECT TOP (1) 1
+                FROM rrhh.ContratoDocenteDocumento
+                WHERE ContratoDocenteId = ? AND TipoDocumento = 'FIRMADO' AND EsVigente = 1
+                """,
+                contract_id,
+            )
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=409,
+                    detail="El contrato ya tiene una firma docente vigente",
+                )
+            source = _teacher_contract_document(cursor, contract_id=contract_id, version="original")
+            conn.commit()
+
+        source_path = _teacher_contract_document_path(_clean(source.ruta_interna))
+        if not source_path.is_file():
+            raise HTTPException(status_code=404, detail="No se encontró el PDF original del contrato")
+        source_pdf = source_path.read_bytes()
+        signed_pdf = await _sign_pdf_with_pkcs12(
+            pdf_bytes=source_pdf,
+            pkcs12_bytes=certificate_bytes,
+            password=contrasena_certificado,
+            current_user=current_user,
+            reason=firma_motivo,
+            location=firma_ubicacion,
+            contact=firma_contacto,
+            signature_box=(335, 42, 565, 112),
+            field_name=f"FirmaDocenteContrato_{contract_id}",
+            readable_field_name="Firma electrónica del docente contratista",
+        )
+        signed_name = f"{Path(_clean(source.nombre_archivo)).stem}-firmado-docente.pdf"
+        relative_path = _teacher_contract_document_relative_path(
+            identity["cedula"],
+            contract_id,
+            "FIRMADO",
+            signed_name,
+        )
+        created_path = _teacher_contract_document_path(relative_path)
+        created_path.parent.mkdir(parents=True, exist_ok=True)
+        created_path.write_bytes(signed_pdf)
+
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_teacher_contract_document_schema(cursor)
+            teacher_id = _sync_finance_teacher(cursor, identity)
+            _teacher_contract_owned(cursor, contract_id=contract_id, teacher_id=teacher_id)
+            cursor.execute(
+                """
+                SELECT TOP (1) EstadoContratoDocenteId
+                FROM cat.EstadoContratoDocente
+                WHERE Codigo = 'VIGENTE'
+                """
+            )
+            state_row = cursor.fetchone()
+            if not state_row:
+                raise HTTPException(status_code=500, detail="No existe el estado contractual VIGENTE")
+            cursor.execute(
+                """
+                UPDATE rrhh.ContratoDocenteDocumento
+                SET EsVigente = 0
+                WHERE ContratoDocenteId = ? AND TipoDocumento = 'FIRMADO' AND EsVigente = 1;
+
+                INSERT INTO rrhh.ContratoDocenteDocumento
+                (
+                    ContratoDocenteId, TipoDocumento, ModalidadAcademica,
+                    NombreArchivo, RutaInterna, MimeType, TamanoBytes,
+                    HashSha256, EsVigente, UsuarioCarga, FirmanteDocumento,
+                    FechaFirma, FirmaMotivo
+                )
+                VALUES (?, 'FIRMADO', ?, ?, ?, 'application/pdf', ?, ?, 1, ?, ?, SYSDATETIME(), ?);
+
+                UPDATE rrhh.ContratoDocente
+                SET RutaContratoFirmado = ?, EstadoContratoDocenteId = ?
+                WHERE ContratoDocenteId = ? AND DocenteId = ?;
+                """,
+                contract_id,
+                contract_id,
+                _clean(source.modalidad_academica),
+                signed_name[:260],
+                str(relative_path).replace("\\", "/"),
+                len(signed_pdf),
+                sha256(signed_pdf).hexdigest(),
+                _clean(current_user.login),
+                identity["nombre"][:300],
+                _clean(firma_motivo)[:500],
+                str(relative_path).replace("\\", "/"),
+                int(state_row.EstadoContratoDocenteId),
+                contract_id,
+                teacher_id,
+            )
+            conn.commit()
+    except HTTPException:
+        if created_path and created_path.exists():
+            created_path.unlink(missing_ok=True)
+        raise
+    except (OSError, pyodbc.Error, RuntimeError) as exc:
+        if created_path and created_path.exists():
+            created_path.unlink(missing_ok=True)
+        logger.exception("No se pudo firmar y registrar el contrato docente")
+        raise HTTPException(status_code=503, detail="No se pudo registrar la firma del contrato") from exc
+
+    filename = f"contrato-{contract_id}-firmado-docente.pdf"
+    return StreamingResponse(
+        BytesIO(signed_pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+        },
+    )
 
 
 @router.get("/teacher/courses")
@@ -2308,6 +3559,8 @@ def teacher_courses(
                     TRY_CONVERT(varchar(50), cxd.codigo_periodo) AS codigo_periodo,
                     TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo) AS detalle_periodo,
                     TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
+                    TRY_CONVERT(date, pe.fechain) AS fecha_inicio,
+                    TRY_CONVERT(date, pe.fechafin) AS fecha_fin,
                     COALESCE(TRY_CONVERT(int, pe.Orden), TRY_CONVERT(int, pe.cod_periodo)) AS periodo_orden,
                     TRY_CONVERT(nvarchar(50), cxd.Paralelo) AS paralelo,
                     TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
@@ -2389,6 +3642,64 @@ def _teacher_course_students_for_report(
     cod_jornada: int | None = None,
 ) -> list[dict[str, Any]]:
     students_by_key: dict[str, dict[str, Any]] = {}
+    if parallel in {"*", "TODOS", "VARIOS"}:
+        catalog = teacher_courses(current_user=current_user)
+        subject = next(
+            (
+                item
+                for item in catalog.get("items") or []
+                if subject_filter
+                in {
+                    _clean(item.get("cod_materia") or item.get("codigo_materia")).upper(),
+                    *{
+                        _clean(code).upper()
+                        for code in item.get("codigo_materias") or []
+                        if _clean(code)
+                    },
+                }
+            ),
+            None,
+        )
+        if not subject:
+            return []
+
+        selected_periods = set(period_codes)
+        scopes = subject.get("asignaciones") or [subject]
+        for kind in ("R", "H"):
+            available_codes = {
+                period_code
+                for scope in scopes
+                if ("H" if scope.get("es_homologacion") else "R") == kind
+                for period_code in (
+                    _int(value)
+                    for value in scope.get("codigo_periodos") or [scope.get("codigo_periodo")]
+                )
+                if period_code is not None and period_code in selected_periods
+            }
+            chunk_size = 2 if kind == "R" else 1
+            ordered_codes = sorted(available_codes, reverse=True)
+            for index in range(0, len(ordered_codes), chunk_size):
+                payload = teacher_subject_students(
+                    current_user=current_user,
+                    codigo_materia=subject_filter,
+                    tipo_periodo=kind,
+                    codigo_periodo=ordered_codes[index:index + chunk_size],
+                )
+                for item in payload.get("items") or []:
+                    key = "|".join(
+                        [
+                            _clean(item.get("codigo_estud")),
+                            _clean(item.get("codigo_periodo")),
+                            _clean(item.get("cod_anio_basica")),
+                            _clean(item.get("codigo_materia")),
+                            _clean(item.get("paralelo")),
+                            _clean(item.get("num_matricula")),
+                            _clean(item.get("num_grupo")),
+                        ]
+                    )
+                    students_by_key[key] = item
+        return list(students_by_key.values())
+
     chunks = [period_codes[index:index + 2] for index in range(0, len(period_codes), 2)]
     for chunk in chunks:
         payload = teacher_course_students(
@@ -2423,10 +3734,13 @@ def teacher_course_students(
     paralelo: Annotated[str, Query(min_length=1)],
     cod_anio_basica: Annotated[int | None, Query()] = None,
     cod_jornada: Annotated[int | None, Query()] = None,
+    buscar: Annotated[str | None, Query(max_length=160)] = None,
 ) -> dict[str, Any]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
     subject_filter = _clean(codigo_materia).upper()
+    search_term = _clean(buscar)
+    search_like = f"%{search_term}%"
     period_codes = list(dict.fromkeys(codigo_periodo))
     if not period_codes:
         raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
@@ -2579,6 +3893,15 @@ def teacher_course_students(
                 WHERE (? IS NULL OR TRY_CONVERT(int, cxe.cod_anio_Basica) = ?)
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), de.Estado))))
                       IN (N'A', N'ACTIVO', N'ACTIVA')
+                  AND (
+                        ? = N''
+                        OR TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre)
+                            COLLATE Latin1_General_100_CI_AI LIKE ?
+                        OR TRY_CONVERT(nvarchar(100), de.Cedula_Est)
+                            COLLATE Latin1_General_100_CI_AI LIKE ?
+                        OR TRY_CONVERT(nvarchar(50), de.codigo_estud)
+                            COLLATE Latin1_General_100_CI_AI LIKE ?
+                  )
                   AND EXISTS (
                       SELECT 1
                       FROM teacher_assignment ta
@@ -2608,6 +3931,10 @@ def teacher_course_students(
                 parallel,
                 cod_anio_basica,
                 cod_anio_basica,
+                search_term,
+                search_like,
+                search_like,
+                search_like,
             )
             rows = cursor.fetchall()
         return {"total": len(rows), "items": [_teacher_student_item(row) for row in rows]}
@@ -3018,6 +4345,8 @@ def admin_grade_teacher_courses(
                     TRY_CONVERT(varchar(50), cxd.codigo_periodo) AS codigo_periodo,
                     TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo) AS detalle_periodo,
                     TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
+                    TRY_CONVERT(date, pe.fechain) AS fecha_inicio,
+                    TRY_CONVERT(date, pe.fechafin) AS fecha_fin,
                     COALESCE(TRY_CONVERT(int, pe.Orden), TRY_CONVERT(int, pe.cod_periodo)) AS periodo_orden,
                     TRY_CONVERT(nvarchar(50), cxd.Paralelo) AS paralelo,
                     TRY_CONVERT(int, cxd.Cod_Jornada) AS cod_jornada,
@@ -3166,6 +4495,7 @@ def _teacher_course_report_meta(
 ) -> dict[str, Any]:
     if not period_codes:
         return {}
+    parallel_filter = None if parallel in {"*", "TODOS", "VARIOS"} else parallel
     period_placeholders = ", ".join("?" for _ in period_codes)
     try:
         with get_connection() as conn:
@@ -3207,7 +4537,10 @@ def _teacher_course_report_meta(
                         OR UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(100), p.cod_materia), N'')))) = ?
                   )
                   AND TRY_CONVERT(int, cxd.codigo_periodo) IN ({period_placeholders})
-                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
+                  AND (
+                        ? IS NULL
+                        OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
+                  )
                 ORDER BY TRY_CONVERT(int, cxd.codigo_periodo) DESC
                 """,
                 codigo_doc,
@@ -3216,7 +4549,8 @@ def _teacher_course_report_meta(
                 subject_filter,
                 subject_filter,
                 *period_codes,
-                parallel,
+                parallel_filter,
+                parallel_filter,
             )
             rows = cursor.fetchall()
     except pyodbc.Error as exc:
@@ -3226,6 +4560,8 @@ def _teacher_course_report_meta(
         return {}
     careers: list[str] = []
     periods: list[str] = []
+    parallels: list[str] = []
+    journeys: list[str] = []
     first = rows[0]
     for row in rows:
         career = _clean(row.nombre_carrera)
@@ -3234,15 +4570,27 @@ def _teacher_course_report_meta(
         period = _clean(row.detalle_periodo) or _clean(row.codigo_periodo)
         if period and period not in periods:
             periods.append(period)
+        row_parallel = _clean(row.paralelo)
+        if row_parallel and row_parallel not in parallels:
+            parallels.append(row_parallel)
+        journey = _clean(row.jornada)
+        if journey and journey not in journeys:
+            journeys.append(journey)
     return {
         "nombre_carrera": " / ".join(careers) if len(careers) <= 2 else f"{len(careers)} carreras",
         "detalle_periodo": " / ".join(periods),
         "codigo_materia": _clean(first.codigo_materia),
         "cod_materia": _clean(first.cod_materia),
         "nombre_materia": _clean(first.nombre_materia),
-        "paralelo": _clean(first.paralelo),
+        "paralelo": parallels[0] if len(parallels) == 1 else ("Varios" if parallels else ""),
         "cod_jornada": _clean(first.cod_jornada),
-        "jornada": _clean(first.jornada) or (f"Jornada {_clean(first.cod_jornada)}" if _clean(first.cod_jornada) else ""),
+        "jornada": (
+            journeys[0]
+            if len(journeys) == 1
+            else "Varias jornadas"
+            if journeys
+            else (f"Jornada {_clean(first.cod_jornada)}" if _clean(first.cod_jornada) else "")
+        ),
         "semestre": _int(first.semestre),
         "unidad_curricular": _clean(first.unidad_curricular),
         "horas": _number(first.horas),
@@ -4329,7 +5677,7 @@ def _student_grade_report_pdf(
             ]
         )
     )
-    story.extend([summary, Spacer(1, 1.15 * cm)])
+    story.append(summary)
 
     signatures = Table(
         [
@@ -4359,7 +5707,9 @@ def _student_grade_report_pdf(
             ]
         )
     )
-    story.append(signatures)
+    # Keep a stable blank area immediately above the teacher label. The
+    # electronic signature is positioned in this area after the PDF is built.
+    story.append(KeepTogether([Spacer(1, 2.9 * cm), signatures]))
 
     output = BytesIO()
     page_margin = (letter[0] - table_width) / 2
@@ -4369,7 +5719,7 @@ def _student_grade_report_pdf(
         rightMargin=page_margin,
         leftMargin=page_margin,
         topMargin=0.55 * cm,
-        bottomMargin=0.55 * cm,
+        bottomMargin=2.8 * cm,
         title="Notas Por Docente",
         author="Instituto Superior Tecnológico INTEC",
     ).build(story)
@@ -4403,6 +5753,7 @@ def _teacher_compliance_model_pdf(
     body_x = 72
     body_right = width - 58
     content_width = body_right - body_x
+    continuation_content_y = height - 150
     dark = colors.HexColor("#111111")
 
     def draw_page_background() -> None:
@@ -4555,7 +5906,7 @@ def _teacher_compliance_model_pdf(
     def draw_selected_students_table(x: float, y: float, max_w: float) -> float:
         row_h = 12
         headers = ["No.", "Estudiante", "Cédula", "Carrera", "Final"]
-        col_widths = [24, 170, 72, 118, 42]
+        col_widths = [22, 170, 70, 118, 46]
         table_w = min(sum(col_widths), max_w)
         max_rows = 7
         visible_students = students[:max_rows]
@@ -4609,8 +5960,8 @@ def _teacher_compliance_model_pdf(
 
     def draw_teams_recordings_table(recordings: list[dict[str, Any]], x: float, y: float, max_w: float) -> float:
         row_h = 17
-        headers = ["Fecha", "Grabación", "Inicio", "Fin", "Llamada", "Archivo", "Modificado por"]
-        col_widths = [52, 116, 42, 42, 58, 58, 97]
+        headers = ["Fecha", "Nombre de la grabación", "Duración"]
+        col_widths = [92, 290, 103]
         scale = min(1.0, max_w / sum(col_widths))
         col_widths = [value * scale for value in col_widths]
         table_w = sum(col_widths)
@@ -4650,13 +6001,10 @@ def _teacher_compliance_model_pdf(
             values = [
                 item.get("date"),
                 item.get("name"),
-                item.get("start_hour"),
-                item.get("end_hour"),
-                item.get("call_duration"),
-                item.get("recording_duration"),
-                item.get("modified_by"),
+                item.get("recording_duration") or item.get("call_duration"),
             ]
             cursor_x = x
+            canvas.setFillColor(dark)
             canvas.setFont("Times-Roman", 6.4)
             for column_index, (value, col_w) in enumerate(zip(values, col_widths)):
                 text = fitted_text(value, col_w)
@@ -4728,7 +6076,8 @@ def _teacher_compliance_model_pdf(
         teams_recordings[index : index + recordings_per_page]
         for index in range(0, len(teams_recordings), recordings_per_page)
     ]
-    total_pages = 4 + len(recording_chunks) if recording_chunks else 4
+    grade_report_images = evidence_group("reporte de notas firmado")
+    total_pages = 4 + len(recording_chunks) + len(grade_report_images)
 
     start_page(1)
     y = 662
@@ -4781,7 +6130,7 @@ def _teacher_compliance_model_pdf(
         y = line(f"•    {item}", body_x + 18, y - 1, 11)
 
     new_page(2)
-    y = 702
+    y = continuation_content_y
     for item in ["Evaluación(es) teórica(s)", "Componente(s) práctico(s)", "Evidencia de clases grabadas en TEAMS:"]:
         y = line(f"•    {item}", body_x + 18, y, 11)
     y = draw_group(("aula", "virtual", "recursos"), body_x + 18, y - 6, 494, 150, 3)
@@ -4789,7 +6138,7 @@ def _teacher_compliance_model_pdf(
     if recording_chunks:
         for chunk_index, recording_chunk in enumerate(recording_chunks):
             new_page(3 + chunk_index)
-            y = 718
+            y = continuation_content_y
             team_name = _clean(recording_chunk[0].get("team_name")) if recording_chunk else ""
             y = line(
                 f"Clases grabadas en TEAMS ({len(teams_recordings)} registro(s) obtenidos desde Microsoft Graph)",
@@ -4797,6 +6146,12 @@ def _teacher_compliance_model_pdf(
                 y,
                 10,
                 True,
+            )
+            y = line(
+                "Fecha, nombre y duración de cada grabación disponible en Microsoft Teams.",
+                body_x + 18,
+                y,
+                8,
             )
             if team_name:
                 y = wrapped(f"Equipo: {team_name}", body_x + 18, y, content_width, 9, False, 11)
@@ -4811,27 +6166,65 @@ def _teacher_compliance_model_pdf(
                 f"Bloque {chunk_index + 1} de {len(recording_chunks)}. Los nombres azules enlazan al archivo en Microsoft 365.",
             )
         new_page(3 + len(recording_chunks))
-        y = 718
+        y = continuation_content_y
     else:
         new_page(3)
-        y = 718
-        y = draw_group(("teams", "clases"), body_x + 18, y, 494, 105, 1)
+        y = continuation_content_y
+        y = line("Clases grabadas en TEAMS", body_x + 18, y, 10, True)
+        y = wrapped(
+            "Microsoft Graph no encontró grabaciones seleccionadas para la materia y el rango de fechas del informe.",
+            body_x + 18,
+            y,
+            content_width,
+            9,
+            False,
+            11,
+        )
+        y = draw_group(("teams", "clases"), body_x + 18, y - 4, 494, 105, 1)
         if _clean(params.get("observaciones")):
             y = wrapped(_clean(params.get("observaciones")), body_x + 18, y - 4, content_width, 9, False, 11)
         y -= 42
-    y = line("3.4.     Asistencias", body_x + 18, y, 11, True)
-    y = draw_group(("asistencia",), body_x + 58, y - 6, 455, 105, 1)
-    y -= 12
-    y = line("3.5.     Reporte de Notas", body_x + 18, y, 11, True)
+    y = line("3.4.     Reporte de Notas", body_x + 18, y, 11, True)
     y -= 14
-    y = wrapped("Indicar la nota máxima obtenida y la nota mínima obtenida y si existieron casos de estudiantes reprobados, junto con captura de pantalla del reporte de notas debidamente firmado electrónicamente y de las notas subidas en el sistema académico:", body_x, y, content_width, 11)
-    y = line("Ejemplo:", body_x, y - 4, 11)
-    y = draw_group(("notas", "reporte"), body_x + 24, y, 470, 205, 1)
+    y = wrapped(
+        "El sistema genera automáticamente el reporte detallado de notas en formato Secretaría con la misma "
+        "asignatura, períodos y estudiantes seleccionados. Primero se firma electrónicamente el reporte de notas; "
+        "después, cada página firmada se incorpora como imagen al presente informe. El PDF original firmado se "
+        "mantiene como documento independiente para su descarga y validación:",
+        body_x,
+        y,
+        content_width,
+        11,
+    )
+    y -= 8
     y = draw_grade_summary_table(body_x + 24, y)
 
-    new_page(4 + len(recording_chunks))
+    for image_index, item in enumerate(grade_report_images):
+        new_page(4 + len(recording_chunks) + image_index)
+        y = continuation_content_y
+        y = line(
+            f"3.4.1.   Reporte de notas firmado - página {image_index + 1} de {len(grade_report_images)}",
+            body_x + 18,
+            y,
+            10,
+            True,
+        )
+        y = wrapped(
+            "Imagen generada automáticamente desde el PDF de notas firmado electrónicamente por el docente.",
+            body_x + 18,
+            y,
+            content_width,
+            8,
+            False,
+            10,
+        )
+        content = item.get("content")
+        if content:
+            y = draw_image(content, body_x + 8, y - 6, content_width - 16, 520)
+
+    new_page(4 + len(recording_chunks) + len(grade_report_images))
     y = 662
-    y = line("3.6.     Anexos:", body_x + 18, y, 12, True)
+    y = line("3.5.     Anexos:", body_x + 18, y, 12, True)
     y -= 16
     y = wrapped("El presente informe debe ir acompañado de la siguiente documentación de respaldo:", body_x, y, content_width, 11)
     for item in [
@@ -5515,6 +6908,83 @@ async def _read_compliance_evidence(
     return evidence_images
 
 
+def _pdf_pages_as_compliance_evidence(
+    pdf_bytes: bytes,
+    *,
+    label: str = "Captura reporte de notas firmado",
+) -> list[dict[str, Any]]:
+    if not pdf_bytes.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="El reporte de notas adjunto no es un PDF válido")
+
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(pdf_bytes)
+        try:
+            page_count = len(document)
+            if page_count < 1:
+                raise HTTPException(status_code=400, detail="El reporte de notas no contiene páginas")
+            if page_count > 40:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El reporte de notas supera el límite de 40 páginas",
+                )
+
+            # La apariencia visible de una firma PDF es un campo AcroForm. Sin
+            # inicializar formularios, PDFium conserva el contenido del reporte
+            # pero omite el QR y los datos visibles del firmante al rasterizarlo.
+            document.init_forms()
+            evidence_images: list[dict[str, Any]] = []
+            for page_index in range(page_count):
+                page = document[page_index]
+                try:
+                    bitmap = page.render(
+                        scale=1.5,
+                        may_draw_forms=True,
+                        draw_annots=True,
+                    )
+                    try:
+                        image = bitmap.to_pil().convert("RGB")
+                        image_output = BytesIO()
+                        image.save(image_output, format="PNG", optimize=True)
+                    finally:
+                        bitmap.close()
+                finally:
+                    page.close()
+                evidence_images.append(
+                    {
+                        "label": f"{label} - página {page_index + 1} de {page_count}",
+                        "content": image_output.getvalue(),
+                    }
+                )
+            return evidence_images
+        finally:
+            document.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("No se pudo convertir el reporte de notas firmado a imágenes")
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo convertir el reporte de notas firmado a imágenes",
+        ) from exc
+
+
+async def _read_signed_grade_report_evidence(upload: UploadFile | None) -> list[dict[str, Any]]:
+    if upload is None or not upload.filename:
+        return []
+    filename = _clean(upload.filename).lower()
+    content_type = _clean(upload.content_type).lower()
+    if not filename.endswith(".pdf") and content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="El reporte de notas firmado debe ser un archivo PDF")
+    content = await upload.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="El reporte de notas firmado está vacío")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El reporte de notas firmado debe pesar máximo 25 MB")
+    return _pdf_pages_as_compliance_evidence(content)
+
+
 def _certificate_subject_text(certificate: Any) -> str:
     subject = certificate.subject.native
     values: list[str] = []
@@ -5694,6 +7164,107 @@ def _load_digital_signature_pkcs12(pkcs12_bytes: bytes, password: str) -> signer
     return signer
 
 
+def _pdf_signature_target_above_text(
+    pdf_bytes: bytes,
+    marker: str,
+    *,
+    box_width: float = 126,
+    box_height: float = 48,
+    vertical_gap: float = 3,
+    page_margin: float = 18,
+    fallback_box: tuple[float, float, float, float] = (243, 90, 369, 138),
+) -> tuple[int, tuple[float, float, float, float]]:
+    """Locate the last marker occurrence and reserve a visible stamp above it."""
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(pdf_bytes)
+        try:
+            for page_index in range(len(document) - 1, -1, -1):
+                page = document[page_index]
+                try:
+                    page_width, page_height = page.get_size()
+                    text_page = page.get_textpage()
+                    try:
+                        search = text_page.search(marker, match_case=False, match_whole_word=False)
+                        try:
+                            occurrence = search.get_next()
+                        finally:
+                            search.close()
+                        if not occurrence:
+                            continue
+                        start, count = occurrence
+                        boxes = [text_page.get_charbox(index) for index in range(start, start + count)]
+                    finally:
+                        text_page.close()
+                finally:
+                    page.close()
+
+                marker_left = min(box[0] for box in boxes)
+                marker_top = max(box[3] for box in boxes)
+                marker_right = max(box[2] for box in boxes)
+                marker_center = (marker_left + marker_right) / 2
+                left = max(page_margin, min(marker_center - box_width / 2, page_width - page_margin - box_width))
+                bottom = marker_top + vertical_gap
+                top = bottom + box_height
+                if top > page_height - page_margin:
+                    top = page_height - page_margin
+                    bottom = top - box_height
+                return page_index, (left, bottom, left + box_width, top)
+        finally:
+            document.close()
+    except Exception:
+        logger.exception("No se pudo localizar el espacio visible de firma en el PDF")
+    return -1, fallback_box
+
+
+def _signature_stamp_layout(
+    signature_box: tuple[float, float, float, float],
+) -> tuple[int, int, int]:
+    """Scale the visible QR stamp to the signature area of each document."""
+    left, bottom, right, top = signature_box
+    width = right - left
+    height = top - bottom
+    if width <= 0 or height <= 0:
+        raise ValueError("El rectángulo visible de firma no es válido")
+
+    qr_size = int(max(20, min(52, height - 10, width * 0.28)))
+    font_size = int(max(5, min(8, height / 9, width / 22)))
+    separation = max(1, min(3, int(height / 20)))
+    return qr_size, font_size, separation
+
+
+def _signature_stamp_signer_name(
+    signer_name: str,
+    signature_box: tuple[float, float, float, float],
+    qr_size: int,
+    font_size: int,
+) -> str:
+    width = signature_box[2] - signature_box[0]
+    available_text_width = max(40.0, width - qr_size - 8)
+    line_length = max(12, int(available_text_width / max(font_size * 0.55, 1)))
+    lines = textwrap.wrap(
+        signer_name,
+        width=line_length,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "\n".join(lines or [signer_name])
+
+
+def _assert_pdf_signature_field(pdf_bytes: bytes, field_name: str) -> None:
+    try:
+        reader = PdfFileReader(BytesIO(pdf_bytes), strict=False)
+        field_names = {signature.field_name for signature in reader.embedded_signatures}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar el PDF firmado") from exc
+    if field_name not in field_names:
+        raise HTTPException(
+            status_code=500,
+            detail=f"El documento no contiene la firma electrónica esperada ({field_name})",
+        )
+
+
 async def _sign_pdf_with_pkcs12(
     pdf_bytes: bytes,
     pkcs12_bytes: bytes,
@@ -5703,6 +7274,7 @@ async def _sign_pdf_with_pkcs12(
     location: str,
     contact: str,
     signature_box: tuple[float, float, float, float] = (72, 450, 392, 520),
+    signature_page: int = -1,
     field_name: str = "FirmaDocente",
     readable_field_name: str = "Firma electrónica del docente",
 ) -> bytes:
@@ -5710,10 +7282,17 @@ async def _sign_pdf_with_pkcs12(
 
     _validate_signing_certificate(signer.signing_cert)
     signer_name = _certificate_signer_name(signer.signing_cert, current_user)
+    qr_size, stamp_font_size, stamp_separation = _signature_stamp_layout(signature_box)
+    visible_signer_name = _signature_stamp_signer_name(
+        signer_name,
+        signature_box,
+        qr_size,
+        stamp_font_size,
+    )
     stamp_reason = _clean(reason) or "Informe de cumplimiento docente"
     stamp_text = (
         "Firmado electronicamente por:\n"
-        f"{signer_name}\n"
+        f"{visible_signer_name}\n"
         "Validar unicamente con FirmaEC"
     )
     writer = IncrementalPdfFileWriter(BytesIO(pdf_bytes))
@@ -5731,11 +7310,16 @@ async def _sign_pdf_with_pkcs12(
         stamp_style=QRStampStyle(
             border_width=0,
             stamp_text=stamp_text,
-            qr_inner_size=58,
+            qr_inner_size=qr_size,
+            innsep=stamp_separation,
+            text_box_style=TextBoxStyle(
+                font_size=stamp_font_size,
+                leading=max(stamp_font_size + 1, int(round(stamp_font_size * 1.12))),
+            ),
         ),
         new_field_spec=SigFieldSpec(
             sig_field_name=field_name,
-            on_page=-1,
+            on_page=signature_page,
             box=signature_box,
             readable_field_name=readable_field_name,
         ),
@@ -5754,7 +7338,9 @@ async def _sign_pdf_with_pkcs12(
         if technical_detail:
             detail = f"{detail}: {technical_detail}"
         raise HTTPException(status_code=400, detail=detail) from exc
-    return output.getvalue()
+    signed_pdf = output.getvalue()
+    _assert_pdf_signature_field(signed_pdf, field_name)
+    return signed_pdf
 
 
 def _planning_paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
@@ -6382,15 +7968,15 @@ def teacher_course_report_pdf(
     )
 
 
-@router.get("/teacher/student-grade-report-pdf")
-def teacher_student_grade_report_pdf(
-    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
-    codigo_periodo: Annotated[list[int], Query()],
-    codigo_materia: Annotated[str, Query()],
-    paralelo: Annotated[str, Query(min_length=1)],
-    cod_anio_basica: Annotated[int | None, Query()] = None,
-    cod_jornada: Annotated[int | None, Query()] = None,
-) -> StreamingResponse:
+def _build_teacher_student_grade_report_pdf(
+    current_user: SessionUser,
+    codigo_periodo: list[int],
+    codigo_materia: str,
+    paralelo: str,
+    codigo_estud: list[int] | None = None,
+    cod_anio_basica: int | None = None,
+    cod_jornada: int | None = None,
+) -> tuple[bytes, str]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
     subject_filter = _clean(codigo_materia).upper()
@@ -6409,27 +7995,125 @@ def teacher_student_grade_report_pdf(
         cod_anio_basica=cod_anio_basica,
         cod_jornada=cod_jornada,
     )
+    selected_student_codes = {str(code) for code in (codigo_estud or [])}
+    if selected_student_codes:
+        students = [item for item in students if _clean(item.get("codigo_estud")) in selected_student_codes]
     meta = _teacher_course_report_meta(codigo_doc, period_codes, subject_filter, parallel, cod_anio_basica)
     if students:
         first = students[0]
+        period_names: list[str] = []
+        career_names: list[str] = []
+        for item in students:
+            period = _clean(item.get("detalle_periodo")) or _clean(item.get("codigo_periodo"))
+            if period and period not in period_names:
+                period_names.append(period)
+            career = _clean(item.get("nombre_carrera"))
+            if career and career not in career_names:
+                career_names.append(career)
         meta = {
             **meta,
-            "nombre_carrera": meta.get("nombre_carrera") or _clean(first.get("nombre_carrera")),
-            "detalle_periodo": meta.get("detalle_periodo") or _clean(first.get("detalle_periodo")),
+            "nombre_carrera": " / ".join(career_names) if career_names else meta.get("nombre_carrera"),
+            "detalle_periodo": " / ".join(period_names) if period_names else meta.get("detalle_periodo"),
             "codigo_materia": meta.get("codigo_materia") or _clean(first.get("codigo_materia")),
             "cod_materia": meta.get("cod_materia") or _clean(first.get("cod_materia")),
             "nombre_materia": meta.get("nombre_materia") or _clean(first.get("nombre_materia")),
             "paralelo": meta.get("paralelo") or _clean(first.get("paralelo")),
+            "jornada": meta.get("jornada") or _clean(first.get("jornada")),
+            "semestre": meta.get("semestre") or _int(first.get("semestre")),
+            "horas": meta.get("horas") or _number(first.get("horas")),
+            "es_homologacion": meta.get("es_homologacion") or any(item.get("es_homologacion") for item in students),
         }
     pdf_bytes = _student_grade_report_pdf(teacher, meta, students)
-    filename = (
+    filename_stem = (
         f"reporte-notas-secretaria-{_safe_filename(meta.get('nombre_materia') or subject_filter)}-"
-        f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}.pdf"
+        f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}"
+    )
+    return pdf_bytes, filename_stem
+
+
+@router.get("/teacher/student-grade-report-pdf")
+def teacher_student_grade_report_pdf(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Query()],
+    codigo_materia: Annotated[str, Query()],
+    paralelo: Annotated[str, Query(min_length=1)],
+    codigo_estud: Annotated[list[int] | None, Query()] = None,
+    cod_anio_basica: Annotated[int | None, Query()] = None,
+    cod_jornada: Annotated[int | None, Query()] = None,
+) -> StreamingResponse:
+    pdf_bytes, filename_stem = _build_teacher_student_grade_report_pdf(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
     )
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename_stem}.pdf"'},
+    )
+
+
+@router.post("/teacher/student-grade-report-sign")
+async def teacher_sign_student_grade_report(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Form()],
+    codigo_materia: Annotated[str, Form()],
+    paralelo: Annotated[str, Form(min_length=1)],
+    certificado: Annotated[UploadFile, File()],
+    contrasena_certificado: Annotated[str, Form(min_length=1, max_length=256)],
+    firma_motivo: Annotated[str, Form(max_length=200)] = "Reporte de notas formato Secretaría",
+    firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
+    firma_contacto: Annotated[str, Form(max_length=200)] = "",
+    codigo_estud: Annotated[list[int] | None, Form()] = None,
+    cod_anio_basica: Annotated[int | None, Form()] = None,
+    cod_jornada: Annotated[int | None, Form()] = None,
+) -> StreamingResponse:
+    certificate_name = _clean(certificado.filename).lower()
+    if not certificate_name.endswith((".p12", ".pfx")):
+        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
+    certificate_bytes = await certificado.read()
+    if not certificate_bytes:
+        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
+    if len(certificate_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+
+    pdf_bytes, filename_stem = _build_teacher_student_grade_report_pdf(
+        current_user=current_user,
+        codigo_periodo=codigo_periodo,
+        codigo_materia=codigo_materia,
+        paralelo=paralelo,
+        codigo_estud=codigo_estud,
+        cod_anio_basica=cod_anio_basica,
+        cod_jornada=cod_jornada,
+    )
+    signature_page, signature_box = _pdf_signature_target_above_text(
+        pdf_bytes,
+        "Firma del docente",
+    )
+    signed_pdf = await _sign_pdf_with_pkcs12(
+        pdf_bytes=pdf_bytes,
+        pkcs12_bytes=certificate_bytes,
+        password=contrasena_certificado,
+        current_user=current_user,
+        reason=firma_motivo,
+        location=firma_ubicacion,
+        contact=firma_contacto,
+        signature_box=signature_box,
+        signature_page=signature_page,
+        field_name="FirmaDocenteReporteNotas",
+        readable_field_name="Firma electrónica docente del reporte de notas",
+    )
+    return StreamingResponse(
+        BytesIO(signed_pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename_stem}-firmado.pdf"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -6483,8 +8167,10 @@ async def teacher_compliance_report_pdf_with_evidence(
     teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
+    reporte_notas_firmado: Annotated[UploadFile | None, File()] = None,
 ) -> StreamingResponse:
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
+    evidence_images.extend(await _read_signed_grade_report_evidence(reporte_notas_firmado))
     teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
     return _teacher_compliance_response(
         current_user=current_user,
@@ -6526,6 +8212,7 @@ async def teacher_sign_compliance_report(
     teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
+    reporte_notas_firmado: Annotated[UploadFile | None, File()] = None,
 ) -> StreamingResponse:
     certificate_name = _clean(certificado.filename).lower()
     if not certificate_name.endswith((".p12", ".pfx")):
@@ -6537,6 +8224,7 @@ async def teacher_sign_compliance_report(
         raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
 
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
+    evidence_images.extend(await _read_signed_grade_report_evidence(reporte_notas_firmado))
     teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
     pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
         current_user=current_user,
@@ -6554,6 +8242,13 @@ async def teacher_sign_compliance_report(
         teams_recordings=teams_recordings,
         evidence_images=evidence_images,
     )
+    signature_page, signature_box = _pdf_signature_target_above_text(
+        pdf_bytes,
+        "Firma electrónica",
+        box_width=190,
+        box_height=58,
+        fallback_box=(72, 458, 262, 516),
+    )
     signed_pdf = await _sign_pdf_with_pkcs12(
         pdf_bytes=pdf_bytes,
         pkcs12_bytes=certificate_bytes,
@@ -6562,6 +8257,8 @@ async def teacher_sign_compliance_report(
         reason=firma_motivo,
         location=firma_ubicacion,
         contact=firma_contacto,
+        signature_box=signature_box,
+        signature_page=signature_page,
     )
     return StreamingResponse(
         BytesIO(signed_pdf),
@@ -6569,6 +8266,70 @@ async def teacher_sign_compliance_report(
         headers={
             "Content-Disposition": f'attachment; filename="{filename_stem}-firmado.pdf"',
             "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/teacher/signed-documents-archive")
+async def teacher_signed_documents_archive(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    informe: Annotated[UploadFile, File()],
+    notas: Annotated[UploadFile, File()],
+    contrato: Annotated[UploadFile, File()],
+    codigo_materia: Annotated[str, Form()] = "",
+    nombre_materia: Annotated[str, Form()] = "",
+    codigo_periodo: Annotated[list[str] | None, Form()] = None,
+) -> StreamingResponse:
+    compliance_pdf = await informe.read()
+    grades_pdf = await notas.read()
+    contract_pdf = await contrato.read()
+    archive_bytes = _signed_teacher_documents_archive(
+        compliance_pdf,
+        grades_pdf,
+        contract_pdf,
+    )
+    identity = _teacher_contract_identity(current_user)
+    try:
+        stored = await run_in_threadpool(
+            _store_signed_teacher_documents_onedrive,
+            identity=identity,
+            compliance_pdf=compliance_pdf,
+            grades_pdf=grades_pdf,
+            contract_pdf=contract_pdf,
+            archive_bytes=archive_bytes,
+            subject_code=codigo_materia,
+            subject_name=nombre_materia,
+            period_codes=codigo_periodo or [],
+        )
+    except Exception as exc:
+        logger.exception(
+            "No se pudieron guardar los documentos firmados del docente %s en OneDrive.",
+            _clean(identity.get("codigo_doc")),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Los documentos fueron firmados, pero Microsoft OneDrive no confirmó su almacenamiento "
+                "en la carpeta DOCENTES. Verifique la conexión de Microsoft Graph e intente nuevamente."
+            ),
+        ) from exc
+
+    logger.info(
+        "Documentos firmados del docente %s guardados en %s (%s archivos).",
+        _clean(identity.get("codigo_doc")),
+        _clean(stored.get("folder_path")),
+        len(stored.get("items") or []),
+    )
+    return StreamingResponse(
+        BytesIO(archive_bytes),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="documentos-docente-firmados.zip"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+            "X-OneDrive-Saved": "true",
+            "X-OneDrive-Root": _TEACHER_DOCUMENT_ONEDRIVE_ROOT,
+            "X-OneDrive-Item-Count": str(len(stored.get("items") or [])),
         },
     )
 

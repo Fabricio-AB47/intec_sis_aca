@@ -2252,6 +2252,7 @@ def teams_courses(
 def my_team_recordings(
     team_id: str,
     current_user: Annotated[SessionUser, Depends(_TEAMS_SELF_ACCESS)],
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     normalized_team_id = str(team_id or "").strip().lower()
     if not normalized_team_id:
@@ -2263,7 +2264,7 @@ def my_team_recordings(
                 status_code=403,
                 detail="El equipo solicitado no pertenece al docente autenticado",
             )
-        return teams_recordings(team_id, current_user)
+        return teams_recordings(team_id, current_user, force_refresh=force_refresh)
     except httpx.HTTPStatusError as exc:
         _raise_graph_http_exception(exc)
     except RuntimeError as exc:
@@ -2274,26 +2275,28 @@ def my_team_recordings(
 def teams_recordings(
     team_id: str,
     current_user: Annotated[SessionUser, Depends(_TEAMS_ACCESS)],
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     del current_user
     started_at = time.perf_counter()
     encoded_team_id = _team_id_url_value(team_id)
     cache_key = encoded_team_id.lower()
 
-    with _RECORDINGS_CACHE_LOCK:
-        cached_entry = _RECORDINGS_CACHE.get(cache_key)
-        if cached_entry and time.monotonic() - cached_entry[0] < _RECORDINGS_CACHE_TTL_SECONDS:
-            cached_payload = cached_entry[1]
-            cached_discovery = cast(dict[str, Any], cached_payload.get("discovery") or {})
-            return {
-                **cached_payload,
-                "discovery": {
-                    **cached_discovery,
-                    "cacheHit": True,
-                    "queryElapsedMs": int(round((time.perf_counter() - started_at) * 1000)),
-                    "cacheTtlSeconds": _RECORDINGS_CACHE_TTL_SECONDS,
-                },
-            }
+    if not force_refresh:
+        with _RECORDINGS_CACHE_LOCK:
+            cached_entry = _RECORDINGS_CACHE.get(cache_key)
+            if cached_entry and time.monotonic() - cached_entry[0] < _RECORDINGS_CACHE_TTL_SECONDS:
+                cached_payload = cached_entry[1]
+                cached_discovery = cast(dict[str, Any], cached_payload.get("discovery") or {})
+                return {
+                    **cached_payload,
+                    "discovery": {
+                        **cached_discovery,
+                        "cacheHit": True,
+                        "queryElapsedMs": int(round((time.perf_counter() - started_at) * 1000)),
+                        "cacheTtlSeconds": _RECORDINGS_CACHE_TTL_SECONDS,
+                    },
+                }
 
     select_fields = (
         "id,name,webUrl,createdDateTime,lastModifiedDateTime,size,file,video,audio,eTag,"

@@ -3727,8 +3727,15 @@ export type PortalTeacherProfile = {
   docente?: string
   correo?: string
   correo_personal?: string
+  telefono?: string
+  movil?: string
   tipo_docente?: string
   perfil?: string
+}
+
+export type PortalTeacherProfileResponse = {
+  teacher?: PortalTeacherProfile
+  detail?: string
 }
 
 export type PortalTeacherCourse = {
@@ -3746,6 +3753,8 @@ export type PortalTeacherCourse = {
   detalle_periodos?: string
   tipo_periodo?: string
   es_homologacion?: boolean
+  fecha_inicio?: string
+  fecha_fin?: string
   paralelo?: string
   cod_jornada?: number | null
   jornada?: string
@@ -3848,6 +3857,13 @@ export type PortalTeacherContract = {
   responsable_contratacion?: string
   observacion?: string
   ruta_contrato_firmado?: string
+  modalidad_academica?: 'REGULAR' | 'HOMOLOGACION' | string
+  tiene_documento_original?: boolean
+  nombre_documento_original?: string
+  fecha_documento_original?: string
+  tiene_documento_firmado?: boolean
+  nombre_documento_firmado?: string
+  fecha_documento_firmado?: string
   clases: PortalTeacherContractClass[]
 }
 
@@ -3863,6 +3879,27 @@ export type PortalTeacherContractsResponse = {
   }
   contracts: PortalTeacherContract[]
   detail?: string
+}
+
+export type PortalTeacherContractDocumentSaveResponse = {
+  ok: boolean
+  contrato_id: number
+  message: string
+}
+
+export type PortalTeacherContractAnalysis = {
+  ok: boolean
+  nombre_archivo: string
+  docente_coincide: boolean
+  numero_contrato?: string
+  cedula?: string
+  codigo_materia?: string
+  modalidad_academica?: 'REGULAR' | 'HOMOLOGACION'
+  fecha_inicio?: string
+  fecha_fin?: string
+  valor_total?: number | null
+  campos_detectados: string[]
+  advertencias: string[]
 }
 
 export type PortalAcademicPlanningTopic = {

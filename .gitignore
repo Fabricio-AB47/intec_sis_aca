@@ -45,6 +45,7 @@ lerna-debug.log*
 
 # Runtime uploads y generados
 backend/uploads/
+backend/private_uploads/
 uploads/
 exports/
 reports/

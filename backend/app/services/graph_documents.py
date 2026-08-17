@@ -17,6 +17,8 @@ from app.services.graph import get_graph_token
 
 MAX_DOCUMENT_BYTES = 1024 * 1024 * 1024
 GRAPH_DOCUMENT_ROOT = "EXPEDIENTES ESTUDIANTILES"
+GRAPH_SIMPLE_UPLOAD_MAX_BYTES = 250 * 1024 * 1024
+GRAPH_UPLOAD_CHUNK_BYTES = 32 * 320 * 1024
 GRAPH_MODULE_FOLDERS = {
     "INGLES": "IDIOMAS",
     "TITULACION": "TITULACION",
@@ -165,6 +167,59 @@ def create_upload_session(path: str) -> dict[str, Any]:
         )
         response.raise_for_status()
         return response.json()
+
+
+def upload_bytes(
+    path: str,
+    content: bytes,
+    content_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    """Upload a complete in-memory document to the configured OneDrive."""
+    if not content:
+        raise ValueError("El archivo que se enviará a OneDrive está vacío.")
+
+    if len(content) <= GRAPH_SIMPLE_UPLOAD_MAX_BYTES:
+        with httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0)) as client:
+            response = client.put(
+                f"{_item_path_url(path)}:/content",
+                headers={
+                    **_auth_headers(),
+                    "Content-Type": content_type or "application/octet-stream",
+                },
+                content=content,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    session = create_upload_session(path)
+    upload_url = clean(session.get("uploadUrl"))
+    if not upload_url:
+        raise RuntimeError("Microsoft Graph no devolvió una sesión de carga válida.")
+
+    total_size = len(content)
+    uploaded_item: dict[str, Any] | None = None
+    with httpx.Client(timeout=httpx.Timeout(180.0, connect=30.0)) as client:
+        for start in range(0, total_size, GRAPH_UPLOAD_CHUNK_BYTES):
+            chunk = content[start : start + GRAPH_UPLOAD_CHUNK_BYTES]
+            end = start + len(chunk) - 1
+            response = client.put(
+                upload_url,
+                headers={
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {start}-{end}/{total_size}",
+                    "Content-Type": content_type or "application/octet-stream",
+                },
+                content=chunk,
+            )
+            response.raise_for_status()
+            if response.status_code in {200, 201}:
+                uploaded_item = response.json()
+
+    if uploaded_item is None:
+        uploaded_item = item_by_path(path)
+    if not uploaded_item:
+        raise RuntimeError("Microsoft Graph no confirmó la carga completa del archivo.")
+    return uploaded_item
 
 
 def item_by_path(path: str) -> dict[str, Any] | None:

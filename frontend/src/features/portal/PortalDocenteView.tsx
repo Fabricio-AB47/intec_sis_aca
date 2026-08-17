@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  analyzePortalTeacherContract,
   downloadPortalTeacherComplianceReport,
   downloadPortalTeacherCourseReport,
+  downloadPortalTeacherSignedDocumentsArchive,
   downloadPortalTeacherStudentGradeReport,
   fetchMyTeamRecordings,
   fetchMyTeamsCatalog,
   fetchPortalTeacherCourses,
+  fetchPortalTeacherProfile,
   fetchPortalTeacherSubjectStudents,
-  fetchPortalTeacherStudents,
   savePortalTeacherGrades,
   signPortalTeacherComplianceReport,
+  signPortalTeacherStudentGradeReport,
+  signPortalTeacherUploadedContract,
 } from '../../lib/api'
 import {
   calculateHomologationGradeWithRecovery,
@@ -22,6 +26,7 @@ import type {
   GraphTeam,
   PortalAcademicRecordItem,
   PortalTeacherCourse,
+  PortalTeacherContractAnalysis,
   PortalTeacherGradePayload,
   TeacherComplianceTeamsRecording,
   TeamRecording,
@@ -50,11 +55,20 @@ const COMPLIANCE_EVIDENCE_OPTIONS = [
   { key: 'pea', label: 'Captura PEA y sílabo firmado' },
   { key: 'aula', label: 'Captura aula virtual y recursos' },
   { key: 'teams', label: 'TEAMS y clases grabadas' },
-  { key: 'asistencia', label: 'Captura de asistencias' },
-  { key: 'notas', label: 'Captura reporte de notas firmado' },
 ] as const
 
 type ComplianceEvidenceKey = (typeof COMPLIANCE_EVIDENCE_OPTIONS)[number]['key']
+
+type SignedReportBundle = {
+  complianceUrl: string
+  complianceFilename: string
+  gradesUrl: string
+  gradesFilename: string
+  contractUrl: string
+  contractFilename: string
+  archiveUrl: string
+  archiveFilename: string
+}
 
 type GradeDraft = {
   teoria_homo: string
@@ -260,6 +274,33 @@ function courseSubjectKey(course: PortalTeacherCourse) {
   return `${code}|${name}`
 }
 
+function courseCommonSubjectCode(course: PortalTeacherCourse) {
+  return (course.cod_materia || course.codigo_materia || '').trim().toUpperCase()
+}
+
+function normalizedContractSubjectCode(value?: string | null) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toUpperCase()
+}
+
+function contractMatchesCourse(analysis: PortalTeacherContractAnalysis, course: PortalTeacherCourse | null) {
+  const detectedCode = normalizedContractSubjectCode(analysis.codigo_materia)
+  if (!detectedCode || !course) return true
+  return [course, ...courseAssignments(course)]
+    .flatMap((item) => [item.cod_materia, item.codigo_materia, ...(item.codigo_materias || [])])
+    .some((code) => normalizedContractSubjectCode(code) === detectedCode)
+}
+
+function isSameCourseSubject(left: PortalTeacherCourse, right: PortalTeacherCourse) {
+  const leftCode = courseCommonSubjectCode(left)
+  const rightCode = courseCommonSubjectCode(right)
+  if (leftCode && rightCode) return leftCode === rightCode
+  return courseSubjectKey(left) === courseSubjectKey(right)
+}
+
 function courseSubjectLabel(course: PortalTeacherCourse) {
   const code = course.cod_materia || course.codigo_materia || ''
   return [course.nombre_materia || 'Materia sin nombre', code ? `(${code})` : ''].filter(Boolean).join(' ')
@@ -345,10 +386,6 @@ function numberText(value: number | null | undefined) {
   return value.toFixed(2)
 }
 
-function hasFinalGrade(item: PortalAcademicRecordItem) {
-  return item.promedio_final !== null && item.promedio_final !== undefined && Number.isFinite(Number(item.promedio_final))
-}
-
 function isHomologation(
   item?: { tipo_matricula?: string; detalle_periodo?: string; esquema_calificacion?: string; es_homologacion?: boolean } | null
 ) {
@@ -391,6 +428,15 @@ function safeFilenamePart(value: string) {
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .toLowerCase() || 'reporte'
+}
+
+function downloadObjectUrl(url: string, filename: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }
 
 function hasGradeUpdates(payload: PortalTeacherGradePayload) {
@@ -530,6 +576,8 @@ function teamsRecordingPayload(
       recording.durationClock ||
       recording.recordingDurationLabel ||
       recording.durationLabel ||
+      recording.callDurationClock ||
+      recording.callDurationLabel ||
       'No disponible',
     modified_by: recording.lastModifiedByName || recording.createdByName || 'No disponible',
     web_url: recording.webUrl || '',
@@ -557,31 +605,38 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [downloadingSecretaryReport, setDownloadingSecretaryReport] = useState(false)
   const [previewingSecretaryReport, setPreviewingSecretaryReport] = useState(false)
   const [secretaryReportPreviewUrl, setSecretaryReportPreviewUrl] = useState('')
+  const [secretaryReportPreviewFilename, setSecretaryReportPreviewFilename] = useState('reporte-notas-secretaria.pdf')
+  const [secretaryReportPreviewTitle, setSecretaryReportPreviewTitle] = useState('Materia seleccionada')
   const [downloadingComplianceReport, setDownloadingComplianceReport] = useState(false)
   const [signingComplianceReport, setSigningComplianceReport] = useState(false)
   const [previewingComplianceReport, setPreviewingComplianceReport] = useState(false)
   const [compliancePreviewUrl, setCompliancePreviewUrl] = useState('')
-  const [complianceStartDate, setComplianceStartDate] = useState('')
-  const [complianceEndDate, setComplianceEndDate] = useState('')
   const [compliancePhone, setCompliancePhone] = useState('')
+  const [complianceContractFile, setComplianceContractFile] = useState<File | null>(null)
+  const [complianceContractInputKey, setComplianceContractInputKey] = useState(0)
+  const [complianceContractAnalysis, setComplianceContractAnalysis] = useState<PortalTeacherContractAnalysis | null>(null)
+  const complianceStartDate = complianceContractAnalysis?.fecha_inicio || ''
+  const complianceEndDate = complianceContractAnalysis?.fecha_fin || ''
+  const [analyzingComplianceContract, setAnalyzingComplianceContract] = useState(false)
   const [complianceUpdates, setComplianceUpdates] = useState('Sin cambios realizados.')
   const [complianceObservations, setComplianceObservations] = useState('')
   const [compliancePeriodCodes, setCompliancePeriodCodes] = useState<string[]>([])
   const [compliancePeriodToAdd, setCompliancePeriodToAdd] = useState('')
+  const [complianceStudentSearch, setComplianceStudentSearch] = useState('')
   const [complianceStudents, setComplianceStudents] = useState<PortalAcademicRecordItem[]>([])
   const [selectedComplianceStudentCodes, setSelectedComplianceStudentCodes] = useState<string[]>([])
   const [loadingComplianceStudents, setLoadingComplianceStudents] = useState(false)
+  const complianceStudentsRequestRef = useRef(0)
   const [complianceEvidenceFiles, setComplianceEvidenceFiles] = useState<Record<ComplianceEvidenceKey, File[]>>({
     pea: [],
     aula: [],
     teams: [],
-    asistencia: [],
-    notas: [],
   })
   const [complianceTeams, setComplianceTeams] = useState<GraphTeam[]>([])
   const [selectedComplianceTeamId, setSelectedComplianceTeamId] = useState('')
   const [complianceRecordings, setComplianceRecordings] = useState<TeamRecording[]>([])
   const [selectedComplianceRecordingKeys, setSelectedComplianceRecordingKeys] = useState<string[]>([])
+  const [filterComplianceRecordingsByDate, setFilterComplianceRecordingsByDate] = useState(false)
   const [loadingComplianceTeams, setLoadingComplianceTeams] = useState(false)
   const [loadingComplianceRecordings, setLoadingComplianceRecordings] = useState(false)
   const [complianceTeamsError, setComplianceTeamsError] = useState('')
@@ -595,6 +650,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [signingLocation, setSigningLocation] = useState('Quito, Ecuador')
   const [signingContact, setSigningContact] = useState('')
   const [signingConsent, setSigningConsent] = useState(false)
+  const [signedReportBundle, setSignedReportBundle] = useState<SignedReportBundle | null>(null)
   const [savingKey, setSavingKey] = useState('')
   const [gradeScreenOpen, setGradeScreenOpen] = useState(initialMode === 'compliance' ? false : false)
   const [error, setError] = useState('')
@@ -683,54 +739,39 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     )
   }, [filteredCourses])
   const totalAssignments = exactCourses.length
-  const filteredExactCourses = useMemo(() => {
+  const complianceCourseOptions = useMemo(() => {
     const query = courseSearch.trim().toUpperCase()
-    return exactCourses.filter((course) => {
-      if (periodFilter !== 'TODOS' && coursePeriodKind(course) !== periodFilter) return false
-      if (subjectFilter && courseSubjectKey(course) !== subjectFilter) return false
-      if (!query) return true
-      return [
-        course.nombre_materia,
-        course.cod_materia,
-        course.codigo_materia,
-        course.nombre_carrera,
-        course.detalle_periodo,
-        course.detalle_periodos,
-        course.codigo_periodo,
-        course.paralelo,
-      ]
+    const grouped = new Map<string, { key: string; label: string; course: PortalTeacherCourse }>()
+    for (const course of courses) {
+      if (periodFilter !== 'TODOS' && !courseHasPeriodKind(course, periodFilter)) continue
+      if (subjectFilter && courseSubjectKey(course) !== subjectFilter) continue
+      const searchable = [course, ...courseAssignments(course)]
+        .flatMap((item) => [
+          item.nombre_materia,
+          item.cod_materia,
+          item.codigo_materia,
+          item.nombre_carrera,
+          item.detalle_periodo,
+          item.detalle_periodos,
+        ])
         .filter(Boolean)
         .join(' ')
         .toUpperCase()
-        .includes(query)
-    })
-  }, [courseSearch, exactCourses, periodFilter, subjectFilter])
-  const complianceCourseOptions = useMemo(() => {
-    const grouped = new Map<string, { key: string; label: string; course: PortalTeacherCourse; periods: number }>()
-    for (const course of filteredExactCourses) {
-      const key = [
-        (course.cod_anio_basica || '').trim(),
-        courseSubjectKey(course),
-        (course.paralelo || '').trim().toUpperCase(),
-        course.cod_jornada || '',
-      ].join('|')
-      const periodCount = course.codigo_periodos?.length || (course.codigo_periodo ? 1 : 0)
-      const current = grouped.get(key)
-      if (current) {
-        current.periods += periodCount
-        continue
-      }
-      grouped.set(key, {
+      if (query && !searchable.includes(query)) continue
+      const subjectCode = courseCommonSubjectCode(course)
+      const subjectKey = subjectCode || courseSubjectKey(course)
+      if (grouped.has(subjectKey)) continue
+      grouped.set(subjectKey, {
         key: courseKey(course),
-        label: `${courseSubjectLabel(course)} - ${course.nombre_carrera || `Carrera ${course.cod_anio_basica || '-'}`} - Paralelo ${course.paralelo || '-'} - ${courseJourneyLabel(course)}`,
+        label: course.nombre_materia || 'Materia sin nombre',
         course,
-        periods: periodCount,
       })
     }
     return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, 'es'))
-  }, [filteredExactCourses])
+  }, [courseSearch, courses, periodFilter, subjectFilter])
   const targetCourse = useMemo(
     () =>
+      complianceCourseOptions.find((option) => option.key === targetCourseKey)?.course ||
       exactCourses.find((item) => courseKey(item) === targetCourseKey) ||
       gradeCourseGroups.find((item) => courseKey(item) === targetCourseKey) ||
       courses.find((item) => courseKey(item) === targetCourseKey) ||
@@ -741,23 +782,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   )
   const targetCoursePeriodOptions = useMemo(() => {
     if (!targetCourse) return []
-    const selectedCareer = (targetCourse.cod_anio_basica || '').trim()
-    const selectedSubject = courseSubjectKey(targetCourse)
-    const selectedParallel = (targetCourse.paralelo || '').trim().toUpperCase()
-    const selectedJourney = targetCourse.cod_jornada ?? null
     const options = new Map<string, { code: string; label: string }>()
     for (const course of exactCourses) {
-      if ((course.cod_anio_basica || '').trim() !== selectedCareer) continue
-      if (courseSubjectKey(course) !== selectedSubject) continue
-      if ((course.paralelo || '').trim().toUpperCase() !== selectedParallel) continue
-      if ((course.cod_jornada ?? null) !== selectedJourney) continue
+      if (!isSameCourseSubject(course, targetCourse)) continue
       const codes = course.codigo_periodos?.length
         ? course.codigo_periodos
         : course.codigo_periodo
           ? [course.codigo_periodo]
           : []
       const details = (course.detalle_periodos || course.detalle_periodo || '')
-        .split('/')
+        .split(/\s+\/\s+/)
         .map((item) => item.trim())
         .filter(Boolean)
       for (const [index, code] of codes.entries()) {
@@ -778,7 +812,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     () => complianceTeams.find((team) => team.id === selectedComplianceTeamId) || null,
     [complianceTeams, selectedComplianceTeamId]
   )
-  const filteredComplianceRecordings = useMemo(
+  const complianceRecordingsInReportRange = useMemo(
     () =>
       complianceRecordings.filter((recording) => {
         if (!complianceStartDate && !complianceEndDate) return true
@@ -790,6 +824,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       }),
     [complianceEndDate, complianceRecordings, complianceStartDate]
   )
+  const filteredComplianceRecordings = filterComplianceRecordingsByDate
+    ? complianceRecordingsInReportRange
+    : complianceRecordings
   const selectedComplianceRecordings = useMemo(
     () =>
       filteredComplianceRecordings.filter((recording) =>
@@ -801,6 +838,19 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     () => teamsRecordingPayload(selectedComplianceTeam, selectedComplianceRecordings),
     [selectedComplianceRecordings, selectedComplianceTeam]
   )
+  const filteredComplianceStudents = useMemo(() => {
+    const query = normalizeTeamText(complianceStudentSearch)
+    if (!query) return complianceStudents
+    return complianceStudents.filter((item) =>
+      normalizeTeamText([
+        item.nombre_estudiante,
+        item.cedula,
+        item.codigo_estud,
+        item.nombre_carrera,
+        item.detalle_periodo,
+      ].filter(Boolean).join(' ')).includes(query)
+    )
+  }, [complianceStudentSearch, complianceStudents])
   const courseUsesHomologation = gradePeriodKind === 'H'
   const gradeTableColumnCount = courseUsesHomologation ? 9 : gradePartial === 'P3' ? 12 : 9
 
@@ -808,9 +858,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setLoadingCourses(true)
     setError('')
     try {
-      const payload = await fetchPortalTeacherCourses()
+      const [payload, profilePayload] = await Promise.all([
+        fetchPortalTeacherCourses(),
+        fetchPortalTeacherProfile().catch(() => null),
+      ])
       const items = payload.items || []
       setCourses(items)
+      const systemPhone = profilePayload?.teacher?.movil || profilePayload?.teacher?.telefono || ''
+      setCompliancePhone((current) => current || systemPhone)
       const firstSubject = items[0]
       const firstGradeCourse = teacherGradeCourseGroups(items)[0]
       const firstCourse = initialMode === 'compliance' ? firstSubject : firstGradeCourse
@@ -819,9 +874,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         setSelectedCourseKey(courseKey(firstCourse))
         setGradePeriodKind(firstKind)
         setSelectedGradePeriodCodes(defaultTeacherGradePeriods(firstCourse, firstKind))
-        const firstTarget = initialMode === 'compliance'
-          ? firstSubject?.alcances_periodo?.[0] || courseAssignments(firstSubject)[0] || firstSubject || firstCourse
-          : firstGradeCourse
+        const firstTarget = initialMode === 'compliance' ? firstSubject : firstGradeCourse
         setTargetCourseKey(courseKey(firstTarget))
         setGradeScreenOpen(false)
         setStudents([])
@@ -843,6 +896,43 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       setLoadingCourses(false)
     }
   }, [initialMode])
+
+  async function selectComplianceContract(file: File | null) {
+    setComplianceContractFile(file)
+    setComplianceContractAnalysis(null)
+    setSignedReportBundle(null)
+    setError('')
+    setMessage('')
+    if (!file) return
+
+    setAnalyzingComplianceContract(true)
+    try {
+      const analysis = await analyzePortalTeacherContract(file)
+      setComplianceContractAnalysis(analysis)
+      if (!contractMatchesCourse(analysis, targetCourse)) {
+        setError(
+          `El contrato corresponde a ${analysis.codigo_materia || 'otra materia'} y no coincide con la materia seleccionada.`,
+        )
+        return
+      }
+      if (!analysis.fecha_inicio || !analysis.fecha_fin) {
+        setError('El contrato fue validado, pero no contiene ambas fechas en un formato reconocible.')
+        return
+      }
+      setMessage('Contrato validado. Las fechas de inicio y fin se completaron desde el PDF.')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo analizar el contrato PDF')
+    } finally {
+      setAnalyzingComplianceContract(false)
+    }
+  }
+
+  function clearComplianceContract() {
+    setComplianceContractFile(null)
+    setComplianceContractAnalysis(null)
+    setComplianceContractInputKey((current) => current + 1)
+    setSignedReportBundle(null)
+  }
 
   async function loadStudents(
     course: PortalTeacherCourse | null = selectedCourse,
@@ -929,23 +1019,29 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
-  async function loadComplianceStudents(course: PortalTeacherCourse | null = targetCourse) {
+  const loadComplianceStudents = useCallback(async (
+    course: PortalTeacherCourse | null = targetCourse,
+    selectedPeriods: string[] = compliancePeriodCodes,
+  ) => {
+    const requestId = ++complianceStudentsRequestRef.current
     const subjectCode = course?.cod_materia || course?.codigo_materia || ''
-    const periodos = compliancePeriodCodes.length
-      ? compliancePeriodCodes
+    const periodos = selectedPeriods.length
+      ? selectedPeriods
       : course?.codigo_periodos?.length
         ? course.codigo_periodos
         : course?.codigo_periodo
           ? [course.codigo_periodo]
           : []
     if (periodos.length > 4) {
+      setLoadingComplianceStudents(false)
       setError('Seleccione máximo 4 periodos para generar el informe.')
       return
     }
-    if (!course || !periodos.length || !subjectCode || !course.paralelo) {
+    if (!course || !periodos.length || !subjectCode) {
+      setLoadingComplianceStudents(false)
       setComplianceStudents([])
       setSelectedComplianceStudentCodes([])
-      setError('Seleccione una materia con periodo y paralelo para cargar estudiantes del informe.')
+      setError('Seleccione una materia y al menos un periodo para cargar estudiantes del informe.')
       return
     }
     setLoadingComplianceStudents(true)
@@ -953,33 +1049,63 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setMessage('')
     try {
       const allItems: PortalAcademicRecordItem[] = []
-      for (let index = 0; index < periodos.length; index += 2) {
-        const chunk = periodos.slice(index, index + 2)
-        const payload = await fetchPortalTeacherStudents({
-          codigoPeriodos: chunk,
-          codAnioBasica: course.cod_anio_basica,
-          codigoMateria: subjectCode,
-          paralelo: course.paralelo,
-          codJornada: course.cod_jornada ?? null,
-        })
-        allItems.push(...(payload.items || []))
+      for (const kind of ['R', 'H'] as const) {
+        const kindPeriods = Array.from(new Set(
+          exactCourses
+            .filter((scope) => isSameCourseSubject(scope, course) && coursePeriodKind(scope) === kind)
+            .flatMap((scope) => scope.codigo_periodos?.length
+              ? scope.codigo_periodos
+              : scope.codigo_periodo
+                ? [scope.codigo_periodo]
+                : [])
+            .filter((code) => periodos.includes(code))
+        ))
+        const chunkSize = kind === 'R' ? 2 : 1
+        for (let index = 0; index < kindPeriods.length; index += chunkSize) {
+          const payload = await fetchPortalTeacherSubjectStudents({
+            codigoMateria: subjectCode,
+            tipoPeriodo: kind,
+            codigoPeriodos: kindPeriods.slice(index, index + chunkSize),
+          })
+          allItems.push(...(payload.items || []))
+        }
       }
       const unique = new Map<string, PortalAcademicRecordItem>()
       for (const item of allItems) {
         unique.set(studentKey(item), item)
       }
-      const items = Array.from(unique.values()).filter(hasFinalGrade).sort((left, right) =>
-        (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
-      )
+      const items = Array.from(unique.values())
+        .sort((left, right) =>
+          (left.nombre_estudiante || '').localeCompare(right.nombre_estudiante || '', 'es', { sensitivity: 'base' })
+        )
+      if (requestId !== complianceStudentsRequestRef.current) return
+      const studentCodes = Array.from(new Set(
+        items.map((item) => String(item.codigo_estud || '').trim()).filter(Boolean)
+      ))
       setComplianceStudents(items)
-      setSelectedComplianceStudentCodes(Array.from(new Set(items.map((item) => String(item.codigo_estud)).filter(Boolean))))
+      setSelectedComplianceStudentCodes(studentCodes)
+      setMessage(
+        items.length > 0
+          ? `${studentCodes.length} estudiante(s) cargado(s) automáticamente para el anexo de notas.`
+          : 'No se encontraron estudiantes matriculados en la materia y periodos seleccionados.'
+      )
     } catch (apiError) {
+      if (requestId !== complianceStudentsRequestRef.current) return
       setComplianceStudents([])
       setSelectedComplianceStudentCodes([])
       setError(apiError instanceof Error ? apiError.message : 'No se pudieron consultar estudiantes para el informe')
     } finally {
-      setLoadingComplianceStudents(false)
+      if (requestId === complianceStudentsRequestRef.current) {
+        setLoadingComplianceStudents(false)
+      }
     }
+  }, [compliancePeriodCodes, exactCourses, targetCourse])
+
+  function selectVisibleComplianceStudents() {
+    const visibleCodes = filteredComplianceStudents
+      .map((item) => String(item.codigo_estud || '').trim())
+      .filter(Boolean)
+    setSelectedComplianceStudentCodes((current) => Array.from(new Set([...current, ...visibleCodes])))
   }
 
   function clearCourseFilters() {
@@ -1079,6 +1205,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
 
   function reportRequestParams(course: PortalTeacherCourse | null = reportCourse, selectedPeriodos: string[] = []) {
     if (!course) return
+    const aggregatesSubjectScopes = Boolean(course.asignaciones?.length || course.alcances_periodo?.length)
     const periodos = selectedPeriodos.length
       ? selectedPeriodos
       : course.codigo_periodos?.length
@@ -1087,16 +1214,17 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         ? [course.codigo_periodo]
         : []
     const subjectCode = course.cod_materia || course.codigo_materia || ''
-    if (!periodos.length || !subjectCode || !course.paralelo) {
+    const parallel = aggregatesSubjectScopes ? '*' : course.paralelo || ''
+    if (!periodos.length || !subjectCode || !parallel) {
       setError('Seleccione una materia con periodo y paralelo para descargar el reporte.')
       return
     }
     return {
       periodos,
       subjectCode,
-      codAnioBasica: course.cod_anio_basica || '',
-      paralelo: course.paralelo,
-      codJornada: course.cod_jornada ?? null,
+      codAnioBasica: aggregatesSubjectScopes ? '' : course.cod_anio_basica || '',
+      paralelo: parallel,
+      codJornada: aggregatesSubjectScopes ? null : course.cod_jornada ?? null,
     }
   }
 
@@ -1112,8 +1240,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     })
   }
 
-  async function buildSecretaryReportBlob() {
-    const params = reportRequestParams()
+  async function buildSecretaryReportBlob(
+    course: PortalTeacherCourse | null = reportCourse,
+    selectedPeriodos: string[] = [],
+    selectedStudentCodes: string[] = []
+  ) {
+    const params = reportRequestParams(course, selectedPeriodos)
     if (!params) return null
     return downloadPortalTeacherStudentGradeReport({
       codigoPeriodos: params.periodos,
@@ -1121,6 +1253,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       codigoMateria: params.subjectCode,
       paralelo: params.paralelo,
       codJornada: params.codJornada,
+      codigoEstudiantes: selectedStudentCodes,
     })
   }
 
@@ -1137,10 +1270,6 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
     if (selectedComplianceStudentCodes.length === 0) {
       setError('Seleccione al menos un estudiante para anexar calificaciones al informe.')
-      return null
-    }
-    if (complianceEvidenceFiles.notas.length === 0) {
-      setError('Debe subir al menos una captura de pantalla del reporte de notas para complementar el documento.')
       return null
     }
     return downloadPortalTeacherComplianceReport({
@@ -1209,14 +1338,30 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
-  async function previewSecretaryReport() {
+  async function previewSecretaryReport(
+    course: PortalTeacherCourse | null = reportCourse,
+    selectedPeriodos: string[] = [],
+    selectedStudentCodes: string[] = []
+  ) {
     setPreviewingSecretaryReport(true)
     setError('')
     try {
-      const blob = await buildSecretaryReportBlob()
+      const blob = await buildSecretaryReportBlob(course, selectedPeriodos, selectedStudentCodes)
       if (!blob) return
       const url = window.URL.createObjectURL(blob)
+      const periodos = selectedPeriodos.length
+        ? selectedPeriodos
+        : course?.codigo_periodos?.length
+          ? course.codigo_periodos
+          : course?.codigo_periodo
+            ? [course.codigo_periodo]
+            : []
+      const subjectCode = course?.cod_materia || course?.codigo_materia || ''
+      const subject = safeFilenamePart(course?.nombre_materia || subjectCode)
+      const period = safeFilenamePart(selectedPeriodos.join('-') || course?.detalle_periodos || course?.detalle_periodo || periodos.join('-'))
       setSecretaryReportPreviewUrl(url)
+      setSecretaryReportPreviewFilename(`reporte-notas-secretaria-${subject}-${period}.pdf`)
+      setSecretaryReportPreviewTitle(course?.nombre_materia || subjectCode || 'Materia seleccionada')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo generar la vista previa del formato Secretaría')
     } finally {
@@ -1224,28 +1369,29 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
   }
 
-  async function downloadSecretaryReport() {
-    if (!reportCourse) return
+  async function downloadSecretaryReport(
+    course: PortalTeacherCourse | null = reportCourse,
+    selectedPeriodos: string[] = [],
+    selectedStudentCodes: string[] = []
+  ) {
+    if (!course) return
     setDownloadingSecretaryReport(true)
     setError('')
     try {
-      const blob = await buildSecretaryReportBlob()
+      const blob = await buildSecretaryReportBlob(course, selectedPeriodos, selectedStudentCodes)
       if (!blob) return
-      const periodos = reportCourse.codigo_periodos?.length
-        ? reportCourse.codigo_periodos
-        : reportCourse.codigo_periodo
-          ? [reportCourse.codigo_periodo]
-          : []
-      const subjectCode = reportCourse.cod_materia || reportCourse.codigo_materia || ''
+      const periodos = selectedPeriodos.length
+        ? selectedPeriodos
+        : course.codigo_periodos?.length
+          ? course.codigo_periodos
+          : course.codigo_periodo
+            ? [course.codigo_periodo]
+            : []
+      const subjectCode = course.cod_materia || course.codigo_materia || ''
       const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      const subject = safeFilenamePart(reportCourse.nombre_materia || subjectCode)
-      const period = safeFilenamePart(reportCourse.detalle_periodos || reportCourse.detalle_periodo || periodos.join('-'))
-      link.href = url
-      link.download = `reporte-notas-secretaria-${subject}-${period}.pdf`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
+      const subject = safeFilenamePart(course.nombre_materia || subjectCode)
+      const period = safeFilenamePart(course.detalle_periodos || course.detalle_periodo || periodos.join('-'))
+      downloadObjectUrl(url, `reporte-notas-secretaria-${subject}-${period}.pdf`)
       window.URL.revokeObjectURL(url)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar el formato Secretaría')
@@ -1324,8 +1470,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       setError('Cargue y seleccione al menos un estudiante para anexar calificaciones al informe.')
       return
     }
-    if (complianceEvidenceFiles.notas.length === 0) {
-      setError('Debe subir al menos una captura del reporte de notas antes de firmar.')
+    if (!complianceContractFile || !complianceContractAnalysis) {
+      setError('Seleccione y valide el contrato docente PDF antes de firmar los documentos.')
+      return
+    }
+    if (!contractMatchesCourse(complianceContractAnalysis, course)) {
+      setError('El contrato docente no corresponde a la materia seleccionada.')
+      return
+    }
+    if (!complianceContractAnalysis.fecha_inicio || !complianceContractAnalysis.fecha_fin) {
+      setError('El contrato debe contener una fecha de inicio y una fecha de finalización reconocibles.')
       return
     }
     if (!signingCertificate || !signingPassword) {
@@ -1342,8 +1496,40 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setSigningComplianceReport(true)
     setError('')
     setMessage('')
+    setSignedReportBundle(null)
     try {
-      const blob = await signPortalTeacherComplianceReport({
+      const subject = safeFilenamePart(course.nombre_materia || params.subjectCode)
+      const period = safeFilenamePart(compliancePeriodCodes.join('-') || course.detalle_periodos || course.detalle_periodo || params.periodos.join('-'))
+      const gradesFilename = `reporte-notas-secretaria-${subject}-${period}-firmado.pdf`
+      const contractReference = complianceContractAnalysis.numero_contrato || complianceContractFile.name.replace(/\.pdf$/i, '')
+      const contractFilename = `contrato-docente-${safeFilenamePart(contractReference)}-firmado.pdf`
+      const complianceFilename = `cumplimiento-docente-${subject}-${period}-firmado.pdf`
+      const archiveFilename = `documentos-docente-${subject}-${period}-firmados.zip`
+      setMessage('Firmando el reporte de notas en formato Secretaría...')
+      const gradesBlob = await signPortalTeacherStudentGradeReport({
+        codigoPeriodos: params.periodos,
+        codAnioBasica: params.codAnioBasica,
+        codigoMateria: params.subjectCode,
+        paralelo: params.paralelo,
+        codJornada: params.codJornada,
+        codigoEstudiantes: selectedComplianceStudentCodes,
+        certificado: signingCertificate,
+        contrasenaCertificado: signingPassword,
+        firmaMotivo: 'Reporte de notas formato Secretaría',
+        firmaUbicacion: signingLocation,
+        firmaContacto: signingContact,
+      })
+      setMessage('Firmando el contrato docente con el mismo certificado...')
+      const contractBlob = await signPortalTeacherUploadedContract({
+        contrato: complianceContractFile,
+        certificado: signingCertificate,
+        contrasenaCertificado: signingPassword,
+        firmaMotivo: 'Aceptación y firma de contrato docente',
+        firmaUbicacion: signingLocation,
+        firmaContacto: signingContact,
+      })
+      setMessage('Adjuntando el reporte firmado como imagen y firmando el informe docente...')
+      const complianceBlob = await signPortalTeacherComplianceReport({
         codigoPeriodos: params.periodos,
         codAnioBasica: params.codAnioBasica,
         codigoMateria: params.subjectCode,
@@ -1357,24 +1543,40 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         observaciones: complianceObservations,
         grabacionesTeams: complianceTeamsReportPayload,
         evidencias: evidencePayload(complianceEvidenceFiles),
+        reporteNotasFirmado: gradesBlob,
+        reporteNotasFirmadoNombre: gradesFilename,
         certificado: signingCertificate,
         contrasenaCertificado: signingPassword,
         firmaMotivo: signingReason,
         firmaUbicacion: signingLocation,
         firmaContacto: signingContact,
       })
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      const subject = safeFilenamePart(course.nombre_materia || params.subjectCode)
-      const period = safeFilenamePart(compliancePeriodCodes.join('-') || course.detalle_periodos || course.detalle_periodo || params.periodos.join('-'))
-      link.href = url
-      link.download = `cumplimiento-docente-${subject}-${period}-firmado.pdf`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(url)
+      setMessage('Preparando la descarga conjunta de los documentos firmados...')
+      const archiveBlob = await downloadPortalTeacherSignedDocumentsArchive({
+        informe: complianceBlob,
+        informeNombre: complianceFilename,
+        notas: gradesBlob,
+        notasNombre: gradesFilename,
+        contrato: contractBlob,
+        contratoNombre: contractFilename,
+        codigoMateria: params.subjectCode,
+        nombreMateria: course.nombre_materia || '',
+        codigoPeriodos: params.periodos,
+      })
+      setSignedReportBundle({
+        complianceUrl: window.URL.createObjectURL(complianceBlob),
+        complianceFilename,
+        gradesUrl: window.URL.createObjectURL(gradesBlob),
+        gradesFilename,
+        contractUrl: window.URL.createObjectURL(contractBlob),
+        contractFilename,
+        archiveUrl: window.URL.createObjectURL(archiveBlob),
+        archiveFilename,
+      })
       setSigningConsent(false)
-      setMessage('Informe firmado y descargado. El certificado y la contraseña fueron descartados de esta pantalla.')
+      setMessage(
+        'Informe, reporte de notas, contrato y paquete ZIP firmados y guardados en OneDrive / DOCENTES. Puede descargarlos también desde esta pantalla.',
+      )
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo firmar electrónicamente el informe')
     } finally {
@@ -1421,26 +1623,46 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }, [compliancePreviewUrl])
 
   useEffect(() => {
+    if (!signedReportBundle) return
+    return () => {
+      window.URL.revokeObjectURL(signedReportBundle.complianceUrl)
+      window.URL.revokeObjectURL(signedReportBundle.gradesUrl)
+      window.URL.revokeObjectURL(signedReportBundle.contractUrl)
+      window.URL.revokeObjectURL(signedReportBundle.archiveUrl)
+    }
+  }, [signedReportBundle])
+
+  useEffect(() => {
     if (subjectFilter && !subjectOptions.some((option) => option.key === subjectFilter)) {
       setSubjectFilter('')
     }
   }, [subjectFilter, subjectOptions])
 
   useEffect(() => {
-    const targetPool = initialMode === 'compliance' ? filteredExactCourses : filteredCourses
-    if (targetPool.length === 0) {
+    if (initialMode === 'compliance') {
+      if (complianceCourseOptions.length === 0) {
+        setTargetCourseKey('')
+        return
+      }
+      if (!complianceCourseOptions.some((option) => option.key === targetCourseKey)) {
+        setTargetCourseKey(complianceCourseOptions[0].key)
+      }
+      return
+    }
+    if (filteredCourses.length === 0) {
       setTargetCourseKey('')
       return
     }
-    if (!targetPool.some((course) => courseKey(course) === targetCourseKey)) {
-      setTargetCourseKey(courseKey(targetPool[0]))
+    if (!filteredCourses.some((course) => courseKey(course) === targetCourseKey)) {
+      setTargetCourseKey(courseKey(filteredCourses[0]))
     }
-  }, [filteredCourses, filteredExactCourses, initialMode, targetCourseKey])
+  }, [complianceCourseOptions, filteredCourses, initialMode, targetCourseKey])
 
   useEffect(() => {
     const codes = targetCoursePeriodOptions.map((option) => option.code)
     setCompliancePeriodCodes(codes.slice(0, 1))
     setCompliancePeriodToAdd(codes[1] || codes[0] || '')
+    setComplianceStudentSearch('')
     setComplianceStudents([])
     setSelectedComplianceStudentCodes([])
   }, [targetCoursePeriodOptions])
@@ -1451,11 +1673,17 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }, [availableCompliancePeriodOptions, compliancePeriodToAdd])
 
   useEffect(() => {
+    if (initialMode !== 'compliance' || !targetCourse || compliancePeriodCodes.length === 0) return
+    void loadComplianceStudents(targetCourse, compliancePeriodCodes)
+  }, [compliancePeriodCodes, initialMode, loadComplianceStudents, targetCourse])
+
+  useEffect(() => {
     if (initialMode !== 'compliance' || !targetCourse) {
       setComplianceTeams([])
       setSelectedComplianceTeamId('')
       setComplianceRecordings([])
       setSelectedComplianceRecordingKeys([])
+      setFilterComplianceRecordingsByDate(false)
       return
     }
     let cancelled = false
@@ -1464,6 +1692,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setSelectedComplianceTeamId('')
     setComplianceRecordings([])
     setSelectedComplianceRecordingKeys([])
+    setFilterComplianceRecordingsByDate(false)
 
     void fetchMyTeamsCatalog()
       .then((payload) => {
@@ -1513,7 +1742,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     let cancelled = false
     setLoadingComplianceRecordings(true)
     setComplianceTeamsError('')
-    void fetchMyTeamRecordings(selectedComplianceTeamId)
+    void fetchMyTeamRecordings(selectedComplianceTeamId, complianceRecordingsRefreshToken > 0)
       .then((payload) => {
         if (cancelled) return
         const items = (payload.value || []).slice(0, 50)
@@ -1645,25 +1874,31 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
             </p>
             <ol className="portal-compliance-steps" aria-label="Puntos del informe docente">
               <li><span>1</span><div><strong>Datos del informe</strong><small>Materia, periodos y fechas</small></div></li>
-              <li><span>2</span><div><strong>Evidencias</strong><small>PEA, aula, TEAMS, asistencia y notas</small></div></li>
+              <li><span>2</span><div><strong>Evidencias</strong><small>PEA, aula, TEAMS y notas</small></div></li>
               <li><span>3</span><div><strong>Estudiantes</strong><small>Selección para el anexo de calificaciones</small></div></li>
               <li><span>4</span><div><strong>Firma electrónica</strong><small>Certificado temporal del docente</small></div></li>
             </ol>
             <div className="portal-compliance-panel portal-compliance-panel--launcher">
+              <label className="portal-compliance-teacher-source">
+                <span>Docente del informe</span>
+                <input value={displayName} readOnly aria-readonly="true" />
+                <small>Los cursos disponibles pertenecen exclusivamente a este docente autenticado.</small>
+              </label>
               <label className="portal-compliance-course-select">
-                <span>Materia del informe</span>
+                <span>Materia asignada al docente</span>
                 <select
                   value={targetCourseKey}
                   onChange={(event) => {
                     setTargetCourseKey(event.target.value)
                     setComplianceStudents([])
                     setSelectedComplianceStudentCodes([])
+                    clearComplianceContract()
                   }}
                   disabled={complianceCourseOptions.length === 0}
                 >
                   {complianceCourseOptions.map((option) => (
                     <option key={option.key} value={option.key}>
-                      {option.label} - {option.periods} periodo(s)
+                      {option.label}
                     </option>
                   ))}
                 </select>
@@ -1729,17 +1964,58 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <div className="portal-compliance-period-note">
                 Puede seleccionar hasta 4 periodos para cargar estudiantes y anexar calificaciones.
               </div>
-              <label>
+              <div className="portal-compliance-contract-source">
+                <label>
+                  <span>Contrato docente PDF</span>
+                  <input
+                    key={complianceContractInputKey}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(event) => { void selectComplianceContract(event.target.files?.[0] || null) }}
+                    disabled={analyzingComplianceContract}
+                  />
+                  <small>
+                    {analyzingComplianceContract
+                      ? 'Analizando contrato y verificando al docente...'
+                      : complianceContractFile
+                        ? `${complianceContractFile.name} · ${(complianceContractFile.size / 1024 / 1024).toFixed(2)} MB`
+                        : 'Seleccione el contrato correspondiente. Se usa temporalmente para obtener las fechas y firmarlo; no se almacena.'}
+                  </small>
+                </label>
+                {complianceContractAnalysis ? (
+                  <div className="portal-compliance-contract-result" aria-live="polite">
+                    <span>Contrato reconocido</span>
+                    <strong>{complianceContractAnalysis.numero_contrato || complianceContractAnalysis.nombre_archivo}</strong>
+                    <small>
+                      {complianceContractAnalysis.codigo_materia || 'Materia no identificada'} · Inicio {complianceContractAnalysis.fecha_inicio || 'pendiente'} · Fin {complianceContractAnalysis.fecha_fin || 'pendiente'}
+                    </small>
+                  </div>
+                ) : null}
+              </div>
+              <label className="portal-compliance-contract-date">
                 <span>Fecha inicio</span>
-                <input type="date" value={complianceStartDate} onChange={(event) => setComplianceStartDate(event.target.value)} />
+                <input
+                  type="date"
+                  value={complianceStartDate}
+                  readOnly
+                  aria-readonly="true"
+                  title="Fecha obtenida del contrato docente validado"
+                />
               </label>
-              <label>
+              <label className="portal-compliance-contract-date">
                 <span>Fecha fin</span>
-                <input type="date" value={complianceEndDate} onChange={(event) => setComplianceEndDate(event.target.value)} />
+                <input
+                  type="date"
+                  value={complianceEndDate}
+                  readOnly
+                  aria-readonly="true"
+                  title="Fecha obtenida del contrato docente validado"
+                />
               </label>
               <label>
                 <span>Teléfono contacto</span>
                 <input value={compliancePhone} onChange={(event) => setCompliancePhone(event.target.value)} placeholder="Ej. 09XXXXXXXX" />
+                <small>Se carga desde el móvil o teléfono registrado en DATOSDOCENTE.</small>
               </label>
               <label>
                 <span>Actualización del sílabo</span>
@@ -1757,7 +2033,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   <h2>Evidencias del informe</h2>
                 </div>
                 <strong>
-                  {evidencePayload(complianceEvidenceFiles).length + complianceTeamsReportPayload.length} evidencia(s)
+                  {evidencePayload(complianceEvidenceFiles).length + complianceTeamsReportPayload.length} cargada(s) · 1 automática
                 </strong>
               </div>
               <div className="portal-compliance-evidence-grid">
@@ -1766,7 +2042,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     className={`portal-compliance-evidence-item${option.key === 'teams' ? ' portal-compliance-evidence-item--teams' : ''}`}
                     key={option.key}
                   >
-                    <span className="portal-compliance-evidence-title"><b>{optionIndex + 1}</b>{option.label}{option.key === 'notas' ? ' *' : ''}</span>
+                    <span className="portal-compliance-evidence-title"><b>{optionIndex + 1}</b>{option.label}</span>
                     {option.key === 'teams' ? (
                       <div className="portal-compliance-teams">
                         <div className="portal-compliance-teams-toolbar">
@@ -1806,14 +2082,19 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           <p className="portal-compliance-teams-alert">{complianceTeamsError}</p>
                         ) : null}
                         {selectedComplianceTeam ? (
-                          <div className="portal-compliance-teams-summary">
+                          <>
+                            <div className="portal-compliance-teams-summary">
                             <div>
                               <span>Microsoft Graph</span>
                               <strong>{selectedComplianceTeam.displayName || 'Equipo seleccionado'}</strong>
                             </div>
                             <div>
                               <span>Encontradas</span>
-                              <strong>{filteredComplianceRecordings.length}</strong>
+                              <strong>{complianceRecordings.length}</strong>
+                            </div>
+                            <div>
+                              <span>En fechas</span>
+                              <strong>{complianceRecordingsInReportRange.length}</strong>
                             </div>
                             <div>
                               <span>Incluidas</span>
@@ -1846,7 +2127,18 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                                 Ninguna
                               </button>
                             </div>
-                          </div>
+                            </div>
+                            {(complianceStartDate || complianceEndDate) && complianceRecordings.length > 0 ? (
+                              <label className="portal-compliance-teams-date-filter">
+                                <input
+                                  type="checkbox"
+                                  checked={filterComplianceRecordingsByDate}
+                                  onChange={(event) => setFilterComplianceRecordingsByDate(event.target.checked)}
+                                />
+                                <span>Mostrar solamente grabaciones dentro de las fechas del informe</span>
+                              </label>
+                            ) : null}
+                          </>
                         ) : null}
                         {loadingComplianceRecordings ? (
                           <div className="portal-compliance-teams-empty">Consultando SharePoint, OneDrive y reuniones de Teams...</div>
@@ -1903,7 +2195,11 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                             </table>
                           </div>
                         ) : selectedComplianceTeamId ? (
-                          <div className="portal-compliance-teams-empty">Sin grabaciones para el rango de fechas seleccionado.</div>
+                          <div className="portal-compliance-teams-empty">
+                            {complianceRecordings.length > 0
+                              ? 'Las grabaciones encontradas están fuera de las fechas del informe. Desactive el filtro de fechas para mostrarlas.'
+                              : 'Microsoft Graph no encontró grabaciones en el equipo seleccionado.'}
+                          </div>
                         ) : null}
                         <details className="portal-compliance-teams-fallback">
                           <summary>Agregar captura manual</summary>
@@ -1962,27 +2258,53 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     )}
                   </div>
                 ))}
+                <div className="portal-compliance-evidence-item portal-compliance-evidence-item--automatic">
+                  <span className="portal-compliance-evidence-title"><b>4</b>Reporte de notas firmado</span>
+                  <strong>{signedReportBundle ? 'Adjuntado automáticamente' : 'Se generará al firmar'}</strong>
+                  <small>
+                    El sistema firma primero el reporte de Secretaría, convierte sus páginas en imágenes y las
+                    incorpora al informe. El PDF firmado también queda disponible por separado.
+                  </small>
+                </div>
               </div>
             </div>
             <div className="portal-compliance-students">
               <div className="section-title">
                 <div>
                   <span>Estudiantes para anexo de notas</span>
-                  <h2>{complianceStudents.length} calificado(s)</h2>
+                  <h2>{selectedComplianceStudentCodes.length} seleccionado(s)</h2>
+                  <small>La selección alimenta automáticamente el anexo de notas.</small>
                 </div>
                 <div className="portal-compliance-actions">
-                  <button type="button" className="ghost-button" onClick={() => void loadComplianceStudents(targetCourse)} disabled={loadingComplianceStudents || !targetCourse || compliancePeriodCodes.length === 0}>
-                    {loadingComplianceStudents ? 'Cargando...' : 'Cargar estudiantes'}
-                  </button>
-                  <button type="button" className="ghost-button" onClick={() => setSelectedComplianceStudentCodes(Array.from(new Set(complianceStudents.map((item) => String(item.codigo_estud)).filter(Boolean))))} disabled={complianceStudents.length === 0}>
-                    Todos
+                  <button type="button" className="ghost-button" onClick={selectVisibleComplianceStudents} disabled={filteredComplianceStudents.length === 0}>
+                    Incluir visibles
                   </button>
                   <button type="button" className="ghost-button" onClick={() => setSelectedComplianceStudentCodes([])} disabled={complianceStudents.length === 0}>
-                    Ninguno
+                    Limpiar selección
                   </button>
                 </div>
               </div>
-              {complianceStudents.length > 0 ? (
+              <div className="portal-compliance-student-search">
+                <label>
+                  <span>Buscar estudiante</span>
+                  <input
+                    type="search"
+                    value={complianceStudentSearch}
+                    onChange={(event) => setComplianceStudentSearch(event.target.value)}
+                    placeholder="Nombre, cédula o código"
+                    autoComplete="off"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => void loadComplianceStudents(targetCourse)}
+                  disabled={loadingComplianceStudents || !targetCourse || compliancePeriodCodes.length === 0}
+                >
+                  {loadingComplianceStudents ? 'Actualizando...' : 'Actualizar estudiantes'}
+                </button>
+              </div>
+              {filteredComplianceStudents.length > 0 ? (
                 <div className="excel-table-wrap portal-compliance-students-wrap">
                   <table className="matricula-table portal-compliance-students-table">
                     <thead>
@@ -1996,7 +2318,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       </tr>
                     </thead>
                     <tbody>
-                      {complianceStudents.map((item) => {
+                      {filteredComplianceStudents.map((item) => {
                         const code = String(item.codigo_estud)
                         return (
                           <tr key={studentKey(item)}>
@@ -2024,21 +2346,24 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     </tbody>
                   </table>
                 </div>
+              ) : complianceStudents.length > 0 ? (
+                <p className="form-success">No hay resultados cargados que coincidan con la búsqueda actual.</p>
               ) : (
-                <p className="form-success">Carga los estudiantes calificados para anexar sus notas al informe.</p>
+                <p className="form-success">Los estudiantes se cargarán automáticamente al seleccionar la materia y sus periodos.</p>
               )}
             </div>
             <section className="portal-signature-panel" aria-labelledby="portal-signature-title">
               <div className="section-title">
                 <div>
                   <span>Firma electrónica</span>
-                  <h2 id="portal-signature-title">Firmar informe con certificado .p12</h2>
+                  <h2 id="portal-signature-title">Firmar informe, notas y contrato</h2>
                 </div>
                 <strong>Uso único por solicitud</strong>
               </div>
               <p>
-                El certificado y la contraseña se utilizan únicamente para firmar este PDF. Al finalizar el intento,
-                deberá seleccionarlos nuevamente para otra firma.
+                El certificado y la contraseña se utilizan una sola vez para firmar el informe de cumplimiento, el
+                reporte de notas en formato Secretaría y el contrato docente validado. Al finalizar deberá
+                seleccionarlos nuevamente para otra firma.
               </p>
               <div className="portal-signature-grid">
                 <label className="portal-signature-certificate">
@@ -2095,7 +2420,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   checked={signingConsent}
                   onChange={(event) => setSigningConsent(event.target.checked)}
                 />
-                <span>Confirmo que soy titular del certificado y apruebo el contenido definitivo del informe.</span>
+                <span>Confirmo que soy titular del certificado y apruebo el contenido definitivo de los tres documentos.</span>
               </label>
               <div className="portal-signature-actions">
                 <button
@@ -2110,11 +2435,55 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   type="button"
                   className="primary-action"
                   onClick={() => void signComplianceReport(targetCourse)}
-                  disabled={signingComplianceReport || !targetCourse || !signingCertificate || !signingPassword || !signingConsent}
+                  disabled={
+                    signingComplianceReport ||
+                    !targetCourse ||
+                    !complianceContractFile ||
+                    !complianceContractAnalysis ||
+                    !signingCertificate ||
+                    !signingPassword ||
+                    !signingConsent
+                  }
                 >
-                  {signingComplianceReport ? 'Firmando PDF...' : 'Firmar y descargar PDF'}
+                  {signingComplianceReport ? 'Firmando los 3 PDF...' : 'Firmar los 3 documentos'}
                 </button>
               </div>
+              {signedReportBundle ? (
+                <div className="portal-signed-documents" aria-live="polite">
+                  <div>
+                    <strong>Documentos firmados</strong>
+                    <small>Guardados en OneDrive / DOCENTES. Descargue el paquete completo o cada PDF por separado.</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={() => downloadObjectUrl(signedReportBundle.archiveUrl, signedReportBundle.archiveFilename)}
+                  >
+                    Descargar todo
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => downloadObjectUrl(signedReportBundle.complianceUrl, signedReportBundle.complianceFilename)}
+                  >
+                    Descargar informe firmado
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => downloadObjectUrl(signedReportBundle.gradesUrl, signedReportBundle.gradesFilename)}
+                  >
+                    Descargar notas firmadas
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => downloadObjectUrl(signedReportBundle.contractUrl, signedReportBundle.contractFilename)}
+                  >
+                    Descargar contrato firmado
+                  </button>
+                </div>
+              ) : null}
             </section>
             <div className="portal-compliance-actions">
               <button
@@ -2132,6 +2501,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 disabled={downloadingComplianceReport || !targetCourse}
               >
                 {downloadingComplianceReport ? 'Generando informe...' : 'Descargar PDF sin firma'}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void previewSecretaryReport(targetCourse, compliancePeriodCodes, selectedComplianceStudentCodes)}
+                disabled={previewingSecretaryReport || !targetCourse || selectedComplianceStudentCodes.length === 0}
+              >
+                {previewingSecretaryReport ? 'Generando notas...' : 'Vista previa de notas'}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void downloadSecretaryReport(targetCourse, compliancePeriodCodes, selectedComplianceStudentCodes)}
+                disabled={downloadingSecretaryReport || !targetCourse || selectedComplianceStudentCodes.length === 0}
+              >
+                {downloadingSecretaryReport ? 'Generando notas...' : 'Descargar notas sin firma'}
               </button>
             </div>
             {error ? <p className="form-error">{error}</p> : null}
@@ -2584,11 +2969,15 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <div>
                 <span>Vista previa</span>
                 <h2>Reporte de notas formato Secretaría</h2>
-                <p>{selectedCourse?.nombre_materia || 'Materia seleccionada'}</p>
+                <p>{secretaryReportPreviewTitle}</p>
               </div>
               <div className="portal-report-preview-actions">
-                <button type="button" className="ghost-button" onClick={() => void downloadSecretaryReport()} disabled={downloadingSecretaryReport}>
-                  {downloadingSecretaryReport ? 'Descargando...' : 'Descargar formato'}
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => downloadObjectUrl(secretaryReportPreviewUrl, secretaryReportPreviewFilename)}
+                >
+                  Descargar formato
                 </button>
                 <button type="button" className="primary-action" onClick={closeSecretaryReportPreview}>
                   Cerrar

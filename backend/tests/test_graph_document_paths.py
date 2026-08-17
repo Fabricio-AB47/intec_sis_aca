@@ -11,6 +11,7 @@ from app.services.graph_documents import (
     prepare_expedient,
     register_upload_session,
     safe_folder_part,
+    upload_bytes,
 )
 
 
@@ -136,6 +137,57 @@ class GraphDocumentPathTests(unittest.TestCase):
         self.assertIn(
             "OUTPUT INSERTED.DocumentoGraphId INTO @DocumentoResultado",
             document_source,
+        )
+
+    @patch("app.services.graph_documents._auth_headers", return_value={"Authorization": "Bearer test"})
+    @patch("app.services.graph_documents._item_path_url", return_value="https://graph.example/file")
+    @patch("app.services.graph_documents.httpx.Client")
+    def test_upload_bytes_uses_simple_upload_for_signed_pdf(
+        self,
+        client_factory: MagicMock,
+        _item_path: MagicMock,
+        _headers: MagicMock,
+    ) -> None:
+        client = client_factory.return_value.__enter__.return_value
+        response = client.put.return_value
+        response.json.return_value = {"id": "pdf-1"}
+
+        result = upload_bytes("DOCENTES/docente/informe.pdf", b"%PDF-test", "application/pdf")
+
+        self.assertEqual(result["id"], "pdf-1")
+        client.put.assert_called_once_with(
+            "https://graph.example/file:/content",
+            headers={"Authorization": "Bearer test", "Content-Type": "application/pdf"},
+            content=b"%PDF-test",
+        )
+        response.raise_for_status.assert_called_once()
+
+    @patch("app.services.graph_documents.GRAPH_UPLOAD_CHUNK_BYTES", 4)
+    @patch("app.services.graph_documents.GRAPH_SIMPLE_UPLOAD_MAX_BYTES", 5)
+    @patch(
+        "app.services.graph_documents.create_upload_session",
+        return_value={"uploadUrl": "https://graph.example/session"},
+    )
+    @patch("app.services.graph_documents.httpx.Client")
+    def test_upload_bytes_uses_a_session_for_large_archive(
+        self,
+        client_factory: MagicMock,
+        _session: MagicMock,
+    ) -> None:
+        client = client_factory.return_value.__enter__.return_value
+        first_response = MagicMock(status_code=202)
+        second_response = MagicMock(status_code=202)
+        final_response = MagicMock(status_code=201)
+        final_response.json.return_value = {"id": "zip-1"}
+        client.put.side_effect = [first_response, second_response, final_response]
+
+        result = upload_bytes("DOCENTES/docente/documentos.zip", b"abcdefghij", "application/zip")
+
+        self.assertEqual(result["id"], "zip-1")
+        self.assertEqual(client.put.call_count, 3)
+        self.assertEqual(
+            client.put.call_args_list[-1].kwargs["headers"]["Content-Range"],
+            "bytes 8-9/10",
         )
 
 

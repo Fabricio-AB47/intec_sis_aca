@@ -99,9 +99,12 @@ import type {
   PortalAcademicPlanningPayload,
   PortalStudentRecordResponse,
   PortalTeacherCoursesResponse,
+  PortalTeacherContractAnalysis,
+  PortalTeacherContractDocumentSaveResponse,
   PortalTeacherContractsResponse,
   PortalTeacherGradePayload,
   PortalTeacherGradeSaveResponse,
+  PortalTeacherProfileResponse,
   PortalTeacherStudentsResponse,
   PracticasCatalogResponse,
   PracticasElegiblesResponse,
@@ -446,15 +449,21 @@ export async function fetchTeamCourses(teamId: string): Promise<TeamCollectionRe
   )
 }
 
-export async function fetchTeamRecordings(teamId: string): Promise<TeamCollectionResponse<TeamRecording>> {
+export async function fetchTeamRecordings(
+  teamId: string,
+  forceRefresh = false
+): Promise<TeamCollectionResponse<TeamRecording>> {
   return request<TeamCollectionResponse<TeamRecording>>(
-    `/api/teams/${encodeURIComponent(teamId)}/recordings`
+    `/api/teams/${encodeURIComponent(teamId)}/recordings?force_refresh=${forceRefresh}`
   )
 }
 
-export async function fetchMyTeamRecordings(teamId: string): Promise<TeamCollectionResponse<TeamRecording>> {
+export async function fetchMyTeamRecordings(
+  teamId: string,
+  forceRefresh = false
+): Promise<TeamCollectionResponse<TeamRecording>> {
   return request<TeamCollectionResponse<TeamRecording>>(
-    `/api/teams/mine/${encodeURIComponent(teamId)}/recordings`
+    `/api/teams/mine/${encodeURIComponent(teamId)}/recordings?force_refresh=${forceRefresh}`
   )
 }
 
@@ -1903,6 +1912,10 @@ export async function fetchPortalTeacherCourses(): Promise<PortalTeacherCoursesR
   return request<PortalTeacherCoursesResponse>('/api/portal/teacher/courses')
 }
 
+export async function fetchPortalTeacherProfile(): Promise<PortalTeacherProfileResponse> {
+  return request<PortalTeacherProfileResponse>('/api/portal/teacher/me', { cache: 'no-store' })
+}
+
 export async function fetchAdminGradeTeachers(params: {
   buscar?: string
   estado?: string
@@ -1939,7 +1952,111 @@ export async function fetchAdminGradeTeacherStudents(params: {
 }
 
 export async function fetchPortalTeacherContracts(): Promise<PortalTeacherContractsResponse> {
-  return request<PortalTeacherContractsResponse>('/api/portal/teacher/contracts')
+  return request<PortalTeacherContractsResponse>('/api/portal/teacher/contracts', { cache: 'no-store' })
+}
+
+export async function analyzePortalTeacherContract(contrato: File): Promise<PortalTeacherContractAnalysis> {
+  const formData = new FormData()
+  formData.append('contrato', contrato)
+  return request<PortalTeacherContractAnalysis>('/api/portal/teacher/contracts/analyze-document', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function uploadPortalTeacherContract(params: {
+  numeroContrato: string
+  codAnioBasica: string
+  codigoPeriodo: string
+  codigoMateria: string
+  paralelo: string
+  codJornada?: number | null
+  modalidadAcademica: 'REGULAR' | 'HOMOLOGACION'
+  fechaInicio: string
+  fechaFin: string
+  horasPlanificadas: number
+  valorHora: number
+  valorTotal: number
+  responsableContratacion?: string
+  observacion?: string
+  contrato: File
+}): Promise<PortalTeacherContractDocumentSaveResponse> {
+  const formData = new FormData()
+  formData.append('numero_contrato', params.numeroContrato)
+  formData.append('cod_anio_basica', params.codAnioBasica)
+  formData.append('codigo_periodo', params.codigoPeriodo)
+  formData.append('codigo_materia', params.codigoMateria)
+  formData.append('paralelo', params.paralelo)
+  if (params.codJornada != null) formData.append('cod_jornada', String(params.codJornada))
+  formData.append('modalidad_academica', params.modalidadAcademica)
+  formData.append('fecha_inicio', params.fechaInicio)
+  formData.append('fecha_fin', params.fechaFin)
+  formData.append('horas_planificadas', String(params.horasPlanificadas))
+  formData.append('valor_hora', String(params.valorHora))
+  formData.append('valor_total', String(params.valorTotal))
+  formData.append('responsable_contratacion', params.responsableContratacion || '')
+  formData.append('observacion', params.observacion || '')
+  formData.append('contrato', params.contrato)
+  return request<PortalTeacherContractDocumentSaveResponse>('/api/portal/teacher/contracts/document', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function fetchPortalTeacherContractDocument(
+  contractId: number,
+  options: { version?: 'current' | 'original' | 'signed'; download?: boolean } = {},
+): Promise<Blob> {
+  const query = new URLSearchParams()
+  query.set('version', options.version || 'current')
+  if (options.download) query.set('download', 'true')
+  return request<Blob>(`/api/portal/teacher/contracts/${contractId}/document?${query.toString()}`, {
+    responseType: 'blob',
+    cache: 'no-store',
+  })
+}
+
+export async function signPortalTeacherContract(params: {
+  contractId: number
+  certificado: File
+  contrasenaCertificado: string
+  firmaMotivo: string
+  firmaUbicacion: string
+  firmaContacto?: string
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('certificado', params.certificado)
+  formData.append('contrasena_certificado', params.contrasenaCertificado)
+  formData.append('firma_motivo', params.firmaMotivo)
+  formData.append('firma_ubicacion', params.firmaUbicacion)
+  formData.append('firma_contacto', params.firmaContacto || '')
+  return request<Blob>(`/api/portal/teacher/contracts/${params.contractId}/sign`, {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
+}
+
+export async function signPortalTeacherUploadedContract(params: {
+  contrato: File
+  certificado: File
+  contrasenaCertificado: string
+  firmaMotivo: string
+  firmaUbicacion: string
+  firmaContacto?: string
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('contrato', params.contrato)
+  formData.append('certificado', params.certificado)
+  formData.append('contrasena_certificado', params.contrasenaCertificado)
+  formData.append('firma_motivo', params.firmaMotivo)
+  formData.append('firma_ubicacion', params.firmaUbicacion)
+  formData.append('firma_contacto', params.firmaContacto || '')
+  return request<Blob>('/api/portal/teacher/contracts/sign-uploaded', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
 }
 
 export async function downloadPortalAcademicPlanningPdf(
@@ -1991,6 +2108,7 @@ export async function fetchPortalTeacherStudents(params: {
   codJornada?: number | null
   codigoMateria: string
   paralelo: string
+  buscar?: string
 }): Promise<PortalTeacherStudentsResponse> {
   const query = new URLSearchParams({
     codigo_materia: params.codigoMateria,
@@ -2001,6 +2119,9 @@ export async function fetchPortalTeacherStudents(params: {
   }
   if (params.codJornada !== null && params.codJornada !== undefined) {
     query.set('cod_jornada', String(params.codJornada))
+  }
+  if (params.buscar?.trim()) {
+    query.set('buscar', params.buscar.trim())
   }
   const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
   for (const codigoPeriodo of periodos) {
@@ -2101,6 +2222,8 @@ type TeacherComplianceReportParams = {
   observaciones?: string
   grabacionesTeams?: TeacherComplianceTeamsRecording[]
   evidencias?: Array<{ label: string; file: File }>
+  reporteNotasFirmado?: Blob
+  reporteNotasFirmadoNombre?: string
 }
 
 function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): FormData {
@@ -2129,6 +2252,13 @@ function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): 
   for (const evidence of params.evidencias || []) {
     formData.append('evidencia_label', evidence.label)
     formData.append('evidencia', evidence.file)
+  }
+  if (params.reporteNotasFirmado) {
+    formData.append(
+      'reporte_notas_firmado',
+      params.reporteNotasFirmado,
+      params.reporteNotasFirmadoNombre || 'reporte-notas-secretaria-firmado.pdf'
+    )
   }
   return formData
 }
@@ -2585,6 +2715,7 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   codJornada?: number | null
   codigoMateria: string
   paralelo: string
+  codigoEstudiantes?: Array<string | number>
 }): Promise<Blob> {
   const query = new URLSearchParams({
     codigo_materia: params.codigoMateria,
@@ -2600,6 +2731,9 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   for (const codigoPeriodo of periodos) {
     query.append('codigo_periodo', codigoPeriodo)
   }
+  for (const codigoEstud of params.codigoEstudiantes || []) {
+    if (String(codigoEstud).trim()) query.append('codigo_estud', String(codigoEstud))
+  }
   const response = await fetch(`/api/portal/teacher/student-grade-report-pdf?${query.toString()}`, {
     credentials: 'include',
   })
@@ -2614,6 +2748,71 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   }
 
   return response.blob()
+}
+
+export async function signPortalTeacherStudentGradeReport(params: {
+  codigoPeriodo?: string
+  codigoPeriodos?: string[]
+  codAnioBasica?: string
+  codJornada?: number | null
+  codigoMateria: string
+  paralelo: string
+  codigoEstudiantes?: Array<string | number>
+  certificado: File
+  contrasenaCertificado: string
+  firmaMotivo: string
+  firmaUbicacion: string
+  firmaContacto?: string
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('codigo_materia', params.codigoMateria)
+  formData.append('paralelo', params.paralelo)
+  if (params.codAnioBasica) formData.append('cod_anio_basica', params.codAnioBasica)
+  if (params.codJornada !== null && params.codJornada !== undefined) {
+    formData.append('cod_jornada', String(params.codJornada))
+  }
+  const periodos = params.codigoPeriodos?.length ? params.codigoPeriodos : params.codigoPeriodo ? [params.codigoPeriodo] : []
+  for (const codigoPeriodo of periodos) formData.append('codigo_periodo', codigoPeriodo)
+  for (const codigoEstud of params.codigoEstudiantes || []) {
+    if (String(codigoEstud).trim()) formData.append('codigo_estud', String(codigoEstud))
+  }
+  formData.append('certificado', params.certificado)
+  formData.append('contrasena_certificado', params.contrasenaCertificado)
+  formData.append('firma_motivo', params.firmaMotivo)
+  formData.append('firma_ubicacion', params.firmaUbicacion)
+  if (params.firmaContacto) formData.append('firma_contacto', params.firmaContacto)
+  return request<Blob>('/api/portal/teacher/student-grade-report-sign', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
+}
+
+export async function downloadPortalTeacherSignedDocumentsArchive(params: {
+  informe: Blob
+  informeNombre: string
+  notas: Blob
+  notasNombre: string
+  contrato: Blob
+  contratoNombre: string
+  codigoMateria: string
+  nombreMateria: string
+  codigoPeriodos: string[]
+}): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('informe', params.informe, params.informeNombre)
+  formData.append('notas', params.notas, params.notasNombre)
+  formData.append('contrato', params.contrato, params.contratoNombre)
+  formData.append('codigo_materia', params.codigoMateria)
+  formData.append('nombre_materia', params.nombreMateria)
+  for (const codigoPeriodo of params.codigoPeriodos) {
+    formData.append('codigo_periodo', codigoPeriodo)
+  }
+  return request<Blob>('/api/portal/teacher/signed-documents-archive', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
 }
 
 export async function fetchPracticasCatalog(): Promise<PracticasCatalogResponse> {

@@ -1,6 +1,9 @@
 import unittest
+from datetime import datetime, timezone
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from zipfile import ZipFile
 
 from pypdf import PdfReader
 from pydantic import ValidationError
@@ -23,14 +26,25 @@ from app.routers.portal_academico import (
     AdminGradeCourseSelectionPayload,
     TeacherGradePayload,
     _admin_grade_completion,
+    _build_teacher_student_grade_report_pdf,
     _courses_with_enrolled_students,
     _grade_result,
     _group_teacher_courses,
+    _pdf_pages_as_compliance_evidence,
+    _parse_teacher_contract_text,
+    _pdf_signature_target_above_text,
+    _signature_stamp_layout,
     _resolve_admin_grade_course_selections,
+    _signed_teacher_documents_archive,
+    _store_signed_teacher_documents_onedrive,
     _student_grade_report_pdf,
+    _teacher_compliance_model_pdf,
+    _teacher_course_students_for_report,
+    _teacher_signed_documents_folder,
     _weighted_regular_partial,
     teacher_course_students,
     teacher_courses,
+    teacher_profile,
     teacher_subject_students,
     teacher_save_grades,
 )
@@ -66,6 +80,198 @@ def _selection(course: dict) -> AdminGradeCourseSelectionPayload:
         paralelo=course["paralelo"],
         cod_jornada=int(course["cod_jornada"]),
     )
+
+
+class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
+    @patch("app.routers.portal_academico._assert_pdf_signature_field")
+    def test_archive_contains_the_three_signed_documents(self, assert_signature: MagicMock):
+        report = b"%PDF-1.4\ninforme"
+        grades = b"%PDF-1.4\nnotas"
+        contract = b"%PDF-1.4\ncontrato"
+
+        archive_bytes = _signed_teacher_documents_archive(report, grades, contract)
+
+        with ZipFile(BytesIO(archive_bytes)) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                [
+                    "informe-cumplimiento-firmado.pdf",
+                    "reporte-notas-secretaria-firmado.pdf",
+                    "contrato-docente-firmado.pdf",
+                ],
+            )
+            self.assertEqual(archive.read("contrato-docente-firmado.pdf"), contract)
+        self.assertEqual(
+            assert_signature.call_args_list,
+            [
+                unittest.mock.call(report, "FirmaDocente"),
+                unittest.mock.call(grades, "FirmaDocenteReporteNotas"),
+                unittest.mock.call(contract, "FirmaDocenteContratoInforme"),
+            ],
+        )
+
+    @patch("app.routers.portal_academico._assert_pdf_signature_field")
+    def test_archive_rejects_a_non_pdf_document(self, _assert_signature: MagicMock):
+        with self.assertRaisesRegex(HTTPException, "contrato docente"):
+            _signed_teacher_documents_archive(
+                b"%PDF-1.4\ninforme",
+                b"%PDF-1.4\nnotas",
+                b"contenido invalido",
+            )
+
+    def test_onedrive_folder_is_scoped_under_docentes(self):
+        path = _teacher_signed_documents_folder(
+            {
+                "codigo_doc": "31",
+                "cedula": "1724-036-536",
+                "nombre": "BORJA HERNÁNDEZ FABRICIO ALEXANDER",
+            },
+            subject_code="VGA-ES-2023-90",
+            subject_name="Inteligencia Artificial",
+            period_codes=["C1-2026-PC", "C1-2026-PC", "C2-2026-PB"],
+            signed_at=datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(
+            path.startswith(
+                "DOCENTES/BORJA HERNÁNDEZ FABRICIO ALEXANDER - 1724036536/"
+            )
+        )
+        self.assertIn(
+            "/DOCUMENTOS FIRMADOS/Inteligencia Artificial - VGA-ES-2023-90/",
+            path,
+        )
+        self.assertIn("/C1-2026-PC - C2-2026-PB/", path)
+        self.assertTrue(path.endswith("FIRMA 20260817-123000-000000 UTC"))
+
+    @patch("app.routers.portal_academico.delete_graph_document_item")
+    @patch("app.routers.portal_academico.upload_graph_document_bytes")
+    @patch("app.routers.portal_academico.ensure_graph_document_folder")
+    def test_onedrive_storage_uploads_all_four_documents(
+        self,
+        ensure_folder: MagicMock,
+        upload: MagicMock,
+        delete_item: MagicMock,
+    ) -> None:
+        ensure_folder.return_value = {"id": "folder-1"}
+        upload.side_effect = [{"id": f"item-{index}"} for index in range(1, 5)]
+
+        stored = _store_signed_teacher_documents_onedrive(
+            identity={"codigo_doc": "31", "cedula": "1724036536", "nombre": "DOCENTE"},
+            compliance_pdf=b"informe",
+            grades_pdf=b"notas",
+            contract_pdf=b"contrato",
+            archive_bytes=b"zip",
+            subject_code="VGA-90",
+            subject_name="Materia",
+            period_codes=["1060"],
+        )
+
+        self.assertEqual(len(stored["items"]), 4)
+        self.assertEqual(upload.call_count, 4)
+        self.assertTrue(upload.call_args_list[0].args[0].endswith("/informe-cumplimiento-firmado.pdf"))
+        self.assertTrue(upload.call_args_list[3].args[0].endswith("/documentos-docente-firmados.zip"))
+        delete_item.assert_not_called()
+
+    @patch("app.routers.portal_academico.delete_graph_document_item")
+    @patch("app.routers.portal_academico.upload_graph_document_bytes")
+    @patch("app.routers.portal_academico.ensure_graph_document_folder")
+    def test_onedrive_storage_rolls_back_partial_uploads(
+        self,
+        ensure_folder: MagicMock,
+        upload: MagicMock,
+        delete_item: MagicMock,
+    ) -> None:
+        ensure_folder.return_value = {"id": "folder-1"}
+        upload.side_effect = [{"id": "item-1"}, RuntimeError("Graph unavailable")]
+
+        with self.assertRaisesRegex(RuntimeError, "Graph unavailable"):
+            _store_signed_teacher_documents_onedrive(
+                identity={"codigo_doc": "31", "cedula": "1724036536", "nombre": "DOCENTE"},
+                compliance_pdf=b"informe",
+                grades_pdf=b"notas",
+                contract_pdf=b"contrato",
+                archive_bytes=b"zip",
+            )
+
+        self.assertEqual(
+            delete_item.call_args_list,
+            [unittest.mock.call("item-1"), unittest.mock.call("folder-1")],
+        )
+
+
+class TeacherContractAnalysisTests(unittest.TestCase):
+    def test_regular_contract_extracts_number_subject_dates_and_value(self):
+        analysis = _parse_teacher_contract_text(
+            """
+            CONTRATO: No. 0202. SEM.MAY2025-JUL2025.VGA-ES-2023-83. A
+            cédula de ciudadanía Nº 1724036536
+            asignatura de VGA-ES-2023-83
+            para el período que inicia el 12/MAY/2025 y termina el 06/JUL/2025
+            valor total del contrato (US$ 80,00)
+            """
+        )
+
+        self.assertEqual(analysis["numero_contrato"], "0202. SEM.MAY2025-JUL2025.VGA-ES-2023-83. A")
+        self.assertEqual(analysis["cedula"], "1724036536")
+        self.assertEqual(analysis["codigo_materia"], "VGA-ES-2023-83")
+        self.assertEqual(analysis["modalidad_academica"], "REGULAR")
+        self.assertEqual(analysis["fecha_inicio"], "2025-05-12")
+        self.assertEqual(analysis["fecha_fin"], "2025-07-06")
+        self.assertEqual(analysis["valor_total"], 80.0)
+
+    def test_homologation_contract_extracts_spanish_dates(self):
+        analysis = _parse_teacher_contract_text(
+            """
+            CONTRATO: No. 512 JUN 2026 - JUL2026/VGA-CG-2023-71. HOMO.05 2025
+            ciudadanía Nº1724036536
+            asignatura de VGA-CG-2023-71 SISTEMAS OPERATIVOS
+            para el período que inicia el 15/JUN/2026 y termina el 05/JUL/2026
+            valor total de (US$ 40)
+            """
+        )
+
+        self.assertEqual(analysis["numero_contrato"], "512 JUN 2026 - JUL2026/VGA-CG-2023-71. HOMO.05 2025")
+        self.assertEqual(analysis["codigo_materia"], "VGA-CG-2023-71")
+        self.assertEqual(analysis["modalidad_academica"], "HOMOLOGACION")
+        self.assertEqual(analysis["fecha_inicio"], "2026-06-15")
+        self.assertEqual(analysis["fecha_fin"], "2026-07-05")
+        self.assertEqual(analysis["valor_total"], 40.0)
+
+    @patch("app.routers.portal_academico.get_connection")
+    def test_teacher_profile_exposes_system_phone(self, get_connection: MagicMock):
+        connection = MagicMock()
+        cursor = MagicMock()
+        connection.cursor.return_value = cursor
+        connection.__enter__.return_value = connection
+        connection.__exit__.return_value = False
+        cursor.fetchone.return_value = SimpleNamespace(
+            codigo_doc="31",
+            cedula="1724036536",
+            docente="Docente prueba",
+            correo="docente@intec.edu.ec",
+            correo_personal="docente@example.com",
+            telefono="022345678",
+            movil="0991234567",
+            tipo_docente="T",
+            perfil="DOCENTE",
+        )
+        get_connection.return_value = connection
+
+        result = teacher_profile(
+            SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            )
+        )
+
+        self.assertEqual(result["teacher"]["telefono"], "022345678")
+        self.assertEqual(result["teacher"]["movil"], "0991234567")
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("d.telefono", sql)
+        self.assertIn("d.movil", sql)
 
 
 class TeacherGradeScopeTests(unittest.TestCase):
@@ -232,6 +438,41 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertIn("de.Estado", sql)
         self.assertIn("N'A', N'ACTIVO', N'ACTIVA'", sql)
 
+    @patch("app.routers.portal_academico.get_connection")
+    def test_teacher_grade_roster_filters_student_inside_assigned_course(self, get_connection: MagicMock):
+        connection = MagicMock()
+        cursor = MagicMock()
+        connection.cursor.return_value = cursor
+        connection.__enter__.return_value = connection
+        connection.__exit__.return_value = False
+        cursor.fetchall.return_value = []
+        get_connection.return_value = connection
+
+        teacher_course_students(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            codigo_periodo=[1030],
+            codigo_materia="VGA-CG-2023-06",
+            paralelo="A",
+            cod_anio_basica=10,
+            cod_jornada=2,
+            buscar="María 0102",
+        )
+
+        args = cursor.execute.call_args.args
+        sql = args[0]
+        parameters = args[1:]
+        self.assertIn("de.Apellidos_nombre", sql)
+        self.assertIn("de.Cedula_Est", sql)
+        self.assertIn("de.codigo_estud", sql)
+        self.assertIn("Latin1_General_100_CI_AI LIKE", sql)
+        self.assertIn("María 0102", parameters)
+        self.assertGreaterEqual(parameters.count("%María 0102%"), 3)
+
     @patch("app.routers.portal_academico.teacher_course_students")
     @patch("app.routers.portal_academico.teacher_courses")
     def test_teacher_subject_students_queries_every_career_scope(
@@ -284,6 +525,51 @@ class TeacherGradeScopeTests(unittest.TestCase):
             all(call.kwargs["codigo_materia"] == "VGA-CG-2023-06" for call in course_students_mock.call_args_list)
         )
         self.assertTrue(all(call.kwargs["codigo_periodo"] == [1030] for call in course_students_mock.call_args_list))
+
+    @patch("app.routers.portal_academico.teacher_subject_students")
+    @patch("app.routers.portal_academico.teacher_courses")
+    def test_teacher_report_aggregates_one_subject_across_attached_careers(
+        self,
+        teacher_courses_mock: MagicMock,
+        subject_students_mock: MagicMock,
+    ):
+        grouped = _group_teacher_courses([
+            _course("10", "1029", 8),
+            _course("20", "1029", 7),
+            _course("10", "1030", 9),
+            _course("20", "1030", 6),
+        ])
+        teacher_courses_mock.return_value = {"total": 1, "items": grouped}
+        subject_students_mock.return_value = {
+            "items": [
+                {
+                    "codigo_estud": "101",
+                    "codigo_periodo": "1030",
+                    "cod_anio_basica": "10",
+                    "codigo_materia": "101",
+                    "paralelo": "A",
+                    "num_matricula": "1",
+                    "num_grupo": 1,
+                }
+            ]
+        }
+
+        result = _teacher_course_students_for_report(
+            current_user=SessionUser(
+                login="docente@intec.edu.ec",
+                nombres="Docente prueba",
+                rol="DOCENTE",
+                codigo_doc=31,
+            ),
+            period_codes=[1029, 1030],
+            subject_filter="VGA-CG-2023-06",
+            parallel="*",
+        )
+
+        self.assertEqual(len(result), 1)
+        subject_students_mock.assert_called_once()
+        self.assertEqual(subject_students_mock.call_args.kwargs["tipo_periodo"], "R")
+        self.assertEqual(set(subject_students_mock.call_args.kwargs["codigo_periodo"]), {1029, 1030})
 
     @patch("app.routers.portal_academico.teacher_courses")
     def test_teacher_regular_subject_accepts_at_most_two_periods(self, teacher_courses_mock: MagicMock):
@@ -696,6 +982,220 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertNotIn("REPROBADO", report_text)
         self.assertEqual(reader.pages[0].mediabox.width, 612)
         self.assertEqual(reader.pages[0].mediabox.height, 792)
+
+        signature_page, signature_box = _pdf_signature_target_above_text(pdf, "Firma del docente")
+        self.assertEqual(signature_page, len(reader.pages) - 1)
+        self.assertGreater(signature_box[1], 18)
+        self.assertGreater(signature_box[2], signature_box[0])
+        self.assertGreater(signature_box[3], signature_box[1])
+        self.assertLessEqual(signature_box[3], 792 - 18)
+        self.assertAlmostEqual(signature_box[2] - signature_box[0], 126)
+        self.assertAlmostEqual(signature_box[3] - signature_box[1], 48)
+
+        qr_size, font_size, separation = _signature_stamp_layout(signature_box)
+        self.assertLessEqual(qr_size, 36)
+        self.assertLessEqual(font_size, 5.5)
+        self.assertGreaterEqual(separation, 1)
+
+    def test_signature_stamp_scales_to_each_document_area(self):
+        notes = _signature_stamp_layout((243, 90, 369, 138))
+        compliance = _signature_stamp_layout((72, 458, 262, 516))
+        contract = _signature_stamp_layout((335, 42, 565, 112))
+
+        self.assertLess(notes[0], compliance[0])
+        self.assertLess(notes[1], compliance[1])
+        self.assertLessEqual(compliance[0], contract[0])
+        self.assertLessEqual(compliance[1], contract[1])
+
+    def test_secretary_report_builder_keeps_only_selected_students(self):
+        students = [
+            {
+                "codigo_estud": "800",
+                "codigo_periodo": "1030",
+                "nombre_estudiante": "ESTUDIANTE SELECCIONADO",
+                "nombre_carrera": "Desarrollo de Software",
+                "detalle_periodo": "Periodo 1030",
+                "codigo_materia": "101",
+                "cod_materia": "VGA-CG-2023-06",
+                "nombre_materia": "Materia asignada",
+                "paralelo": "A",
+            },
+            {
+                "codigo_estud": "801",
+                "codigo_periodo": "1030",
+                "nombre_estudiante": "ESTUDIANTE NO SELECCIONADO",
+                "nombre_carrera": "Desarrollo de Software",
+                "detalle_periodo": "Periodo 1030",
+                "codigo_materia": "101",
+                "cod_materia": "VGA-CG-2023-06",
+                "nombre_materia": "Materia asignada",
+                "paralelo": "A",
+            },
+        ]
+
+        with (
+            patch("app.routers.portal_academico._teacher_code", return_value=31),
+            patch(
+                "app.routers.portal_academico.teacher_profile",
+                return_value={"teacher": {"docente": "DOCENTE PRUEBA", "cedula": "1106128380"}},
+            ),
+            patch("app.routers.portal_academico._teacher_course_students_for_report", return_value=students),
+            patch("app.routers.portal_academico._teacher_course_report_meta", return_value={}),
+            patch("app.routers.portal_academico._student_grade_report_pdf", return_value=b"%PDF-test") as pdf_mock,
+        ):
+            pdf, filename = _build_teacher_student_grade_report_pdf(
+                current_user=MagicMock(),
+                codigo_periodo=[1030],
+                codigo_materia="VGA-CG-2023-06",
+                paralelo="A",
+                codigo_estud=[800],
+            )
+
+        report_students = pdf_mock.call_args.args[2]
+        self.assertEqual(pdf, b"%PDF-test")
+        self.assertEqual([item["codigo_estud"] for item in report_students], ["800"])
+        self.assertIn("reporte-notas-secretaria", filename)
+
+    def test_compliance_report_uses_selected_students_and_graph_recordings(self):
+        students = [{
+            "codigo_estud": "800",
+            "codigo_periodo": "1030",
+            "nombre_estudiante": "ESTUDIANTE SELECCIONADO",
+            "cedula": "1106128380",
+            "nombre_carrera": "Desarrollo de Software",
+            "detalle_periodo": "Periodo 1030",
+            "promedio_final": 8.75,
+        }]
+
+        pdf = _teacher_compliance_model_pdf(
+            {
+                "docente": "DOCENTE PRUEBA",
+                "cedula": "1106128381",
+                "correo": "docente@intec.edu.ec",
+            },
+            {
+                "nombre_materia": "Materia asignada",
+                "detalle_periodo": "Periodo 1030",
+                "paralelo": "A",
+                "jornada": "Nocturna",
+                "semestre": 3,
+                "horas": 144,
+            },
+            students,
+            {},
+            {
+                "fecha_inicio": "2026-05-01",
+                "fecha_fin": "2026-09-30",
+                "telefono": "0999999999",
+                "actualizaciones": "Sin cambios.",
+                "observaciones": "",
+                "teams_recordings": [{
+                    "team_id": "team-1",
+                    "team_name": "Equipo de prueba",
+                    "recording_id": "recording-1",
+                    "name": "Clase grabada 01.mp4",
+                    "date": "21/07/2026",
+                    "start_hour": "19:00",
+                    "end_hour": "20:02",
+                    "call_duration": "01:02:00",
+                    "recording_duration": "01:01:32",
+                    "modified_by": "DOCENTE PRUEBA",
+                    "web_url": "https://example.sharepoint.com/recording",
+                    "source": "Microsoft Graph",
+                }],
+            },
+            evidence_images=[],
+        )
+
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        reader = PdfReader(BytesIO(pdf))
+        report_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        self.assertNotIn("Asistencias", report_text)
+        self.assertIn("ESTUDIANTE SELECCIONADO", report_text)
+        self.assertIn("8.75", report_text)
+        self.assertIn("Clases grabadas en TEAMS", report_text)
+        self.assertIn("21/07/2026", report_text)
+        self.assertIn("Clase grabada 01.mp4", report_text)
+        self.assertIn("01:01:32", report_text)
+        self.assertIn("formato Secretaría", report_text)
+        self.assertIn("documento independiente", report_text)
+        self.assertNotIn("captura de pantalla del reporte de notas", report_text)
+
+    def test_signed_grade_report_is_embedded_as_images_in_compliance_pdf(self):
+        teacher = {
+            "docente": "DOCENTE PRUEBA",
+            "cedula": "1106128381",
+            "correo": "docente@intec.edu.ec",
+        }
+        meta = {
+            "nombre_materia": "Materia asignada",
+            "detalle_periodo": "Periodo 1030",
+            "paralelo": "A",
+            "jornada": "Nocturna",
+            "semestre": 3,
+            "horas": 144,
+        }
+        students = [{
+            "codigo_estud": "800",
+            "codigo_periodo": "1030",
+            "nombre_estudiante": "ESTUDIANTE SELECCIONADO",
+            "cedula": "1106128380",
+            "nombre_carrera": "Desarrollo de Software",
+            "detalle_periodo": "Periodo 1030",
+            "promedio_final": 8.75,
+        }]
+        signed_grade_pdf = _student_grade_report_pdf(teacher, meta, students)
+        grade_images = _pdf_pages_as_compliance_evidence(signed_grade_pdf)
+
+        self.assertGreaterEqual(len(grade_images), 1)
+        self.assertTrue(grade_images[0]["content"].startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn("reporte de notas firmado", grade_images[0]["label"].lower())
+
+        compliance_pdf = _teacher_compliance_model_pdf(
+            teacher,
+            meta,
+            students,
+            {},
+            {
+                "fecha_inicio": "2026-05-01",
+                "fecha_fin": "2026-09-30",
+                "telefono": "0999999999",
+                "actualizaciones": "Sin cambios.",
+                "observaciones": "",
+                "teams_recordings": [],
+            },
+            evidence_images=grade_images,
+        )
+
+        reader = PdfReader(BytesIO(compliance_pdf))
+        report_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        self.assertEqual(len(reader.pages), 4 + len(grade_images))
+        self.assertIn("Reporte de notas firmado - página 1", report_text)
+        self.assertIn("Imagen generada automáticamente", report_text)
+        self.assertIn("Reporte de notas firmado electrónicamente", report_text)
+
+    @patch("pypdfium2.PdfDocument")
+    def test_signed_grade_report_renders_signature_forms_and_annotations(self, pdf_document: MagicMock):
+        document = MagicMock()
+        document.__len__.return_value = 1
+        page = MagicMock()
+        bitmap = MagicMock()
+        image = MagicMock()
+        bitmap.to_pil.return_value.convert.return_value = image
+        image.save.side_effect = lambda stream, **_kwargs: stream.write(b"\x89PNG\r\n\x1a\n")
+        page.render.return_value = bitmap
+        document.__getitem__.return_value = page
+        pdf_document.return_value = document
+
+        images = _pdf_pages_as_compliance_evidence(b"%PDF-1.7\nfirmado")
+
+        document.init_forms.assert_called_once_with()
+        page.render.assert_called_once_with(
+            scale=1.5,
+            may_draw_forms=True,
+            draw_annots=True,
+        )
+        self.assertTrue(images[0]["content"].startswith(b"\x89PNG"))
 
     def test_admin_grade_report_remains_registered(self):
         self.assertIn("notas_carrera_materia", REPORTS)
