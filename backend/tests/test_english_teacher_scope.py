@@ -76,7 +76,7 @@ class EnglishTeacherScopeTests(unittest.TestCase):
     def test_document_creation_uses_trigger_safe_identity_output(self) -> None:
         source = getsource(finalize_student_upload)
 
-        self.assertIn("OUTPUT INSERTED.DocumentoExpedienteId", source)
+        self.assertIn("OUTPUT INSERTED.DocumentoId", source)
         self.assertIn("INTO @DocumentoCreado", source)
 
     def test_teacher_scope_requires_assignment_and_real_student_enrollment(self):

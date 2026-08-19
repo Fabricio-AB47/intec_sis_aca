@@ -55,7 +55,7 @@ class EnglishVideoUploadTests(unittest.TestCase):
         minimum = UploadSessionPayload(filename="p1.mp4", size=_MIN_FILE_BYTES, content_type="video/mp4")
         maximum = UploadSessionPayload(filename="p1.mp4", size=_MAX_FILE_BYTES, content_type="video/mp4")
 
-        self.assertEqual(minimum.size, 40 * 1024 * 1024)
+        self.assertEqual(minimum.size, 3 * 1024 * 1024)
         self.assertEqual(maximum.size, 2 * 1024 * 1024 * 1024)
         with self.assertRaises(ValidationError):
             UploadSessionPayload(filename="p1.mp4", size=_MIN_FILE_BYTES - 1, content_type="video/mp4")

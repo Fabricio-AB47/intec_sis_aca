@@ -3325,6 +3325,39 @@ export async function uploadGraphFileChunks(
     await new Promise((resolve) => window.setTimeout(resolve, delay))
   }
 
+  const uploadChunk = (
+    chunk: Blob,
+    chunkStart: number,
+    endExclusive: number,
+  ): Promise<Response> => new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', uploadUrl, true)
+    request.withCredentials = false
+    request.timeout = 10 * 60 * 1000
+    request.setRequestHeader('Content-Range', `bytes ${chunkStart}-${endExclusive - 1}/${file.size}`)
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return
+      const sentBytes = Math.min(file.size, chunkStart + event.loaded)
+      onProgress?.(Math.round((sentBytes / file.size) * 100))
+    }
+    request.onload = () => {
+      const headers = new Headers()
+      const retryAfter = request.getResponseHeader('Retry-After')
+      const contentType = request.getResponseHeader('Content-Type')
+      if (retryAfter) headers.set('Retry-After', retryAfter)
+      if (contentType) headers.set('Content-Type', contentType)
+      resolve(new Response(request.responseText || null, {
+        status: request.status,
+        statusText: request.statusText,
+        headers,
+      }))
+    }
+    request.onerror = () => reject(new Error('No se pudo conectar con Microsoft Graph durante la carga.'))
+    request.ontimeout = () => reject(new Error('La carga agotó el tiempo de espera. Verifique su conexión e intente nuevamente.'))
+    request.onabort = () => reject(new Error('La carga fue interrumpida.'))
+    request.send(chunk)
+  })
+
   let offset = await sessionOffset() ?? 0
   onProgress?.(Math.round((offset / file.size) * 100))
   while (offset < file.size) {
@@ -3336,14 +3369,7 @@ export async function uploadGraphFileChunks(
 
     for (let attempt = 1; attempt <= 6; attempt += 1) {
       try {
-        response = await fetch(uploadUrl, {
-          method: 'PUT',
-          credentials: 'omit',
-          headers: {
-            'Content-Range': `bytes ${chunkStart}-${endExclusive - 1}/${file.size}`,
-          },
-          body: chunk,
-        })
+        response = await uploadChunk(chunk, chunkStart, endExclusive)
         if (response.ok) {
           let payload: UploadStatus | null = null
           try {

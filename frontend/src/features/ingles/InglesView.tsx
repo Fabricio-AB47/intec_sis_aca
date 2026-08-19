@@ -32,7 +32,7 @@ type InglesViewProps = {
   onOpenSubjectGrades?: () => void
 }
 
-const MIN_FILE_BYTES = 40 * 1024 * 1024
+const MIN_FILE_BYTES = 3 * 1024 * 1024
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 const ACCEPTED_VIDEOS = 'video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm'
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.webm'])
@@ -264,7 +264,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
     if (file.size < (exam?.min_file_bytes || MIN_FILE_BYTES)) {
       setSelectedFiles((current) => ({ ...current, [componentCode]: null }))
       setFileInputKeys((current) => ({ ...current, [componentCode]: (current[componentCode] || 0) + 1 }))
-      setError('El video debe tener al menos 40 MB.')
+      setError('El video debe tener al menos 3 MB.')
       return
     }
     if (file.size > (exam?.max_file_bytes || MAX_FILE_BYTES)) {
@@ -398,7 +398,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
           <div>
             <span>Entrega estudiantil</span>
             <h3>Evidencias por parcial</h3>
-            <p>Cargue un video de 40 MB a 2 GB, revise la vista previa y confirme la entrega definitiva antes del cierre.</p>
+            <p>Cargue un video de 3 MB a 2 GB, revise la vista previa y confirme la entrega definitiva antes del cierre.</p>
           </div>
           <span className={resultClass(exam.result)}>{exam.result}</span>
         </div>
@@ -483,7 +483,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
                     onChange={(event) => selectFile(component.code, event.target.files?.[0] || null)}
                   />
                 </label>
-                <small>{selectedFile ? `${selectedFile.name} · ${fileSize(selectedFile.size)}` : 'Video MP4, MOV, MKV o WEBM. Entre 40 MB y 2 GB.'}</small>
+                <small>{selectedFile ? `${selectedFile.name} · ${fileSize(selectedFile.size)}` : 'Video MP4, MOV, MKV o WEBM. Entre 3 MB y 2 GB.'}</small>
                 <button type="button" className="primary-action" onClick={() => void uploadFile(component)} disabled={!selectedFile || Boolean(uploadingCode)}>
                   {uploading ? `Subiendo ${progress}%` : component.file ? 'Reemplazar carga temporal' : `Cargar ${component.label}`}
                 </button>
