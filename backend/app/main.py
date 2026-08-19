@@ -19,6 +19,7 @@ from app.routers.document_expedients import router as document_expedients_router
 from app.routers.excel_validator import router as excel_validator_router
 from app.routers.english_exams import router as english_exams_router
 from app.routers.health import router as health_router
+from app.routers.institutional_email import router as institutional_email_router
 from app.routers.legacy_reports import router as legacy_reports_router
 from app.routers.mass_email import router as mass_email_router
 from app.routers.portal_academico import router as portal_academico_router
@@ -84,6 +85,7 @@ async def bind_database_audit_context(request: Request, call_next):
 
 
 app.include_router(health_router)
+app.include_router(institutional_email_router)
 app.include_router(teams_router)
 app.include_router(auth_router)
 app.include_router(carnet_router)

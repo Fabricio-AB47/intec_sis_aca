@@ -65,6 +65,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'matricula-docente',
   'estado-docente',
   'actualizar-datos-estudiante',
+  'actualizar-correo-intec',
   'reportes-individuales',
   'admin-notas-asignatura',
   'reporteria-integral',
@@ -228,6 +229,11 @@ function requestedPermissionFromUrl(
     requestedPermission = `${requestedPage}/${enrollmentMode(url.searchParams.get('matricula_mode'))}`
   } else if (requestedPage === 'gestion-sisacademico') {
     const section = url.searchParams.get('sis_section') || ''
+    if (section === 'correos') {
+      return screenPermissionAllowsCode(permissions, 'actualizar-correo-intec')
+        ? 'actualizar-correo-intec'
+        : firstPermissionForPage(permissions, 'actualizar-correo-intec')
+    }
     requestedPermission = section ? `${requestedPage}/${section}` : requestedPage
   } else if (requestedPage === 'reporteria-integral' || requestedPage === 'reportes-individuales') {
     const report = url.searchParams.get('report_key') || ''
@@ -1146,6 +1152,9 @@ export function useReporteriaApp() {
   const openActualizarDatosEstudiantePage = () => {
     activateAssignedScreen('actualizar-datos-estudiante')
   }
+  const openActualizarCorreoIntecPage = () => {
+    activateAssignedScreen('actualizar-correo-intec')
+  }
   const openPreinscripcionPage = () => {
     activateAssignedScreen('preinscripcion/registro')
   }
@@ -1166,6 +1175,10 @@ export function useReporteriaApp() {
     activateAssignedScreen('admin-notas-asignatura')
   }
   const openGestionSisAcademicoPage = (sectionKey?: string) => {
+    if (sectionKey === 'correos') {
+      activateAssignedScreen('actualizar-correo-intec')
+      return
+    }
     activateAssignedScreen(sectionKey ? `gestion-sisacademico/${sectionKey}` : 'gestion-sisacademico')
   }
   const openAsignacionPantallasPage = () => {
@@ -1340,6 +1353,7 @@ export function useReporteriaApp() {
     openEstadoDocentePage,
     openSenescytEstudiantesPage,
     openActualizarDatosEstudiantePage,
+    openActualizarCorreoIntecPage,
     openPreinscripcionPage,
     openPreinscripcionStage,
     openReporteriaCarrerasPage,

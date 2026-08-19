@@ -27,6 +27,7 @@ const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/
 const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
 const InglesView = lazyView(() => import('./features/ingles/InglesView'), 'InglesView')
 const ActualizarDatosEstudianteView = lazyView(() => import('./features/matricula/ActualizarDatosEstudianteView'), 'ActualizarDatosEstudianteView')
+const ActualizarCorreoIntecView = lazyView(() => import('./features/matricula/ActualizarCorreoIntecView'), 'ActualizarCorreoIntecView')
 const CertificateRenamerView = lazyView(() => import('./features/matricula/CertificateRenamerView'), 'CertificateRenamerView')
 const CertificadosView = lazyView(() => import('./features/matricula/CertificadosView'), 'CertificadosView')
 const EstadoDocenteView = lazyView(() => import('./features/matricula/EstadoDocenteView'), 'EstadoDocenteView')
@@ -234,6 +235,8 @@ function App() {
       pageContent = <SenescytEstudiantesView displayName={app.displayName} />
     } else if (app.activePage === 'actualizar-datos-estudiante') {
       pageContent = <ActualizarDatosEstudianteView displayName={app.displayName} />
+    } else if (app.activePage === 'actualizar-correo-intec') {
+      pageContent = <ActualizarCorreoIntecView displayName={app.displayName} />
     } else if (app.activePage === 'preinscripcion') {
       pageContent = (
         <PreinscripcionView
@@ -508,6 +511,7 @@ function App() {
           onOpenEstadoDocente={app.openEstadoDocentePage}
           onOpenSenescytEstudiantes={app.openSenescytEstudiantesPage}
           onOpenActualizarDatosEstudiante={app.openActualizarDatosEstudiantePage}
+          onOpenActualizarCorreoIntec={app.openActualizarCorreoIntecPage}
           onOpenPreinscripcion={app.openPreinscripcionStage}
           onOpenReporteriaCarreras={app.openReporteriaCarrerasPage}
           onOpenReporteriaIntegral={app.openReporteriaIntegralPage}

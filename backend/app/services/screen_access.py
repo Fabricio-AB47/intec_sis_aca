@@ -75,6 +75,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("matricula-docente", "Matricula docente", "Asignacion docente por materia y periodo.", "Docencia"),
     _screen("estado-docente", "Estado docente", "Activacion, inactivacion y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualizacion de datos", "Datos personales de estudiantes y docentes.", "Personas"),
+    _screen(
+        "actualizar-correo-intec",
+        "Actualizacion de correo INTEC",
+        "Consulta, comparacion y actualizacion individual o masiva del correo institucional estudiantil.",
+        "Actualizaciones",
+    ),
     _screen("gestion-sisacademico", "Gestion operativa", "Tablas y procesos modernizados de SisAcademicoV1.", "Operacion"),
     _screen("asignacion-pantallas", "Asignacion de pantallas", "Permisos de navegacion por tipo de usuario.", "Administracion"),
     _screen("periodo-academico", "Periodo academico", "Resumen por periodo y estudiantes.", "Academico"),
@@ -158,7 +164,6 @@ SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("gestion-sisacademico", "pagos_matricula", "Pagos y valores", "Operacion / Matricula"),
     _flow("gestion-sisacademico", "estudiantes", "Ficha del estudiante", "Operacion / Estudiantes"),
     _flow("gestion-sisacademico", "registro_documentos_estudiante", "Documentos del estudiante", "Operacion / Estudiantes"),
-    _flow("gestion-sisacademico", "correos", "Correos institucionales", "Operacion / Estudiantes"),
     _flow("gestion-sisacademico", "seguimiento", "Seguimiento academico", "Operacion / Estudiantes"),
     _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Operacion / Estudiantes"),
     _flow("gestion-sisacademico", "docentes", "Ficha docente", "Operacion / Docentes"),
@@ -277,6 +282,7 @@ def _combine_pages(*collections: Iterable[str]) -> tuple[str, ...]:
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
     "matricula-docente", "estado-docente", "actualizar-datos-estudiante",
+    "actualizar-correo-intec",
     "reportes-individuales", "admin-notas-asignatura", "reporteria-integral",
     "gestion-sisacademico", "periodo-academico",
     "periodo-matriculados", "rango-edades", "certificados", "fecha-grado",

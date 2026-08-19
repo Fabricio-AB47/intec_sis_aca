@@ -73,6 +73,10 @@ import type {
   FechaGradoStudentsResponse,
   FechaGradoVerificationResponse,
   IngresoVentasResponse,
+  InstitutionalEmailAnalysisResponse,
+  InstitutionalEmailApplyResponse,
+  InstitutionalEmailStudentsResponse,
+  InstitutionalEmailUpdateResponse,
   LegacyCrystalCatalogResponse,
   LegacyDataUpdateDetailResponse,
   LegacyDataUpdateSearchResponse,
@@ -456,6 +460,51 @@ export async function fetchTeamRecordings(
   return request<TeamCollectionResponse<TeamRecording>>(
     `/api/teams/${encodeURIComponent(teamId)}/recordings?force_refresh=${forceRefresh}`
   )
+}
+
+export async function fetchInstitutionalEmailStudents(params: {
+  cedula?: string
+  page?: number
+  pageSize?: number
+} = {}): Promise<InstitutionalEmailStudentsResponse> {
+  const search = new URLSearchParams({
+    cedula: params.cedula || '',
+    page: String(params.page || 1),
+    page_size: String(params.pageSize || 25),
+  })
+  return request<InstitutionalEmailStudentsResponse>(`/api/institutional-email/students?${search.toString()}`)
+}
+
+export async function downloadInstitutionalEmailTemplate(): Promise<Blob> {
+  return request<Blob>('/api/institutional-email/template', { responseType: 'blob' })
+}
+
+export async function analyzeInstitutionalEmailWorkbook(file: File): Promise<InstitutionalEmailAnalysisResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<InstitutionalEmailAnalysisResponse>('/api/institutional-email/analyze', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function applyInstitutionalEmailWorkbook(file: File): Promise<InstitutionalEmailApplyResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<InstitutionalEmailApplyResponse>('/api/institutional-email/apply', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function updateInstitutionalEmailStudent(
+  cedula: string,
+  payload: { correo_intec: string; password: string },
+): Promise<InstitutionalEmailUpdateResponse> {
+  return request<InstitutionalEmailUpdateResponse>(`/api/institutional-email/students/${encodeURIComponent(cedula)}`, {
+    method: 'PUT',
+    body: payload,
+  })
 }
 
 export async function fetchMyTeamRecordings(

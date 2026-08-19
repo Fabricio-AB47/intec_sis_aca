@@ -30,6 +30,7 @@ type StudentLayoutProps = {
   onOpenEstadoDocente: () => void
   onOpenSenescytEstudiantes: () => void
   onOpenActualizarDatosEstudiante: () => void
+  onOpenActualizarCorreoIntec: () => void
   onOpenPreinscripcion: (stage?: PreinscriptionStage) => void
   onOpenReporteriaCarreras: () => void
   onOpenReporteriaIntegral: (reportKey?: string) => void
@@ -125,6 +126,7 @@ const academicPages = new Set<Page>([
   'matricula-docente',
   'estado-docente',
   'actualizar-datos-estudiante',
+  'actualizar-correo-intec',
   'reportes-individuales',
   'admin-notas-asignatura',
   'reporteria-integral',
@@ -562,6 +564,7 @@ export function StudentLayout({
   onOpenEstadoDocente,
   onOpenSenescytEstudiantes,
   onOpenActualizarDatosEstudiante,
+  onOpenActualizarCorreoIntec,
   onOpenPreinscripcion,
   onOpenReporteriaCarreras,
   onOpenReporteriaIntegral,
@@ -673,6 +676,39 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('seguimiento'),
     },
   ]
+  const updatesMenuGroup: NavGroup = {
+    key: 'actualizacion-estados',
+    title: 'Actualización',
+    summary: 'Datos, correo y estados',
+    items: [
+      {
+        label: 'Actualización de datos',
+        description: 'Actualizar información personal de estudiantes y docentes.',
+        page: 'actualizar-datos-estudiante',
+        action: onOpenActualizarDatosEstudiante,
+      },
+      {
+        label: 'Correo INTEC',
+        description: 'Consultar y actualizar correo institucional y credenciales estudiantiles.',
+        page: 'actualizar-correo-intec',
+        action: onOpenActualizarCorreoIntec,
+      },
+      {
+        label: 'Estado docente',
+        description: 'Activar o inactivar docentes validando DATOSDOCENTE y USUARIOS.',
+        page: 'gestion-sisacademico',
+        sectionKey: 'actualizacion_est',
+        action: () => onOpenGestionSisAcademico('actualizacion_est'),
+      },
+      {
+        label: 'Estado estudiante',
+        description: 'Activar o inactivar estudiantes desde DATOS_ESTUD usando ESTADO.',
+        page: 'gestion-sisacademico',
+        sectionKey: 'actualizacion_estudiantes',
+        action: () => onOpenGestionSisAcademico('actualizacion_estudiantes'),
+      },
+    ],
+  }
   const enrollmentMenuGroup: NavGroup = {
     key: 'matriculacion',
     title: 'Matriculación',
@@ -830,27 +866,6 @@ export function StudentLayout({
       summary: 'Vista general',
       items: [
         { label: 'Dashboard', description: 'Indicadores principales del sistema.', page: 'dashboard', action: onOpenDashboard },
-      ],
-    },
-    {
-      key: 'actualizacion-estados',
-      title: 'Actualizacion de estados',
-      summary: 'Docentes y estudiantes',
-      items: [
-        {
-          label: 'Estado docente',
-          description: 'Activa o inactiva docentes validando DATOSDOCENTE y USUARIOS.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'actualizacion_est',
-          action: () => onOpenGestionSisAcademico('actualizacion_est'),
-        },
-        {
-          label: 'Estado estudiante',
-          description: 'Activa o inactiva estudiantes desde DATOS_ESTUD usando ESTADO.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'actualizacion_estudiantes',
-          action: () => onOpenGestionSisAcademico('actualizacion_estudiantes'),
-        },
       ],
     },
     {
@@ -1088,13 +1103,6 @@ export function StudentLayout({
           page: 'gestion-sisacademico',
           sectionKey: 'registro_documentos_estudiante',
           action: () => onOpenGestionSisAcademico('registro_documentos_estudiante'),
-        },
-        {
-          label: 'Correos institucionales',
-          description: 'Correos INTEC, claves y estado de envio.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'correos',
-          action: () => onOpenGestionSisAcademico('correos'),
         },
         {
           label: 'Materias y notas',
@@ -2354,12 +2362,12 @@ export function StudentLayout({
           : normalizedRole === 'SECRETARIA'
           ? [...secretaryMenuGroups, documentExpedientsMenuGroup]
           : academicRoles.has(normalizedRole)
-            ? [enrollmentMenuGroup, ...academicMenuGroups, documentExpedientsMenuGroup]
+            ? [updatesMenuGroup, enrollmentMenuGroup, ...academicMenuGroups, documentExpedientsMenuGroup]
             : dashboardOnlyRoles.has(normalizedRole)
               ? executiveMenuGroups
               : normalizedRole === 'FINANCIERO'
                 ? financialMenuGroups
-                : [enrollmentMenuGroup, ...adminMenuGroups, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
+                : [updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
 
   const roleScopedMenuGroups = roleMenuGroups
     .filter((group) => isAdministrator || group.key !== 'flujo-academico')
@@ -2374,6 +2382,7 @@ export function StudentLayout({
     ...secretaryMenuGroups,
     ...studentMenuGroups,
     ...teacherMenuGroups,
+    updatesMenuGroup,
     enrollmentMenuGroup,
     scholarshipMenuGroup,
     assignableUtilitiesMenuGroup,

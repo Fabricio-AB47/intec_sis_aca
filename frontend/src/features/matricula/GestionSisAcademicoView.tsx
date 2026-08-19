@@ -80,8 +80,8 @@ const processShortcuts: ProcessShortcut[] = [
   {
     key: 'personas',
     title: 'Estudiante',
-    description: 'Listado, ficha, documentos, correos institucionales y datos academicos.',
-    sections: ['actualizacion_estudiantes', 'estudiantes', 'registro_documentos_estudiante', 'correos', 'seguimiento'],
+    description: 'Listado, ficha, documentos y datos académicos.',
+    sections: ['actualizacion_estudiantes', 'estudiantes', 'registro_documentos_estudiante', 'seguimiento'],
   },
   {
     key: 'docencia',
@@ -183,8 +183,8 @@ const operationalFlowSteps: OperationalFlowStep[] = [
     key: 'datos',
     number: '02',
     title: 'Datos del estudiante',
-    description: 'Ficha, actualizacion de datos, correos y estado del estudiante.',
-    sections: ['estudiantes', 'actualizacion_estudiantes', 'correos', 'seguimiento'],
+    description: 'Ficha, actualización de datos y estado del estudiante.',
+    sections: ['estudiantes', 'actualizacion_estudiantes', 'seguimiento'],
   },
   {
     key: 'matricula',

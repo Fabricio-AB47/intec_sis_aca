@@ -70,6 +70,7 @@ export type Page =
   | 'estado-docente'
   | 'senescyt-estudiantes'
   | 'actualizar-datos-estudiante'
+  | 'actualizar-correo-intec'
   | 'preinscripcion'
   | 'reporteria-carreras'
   | 'reporteria-integral'
@@ -4876,6 +4877,63 @@ export type LegacyDataUpdateDetailResponse = {
   updated_fields?: string[]
   affected_rows?: number
   detail?: string
+}
+
+export type InstitutionalEmailStudent = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  carrera?: string | null
+  estado?: string | null
+  correo_personal?: string | null
+  correo_intec_datos?: string | null
+  correo_intec_registro?: string | null
+  correo_intec?: string | null
+  tiene_registro: boolean
+  password_configurada: boolean
+  sincronizado: boolean
+}
+
+export type InstitutionalEmailStudentsResponse = {
+  rows: InstitutionalEmailStudent[]
+  total: number
+  page: number
+  page_size: number
+  cedula: string
+}
+
+export type InstitutionalEmailAnalysisRow = {
+  row: number
+  cedula: string
+  codigo_estud?: number | null
+  estudiante?: string
+  correo_actual?: string | null
+  correo_nuevo: string
+  password_informada: boolean
+  estado: 'VALIDO' | 'ERROR'
+  detalle: string
+}
+
+export type InstitutionalEmailAnalysisResponse = {
+  rows: InstitutionalEmailAnalysisRow[]
+  summary: {
+    total: number
+    validos: number
+    errores: number
+  }
+}
+
+export type InstitutionalEmailApplyResponse = {
+  ok: boolean
+  actualizados: number
+  message: string
+}
+
+export type InstitutionalEmailUpdateResponse = {
+  ok: boolean
+  message: string
+  cedula: string
+  correo_intec: string
 }
 
 export type SenescytTarget = 'estudiantes' | 'docentes'
