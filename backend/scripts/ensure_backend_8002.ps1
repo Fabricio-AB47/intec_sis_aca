@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 
 $port = 8002
 $backendDir = Split-Path -Parent $PSScriptRoot
+$appDir = Join-Path $backendDir 'app'
 $repoDir = Split-Path -Parent $backendDir
 $pythonExe = Join-Path $repoDir '.venv\Scripts\python.exe'
 if (-not (Test-Path $pythonExe)) {
@@ -102,6 +103,9 @@ $arguments = @(
     '127.0.0.1',
     '--port',
     "$port",
+    '--reload',
+    '--reload-dir',
+    $appDir,
     '--proxy-headers',
     '--forwarded-allow-ips',
     '127.0.0.1,204.168.250.176',

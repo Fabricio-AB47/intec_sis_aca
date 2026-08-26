@@ -507,7 +507,17 @@ export type MoodleGradeChange = {
   moodle_grade_item: string
   moodle_grade_item_count?: number
   moodle_grade_items?: string[]
+  moodle_grade_candidates?: Array<{
+    item_id: number
+    item_name: string
+    grade: number
+    activity_type: 'quiz' | 'assign' | string
+    selected: boolean
+  }>
   moodle_grade_selection?: 'single_grade' | 'highest_grade'
+  moodle_partial_label?: string
+  moodle_partial_segment?: string
+  moodle_partial_source?: 'segment' | 'label' | 'section' | 'metadata' | 'label_metadata' | 'activity' | 'section_inheritance' | 'section_order'
   moodle_raw_grade?: number | null
   moodle_grade_min?: number | null
   moodle_grade_max?: number | null

@@ -34,6 +34,28 @@ function numberLabel(value: number): string {
   return value.toLocaleString('es-EC', { maximumFractionDigits: 2 })
 }
 
+function componentMigrationRule(change: MoodleGradeChange): string {
+  if (change.field.endsWith('Examen')) {
+    return 'Cuestionario Moodle → examen teórico (40 %)'
+  }
+  if (change.field.endsWith('Tareas')) {
+    return 'Tarea Moodle → tareas (30 %)'
+  }
+  if (change.field.endsWith('Proyectos')) {
+    return 'La misma tarea Moodle → proyectos (30 %)'
+  }
+  if (change.field === 'teoriaHomo') {
+    return 'Cuestionario Moodle → teoría de homologación (40 %)'
+  }
+  return 'Tarea Moodle → práctica de homologación (60 %)'
+}
+
+function activityTypeLabel(value: string): string {
+  if (value === 'quiz') return 'Cuestionario'
+  if (value === 'assign') return 'Tarea'
+  return 'Actividad'
+}
+
 function moodleGradeTrace(change: MoodleGradeChange): string | null {
   if (change.moodle_raw_grade === null || change.moodle_raw_grade === undefined) return null
   if (change.moodle_grade_scale_source === 'institutional_decimal_shift_10') {
@@ -366,6 +388,8 @@ export function MoodleGradeSyncPanel() {
     setLoading(true)
     setError('')
     setSuccess('')
+    setPreview(null)
+    setConfirmApply(false)
     try {
       setPreview(
         await previewMoodleGrades(
@@ -431,6 +455,20 @@ export function MoodleGradeSyncPanel() {
         >
           {loading ? 'Actualizando...' : 'Actualizar catálogo'}
         </button>
+      </div>
+
+      <div className="moodle-grade-rule">
+        <strong>Regla activa de migración</strong>
+        <span>
+          <b>Regular:</b> cada cuestionario de Moodle se registra como Examen teórico 40 %.
+          Cada tarea se registra como Examen práctico y su nota se duplica en Tareas 30 % y
+          Proyectos 30 % del mismo parcial. Si existen dos o más cuestionarios o tareas en un
+          parcial, se conserva únicamente la nota más alta normalizada sobre 10. Solo se toman
+          actividades del bloque Evaluación y de sus secciones Primer, Segundo o Tercer parcial;
+          simuladores y recuperación quedan excluidos.
+          {' '}<b>Homologación:</b> el cuestionario se registra en Teoría 40 % y la tarea en
+          Práctica 60 %.
+        </span>
       </div>
 
       {catalog && (
@@ -587,19 +625,6 @@ export function MoodleGradeSyncPanel() {
         </div>
       )}
 
-      {selectedPeriods.length > 0 && (
-        <div className="moodle-grade-rule">
-          <strong>{selectedPeriodType === 'R' ? 'Matrícula regular' : 'Homologación'}</strong>
-          <span>
-            {selectedPeriodType === 'R'
-              ? 'Cada tarea práctica se registra en Tareas 30% y Examen 40% de su parcial. Cada cuestionario teórico se registra únicamente en Proyectos 30%. Si el nombre no identifica el parcial, se utiliza el orden dentro de Evaluación.'
-              : 'Cada cuestionario se registra en Teoría 40% y cada tarea en Práctica 60%, sin depender del nombre de la actividad.'}
-            {' '}Si existen varias tareas o varios cuestionarios para el mismo componente, se conserva la nota más alta normalizada sobre 10.
-            {' '}La selección contiene {selectedPeriods.length} período(s) distinto(s).
-          </span>
-        </div>
-      )}
-
       {preview && (
         <>
           <div className="moodle-grade-summary">
@@ -612,6 +637,14 @@ export function MoodleGradeSyncPanel() {
             <div><span>Períodos / tipo</span><strong>{preview.periods?.length ?? 0} · {preview.period?.type ?? 'Sin tipo'}</strong></div>
           </div>
 
+          {preview.period.type === 'R' && (
+            <div className="moodle-grade-selection-criteria" role="note">
+              <strong>Criterio aplicado por cada parcial</strong>
+              <span>Cuestionarios: se selecciona la nota más alta para examen teórico (40 %).</span>
+              <span>Tareas: se selecciona la nota más alta y se replica en tareas (30 %) y proyectos (30 %).</span>
+              <span>Las actividades de un parcial nunca se comparan con las de otro parcial.</span>
+            </div>
+          )}
           <p className="moodle-grade-rule-text">{preview.rule}</p>
           <div className="moodle-table-wrap">
             <table className="moodle-table moodle-grade-table">
@@ -634,12 +667,36 @@ export function MoodleGradeSyncPanel() {
                     </td>
                     <td>{change.career}<small>{change.period}</small></td>
                     <td>
-                      {change.component}
-                      <small>{change.moodle_grade_item}</small>
-                      {(change.moodle_grade_item_count ?? 1) > 1 && (
+                      <strong className="moodle-grade-component-name">{change.component}</strong>
+                      <span className="moodle-grade-component-rule">
+                        {componentMigrationRule(change)}
+                      </span>
+                      {change.moodle_partial_label && (
                         <small>
-                          Nota mayor de {change.moodle_grade_item_count} actividades habilitadas.
+                          Segmento: {change.moodle_partial_label}
+                          {change.moodle_partial_source === 'segment'
+                            ? ' · identificado por segmento Moodle'
+                            : change.moodle_partial_source === 'label'
+                              ? ' · identificado por etiqueta'
+                              : ''}
                         </small>
+                      )}
+                      <small>Actividad seleccionada: {change.moodle_grade_item}</small>
+                      {!!change.moodle_grade_candidates?.length && (
+                        <ul className="moodle-grade-candidate-list">
+                          {change.moodle_grade_candidates.map((candidate) => (
+                            <li
+                              key={`${change.row_id}-${change.field}-${candidate.item_id}`}
+                              className={candidate.selected ? 'is-selected' : undefined}
+                            >
+                              <span>
+                                {activityTypeLabel(candidate.activity_type)} · {candidate.item_name}
+                              </span>
+                              <strong>{grade(candidate.grade)}</strong>
+                              {candidate.selected && <em>Mayor nota</em>}
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </td>
                     <td>{grade(change.current_grade)}</td>

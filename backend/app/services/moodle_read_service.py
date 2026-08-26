@@ -163,6 +163,38 @@ def _search_text(value: Any) -> str:
     return "".join(character for character in normalized if not unicodedata.combining(character))
 
 
+def _module_name_identity(value: Any) -> str:
+    """Normaliza el nombre de una actividad para una coincidencia exacta estable."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", _search_text(value)).split())
+
+
+def _academic_partial_number(value: Any) -> int | None:
+    normalized = " ".join(
+        _search_text(value).replace("_", " ").replace("-", " ").split()
+    )
+    patterns = {
+        1: (
+            r"\bp\s*1\b",
+            r"\bprimer(?:o)?\s+parcial\b",
+            r"\bparcial\s*(?:(?:no|nro|numero)\.?\s*)?1\b",
+        ),
+        2: (
+            r"\bp\s*2\b",
+            r"\bsegundo\s+parcial\b",
+            r"\bparcial\s*(?:(?:no|nro|numero)\.?\s*)?2\b",
+        ),
+        3: (
+            r"\bp\s*3\b",
+            r"\btercer(?:o)?\s+parcial\b",
+            r"\bparcial\s*(?:(?:no|nro|numero)\.?\s*)?3\b",
+        ),
+    }
+    for partial, partial_patterns in patterns.items():
+        if any(re.search(pattern, normalized) for pattern in partial_patterns):
+            return partial
+    return None
+
+
 def _summary_as_plain_text(value: Any) -> str:
     raw = _as_text(value)
     if not raw:
@@ -174,6 +206,23 @@ def _summary_as_plain_text(value: Any) -> str:
         return parser.text()
     except (ValueError, AssertionError):
         return " ".join(re.sub(r"<[^>]*>", " ", raw).split())
+
+
+_ACADEMIC_PARTIAL_LABELS = {
+    1: "Primer parcial",
+    2: "Segundo parcial",
+    3: "Tercer parcial",
+}
+
+
+def _academic_partial_context(*values: Any) -> tuple[int | None, str]:
+    """Detecta el parcial en nombres o descripciones devueltos por Moodle."""
+    for value in values:
+        plain_text = _summary_as_plain_text(value)
+        partial = _academic_partial_number(plain_text)
+        if partial in _ACADEMIC_PARTIAL_LABELS:
+            return partial, _ACADEMIC_PARTIAL_LABELS[partial]
+    return None, ""
 
 
 _BARE_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", flags=re.IGNORECASE)
@@ -1316,26 +1365,88 @@ class MoodleReadService:
         sections: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         module_index: dict[tuple[str, int], dict[str, Any] | None] = {}
+        module_name_index: dict[tuple[str, str], dict[str, Any] | None] = {}
+        evaluation_block_active = False
+        evaluation_block_partial: int | None = None
         for section in sections:
             section_name = _as_text(section.get("name"))
+            section_summary = _summary_as_plain_text(section.get("summary"))
             section_visible = _as_bool(section.get("visible")) and _as_bool(
                 section.get("uservisible", section.get("visible"))
             )
-            evaluation_section = cls._is_evaluation_section_name(section_name)
+            section_partial, section_partial_label = _academic_partial_context(
+                section_name,
+                section_summary,
+            )
+            starts_evaluation_block = any(
+                cls._is_evaluation_section_name(value)
+                for value in (section_name, section_summary)
+            )
+            if starts_evaluation_block:
+                evaluation_section = True
+                evaluation_block_active = True
+                evaluation_block_partial = section_partial
+            elif (
+                evaluation_block_active
+                and section_partial in {1, 2, 3}
+                and (
+                    evaluation_block_partial is None
+                    or section_partial == evaluation_block_partial + 1
+                )
+            ):
+                evaluation_section = True
+                evaluation_block_partial = section_partial
+            else:
+                evaluation_section = False
+                evaluation_block_active = False
+                evaluation_block_partial = None
+
             modules = section.get("modules") if isinstance(section.get("modules"), list) else []
+            module_partial = section_partial
+            label_partial_active: int | None = None
+            partial_label_name = section_partial_label
+            partial_label_module_id = 0
+            detected_partials: set[int] = set()
             for module_order, module in enumerate(modules, start=1):
                 if not isinstance(module, dict):
                     continue
+                is_label = _as_text(module.get("modname")).casefold() == "label"
+                label_partial, label_partial_name = (
+                    _academic_partial_context(
+                        module.get("name"),
+                        module.get("description"),
+                    )
+                    if is_label
+                    else (None, "")
+                )
+                if label_partial in {1, 2, 3}:
+                    module_partial = label_partial
+                    label_partial_active = label_partial
+                    partial_label_name = label_partial_name
+                    partial_label_module_id = _as_int(module.get("id"))
+                if module_partial in {1, 2, 3}:
+                    detected_partials.add(module_partial)
                 key = (
                     _as_text(module.get("modname")).casefold(),
                     _as_int(module.get("instance")),
                 )
-                if not key[0] or key[1] <= 0:
-                    continue
+                section_id = _as_int(section.get("id"))
+                if partial_label_module_id > 0:
+                    partial_segment = f"section:{section_id}:label:{partial_label_module_id}"
+                elif module_partial in {1, 2, 3}:
+                    partial_segment = f"section:{section_id}:partial:{module_partial}"
+                else:
+                    partial_segment = ""
                 metadata = {
-                    "course_section_id": _as_int(section.get("id")),
+                    "course_section_id": section_id,
                     "course_section_number": _as_int(section.get("section")),
                     "course_section_name": section_name,
+                    "course_section_partial": module_partial,
+                    "course_section_named_partial": section_partial or 0,
+                    "course_label_partial": label_partial_active or 0,
+                    "course_partial_label": partial_label_name,
+                    "course_partial_label_module_id": partial_label_module_id,
+                    "course_partial_segment": partial_segment,
                     "course_section_visible": section_visible,
                     "course_module_id": _as_int(module.get("id")),
                     "course_module_order": module_order,
@@ -1345,7 +1456,16 @@ class MoodleReadService:
                     "evaluation_scope": evaluation_section,
                 }
                 # Una coincidencia duplicada no es suficientemente segura para migrar notas.
-                module_index[key] = metadata if key not in module_index else None
+                if key[0] and key[1] > 0:
+                    module_index[key] = metadata if key not in module_index else None
+                name_key = (key[0], _module_name_identity(module.get("name")))
+                if name_key[0] and name_key[1]:
+                    module_name_index[name_key] = (
+                        metadata if name_key not in module_name_index else None
+                    )
+
+            if evaluation_section and detected_partials:
+                evaluation_block_partial = max(detected_partials)
 
         enriched_groups: list[dict[str, Any]] = []
         for group in grade_groups:
@@ -1361,6 +1481,16 @@ class MoodleReadService:
                     _as_int(item.get("iteminstance")),
                 )
                 metadata = module_index.get(key)
+                if key not in module_index:
+                    # Algunas versiones o complementos de Moodle entregan un
+                    # iteminstance distinto entre el libro de calificaciones y
+                    # core_course_get_contents. Solo recuperamos el contexto si
+                    # tipo y nombre identifican una única actividad del curso.
+                    name_key = (
+                        key[0],
+                        _module_name_identity(item.get("itemname")),
+                    )
+                    metadata = module_name_index.get(name_key)
                 if metadata:
                     item.update(metadata)
                 else:
@@ -1369,6 +1499,12 @@ class MoodleReadService:
                             "course_section_id": 0,
                             "course_section_number": 0,
                             "course_section_name": "",
+                            "course_section_partial": 0,
+                            "course_section_named_partial": 0,
+                            "course_label_partial": 0,
+                            "course_partial_label": "",
+                            "course_partial_label_module_id": 0,
+                            "course_partial_segment": "",
                             "course_section_visible": False,
                             "course_module_id": 0,
                             "course_module_order": 0,
@@ -1385,7 +1521,10 @@ class MoodleReadService:
     @staticmethod
     def _is_evaluation_section_name(value: Any) -> bool:
         tokens = re.findall(r"[a-z0-9]+", _search_text(value))
-        return any(token in {"evaluacion", "evaluaciones"} for token in tokens)
+        return (
+            any(token in {"evaluacion", "evaluaciones"} for token in tokens)
+            and "recuperacion" not in tokens
+        )
 
     @classmethod
     def _normalize_course_section(cls, item: dict[str, Any]) -> dict[str, Any]:

@@ -37,10 +37,27 @@ _ACTIVE_STATES = {"A", "ACTIVO", "ACTIVA"}
 _PRACTICAL_WORDS = ("PRACTICO", "PRACTICA")
 _THEORY_WORDS = ("TEORICO", "TEORICA", "TEORIA")
 _EVALUATION_MODULES = {"quiz", "assign"}
+_PARTIAL_LABELS = {
+    1: "Primer parcial",
+    2: "Segundo parcial",
+    3: "Tercer parcial",
+}
 _PARTIAL_PATTERNS = {
-    1: (r"\bP\s*1\b", r"\bPRIMER(?:O)?\s+PARCIAL\b", r"\bPARCIAL\s*1\b"),
-    2: (r"\bP\s*2\b", r"\bSEGUNDO\s+PARCIAL\b", r"\bPARCIAL\s*2\b"),
-    3: (r"\bP\s*3\b", r"\bTERCER(?:O)?\s+PARCIAL\b", r"\bPARCIAL\s*3\b"),
+    1: (
+        r"\bP\s*1\b",
+        r"\bPRIMER(?:O)?\s+PARCIAL\b",
+        r"\bPARCIAL\s*(?:(?:NO|NRO|NUMERO)\.?\s*)?1\b",
+    ),
+    2: (
+        r"\bP\s*2\b",
+        r"\bSEGUNDO\s+PARCIAL\b",
+        r"\bPARCIAL\s*(?:(?:NO|NRO|NUMERO)\.?\s*)?2\b",
+    ),
+    3: (
+        r"\bP\s*3\b",
+        r"\bTERCER(?:O)?\s+PARCIAL\b",
+        r"\bPARCIAL\s*(?:(?:NO|NRO|NUMERO)\.?\s*)?3\b",
+    ),
 }
 
 
@@ -207,8 +224,8 @@ def moodle_exam_targets(
         return ()
 
     if is_practical:
-        return (f"P{partial}Tareas", f"P{partial}Examen")
-    return (f"P{partial}Proyectos",)
+        return (f"P{partial}Tareas", f"P{partial}Proyectos")
+    return (f"P{partial}Examen",)
 
 
 def _evaluation_module_targets(
@@ -226,8 +243,8 @@ def _evaluation_module_targets(
     if enrollment != "R" or partial not in {1, 2, 3}:
         return ()
     if module == "quiz":
-        return (f"P{partial}Proyectos",)
-    return (f"P{partial}Tareas", f"P{partial}Examen")
+        return (f"P{partial}Examen",)
+    return (f"P{partial}Tareas", f"P{partial}Proyectos")
 
 
 def practical_exam_targets(item_name: Any, enrollment_type: str) -> tuple[str, ...]:
@@ -1197,7 +1214,11 @@ class MoodleGradeSyncService:
                         "moodle_grade_item": candidate["item_name"],
                         "moodle_grade_item_count": int(candidate["candidate_count"]),
                         "moodle_grade_items": candidate["candidate_item_names"],
+                        "moodle_grade_candidates": candidate["candidate_items"],
                         "moodle_grade_selection": candidate["selection_rule"],
+                        "moodle_partial_label": candidate["partial_label"],
+                        "moodle_partial_segment": candidate["partial_segment"],
+                        "moodle_partial_source": candidate["partial_source"],
                         "moodle_raw_grade": candidate["raw_grade"],
                         "moodle_grade_min": candidate["grade_min"],
                         "moodle_grade_max": candidate["grade_max"],
@@ -1227,15 +1248,18 @@ class MoodleGradeSyncService:
             "periods": period_metadata,
             "selected_period_codes": selected_period_codes,
             "rule": (
-                "R: cada tarea práctica de Evaluación actualiza Tareas 30% y Examen 40% "
-                "de su parcial; cada cuestionario teórico actualiza Proyectos 30%. "
+                "R: cada tarea práctica de Evaluación actualiza Tareas 30% y Proyectos 30% "
+                "de su parcial; cada cuestionario teórico actualiza Examen 40%. "
                 if enrollment_type == "R"
                 else "H: el cuestionario actualiza Teoría 40% y la tarea actualiza Práctica 60%. "
             )
             + (
-                "Solo se migran actividades ubicadas en una sección Moodle denominada Evaluación. "
+                "Solo se migran actividades del bloque Moodle Evaluación y de sus secciones "
+                "Primer, Segundo o Tercer parcial. Simuladores y recuperación quedan excluidos. "
                 "El tipo quiz identifica cuestionarios y assign identifica tareas; el nombre es solo una referencia. "
-                "Cuando el nombre no indica P1, P2 o P3, el parcial se obtiene del orden de la actividad. "
+                "El parcial se obtiene del nombre de la sección, de su rótulo o del nombre explícito "
+                "de la actividad. Si Moodle usa secciones consecutivas sin rotular, se considera el "
+                "orden de esas secciones; las actividades nunca se reparten por su orden. "
                 "Si existen varias tareas o varios cuestionarios habilitados para un mismo componente, "
                 "se utiliza la mayor nota normalizada sobre 10. Una nota ya sincronizada se vuelve a migrar "
                 "únicamente cuando su valor cambia en Moodle."
@@ -1515,14 +1539,14 @@ class MoodleGradeSyncService:
     def _component_label(field: str) -> str:
         return {
             "P1Tareas": "Examen práctico P1 · Tareas 30%",
-            "P1Proyectos": "Examen teórico P1 · Proyectos 30%",
-            "P1Examen": "Examen práctico P1 · Examen 40%",
+            "P1Proyectos": "Examen práctico P1 · Proyectos 30%",
+            "P1Examen": "Examen teórico P1 · Examen 40%",
             "P2Tareas": "Examen práctico P2 · Tareas 30%",
-            "P2Proyectos": "Examen teórico P2 · Proyectos 30%",
-            "P2Examen": "Examen práctico P2 · Examen 40%",
+            "P2Proyectos": "Examen práctico P2 · Proyectos 30%",
+            "P2Examen": "Examen teórico P2 · Examen 40%",
             "P3Tareas": "Examen práctico P3 · Tareas 30%",
-            "P3Proyectos": "Examen teórico P3 · Proyectos 30%",
-            "P3Examen": "Examen práctico P3 · Examen 40%",
+            "P3Proyectos": "Examen práctico P3 · Proyectos 30%",
+            "P3Examen": "Examen teórico P3 · Examen 40%",
             "teoriaHomo": "Examen teórico de homologación",
             "practicahomo": "Examen práctico de homologación",
         }[field]
@@ -1580,6 +1604,13 @@ class MoodleGradeSyncService:
         grade_items: Iterable[dict[str, Any]],
         enrollment_type: str,
     ) -> tuple[list[dict[str, Any]], list[str]]:
+        def positive_int(value: Any) -> int | None:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
+
         candidates: list[dict[str, Any]] = []
         errors: list[str] = []
         prepared_items: list[dict[str, Any]] = []
@@ -1595,15 +1626,49 @@ class MoodleGradeSyncService:
             if item_module not in _EVALUATION_MODULES:
                 continue
 
-            section_and_item = _normalized_text(
-                f"{item.get('course_section_name') or ''} {item_name}"
+            section_name = _text(item.get("course_section_name"))
+            normalized_section = _normalized_text(section_name)
+            metadata_partial = positive_int(item.get("course_section_partial"))
+            if metadata_partial not in {1, 2, 3}:
+                metadata_partial = None
+            named_section_partial = positive_int(
+                item.get("course_section_named_partial")
+            ) or _partial_number(normalized_section)
+            if named_section_partial not in {1, 2, 3}:
+                named_section_partial = None
+            label_partial = positive_int(item.get("course_label_partial"))
+            if label_partial not in {1, 2, 3}:
+                label_partial = None
+            partial_label = _text(item.get("course_partial_label"))
+            partial_segment = _text(item.get("course_partial_segment"))
+            explicit_label_partial = (
+                label_partial
+                if label_partial in {1, 2, 3} and partial_label and partial_segment
+                else None
             )
+            section_id = positive_int(item.get("course_section_id"))
+            section_number = positive_int(item.get("course_section_number"))
+            section_key: tuple[Any, ...] | None = None
+            if section_id is not None:
+                section_key = ("id", section_id)
+            elif section_number is not None:
+                section_key = ("number", section_number, normalized_section)
+            elif normalized_section:
+                section_key = ("name", normalized_section)
+
             prepared_items.append(
                 {
                     "item": item,
                     "item_name": item_name,
                     "item_module": item_module,
-                    "explicit_partial": _partial_number(section_and_item),
+                    "section_key": section_key,
+                    "named_section_partial": named_section_partial,
+                    "label_partial": label_partial,
+                    "explicit_label_partial": explicit_label_partial,
+                    "partial_label": partial_label,
+                    "partial_segment": partial_segment,
+                    "metadata_partial": metadata_partial,
+                    "item_partial": _partial_number(_normalized_text(item_name)),
                     "source_order": source_order,
                 }
             )
@@ -1624,29 +1689,117 @@ class MoodleGradeSyncService:
             )
         )
 
-        occupied_partials: dict[str, set[int]] = defaultdict(set)
+        ordered_section_keys: list[tuple[Any, ...]] = []
+        entries_by_section: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
         for entry in prepared_items:
-            module = entry["item_module"]
-            partial = entry["explicit_partial"]
-            if module in _EVALUATION_MODULES and partial in {1, 2, 3}:
-                occupied_partials[module].add(partial)
+            section_key = entry["section_key"]
+            if section_key is None:
+                continue
+            if section_key not in entries_by_section:
+                ordered_section_keys.append(section_key)
+            entries_by_section[section_key].append(entry)
+
+        inherited_section_partials: dict[tuple[Any, ...], int] = {}
+        for section_key, section_entries in entries_by_section.items():
+            explicit_context_partials = {
+                entry["named_section_partial"]
+                or entry["label_partial"]
+                or entry["metadata_partial"]
+                for entry in section_entries
+                if (
+                    entry["named_section_partial"]
+                    or entry["label_partial"]
+                    or entry["metadata_partial"]
+                )
+                in {1, 2, 3}
+            }
+            if len(explicit_context_partials) == 1:
+                inherited_section_partials[section_key] = next(iter(explicit_context_partials))
+                continue
+
+            explicit_item_partials = {
+                entry["item_partial"]
+                for entry in section_entries
+                if entry["item_partial"] in {1, 2, 3}
+            }
+            if len(explicit_item_partials) == 1:
+                # Una actividad rotulada permite ubicar también a sus actividades
+                # hermanas dentro de la misma sección de Evaluación.
+                inherited_section_partials[section_key] = next(iter(explicit_item_partials))
+
+        entries_by_segment: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for entry in prepared_items:
+            partial_segment = entry["partial_segment"]
+            if partial_segment:
+                entries_by_segment[partial_segment].append(entry)
+
+        segment_partials: dict[str, int] = {}
+        for partial_segment, segment_entries in entries_by_segment.items():
+            # Moodle puede incluir "Parcial 2" en el nombre de un segundo intento
+            # ubicado todavía bajo la etiqueta Primer parcial. El contexto común
+            # del segmento debe prevalecer sobre esos nombres individuales.
+            for context_key in (
+                "explicit_label_partial",
+                "label_partial",
+                "named_section_partial",
+                "metadata_partial",
+            ):
+                context_values = {
+                    entry[context_key]
+                    for entry in segment_entries
+                    if entry[context_key] in {1, 2, 3}
+                }
+                if len(context_values) == 1:
+                    segment_partials[partial_segment] = next(iter(context_values))
+                    break
+
+        ordered_section_partials: dict[tuple[Any, ...], int] = {}
+        if 1 < len(ordered_section_keys) <= 3:
+            used_partials = set(inherited_section_partials.values())
+            available_partials = [partial for partial in (1, 2, 3) if partial not in used_partials]
+            for section_key in ordered_section_keys:
+                if section_key in inherited_section_partials or not available_partials:
+                    continue
+                ordered_section_partials[section_key] = available_partials.pop(0)
+
+        for entry in prepared_items:
+            section_key = entry["section_key"]
+            # La ubicación estructural en Moodle es autoritativa. Un nombre como
+            # "2da oportunidad" describe otro intento, no el segundo parcial.
+            # El nombre de la actividad solo se usa cuando Moodle no entrega un
+            # rótulo, sección, metadato ni segmento académico utilizable.
+            resolution_options = (
+                ("segment", segment_partials.get(entry["partial_segment"])),
+                ("label", entry["explicit_label_partial"]),
+                ("section", entry["named_section_partial"]),
+                ("metadata", entry["metadata_partial"]),
+                ("label_metadata", entry["label_partial"]),
+                ("section_inheritance", inherited_section_partials.get(section_key)),
+                ("section_order", ordered_section_partials.get(section_key)),
+                ("activity", entry["item_partial"]),
+            )
+            partial_source, resolved_partial = next(
+                (
+                    (source, value)
+                    for source, value in resolution_options
+                    if value in {1, 2, 3}
+                ),
+                ("", None),
+            )
+            entry["resolved_partial"] = resolved_partial
+            entry["partial_source"] = partial_source
 
         for entry in prepared_items:
             item = entry["item"]
             item_name = entry["item_name"]
             item_module = entry["item_module"]
-            partial = entry["explicit_partial"]
+            partial = entry["resolved_partial"]
             if _text(enrollment_type).upper() == "R" and partial not in {1, 2, 3}:
-                partial = next(
-                    (
-                        candidate
-                        for candidate in (1, 2, 3)
-                        if candidate not in occupied_partials[item_module]
-                    ),
-                    None,
+                errors.append(
+                    f"{item_name or 'Ítem sin nombre'}: no se pudo identificar "
+                    "el primer, segundo o tercer parcial dentro de Evaluación"
                 )
-                if partial is not None:
-                    occupied_partials[item_module].add(partial)
+                continue
             targets = _evaluation_module_targets(item_module, enrollment_type, partial)
             if not targets:
                 continue
@@ -1666,6 +1819,14 @@ class MoodleGradeSyncService:
                         "grade": grade,
                         "item_id": int(item.get("id") or 0),
                         "item_name": item_name,
+                        "activity_type": item_module,
+                        "partial": partial,
+                        "partial_label": entry["partial_label"]
+                        or _PARTIAL_LABELS.get(partial, ""),
+                        "partial_segment": entry["partial_segment"],
+                        "partial_source": entry["partial_source"],
+                        "course_section_id": int(item.get("course_section_id") or 0),
+                        "course_section_name": _text(item.get("course_section_name")),
                         "duplicated": duplicated,
                         "priority": 3,
                         "raw_grade": grade_details["raw_grade"],
@@ -1693,11 +1854,25 @@ class MoodleGradeSyncService:
                 preferred,
                 key=lambda item: (-float(item["grade"]), int(item["item_id"])),
             )[0]
+            ordered_candidates = sorted(
+                preferred,
+                key=lambda item: (-float(item["grade"]), int(item["item_id"])),
+            )
             selected[target] = {
                 **winner,
                 "candidate_count": len(preferred),
                 "candidate_item_ids": [int(item["item_id"]) for item in preferred],
                 "candidate_item_names": [item["item_name"] for item in preferred],
+                "candidate_items": [
+                    {
+                        "item_id": int(item["item_id"]),
+                        "item_name": item["item_name"],
+                        "grade": float(item["grade"]),
+                        "activity_type": item["activity_type"],
+                        "selected": int(item["item_id"]) == int(winner["item_id"]),
+                    }
+                    for item in ordered_candidates
+                ],
                 "selection_rule": "highest_grade" if len(preferred) > 1 else "single_grade",
             }
         return selected, conflicts

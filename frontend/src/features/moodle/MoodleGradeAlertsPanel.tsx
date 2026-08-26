@@ -68,14 +68,14 @@ function kindLabel(kind: MoodleGradeAlertKind): string {
 function componentLabel(component: string): string {
   const labels: Record<string, string> = {
     P1Tareas: 'P1 examen práctico · Tareas (30 %)',
-    P1Proyectos: 'P1 examen teórico · Proyectos (30 %)',
-    P1Examen: 'P1 examen práctico · Examen (40 %)',
+    P1Proyectos: 'P1 examen práctico · Proyectos (30 %)',
+    P1Examen: 'P1 examen teórico · Examen (40 %)',
     P2Tareas: 'P2 examen práctico · Tareas (30 %)',
-    P2Proyectos: 'P2 examen teórico · Proyectos (30 %)',
-    P2Examen: 'P2 examen práctico · Examen (40 %)',
+    P2Proyectos: 'P2 examen práctico · Proyectos (30 %)',
+    P2Examen: 'P2 examen teórico · Examen (40 %)',
     P3Tareas: 'P3 examen práctico · Tareas (30 %)',
-    P3Proyectos: 'P3 examen teórico · Proyectos (30 %)',
-    P3Examen: 'P3 examen práctico · Examen (40 %)',
+    P3Proyectos: 'P3 examen práctico · Proyectos (30 %)',
+    P3Examen: 'P3 examen teórico · Examen (40 %)',
     teoriaHomo: 'Teoría de homologación',
     practicahomo: 'Práctica de homologación',
   }

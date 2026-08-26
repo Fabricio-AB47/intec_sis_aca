@@ -39,14 +39,14 @@ _GRADE_WARNING_STATES = {"without_grades", "without_exam_grade"}
 _REVIEW_WARNING_STATES = {"invalid_grade", "ambiguous_grade"}
 _COMPONENT_LABELS = {
     "P1Tareas": "P1 examen práctico · Tareas 30 %",
-    "P1Proyectos": "P1 examen teórico · Proyectos 30 %",
-    "P1Examen": "P1 examen práctico · Examen 40 %",
+    "P1Proyectos": "P1 examen práctico · Proyectos 30 %",
+    "P1Examen": "P1 examen teórico · Examen 40 %",
     "P2Tareas": "P2 examen práctico · Tareas 30 %",
-    "P2Proyectos": "P2 examen teórico · Proyectos 30 %",
-    "P2Examen": "P2 examen práctico · Examen 40 %",
+    "P2Proyectos": "P2 examen práctico · Proyectos 30 %",
+    "P2Examen": "P2 examen teórico · Examen 40 %",
     "P3Tareas": "P3 examen práctico · Tareas 30 %",
-    "P3Proyectos": "P3 examen teórico · Proyectos 30 %",
-    "P3Examen": "P3 examen práctico · Examen 40 %",
+    "P3Proyectos": "P3 examen práctico · Proyectos 30 %",
+    "P3Examen": "P3 examen teórico · Examen 40 %",
     "teoriaHomo": "Teoría de homologación 40%",
     "practicahomo": "Práctica de homologación 60%",
 }

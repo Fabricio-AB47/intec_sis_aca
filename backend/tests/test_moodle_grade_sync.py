@@ -17,6 +17,7 @@ from app.services.moodle_grade_sync import (
     parse_configured_mappings,
     practical_exam_targets,
 )
+from app.services.moodle_read_service import MoodleReadService
 
 
 class MoodleGradeRuleTests(unittest.TestCase):
@@ -528,18 +529,18 @@ class MoodleGradeRuleTests(unittest.TestCase):
         )
         self.assertEqual(moodle_exam_targets("Examen teórico", "R"), ())
 
-    def test_explicit_regular_practical_exam_duplicates_into_task_and_exam(self) -> None:
+    def test_explicit_regular_practical_exam_duplicates_into_task_and_project(self) -> None:
         self.assertEqual(
             practical_exam_targets("Examen práctico P1", "R"),
-            ("P1Tareas", "P1Examen"),
+            ("P1Tareas", "P1Proyectos"),
         )
         self.assertEqual(
             practical_exam_targets("Examen práctico parcial 2", "R"),
-            ("P2Tareas", "P2Examen"),
+            ("P2Tareas", "P2Proyectos"),
         )
         self.assertEqual(
             practical_exam_targets("Examen práctico tercer parcial", "R"),
-            ("P3Tareas", "P3Examen"),
+            ("P3Tareas", "P3Proyectos"),
         )
 
     def test_homologation_practical_exam_is_applied_once(self) -> None:
@@ -548,14 +549,14 @@ class MoodleGradeRuleTests(unittest.TestCase):
             ("practicahomo",),
         )
 
-    def test_regular_theoretical_exam_updates_project_of_same_partial(self) -> None:
+    def test_regular_theoretical_exam_updates_exam_of_same_partial(self) -> None:
         self.assertEqual(
             moodle_exam_targets("Examen teórico P1", "R"),
-            ("P1Proyectos",),
+            ("P1Examen",),
         )
         self.assertEqual(
             moodle_exam_targets("Examen teórico tercer parcial", "R"),
-            ("P3Proyectos",),
+            ("P3Examen",),
         )
 
     def test_homologation_theoretical_exam_is_applied_once(self) -> None:
@@ -569,13 +570,13 @@ class MoodleGradeRuleTests(unittest.TestCase):
     def test_enabled_quiz_without_theoretical_label_is_theoretical(self) -> None:
         self.assertEqual(
             moodle_exam_targets("Cuestionario P2", "R", "quiz"),
-            ("P2Proyectos",),
+            ("P2Examen",),
         )
 
-    def test_assignment_without_practical_label_uses_task_and_exam_components(self) -> None:
+    def test_assignment_without_practical_label_uses_task_and_project_components(self) -> None:
         self.assertEqual(
             moodle_exam_targets("Entrega con un nombre libre P2", "R", "assign"),
-            ("P2Tareas", "P2Examen"),
+            ("P2Tareas", "P2Proyectos"),
         )
 
     def test_moodle_scale_is_normalized_to_ten(self) -> None:
@@ -806,8 +807,8 @@ class MoodleGradeRuleTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(conflicts, set())
         self.assertEqual(selected["P2Tareas"]["grade"], 9.0)
-        self.assertEqual(selected["P2Proyectos"]["grade"], 8.0)
-        self.assertEqual(selected["P2Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P2Proyectos"]["grade"], 9.0)
+        self.assertEqual(selected["P2Examen"]["grade"], 8.0)
         self.assertNotIn("P1Examen", selected)
         self.assertNotIn("P3Examen", selected)
 
@@ -842,9 +843,28 @@ class MoodleGradeRuleTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(conflicts, set())
-        self.assertEqual(selected["P1Proyectos"]["grade"], 9.0)
-        self.assertEqual(selected["P1Proyectos"]["candidate_count"], 2)
-        self.assertEqual(selected["P1Proyectos"]["selection_rule"], "highest_grade")
+        self.assertEqual(selected["P1Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P1Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P1Examen"]["selection_rule"], "highest_grade")
+        self.assertEqual(
+            selected["P1Examen"]["candidate_items"],
+            [
+                {
+                    "item_id": 21,
+                    "item_name": "Cuestionario P1 - intento 2",
+                    "grade": 9.0,
+                    "activity_type": "quiz",
+                    "selected": True,
+                },
+                {
+                    "item_id": 20,
+                    "item_name": "Cuestionario P1 - intento 1",
+                    "grade": 7.0,
+                    "activity_type": "quiz",
+                    "selected": False,
+                },
+            ],
+        )
 
     def test_highest_enabled_assignment_grade_is_selected(self) -> None:
         items = [
@@ -875,14 +895,20 @@ class MoodleGradeRuleTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(conflicts, set())
-        self.assertEqual(set(selected), {"P2Tareas", "P2Examen"})
+        self.assertEqual(set(selected), {"P2Tareas", "P2Proyectos"})
         self.assertEqual(selected["P2Tareas"]["grade"], 9.25)
-        self.assertEqual(selected["P2Examen"]["grade"], 9.25)
-        self.assertEqual(selected["P2Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P2Proyectos"]["grade"], 9.25)
+        self.assertEqual(selected["P2Proyectos"]["candidate_count"], 2)
         self.assertEqual(
-            selected["P2Examen"]["candidate_item_names"],
+            selected["P2Proyectos"]["candidate_item_names"],
             ["Tarea práctica P2 - primera entrega", "Tarea práctica P2 - entrega final"],
         )
+        self.assertEqual(
+            [item["grade"] for item in selected["P2Proyectos"]["candidate_items"]],
+            [9.25, 8.5],
+        )
+        self.assertTrue(selected["P2Proyectos"]["candidate_items"][0]["selected"])
+        self.assertFalse(selected["P2Proyectos"]["candidate_items"][1]["selected"])
 
     def test_hidden_quiz_is_not_considered_for_maximum_grade(self) -> None:
         items = [
@@ -915,7 +941,7 @@ class MoodleGradeRuleTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(conflicts, set())
-        self.assertEqual(selected["P3Proyectos"]["grade"], 8.0)
+        self.assertEqual(selected["P3Examen"]["grade"], 8.0)
 
     def test_grade_item_outside_evaluation_section_is_ignored(self) -> None:
         items = [
@@ -937,7 +963,7 @@ class MoodleGradeRuleTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(candidates, [])
 
-    def test_generic_quizzes_and_assignments_are_ordered_by_module_type(self) -> None:
+    def test_regular_items_without_partial_are_not_distributed_by_activity_order(self) -> None:
         items = [
             {
                 "id": 50,
@@ -1014,25 +1040,15 @@ class MoodleGradeRuleTests(unittest.TestCase):
         ]
 
         candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
-        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
-
-        self.assertEqual(errors, [])
-        self.assertEqual(conflicts, set())
-        self.assertEqual(selected["P1Examen"]["grade"], 7.0)
-        self.assertEqual(selected["P2Examen"]["grade"], 8.5)
-        self.assertEqual(selected["P3Examen"]["grade"], 9.5)
-        self.assertEqual(selected["P1Tareas"]["grade"], 7.0)
-        self.assertEqual(selected["P2Tareas"]["grade"], 8.5)
-        self.assertEqual(selected["P3Tareas"]["grade"], 9.5)
-        self.assertEqual(selected["P1Proyectos"]["grade"], 8.0)
-        self.assertEqual(selected["P2Proyectos"]["grade"], 9.0)
-        self.assertEqual(selected["P3Proyectos"]["grade"], 10.0)
+        self.assertEqual(candidates, [])
+        self.assertEqual(len(errors), 6)
+        self.assertTrue(all("no se pudo identificar" in error for error in errors))
 
     def test_section_partial_is_preferred_over_activity_name(self) -> None:
         items = [
             {
                 "id": 60,
-                "itemname": "Nombre libre de la entrega",
+                "itemname": "Entrega identificada como P1",
                 "itemmodule": "assign",
                 "graderaw": 9,
                 "grademax": 10,
@@ -1049,7 +1065,479 @@ class MoodleGradeRuleTests(unittest.TestCase):
         selected, _ = MoodleGradeSyncService._select_candidates(candidates)
 
         self.assertEqual(errors, [])
-        self.assertEqual(set(selected), {"P2Tareas", "P2Examen"})
+        self.assertEqual(set(selected), {"P2Tareas", "P2Proyectos"})
+
+    def test_activity_name_does_not_override_structural_partial_segment(self) -> None:
+        items = [
+            {
+                "id": 601,
+                "itemname": "Evaluación parcial No. 2",
+                "itemmodule": "quiz",
+                "graderaw": 8.75,
+                "grademax": 10,
+                "course_section_id": 502,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_label_partial": 1,
+                "course_section_number": 5,
+                "course_module_order": 8,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            }
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, _ = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(set(selected), {"P1Examen"})
+        self.assertEqual(selected["P1Examen"]["grade"], 8.75)
+
+    def test_same_segment_keeps_numbered_second_opportunity_in_first_partial(self) -> None:
+        items = [
+            {
+                "id": 611,
+                "itemname": "Evaluación Parcial No. 1",
+                "itemmodule": "quiz",
+                "graderaw": 8,
+                "grademax": 10,
+                "course_section_id": 504,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_label_partial": 1,
+                "course_partial_label": "Primer parcial",
+                "course_partial_segment": "section:504:label:700",
+                "course_section_number": 5,
+                "course_module_order": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 612,
+                "itemname": "Evaluación Parcial 2 - 2da oportunidad personas que no rindieron",
+                "itemmodule": "quiz",
+                "graderaw": 9,
+                "grademax": 10,
+                "course_section_id": 504,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_label_partial": 1,
+                "course_partial_label": "Primer parcial",
+                "course_partial_segment": "section:504:label:700",
+                "course_section_number": 5,
+                "course_module_order": 4,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(set(selected), {"P1Examen"})
+        self.assertEqual(selected["P1Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P1Examen"]["item_id"], 612)
+        self.assertEqual(selected["P1Examen"]["candidate_count"], 2)
+        self.assertEqual(
+            selected["P1Examen"]["partial_segment"],
+            "section:504:label:700",
+        )
+
+    def test_segment_context_overrides_conflicting_activity_metadata(self) -> None:
+        items = [
+            {
+                "id": 613,
+                "itemname": "Evaluación Parcial No. 1",
+                "itemmodule": "quiz",
+                "graderaw": 8,
+                "grademax": 10,
+                "course_section_id": 505,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_label_partial": 1,
+                "course_partial_label": "Primer parcial",
+                "course_partial_segment": "section:505:label:701",
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 614,
+                "itemname": "Evaluación Parcial 2 - 2da oportunidad",
+                "itemmodule": "quiz",
+                "graderaw": 9.5,
+                "grademax": 10,
+                "course_section_id": 505,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 2,
+                "course_label_partial": 0,
+                "course_partial_label": "",
+                "course_partial_segment": "section:505:label:701",
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(set(selected), {"P1Examen"})
+        self.assertEqual(selected["P1Examen"]["grade"], 9.5)
+        self.assertEqual(selected["P1Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P1Examen"]["partial_source"], "segment")
+
+    def test_second_opportunity_text_is_not_confused_with_second_partial(self) -> None:
+        items = [
+            {
+                "id": 602,
+                "itemname": "Evaluación Parcial - 2da oportunidad personas que no rindieron",
+                "itemmodule": "quiz",
+                "graderaw": 9.25,
+                "grademax": 10,
+                "course_section_id": 503,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_label_partial": 1,
+                "course_section_number": 5,
+                "course_module_order": 4,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            }
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, _ = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(set(selected), {"P1Examen"})
+        self.assertEqual(selected["P1Examen"]["grade"], 9.25)
+
+    def test_same_section_uses_highest_quiz_and_assignment_in_one_partial(self) -> None:
+        items = [
+            {
+                "id": 61,
+                "itemname": "Cuestionario diagnóstico",
+                "itemmodule": "quiz",
+                "graderaw": 7,
+                "grademax": 10,
+                "course_section_id": 502,
+                "course_section_name": "Evaluación - Segundo parcial",
+                "course_section_number": 5,
+                "course_module_order": 1,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 62,
+                "itemname": "Cuestionario final",
+                "itemmodule": "quiz",
+                "graderaw": 9,
+                "grademax": 10,
+                "course_section_id": 502,
+                "course_section_name": "Evaluación - Segundo parcial",
+                "course_section_number": 5,
+                "course_module_order": 2,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 63,
+                "itemname": "Tarea inicial",
+                "itemmodule": "assign",
+                "graderaw": 8,
+                "grademax": 10,
+                "course_section_id": 502,
+                "course_section_name": "Evaluación - Segundo parcial",
+                "course_section_number": 5,
+                "course_module_order": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 64,
+                "itemname": "Tarea final",
+                "itemmodule": "assign",
+                "graderaw": 9.25,
+                "grademax": 10,
+                "course_section_id": 502,
+                "course_section_name": "Evaluación - Segundo parcial",
+                "course_section_number": 5,
+                "course_module_order": 4,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(set(selected), {"P2Tareas", "P2Proyectos", "P2Examen"})
+        self.assertEqual(selected["P2Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P2Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P2Tareas"]["grade"], 9.25)
+        self.assertEqual(selected["P2Proyectos"]["grade"], 9.25)
+        self.assertEqual(selected["P2Tareas"]["candidate_count"], 2)
+        self.assertEqual(selected["P2Proyectos"]["candidate_count"], 2)
+
+    def test_labels_partition_three_partials_and_keep_each_highest_grade(self) -> None:
+        partial_specs = {
+            1: ("Primer parcial", (7.0, 9.0), (6.0, 8.0)),
+            2: ("Segundo parcial", (5.0, 8.0, 7.0), (4.0, 9.0, 6.0)),
+            3: ("Tercer parcial", (6.5, 9.5), (7.5, 8.5)),
+        }
+        grade_items: list[dict[str, object]] = []
+        modules: list[dict[str, object]] = []
+        item_id = 200
+        module_order = 0
+
+        for partial, (label, quiz_grades, assignment_grades) in partial_specs.items():
+            module_order += 1
+            modules.append(
+                {
+                    "id": 1_000 + module_order,
+                    "name": label,
+                    "modname": "label",
+                    "instance": 1_000 + module_order,
+                    "visible": True,
+                    "uservisible": True,
+                }
+            )
+            for component_label in ("Componente teórico", "Componente práctico"):
+                module_order += 1
+                modules.append(
+                    {
+                        "id": 1_000 + module_order,
+                        "name": component_label,
+                        "modname": "label",
+                        "instance": 1_000 + module_order,
+                        "visible": True,
+                        "uservisible": True,
+                    }
+                )
+                grades = quiz_grades if component_label.endswith("teórico") else assignment_grades
+                module_type = "quiz" if component_label.endswith("teórico") else "assign"
+                for attempt, value in enumerate(grades, start=1):
+                    item_id += 1
+                    module_order += 1
+                    grade_items.append(
+                        {
+                            "id": item_id,
+                            "itemname": f"Intento {attempt}",
+                            "itemmodule": module_type,
+                            "iteminstance": item_id,
+                            "graderaw": value,
+                            "grademax": 10,
+                        }
+                    )
+                    modules.append(
+                        {
+                            "id": 1_000 + module_order,
+                            "name": f"Intento {attempt}",
+                            "modname": module_type,
+                            "instance": item_id,
+                            "visible": True,
+                            "uservisible": True,
+                        }
+                    )
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            [{"userid": 99, "gradeitems": grade_items}],
+            [
+                {
+                    "id": 700,
+                    "section": 7,
+                    "name": "Evaluaciones",
+                    "visible": True,
+                    "uservisible": True,
+                    "modules": modules,
+                }
+            ],
+        )
+        candidates, errors = MoodleGradeSyncService._grade_candidates(
+            enriched[0]["gradeitems"],
+            "R",
+        )
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(selected["P1Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P1Tareas"]["grade"], 8.0)
+        self.assertEqual(selected["P1Proyectos"]["grade"], 8.0)
+        self.assertEqual(selected["P2Examen"]["grade"], 8.0)
+        self.assertEqual(selected["P2Tareas"]["grade"], 9.0)
+        self.assertEqual(selected["P2Proyectos"]["grade"], 9.0)
+        self.assertEqual(selected["P3Examen"]["grade"], 9.5)
+        self.assertEqual(selected["P3Tareas"]["grade"], 8.5)
+        self.assertEqual(selected["P3Proyectos"]["grade"], 8.5)
+        self.assertEqual(selected["P1Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P2Examen"]["candidate_count"], 3)
+        self.assertEqual(selected["P2Tareas"]["candidate_count"], 3)
+        for partial, label in ((1, "Primer parcial"), (2, "Segundo parcial"), (3, "Tercer parcial")):
+            for suffix in ("Examen", "Tareas", "Proyectos"):
+                result = selected[f"P{partial}{suffix}"]
+                self.assertEqual(result["partial"], partial)
+                self.assertEqual(result["partial_label"], label)
+                self.assertEqual(result["partial_source"], "segment")
+                self.assertIn("section:700:label:", result["partial_segment"])
+
+    def test_first_partial_uses_highest_second_opportunity_by_activity_type(self) -> None:
+        items = [
+            {
+                "id": 161,
+                "itemname": "Evaluación Parcial No.1",
+                "itemmodule": "quiz",
+                "graderaw": 7,
+                "grademax": 10,
+                "course_section_id": 612,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_section_number": 12,
+                "course_module_order": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 162,
+                "itemname": "Evaluación Parcial - 2da oportunidad personas que no rindieron",
+                "itemmodule": "quiz",
+                "graderaw": 9,
+                "grademax": 10,
+                "course_section_id": 612,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_section_number": 12,
+                "course_module_order": 4,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 163,
+                "itemname": "DEBER",
+                "itemmodule": "assign",
+                "graderaw": 6.5,
+                "grademax": 10,
+                "course_section_id": 612,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_section_number": 12,
+                "course_module_order": 6,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 164,
+                "itemname": "DEBER - 2DA OPORTUNIDAD PERSONAS QUE NO RINDIERON",
+                "itemmodule": "assign",
+                "graderaw": 8.5,
+                "grademax": 10,
+                "course_section_id": 612,
+                "course_section_name": "Evaluaciones",
+                "course_section_partial": 1,
+                "course_section_number": 12,
+                "course_module_order": 7,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(set(selected), {"P1Tareas", "P1Proyectos", "P1Examen"})
+        self.assertEqual(selected["P1Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P1Examen"]["item_id"], 162)
+        self.assertEqual(selected["P1Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P1Examen"]["activity_type"], "quiz")
+        self.assertEqual(selected["P1Examen"]["partial"], 1)
+        self.assertEqual(selected["P1Tareas"]["grade"], 8.5)
+        self.assertEqual(selected["P1Proyectos"]["grade"], 8.5)
+        self.assertEqual(selected["P1Tareas"]["item_id"], 164)
+        self.assertEqual(selected["P1Tareas"]["candidate_count"], 2)
+        self.assertEqual(selected["P1Proyectos"]["candidate_count"], 2)
+        self.assertEqual(selected["P1Tareas"]["activity_type"], "assign")
+        self.assertEqual(selected["P1Tareas"]["partial"], 1)
+
+    def test_section_metadata_keeps_highest_grades_inside_the_third_partial(self) -> None:
+        items = [
+            {
+                "id": 65,
+                "itemname": "Cuestionario inicial",
+                "itemmodule": "quiz",
+                "graderaw": 7,
+                "grademax": 10,
+                "course_section_partial": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 66,
+                "itemname": "Cuestionario final",
+                "itemmodule": "quiz",
+                "graderaw": 9,
+                "grademax": 10,
+                "course_section_partial": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 67,
+                "itemname": "Tarea inicial",
+                "itemmodule": "assign",
+                "graderaw": 8,
+                "grademax": 10,
+                "course_section_partial": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+            {
+                "id": 68,
+                "itemname": "Tarea final",
+                "itemmodule": "assign",
+                "graderaw": 9.5,
+                "grademax": 10,
+                "course_section_partial": 3,
+                "evaluation_scope": True,
+                "course_section_visible": True,
+                "course_module_visible": True,
+            },
+        ]
+
+        candidates, errors = MoodleGradeSyncService._grade_candidates(items, "R")
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts, set())
+        self.assertEqual(set(selected), {"P3Tareas", "P3Proyectos", "P3Examen"})
+        self.assertEqual(selected["P3Examen"]["grade"], 9.0)
+        self.assertEqual(selected["P3Tareas"]["grade"], 9.5)
+        self.assertEqual(selected["P3Proyectos"]["grade"], 9.5)
+        self.assertEqual(selected["P3Examen"]["candidate_count"], 2)
+        self.assertEqual(selected["P3Tareas"]["candidate_count"], 2)
 
     def test_only_quiz_and_assign_are_migrated_from_evaluation(self) -> None:
         items = [
@@ -1069,6 +1557,7 @@ class MoodleGradeRuleTests(unittest.TestCase):
                 "itemmodule": "quiz",
                 "graderaw": 8,
                 "grademax": 10,
+                "course_section_partial": 1,
                 "evaluation_scope": True,
                 "course_section_visible": True,
                 "course_module_visible": True,
@@ -1079,7 +1568,7 @@ class MoodleGradeRuleTests(unittest.TestCase):
         selected, _ = MoodleGradeSyncService._select_candidates(candidates)
 
         self.assertEqual(errors, [])
-        self.assertEqual(set(selected), {"P1Proyectos"})
+        self.assertEqual(set(selected), {"P1Examen"})
 
     def test_homologation_uses_module_type_without_activity_name(self) -> None:
         items = [

@@ -348,6 +348,442 @@ class MoodleReadServiceTests(unittest.IsolatedAsyncioTestCase):
     def test_similar_but_different_section_name_is_not_evaluation(self) -> None:
         self.assertFalse(MoodleReadService._is_evaluation_section_name("Autoevaluación"))
         self.assertTrue(MoodleReadService._is_evaluation_section_name("Evaluaciones P2"))
+        self.assertFalse(
+            MoodleReadService._is_evaluation_section_name("Evaluación de Recuperación")
+        )
+
+    def test_evaluation_block_includes_three_partials_and_excludes_other_sections(self) -> None:
+        grade_groups = [
+            {
+                "userid": 7,
+                "gradeitems": [
+                    {"id": 1, "itemmodule": "quiz", "iteminstance": 500},
+                    {"id": 2, "itemmodule": "quiz", "iteminstance": 501},
+                    {"id": 3, "itemmodule": "assign", "iteminstance": 502},
+                    {"id": 4, "itemmodule": "quiz", "iteminstance": 503},
+                    {"id": 5, "itemmodule": "assign", "iteminstance": 504},
+                    {"id": 6, "itemmodule": "quiz", "iteminstance": 505},
+                    {"id": 7, "itemmodule": "assign", "iteminstance": 506},
+                    {"id": 8, "itemmodule": "quiz", "iteminstance": 507},
+                ],
+            }
+        ]
+        sections = [
+            {
+                "id": 90,
+                "section": 9,
+                "name": "Simuladores",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 900,
+                        "name": "Simulador Parcial 1",
+                        "modname": "quiz",
+                        "instance": 500,
+                        "visible": True,
+                        "uservisible": True,
+                    }
+                ],
+            },
+            {
+                "id": 120,
+                "section": 12,
+                "name": "Evaluaciones",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1200,
+                        "name": "Primer parcial",
+                        "modname": "label",
+                        "instance": 700,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1201,
+                        "name": "Cuestionario con nombre libre",
+                        "modname": "quiz",
+                        "instance": 501,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1202,
+                        "name": "Tarea con nombre libre",
+                        "modname": "assign",
+                        "instance": 502,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            },
+            {
+                "id": 130,
+                "section": 13,
+                "name": "Segundo parcial",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1301,
+                        "name": "Cuestionario con nombre libre",
+                        "modname": "quiz",
+                        "instance": 503,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1302,
+                        "name": "Tarea con nombre libre",
+                        "modname": "assign",
+                        "instance": 504,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            },
+            {
+                "id": 140,
+                "section": 14,
+                "name": "Tercer parcial",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1401,
+                        "name": "Cuestionario con nombre libre",
+                        "modname": "quiz",
+                        "instance": 505,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1402,
+                        "name": "Tarea con nombre libre",
+                        "modname": "assign",
+                        "instance": 506,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            },
+            {
+                "id": 150,
+                "section": 15,
+                "name": "Evaluación de Recuperación",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1501,
+                        "name": "Recuperación",
+                        "modname": "quiz",
+                        "instance": 507,
+                        "visible": True,
+                        "uservisible": True,
+                    }
+                ],
+            },
+        ]
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            grade_groups,
+            sections,
+        )
+        items = {
+            item["iteminstance"]: item
+            for item in enriched[0]["gradeitems"]
+        }
+
+        self.assertFalse(items[500]["evaluation_scope"])
+        self.assertFalse(items[507]["evaluation_scope"])
+        for instance, partial in (
+            (501, 1),
+            (502, 1),
+            (503, 2),
+            (504, 2),
+            (505, 3),
+            (506, 3),
+        ):
+            self.assertTrue(items[instance]["evaluation_scope"])
+            self.assertEqual(items[instance]["course_section_partial"], partial)
+
+    def test_labels_keep_multiple_attempts_inside_the_same_partial(self) -> None:
+        grade_groups = [
+            {
+                "userid": 9,
+                "gradeitems": [
+                    {"id": 21, "itemmodule": "quiz", "iteminstance": 801},
+                    {"id": 22, "itemmodule": "quiz", "iteminstance": 802},
+                    {"id": 23, "itemmodule": "assign", "iteminstance": 803},
+                    {"id": 24, "itemmodule": "assign", "iteminstance": 804},
+                ],
+            }
+        ]
+        sections = [
+            {
+                "id": 612,
+                "section": 12,
+                "name": "Evaluaciones",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 800,
+                        "name": "Primer parcial",
+                        "modname": "label",
+                        "instance": 800,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 805,
+                        "name": "Componente teórico",
+                        "modname": "label",
+                        "instance": 805,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 801,
+                        "name": "Evaluación Parcial No.1",
+                        "modname": "quiz",
+                        "instance": 801,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 802,
+                        "name": "Evaluación Parcial - 2da oportunidad personas que no rindieron",
+                        "modname": "quiz",
+                        "instance": 802,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 806,
+                        "name": "Componente práctico",
+                        "modname": "label",
+                        "instance": 806,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 803,
+                        "name": "DEBER",
+                        "modname": "assign",
+                        "instance": 803,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 804,
+                        "name": "DEBER - 2DA OPORTUNIDAD PERSONAS QUE NO RINDIERON",
+                        "modname": "assign",
+                        "instance": 804,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            }
+        ]
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            grade_groups,
+            sections,
+        )
+
+        for item in enriched[0]["gradeitems"]:
+            self.assertTrue(item["evaluation_scope"])
+            self.assertEqual(item["course_section_partial"], 1)
+            self.assertEqual(item["course_section_named_partial"], 0)
+            self.assertEqual(item["course_label_partial"], 1)
+            self.assertEqual(item["course_partial_label"], "Primer parcial")
+            self.assertEqual(item["course_partial_label_module_id"], 800)
+            self.assertEqual(item["course_partial_segment"], "section:612:label:800")
+
+    def test_partial_is_detected_from_label_description(self) -> None:
+        grade_groups = [
+            {
+                "userid": 12,
+                "gradeitems": [
+                    {"id": 31, "itemmodule": "quiz", "iteminstance": 901},
+                    {"id": 32, "itemmodule": "assign", "iteminstance": 902},
+                ],
+            }
+        ]
+        sections = [
+            {
+                "id": 712,
+                "section": 12,
+                "name": "Bloque académico",
+                "summary": "<p>Evaluaciones</p>",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 900,
+                        "name": "Separador",
+                        "description": "<strong>Segundo parcial</strong>",
+                        "modname": "label",
+                        "instance": 900,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 901,
+                        "name": "Cuestionario sin número",
+                        "modname": "quiz",
+                        "instance": 901,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 902,
+                        "name": "Tarea sin número",
+                        "modname": "assign",
+                        "instance": 902,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            }
+        ]
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            grade_groups,
+            sections,
+        )
+
+        for item in enriched[0]["gradeitems"]:
+            self.assertTrue(item["evaluation_scope"])
+            self.assertEqual(item["course_section_partial"], 2)
+            self.assertEqual(item["course_label_partial"], 2)
+            self.assertEqual(item["course_partial_label"], "Segundo parcial")
+            self.assertEqual(item["course_partial_segment"], "section:712:label:900")
+
+    def test_unique_module_name_recovers_partial_when_iteminstance_differs(self) -> None:
+        grade_groups = [
+            {
+                "userid": 15,
+                "gradeitems": [
+                    {
+                        "id": 41,
+                        "itemname": "Evaluación Parcial - 2da oportunidad",
+                        "itemmodule": "quiz",
+                        "iteminstance": 9999,
+                    }
+                ],
+            }
+        ]
+        sections = [
+            {
+                "id": 812,
+                "section": 12,
+                "name": "Evaluaciones",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1000,
+                        "name": "Primer parcial",
+                        "modname": "label",
+                        "instance": 1000,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1001,
+                        "name": "Evaluación Parcial - 2da oportunidad",
+                        "modname": "quiz",
+                        "instance": 1001,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            }
+        ]
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            grade_groups,
+            sections,
+        )
+        item = enriched[0]["gradeitems"][0]
+
+        self.assertTrue(item["evaluation_scope"])
+        self.assertEqual(item["course_section_partial"], 1)
+        self.assertEqual(item["course_label_partial"], 1)
+        self.assertEqual(item["course_partial_segment"], "section:812:label:1000")
+
+    def test_ambiguous_module_name_does_not_cross_partial_boundaries(self) -> None:
+        grade_groups = [
+            {
+                "userid": 16,
+                "gradeitems": [
+                    {
+                        "id": 42,
+                        "itemname": "Cuestionario de evaluación",
+                        "itemmodule": "quiz",
+                        "iteminstance": 9998,
+                    }
+                ],
+            }
+        ]
+        sections = [
+            {
+                "id": 912,
+                "section": 12,
+                "name": "Evaluaciones",
+                "visible": True,
+                "uservisible": True,
+                "modules": [
+                    {
+                        "id": 1100,
+                        "name": "Primer parcial",
+                        "modname": "label",
+                        "instance": 1100,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1101,
+                        "name": "Cuestionario de evaluación",
+                        "modname": "quiz",
+                        "instance": 1101,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1200,
+                        "name": "Segundo parcial",
+                        "modname": "label",
+                        "instance": 1200,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                    {
+                        "id": 1201,
+                        "name": "Cuestionario de evaluación",
+                        "modname": "quiz",
+                        "instance": 1201,
+                        "visible": True,
+                        "uservisible": True,
+                    },
+                ],
+            }
+        ]
+
+        enriched = MoodleReadService._grade_items_with_course_sections(
+            grade_groups,
+            sections,
+        )
+        item = enriched[0]["gradeitems"][0]
+
+        self.assertFalse(item["evaluation_scope"])
+        self.assertEqual(item["course_section_partial"], 0)
+        self.assertEqual(item["course_partial_segment"], "")
 
     async def test_course_search_visibility_category_and_pagination(self) -> None:
         visible = await self.service.list_courses(
