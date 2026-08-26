@@ -937,11 +937,6 @@ export function MoodleGradeAlertsPanel() {
               </section>
             </div>
 
-            <footer className="moodle-confirm-dialog__actions">
-              <button type="button" className="moodle-button" onClick={() => setSelectedAlert(null)}>
-                Cerrar detalle
-              </button>
-            </footer>
           </section>
         </div>
       )}

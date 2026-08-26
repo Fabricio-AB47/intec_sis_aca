@@ -10,6 +10,7 @@ from unicodedata import combining, normalize
 
 from app.core.security import SessionUser
 from app.services.db import get_connection
+from app.services.email_identity import normalize_email_identity
 from app.services.moodle_grade_sync import (
     MoodleGradeSyncError,
     MoodleGradeSyncService,
@@ -429,8 +430,12 @@ class MoodleGradeAlertService:
                   ON TRY_CONVERT(int, carrera.Cod_AnioBasica) = TRY_CONVERT(int, ce.cod_anio_Basica)
                 OUTER APPLY (
                     SELECT TOP (1)
-                        LOWER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), registro.CorreoIntec))))
-                            AS institutional_email
+                        LOWER(LTRIM(RTRIM(
+                            REPLACE(REPLACE(REPLACE(
+                                TRY_CONVERT(nvarchar(254), registro.CorreoIntec),
+                                NCHAR(160), N' '
+                            ), NCHAR(8203), N''), NCHAR(65279), N'')
+                        ))) COLLATE Latin1_General_100_CI_AS AS institutional_email
                     FROM dbo.CorreosEstudIntec AS registro
                     WHERE TRY_CONVERT(int, registro.codestud) = TRY_CONVERT(int, ce.codigo_estud)
                       AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), registro.CorreoIntec))), N'')
@@ -447,6 +452,7 @@ class MoodleGradeAlertService:
 
         unique_rows: dict[int, dict[str, Any]] = {}
         for row in rows:
+            row["email"] = normalize_email_identity(row.get("email"))
             pair = (
                 canonical_course_code(row.get("course_code")),
                 int(row.get("period_code") or 0),

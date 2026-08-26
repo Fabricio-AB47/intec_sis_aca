@@ -12,6 +12,7 @@ from app.services.moodle_grade_sync import (
     match_course_users_by_institutional_email,
     moodle_exam_targets,
     normalize_moodle_grade,
+    normalize_institutional_email,
     normalize_period_codes,
     parse_configured_mappings,
     practical_exam_targets,
@@ -240,6 +241,24 @@ class MoodleGradeRuleTests(unittest.TestCase):
             [("CorreosEstudIntec", "student@intec.edu.ec")],
         )
 
+    def test_institutional_email_identity_ignores_case_and_invisible_boundaries(self) -> None:
+        self.assertEqual(
+            normalize_institutional_email(
+                "\ufeff  STUDENT@INTEC.EDU.EC\u200b "
+            ),
+            "student@intec.edu.ec",
+        )
+
+    def test_institutional_email_identity_does_not_use_partial_matches(self) -> None:
+        self.assertEqual(
+            normalize_institutional_email("student+1@INTEC.EDU.EC"),
+            "student+1@intec.edu.ec",
+        )
+        self.assertNotEqual(
+            normalize_institutional_email("student+1@INTEC.EDU.EC"),
+            normalize_institutional_email("student@intec.edu.ec"),
+        )
+
     def test_data_email_is_not_an_identity_without_registry_relation(self) -> None:
         enrollment = {
             "registry_email": "",
@@ -312,6 +331,23 @@ class MoodleGradeRuleTests(unittest.TestCase):
         selected_course_users = {
             "student@intec.edu.ec": [
                 {"id": 42, "email": "STUDENT@INTEC.EDU.EC", "fullname": "Estudiante Uno"}
+            ]
+        }
+
+        users, email, source = match_course_users_by_institutional_email(
+            enrollment,
+            selected_course_users,
+        )
+
+        self.assertEqual([user["id"] for user in users], [42])
+        self.assertEqual(email, "student@intec.edu.ec")
+        self.assertEqual(source, "CorreosEstudIntec")
+
+    def test_student_match_is_case_insensitive_at_both_sources(self) -> None:
+        enrollment = {"registry_email": "STUDENT@INTEC.EDU.EC"}
+        selected_course_users = {
+            "student@intec.edu.ec": [
+                {"id": 42, "email": "student@intec.edu.ec"}
             ]
         }
 

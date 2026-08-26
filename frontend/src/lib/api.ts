@@ -312,12 +312,21 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     resolvedHeaders.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(resolveApiPath(path), {
-    credentials: credentials ?? 'include',
-    headers: resolvedHeaders,
-    body: resolvedBody,
-    ...rest,
-  })
+  let response: Response
+  try {
+    response = await fetch(resolveApiPath(path), {
+      credentials: credentials ?? 'include',
+      headers: resolvedHeaders,
+      body: resolvedBody,
+      ...rest,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError(
+      'No se pudo conectar con el servidor. Verifique que el backend esté activo e intente nuevamente.',
+      0,
+    )
+  }
   onResponse?.(response)
 
   const payload = responseType === 'blob' && response.ok ? await response.blob() : await readResponsePayload(response)

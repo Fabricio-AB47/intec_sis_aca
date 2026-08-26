@@ -11,6 +11,7 @@ from typing import Any, Iterable, Sequence
 
 from app.core.config import Settings, get_settings
 from app.services.db import get_connection
+from app.services.email_identity import normalize_email_identity
 from app.services.grade_calculation import (
     calculate_homologation_grade_with_recovery,
     calculate_regular_grade_with_recovery,
@@ -53,10 +54,7 @@ def _text(value: Any) -> str:
 
 def normalize_institutional_email(value: Any) -> str:
     """Normalize an institutional email without introducing fuzzy identity matches."""
-    email = _text(value).casefold()
-    if not email or "@" not in email or len(email) > 254 or any(character.isspace() for character in email):
-        return ""
-    return email
+    return normalize_email_identity(value)
 
 
 def institutional_email_candidates(enrollment: dict[str, Any]) -> list[tuple[str, str]]:
@@ -1773,7 +1771,7 @@ class MoodleGradeSyncService:
             cursor.execute(
                 """
                 CREATE TABLE #MoodleInstitutionalEmails (
-                    email nvarchar(254) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY
+                    email nvarchar(254) COLLATE Latin1_General_100_CI_AS NOT NULL PRIMARY KEY
                 )
                 """
             )
@@ -1787,8 +1785,11 @@ class MoodleGradeSyncService:
                     SELECT DISTINCT
                         TRY_CONVERT(int, email_row.codestud) AS student_code,
                         LOWER(LTRIM(RTRIM(
-                            TRY_CONVERT(nvarchar(254), email_row.CorreoIntec)
-                        ))) COLLATE DATABASE_DEFAULT AS institutional_email
+                            REPLACE(REPLACE(REPLACE(
+                                TRY_CONVERT(nvarchar(254), email_row.CorreoIntec),
+                                NCHAR(160), N' '
+                            ), NCHAR(8203), N''), NCHAR(65279), N'')
+                        ))) COLLATE Latin1_General_100_CI_AS AS institutional_email
                     FROM dbo.CorreosEstudIntec AS email_row
                     WHERE TRY_CONVERT(int, email_row.codestud) IS NOT NULL
                       AND NULLIF(
@@ -1884,7 +1885,7 @@ class MoodleGradeSyncService:
             cursor.execute(
                 """
                 CREATE TABLE #MoodleInstitutionalEmails (
-                    email nvarchar(254) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY
+                    email nvarchar(254) COLLATE Latin1_General_100_CI_AS NOT NULL PRIMARY KEY
                 )
                 """
             )
@@ -1898,8 +1899,11 @@ class MoodleGradeSyncService:
                     SELECT DISTINCT
                         TRY_CONVERT(int, email_row.codestud) AS student_code,
                         LOWER(LTRIM(RTRIM(
-                            TRY_CONVERT(nvarchar(254), email_row.CorreoIntec)
-                        ))) COLLATE DATABASE_DEFAULT AS registry_email
+                            REPLACE(REPLACE(REPLACE(
+                                TRY_CONVERT(nvarchar(254), email_row.CorreoIntec),
+                                NCHAR(160), N' '
+                            ), NCHAR(8203), N''), NCHAR(65279), N'')
+                        ))) COLLATE Latin1_General_100_CI_AS AS registry_email
                     FROM dbo.CorreosEstudIntec AS email_row
                     WHERE TRY_CONVERT(int, email_row.codestud) IS NOT NULL
                       AND NULLIF(

@@ -7037,19 +7037,25 @@
 }
 
 .moodle-confirm-dialog.moodle-grade-alert-detail {
-  width: min(1480px, 100%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
   overflow: hidden;
 }
 
 .moodle-grade-alert-detail .moodle-confirm-dialog__header {
-  position: sticky;
-  top: 0;
+  position: relative;
+  align-items: center;
   z-index: 2;
 }
 
 .moodle-grade-alert-detail__body {
-  max-height: calc(100vh - 190px);
-  overflow-y: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .moodle-grade-alert-detail__notice {
@@ -7464,9 +7470,12 @@
     padding: 10px;
   }
 
-  .moodle-grade-alert-detail__body,
   .moodle-grade-course-issues__body {
     max-height: calc(100vh - 150px);
+  }
+
+  .moodle-grade-alert-detail__body {
+    max-height: none;
   }
 
   .moodle-grade-alert-detail__notice {

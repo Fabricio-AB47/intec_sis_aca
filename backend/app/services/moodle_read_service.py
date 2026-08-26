@@ -41,6 +41,7 @@ from app.integrations.moodle.exceptions import (
     MoodleUserNotFoundError,
 )
 from app.services.db import get_connection, get_integration_control_connection
+from app.services.email_identity import normalize_email_identity
 
 logger = logging.getLogger(__name__)
 
@@ -437,9 +438,9 @@ class MoodleReadService:
             refresh=refresh,
         )
         return {
-            _as_text(item.get("email")).casefold()
+            normalized_email
             for item in entry.items
-            if _as_text(item.get("email"))
+            if (normalized_email := normalize_email_identity(item.get("email")))
         }
 
     async def get_course_enrolled_users(
@@ -905,8 +906,8 @@ class MoodleReadService:
 
     @staticmethod
     def _validate_institutional_email(email: str) -> dict[str, Any]:
-        normalized_email = _as_text(email).casefold()
-        if not normalized_email or "@" not in normalized_email or len(normalized_email) > 254:
+        normalized_email = normalize_email_identity(email)
+        if not normalized_email:
             raise MoodleInstitutionalEmailNotFoundError(
                 "El usuario Moodle no tiene un correo institucional válido"
             )
@@ -916,19 +917,25 @@ class MoodleReadService:
                 cursor = connection.cursor()
                 cursor.execute(
                     """
-                    SELECT TOP (1)
+                    SELECT TOP (2)
                         TRY_CONVERT(int, de.codigo_estud) AS codigo_estud,
-                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), de.Apellidos_nombre))) AS estudiante,
-                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), ce.CorreoIntec))) AS correo_intec
+                        MAX(LTRIM(RTRIM(TRY_CONVERT(nvarchar(250), de.Apellidos_nombre)))) AS estudiante,
+                        MIN(LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), ce.CorreoIntec)))) AS correo_intec
                     FROM dbo.CorreosEstudIntec AS ce
                     INNER JOIN dbo.DATOS_ESTUD AS de
                         ON TRY_CONVERT(int, de.codigo_estud) = TRY_CONVERT(int, ce.codestud)
-                    WHERE LOWER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), ce.CorreoIntec)))) = ?
+                    WHERE LOWER(LTRIM(RTRIM(
+                        REPLACE(REPLACE(REPLACE(
+                            TRY_CONVERT(nvarchar(254), ce.CorreoIntec),
+                            NCHAR(160), N' '
+                        ), NCHAR(8203), N''), NCHAR(65279), N'')
+                    ))) COLLATE Latin1_General_100_CI_AS = ? COLLATE Latin1_General_100_CI_AS
+                    GROUP BY TRY_CONVERT(int, de.codigo_estud)
                     ORDER BY TRY_CONVERT(int, de.codigo_estud);
                     """,
                     normalized_email,
                 )
-                row = cursor.fetchone()
+                rows = cursor.fetchall()
                 cursor.close()
         except MoodleInstitutionalEmailNotFoundError:
             raise
@@ -938,15 +945,20 @@ class MoodleReadService:
                 "No fue posible validar el correo institucional en INTECBDD"
             ) from exc
 
-        if row is None:
+        if not rows:
             raise MoodleInstitutionalEmailNotFoundError(
                 "El correo del usuario Moodle no existe en INTECBDD.dbo.CorreosEstudIntec"
             )
+        if len(rows) > 1:
+            raise MoodleInstitutionalEmailValidationError(
+                "El correo institucional está asociado a más de un estudiante en INTECBDD"
+            )
+        row = rows[0]
         return {
             "validated": True,
             "codigo_estud": _as_int(row[0]),
             "estudiante": _as_text(row[1]),
-            "correo_intec": _as_text(row[2]),
+            "correo_intec": normalize_email_identity(row[2]),
         }
 
     @staticmethod

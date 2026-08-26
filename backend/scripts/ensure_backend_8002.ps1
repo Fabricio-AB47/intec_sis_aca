@@ -16,6 +16,9 @@ $logDir = Join-Path $backendDir 'logs'
 $logFile = Join-Path $logDir "uvicorn-$port.log"
 $errorLogFile = Join-Path $logDir "uvicorn-$port-error.log"
 $watchdogLog = Join-Path $logDir 'backend-watchdog.log'
+$portUtilities = Join-Path $PSScriptRoot 'backend_port_utils.ps1'
+
+. $portUtilities
 
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -28,7 +31,7 @@ function Write-WatchdogLog {
 }
 
 function Get-BackendListener {
-    Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+    Get-ProjectBackendListeners -Port $port |
         Select-Object -First 1
 }
 
@@ -61,41 +64,20 @@ function Wait-BackendReady {
 
 $listener = Get-BackendListener
 if ($listener -and $Restart) {
-    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
-    $commandLine = [string] $processInfo.CommandLine
-    $escapedPythonExe = [regex]::Escape($pythonExe)
-    $isProjectBackend = (
-        $processInfo.Name -eq 'python.exe' -and
-        $commandLine -match "^`"?$escapedPythonExe`"?\s" -and
-        $commandLine -match '(app\.main:app|app[\\/]main\.py)' -and
-        $commandLine -match '(--port\s+8002|--port=8002)'
-    )
-
-    if (-not $isProjectBackend) {
-        $message = "Port $port is occupied by PID $($listener.OwningProcess), but it is not the project backend. It was not stopped."
-        Write-WatchdogLog $message
-        Write-Error $message
-        exit 1
-    }
-
     Write-Host "Restarting the backend on port $port (PID $($listener.OwningProcess))..."
-    Write-WatchdogLog "Stopping backend PID $($listener.OwningProcess) for a controlled restart."
-    Stop-Process -Id $listener.OwningProcess -Force
+    Write-WatchdogLog "Stopping the complete backend process tree for a controlled restart."
 
-    for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        Start-Sleep -Milliseconds 250
-        if (-not (Get-BackendListener)) {
-            break
-        }
+    try {
+        Stop-ProjectBackendOnPort -Port $port -RepoDir $repoDir | Out-Null
     }
-
-    $listener = Get-BackendListener
-    if ($listener) {
-        $message = "Port $port did not become available after stopping PID $($listener.OwningProcess)."
+    catch {
+        $message = $_.Exception.Message
         Write-WatchdogLog $message
         Write-Error $message
         exit 1
     }
+
+    $listener = $null
 }
 
 if ($listener) {

@@ -30,14 +30,14 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
-          proxyTimeout: 120000,
-          timeout: 120000,
+          proxyTimeout: 300000,
+          timeout: 300000,
         },
         '/uploads': {
           target: apiTarget,
           changeOrigin: true,
-          proxyTimeout: 120000,
-          timeout: 120000,
+          proxyTimeout: 300000,
+          timeout: 300000,
         },
       },
     },
