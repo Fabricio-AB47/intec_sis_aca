@@ -1,3 +1,4 @@
+import secrets
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,9 @@ from app.services.auth import (
     _student_access_allowed,
     authenticate_user,
 )
+
+
+TEST_CREDENTIAL = secrets.token_urlsafe(18)
 
 
 def profile(role: str, *, cedula: str = "1724036536") -> SessionUser:
@@ -32,7 +36,7 @@ class AuthenticateProfilesTests(unittest.TestCase):
             patch("app.services.auth._authenticate_student", return_value=student),
             patch("app.services.auth._authenticate_teacher", return_value=teacher),
         ):
-            return authenticate_user("persona@institucion.edu.ec", "credencial-valida")
+            return authenticate_user("persona@institucion.edu.ec", TEST_CREDENTIAL)
 
     def test_returns_student_and_teacher_profiles(self):
         session = self.authenticate_with(
@@ -73,7 +77,7 @@ class AdministrativeTypeTests(unittest.TestCase):
     def administrative_row(tp_us, *, tipousuario="1", detalle="ADMINISTRADOR"):
         return SimpleNamespace(
             login="administrativo@institucion.edu.ec",
-            password="credencial-almacenada",
+            password=TEST_CREDENTIAL,
             nombres="Persona administrativa",
             id_usuarios=25,
             estado="A",
@@ -95,7 +99,7 @@ class AdministrativeTypeTests(unittest.TestCase):
         ):
             return _authenticate_administrative_user(
                 "administrativo@institucion.edu.ec",
-                "credencial-valida",
+                TEST_CREDENTIAL,
             )
 
     def test_rejects_null_tp_us_even_when_legacy_role_fields_have_values(self):

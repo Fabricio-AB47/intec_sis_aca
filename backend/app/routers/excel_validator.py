@@ -176,7 +176,7 @@ def _read_excel(content: bytes, filename: str) -> tuple[list[str], list[dict[str
     if suffix != "xlsx":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sube un archivo .xlsx")
     if len(content) > _MAX_FILE_SIZE:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo supera el maximo permitido de 12 MB")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El archivo supera el máximo permitido de 12 MB')
 
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
@@ -203,11 +203,11 @@ def _read_excel(content: bytes, filename: str) -> tuple[list[str], list[dict[str
         item["_excel_row"] = row_number
         data_rows.append(item)
         if len(data_rows) >= _MAX_ROWS:
-            warnings.append(f"Se procesaron las primeras {_MAX_ROWS} filas con informacion.")
+            warnings.append(f"Se procesaron las primeras {_MAX_ROWS} filas con información.")
             break
 
     if not data_rows:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El Excel no contiene datos despues de la cabecera")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El Excel no contiene datos después de la cabecera')
     return headers, data_rows, warnings
 
 
@@ -399,7 +399,7 @@ async def validate_excel(
     if not any(detected.values()):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No se detectaron columnas de codigo, cedula, correo o nombre para cruzar.",
+            detail='No se detectaron columnas de código, cédula, correo o nombre para cruzar.',
         )
 
     identifier_sets = {

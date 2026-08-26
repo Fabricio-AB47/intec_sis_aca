@@ -46,8 +46,8 @@ function manualCourseCode(courseName: string) {
 function courseSourceLabel(course?: CredentialCourse) {
   if (!course) return 'Manual'
   if (course.source === 'PENSUM') return 'Pensum'
-  if (course.source === 'EDUCACION_CONTINUA') return 'Educacion continua'
-  return course.source || 'Catalogo'
+  if (course.source === 'EDUCACION_CONTINUA') return 'Educación continua'
+  return course.source || 'Catálogo'
 }
 
 function courseDetail(course: CredentialCourse) {
@@ -55,7 +55,7 @@ function courseDetail(course: CredentialCourse) {
     courseSourceLabel(course),
     course.carrera,
     course.semestre ? `Nivel ${course.semestre}` : '',
-    course.cod_materia || course.codigo_materia ? `Codigo ${course.cod_materia || course.codigo_materia}` : '',
+    course.cod_materia || course.codigo_materia ? `Código ${course.cod_materia || course.codigo_materia}` : '',
   ]
     .filter(Boolean)
     .join(' · ')
@@ -147,7 +147,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
       setCourseSearch('')
       setSavedRows([])
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el modulo de credenciales')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el módulo de credenciales')
     } finally {
       setLoading(false)
     }
@@ -229,25 +229,25 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
     setError('')
     setMessage('')
     if (!effectiveCourse) {
-      setError('Busca una materia del pensum o escribe el nombre del curso que necesita el grupo.')
+      setError('Busque una materia del pensum o escribe el nombre del curso que necesita el grupo.')
       return
     }
     if (!messageTemplate.trim()) {
-      setError('Ingresa el mensaje que se enviara con las credenciales.')
+      setError('Ingrese el mensaje que se enviara con las credenciales.')
       return
     }
     if (!link.trim()) {
-      setError('Ingresa el enlace de induccion que debe incluirse en el mensaje.')
+      setError('Ingrese el enlace de inducción que debe incluirse en el mensaje.')
       return
     }
     if (!validRows.length) {
-      setError('Agrega al menos un usuario con nombre, apellido, cedula y correo.')
+      setError('Agregue al menos un usuario con nombre, apellido, cédula y correo.')
       return
     }
 
     const invalidEmail = validRows.find((row) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.correo_electronico.trim()))
     if (invalidEmail) {
-      setError(`Correo no valido para la cedula ${invalidEmail.cedula || '-'}.`)
+      setError(`Correo no válido para la cédula ${invalidEmail.cedula || '-'}.`)
       return
     }
 
@@ -299,12 +299,12 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
         <article>
           <span>Curso activo</span>
           <strong>{effectiveCourse ? effectiveCourse.curso : '-'}</strong>
-          <small>{effectiveCourse ? courseSourceLabel(effectiveCourse) : 'Pendiente de seleccion'}</small>
+          <small>{effectiveCourse ? courseSourceLabel(effectiveCourse) : 'Pendiente de selección'}</small>
         </article>
         <article>
           <span>Usuarios listos</span>
           <strong>{validRows.length}</strong>
-          <small>Con nombre, cedula y correo</small>
+          <small>Con nombre, cédula y correo</small>
         </article>
         <article>
           <span>Microsoft Graph</span>
@@ -376,7 +376,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
 
             <div className="matricula-acad-form credential-form">
             <label>
-              <span>Link obligatorio en el mensaje</span>
+              <span>Enlace obligatorio en el mensaje</span>
               <input value={link} onChange={(event) => setLink(event.target.value)} />
             </label>
             <label className="credential-field--wide">
@@ -396,7 +396,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
             <span>{'{segundo_nombre}'}</span>
             <span>{'{primer_apellido}'}</span>
             <span>{'{segundo_apellido}'}</span>
-            <span>{'{cedula}'}</span>
+            <span>{'{cédula}'}</span>
             <span>{'{correo}'}</span>
             <span>{'{curso}'}</span>
             <span>{'{usuario}'}</span>
@@ -414,7 +414,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
               <strong>{graphSender || 'GRAPH_MAIL_SENDER pendiente'}</strong>
             </div>
             <p>
-              Al guardar se crea o actualiza cada usuario en Microsoft 365 con contraseña temporal. Si activas el envio,
+              Al guardar se crea o actualiza cada usuario en Microsoft 365 con contraseña temporal. Si activas el envío,
               el correo sale por Microsoft Graph desde la cuenta remitente configurada.
             </p>
           </div>
@@ -428,12 +428,12 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
 
           <div className="credential-paste">
             <label>
-              <span>Pegar lista rapida</span>
+              <span>Pegar lista rápida</span>
               <textarea
                 value={pasteText}
                 rows={4}
                 onChange={(event) => setPasteText(event.target.value)}
-                placeholder="Primer nombre;Segundo nombre;Primer apellido;Segundo apellido;Cedula;Correo electronico"
+                placeholder="Primer nombre;Segundo nombre;Primer apellido;Segundo apellido;Cédula;Correo electrónico"
               />
             </label>
             <button type="button" className="ghost-button" onClick={importPasteRows}>
@@ -449,10 +449,10 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
                   <th>Segundo nombre</th>
                   <th>Primer apellido</th>
                   <th>Segundo apellido</th>
-                  <th>Cedula</th>
-                  <th>Correo electronico</th>
+                  <th>Cédula</th>
+                  <th>Correo electrónico</th>
                   <th>Correo enviado</th>
-                  <th>Accion</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -483,7 +483,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
                           checked={Boolean(row.correo_enviado)}
                           onChange={(event) => updateRow(index, 'correo_enviado', event.target.checked)}
                         />
-                        <span>Si</span>
+                        <span>Sí</span>
                       </label>
                     </td>
                     <td>
@@ -522,7 +522,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
               <thead>
                 <tr>
                   <th>Estudiante</th>
-                  <th>Cedula</th>
+                  <th>Cédula</th>
                   <th>Correo</th>
                   <th>Usuario Microsoft</th>
                   <th>Clave</th>
@@ -550,7 +550,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
                         </span>
                         {row.error_graph ? <small>{row.error_graph}</small> : null}
                       </td>
-                      <td>{row.correo_enviado ? 'Si' : 'No'}</td>
+                      <td>{row.correo_enviado ? 'Sí' : 'No'}</td>
                       <td>
                         <span className={`credential-status credential-status--${String(row.estado_envio || 'pendiente').toLowerCase()}`}>
                           {valueOrDash(row.estado_envio)}

@@ -20,8 +20,10 @@ from app.routers.excel_validator import router as excel_validator_router
 from app.routers.english_exams import router as english_exams_router
 from app.routers.health import router as health_router
 from app.routers.institutional_email import router as institutional_email_router
+from app.routers.integration_history import router as integration_history_router
 from app.routers.legacy_reports import router as legacy_reports_router
 from app.routers.mass_email import router as mass_email_router
+from app.routers.moodle import router as moodle_router
 from app.routers.portal_academico import router as portal_academico_router
 from app.routers.practicas_institucionales import router as practicas_institucionales_router
 from app.routers.preinscription import UPLOAD_ROOT, router as preinscription_router
@@ -50,6 +52,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-OneDrive-Saved",
+        "X-OneDrive-Root",
+        "X-OneDrive-Item-Count",
+        "X-OneDrive-Same-Folder",
+    ],
 )
 
 
@@ -86,6 +95,7 @@ async def bind_database_audit_context(request: Request, call_next):
 
 app.include_router(health_router)
 app.include_router(institutional_email_router)
+app.include_router(integration_history_router)
 app.include_router(teams_router)
 app.include_router(auth_router)
 app.include_router(carnet_router)
@@ -93,6 +103,7 @@ app.include_router(certificados_router)
 app.include_router(certificate_renamer_router)
 app.include_router(credential_generator_router)
 app.include_router(mass_email_router)
+app.include_router(moodle_router)
 app.include_router(excel_validator_router)
 app.include_router(english_exams_router)
 app.include_router(document_expedients_router)

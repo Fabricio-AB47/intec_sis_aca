@@ -11,10 +11,10 @@ export function ReportesIndividualesView({ displayName, role, initialReportKey }
     initialReportKey === 'notas_carrera_materia'
       ? 'Calificaciones de estudiantes'
       : initialReportKey === 'estud_per_c_m'
-        ? 'Estudiantes por periodo, carrera y materia'
+        ? 'Estudiantes por período, carrera y materia'
         : initialReportKey === 'becas_edades'
           ? 'Becas y edades'
-          : 'Reportes por modulo'
+          : 'Reportes por módulo'
 
   return (
     <ReporteriaIntegralView

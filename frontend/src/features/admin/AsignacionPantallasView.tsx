@@ -59,7 +59,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       setData(response)
       setAssignments(assignmentMap(response.roles))
     } catch (apiError) {
-      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo cargar la asignacion institucional de pantallas.')
+      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo cargar la asignación institucional de pantallas.')
     } finally {
       setLoading(false)
     }
@@ -177,7 +177,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       window.dispatchEvent(new CustomEvent('intec-screen-access-updated'))
       setMessage(`Asignacion sincronizada para ${savedRole.label}.`)
     } catch (apiError) {
-      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo guardar la asignacion de pantallas.')
+      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo guardar la asignación de pantallas.')
     } finally {
       setSaving(false)
     }
@@ -187,8 +187,8 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
     <div className="screen-access-page">
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Administracion</p>
-          <h1>Asignacion de pantallas</h1>
+          <p className="eyebrow">Administración</p>
+          <h1>Asignación de pantallas</h1>
           <p>{displayName} · Configure las pantallas que utilizaran todos los usuarios de cada tipo.</p>
         </div>
         <div className="screen-access-source">
@@ -198,7 +198,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
         </div>
       </header>
 
-      <div className="titulacion-simple-tabs senescyt-update-tabs" role="tablist" aria-label="Asignacion de accesos">
+      <div className="titulacion-simple-tabs senescyt-update-tabs" role="tablist" aria-label="Asignación de accesos">
         <button type="button" className={activeTab === 'roles' ? 'is-active' : ''} onClick={() => setActiveTab('roles')}>
           Tipos de usuario
         </button>
@@ -211,7 +211,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
         <div className="screen-access-toolbar">
           <label>
             Buscar perfil
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Administrador, academico, bienestar..." />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Administrador, académico, bienestar..." />
           </label>
           <button type="button" onClick={() => setQuery('')} disabled={!query}>Limpiar</button>
           <button type="button" onClick={() => void loadAssignments()} disabled={loading}>
@@ -219,7 +219,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
           </button>
           <div className="screen-access-sync-copy">
             <strong>{filteredRoles.length} perfil(es)</strong>
-            <span>Actualizacion: {formatUpdate(data?.synchronized_at)}</span>
+            <span>Actualización: {formatUpdate(data?.synchronized_at)}</span>
           </div>
         </div>
 
@@ -236,7 +236,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 <button key={role.value} type="button" className="screen-access-role-card" onClick={() => openRole(role)}>
                   <span className="screen-access-role-card__head">
                     <strong>{role.label}</strong>
-                    <small>{role.protected ? 'Protegido' : role.configured ? 'Asignacion guardada' : 'Sin asignar'}</small>
+                    <small>{role.protected ? 'Protegido' : role.configured ? 'Asignación guardada' : 'Sin asignar'}</small>
                   </span>
                   <span>{role.description}</span>
                   <span className="screen-access-role-card__footer">
@@ -254,10 +254,10 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 <tr>
                   <th>Tipo de usuario</th>
                   <th>Alcance</th>
-                  <th>Configuracion</th>
-                  <th>Ultima actualizacion</th>
+                  <th>Configuración</th>
+                  <th>Última actualización</th>
                   <th>Responsable</th>
-                  <th>Accion</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -265,10 +265,10 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   <tr key={role.value}>
                     <td data-label="Tipo de usuario"><strong>{role.label}</strong><small>{role.value}</small></td>
                     <td data-label="Alcance">{(assignments[role.value] || role.pages).length} de {availableScreenCount(role.value)} disponibles</td>
-                    <td data-label="Configuracion"><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.protected ? 'Protegida' : role.configured ? 'Guardada' : 'Sin asignar'}</span></td>
-                    <td data-label="Ultima actualizacion">{formatUpdate(role.updated_at)}</td>
+                    <td data-label="Configuración"><span className={role.configured ? 'screen-access-badge is-custom' : 'screen-access-badge'}>{role.protected ? 'Protegida' : role.configured ? 'Guardada' : 'Sin asignar'}</span></td>
+                    <td data-label="Última actualización">{formatUpdate(role.updated_at)}</td>
                     <td data-label="Responsable">{role.updated_by || 'Sistema'}</td>
-                    <td data-label="Accion"><button type="button" onClick={() => openRole(role)}>{role.protected ? 'Ver acceso' : 'Asignar'}</button></td>
+                    <td data-label="Acción"><button type="button" onClick={() => openRole(role)}>{role.protected ? 'Ver acceso' : 'Asignar'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -279,10 +279,10 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
 
       {selectedRole && selectedRoleMeta ? (
         <div className="senescyt-update-subscreen-backdrop screen-access-subscreen-backdrop" role="presentation">
-          <section className="senescyt-update-subscreen screen-access-subscreen" role="dialog" aria-modal="true" aria-label="Subpantalla de asignacion de pantallas">
+          <section className="senescyt-update-subscreen screen-access-subscreen" role="dialog" aria-modal="true" aria-label="Subpantalla de asignación de pantallas">
             <div className="senescyt-update-subscreen__head">
               <div>
-                <span>Asignacion por tipo de usuario</span>
+                <span>Asignación por tipo de usuario</span>
                 <h2>{selectedRoleMeta.label}</h2>
               </div>
               <div className="senescyt-update-subscreen__actions">
@@ -295,12 +295,12 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
               <div className="matricula-acad-preview senescyt-update-summary">
                 <div><span>Perfil</span><strong>{selectedRole}</strong></div>
                 <div><span>Alcance</span><strong>{selectedPages.length} / {availableScreenCount(selectedRole)}</strong></div>
-                <div><span>Configuracion</span><strong>{selectedRoleMeta.protected ? 'Protegida' : selectedRoleMeta.configured ? 'Guardada' : 'Sin asignar'}</strong></div>
-                <div><span>Ultimo cambio</span><strong>{formatUpdate(selectedRoleMeta.updated_at)}</strong></div>
+                <div><span>Configuración</span><strong>{selectedRoleMeta.protected ? 'Protegida' : selectedRoleMeta.configured ? 'Guardada' : 'Sin asignar'}</strong></div>
+                <div><span>Último cambio</span><strong>{formatUpdate(selectedRoleMeta.updated_at)}</strong></div>
               </div>
 
               {selectedRoleMeta.protected ? (
-                <div className="status-message status-message--info">El perfil Administrador conserva acceso total para evitar el bloqueo de la configuracion institucional.</div>
+                <div className="status-message status-message--info">El perfil Administrador conserva acceso total para evitar el bloqueo de la configuración institucional.</div>
               ) : null}
 
               <div className="screen-access-editor-toolbar">
@@ -320,7 +320,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
 
               <div className="screen-access-actions">
                 <div className="screen-access-actions__status" aria-live="polite">
-                  <strong>{hasChanges ? 'Cambios pendientes' : 'Asignacion sincronizada'}</strong>
+                  <strong>{hasChanges ? 'Cambios pendientes' : 'Asignación sincronizada'}</strong>
                   <span>Marque o desmarque cada pantalla y guarde una sola vez.</span>
                 </div>
                 <button type="button" onClick={discardChanges} disabled={saving || selectedRoleMeta.protected || !hasChanges}>Deshacer cambios</button>
@@ -329,7 +329,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                 </button>
               </div>
 
-              {selectedPages.length === 0 ? <div className="status-message status-message--info">Este perfil quedara sin acceso al sistema cuando guarde la asignacion.</div> : null}
+              {selectedPages.length === 0 ? <div className="status-message status-message--info">Este perfil quedará sin acceso al sistema cuando guarde la asignación.</div> : null}
               {message ? <div className="status-message status-message--success">{message}</div> : null}
               {error ? <div className="status-message status-message--error">{error}</div> : null}
 
@@ -359,7 +359,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   </section>
                 ))}
                 {groupedScreens.length === 0 ? (
-                  <p className="screen-access-empty">No hay pantallas que coincidan con la busqueda.</p>
+                  <p className="screen-access-empty">No hay pantallas que coincidan con la búsqueda.</p>
                 ) : null}
               </div>
             </div>

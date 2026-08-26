@@ -149,7 +149,7 @@ IF COL_LENGTH(N'tit.ExpedienteTitulacion', N'FechaActualizacion') IS NULL ALTER 
 GO
 
 /* ============================================================================
-   3. Catalogos
+   3. Catálogos
    ============================================================================ */
 IF OBJECT_ID(N'cat.MecanismoTitulacion', N'U') IS NULL
 BEGIN
@@ -327,7 +327,7 @@ USING (VALUES
     ('LECTOR', N'Lector', 0),
     ('COORDINADOR_ACADEMICO', N'Coordinador academico', 0),
     ('SECRETARIA_TITULACION', N'Secretaria de titulacion', 0),
-    ('AUTORIDAD_ACADEMICA', N'Autoridad academica', 0)
+    ('AUTORIDAD_ACADEMICA', N'Autoridad académica', 0)
 ) AS S(Codigo, Nombre, EsTribunal)
 ON T.Codigo COLLATE Modern_Spanish_CI_AS = S.Codigo COLLATE Modern_Spanish_CI_AS
 WHEN MATCHED THEN UPDATE SET Codigo = S.Codigo, RolResponsableCodigo = S.Codigo, Nombre = S.Nombre, EsTribunal = S.EsTribunal, Activo = 1

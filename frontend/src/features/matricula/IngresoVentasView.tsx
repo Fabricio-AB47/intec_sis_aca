@@ -45,7 +45,7 @@ const estadoOptions: Array<{ value: EstadoFilter; label: string }> = [
   { value: 'G', label: 'Graduado' },
   { value: 'P', label: 'Inactivo' },
   { value: 'R', label: 'Retirado' },
-  { value: 'SIN_MATRICULA', label: 'Sin matricula' },
+  { value: 'SIN_MATRICULA', label: 'Sin matrícula' },
 ]
 function salesRisk(index: number, total: number): RiskFilter {
   if (total <= 1 || index < Math.ceil(total / 3)) return 'green'
@@ -85,7 +85,7 @@ function estadoDatosKey(row: IngresoVentasRow): EstadoFilter | 'SIN_ESTADO' {
 }
 
 function estadoLabel(row: IngresoVentasRow): string {
-  if (!row.matricula_validada) return 'Sin matricula'
+  if (!row.matricula_validada) return 'Sin matrícula'
   return row.estado_nombre_matricula || row.estado_codigo_matricula || 'Sin estado'
 }
 
@@ -203,11 +203,11 @@ export function IngresoVentasView({
     { key: 'validadas', label: 'Validadas', value: totals.total_matriculados },
     { key: 'datos_estud', label: 'DATOS_ESTUD', value: totals.total_datos_estud },
     { key: 'carreraxestud', label: 'CARRERAXESTUD', value: totals.total_carreraxestud },
-    { key: 'sin_matricula', label: 'Sin matricula', value: totals.sin_matricula },
+    { key: 'sin_matricula', label: 'Sin matrícula', value: totals.sin_matricula },
     { key: 'asesores', label: 'Asesores', value: totals.asesores },
     { key: 'activos', label: 'Activos', value: totals.activos },
-    { key: 'periodo_r', label: 'Periodo R', value: totals.regular_r },
-    { key: 'periodo_h', label: 'Periodo H', value: totals.homologacion_h },
+    { key: 'periodo_r', label: 'Período R', value: totals.regular_r },
+    { key: 'periodo_h', label: 'Período H', value: totals.homologacion_h },
     { key: 'inactivos', label: 'Inactivos', value: totals.inactivos },
     { key: 'retirados', label: 'Retirados', value: totals.retirados },
     { key: 'graduados', label: 'Graduados', value: totals.graduados },
@@ -356,14 +356,14 @@ export function IngresoVentasView({
                 </select>
               </label>
               <label>
-                <span>Tipo periodo</span>
+                <span>Tipo período</span>
                 <select
                   value={tipoPeriodoFilter}
                   onChange={(event) => setTipoPeriodoFilter(event.target.value as TipoPeriodoFilter)}
                 >
                   <option value="ALL">Todos</option>
                   <option value="R">Regular (R)</option>
-                  <option value="H">Homologacion (H)</option>
+                  <option value="H">Homologación (H)</option>
                 </select>
               </label>
               <label>
@@ -371,7 +371,7 @@ export function IngresoVentasView({
                 <input
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Estudiante, cedula, carrera o periodo"
+                  placeholder="Estudiante, cédula, carrera o período"
                 />
               </label>
             </div>
@@ -382,11 +382,11 @@ export function IngresoVentasView({
                   <tr>
                     <th>Estudiante</th>
                     <th>Estado</th>
-                    <th>Tipo periodo</th>
+                    <th>Tipo período</th>
                     <th>Carrera</th>
-                    <th>Periodo ingreso</th>
-                    <th>Preinscripcion</th>
-                    <th>Correo / Telefono</th>
+                    <th>Período ingreso</th>
+                    <th>Preinscripción</th>
+                    <th>Correo / Teléfono</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -417,7 +417,7 @@ export function IngresoVentasView({
                         </td>
                         <td>
                           <div className="ingreso-ventas-flags">
-                            <span>{row.prematricula ? 'Prematricula' : 'Sin prematricula'}</span>
+                            <span>{row.prematricula ? 'Prematrícula' : 'Sin prematrícula'}</span>
                             <span>{row.control_ingreso ? 'Ingreso' : 'Pendiente'}</span>
                           </div>
                         </td>
@@ -469,7 +469,7 @@ export function IngresoVentasView({
                       <th>Activos</th>
                       <th>Tipo R</th>
                       <th>Tipo H</th>
-                      <th>Sin matricula</th>
+                      <th>Sin matrícula</th>
                       <th>Ver</th>
                     </tr>
                   </thead>
@@ -513,10 +513,10 @@ export function IngresoVentasView({
                       <th>Estudiante</th>
                       <th>Usuario</th>
                       <th>Estado</th>
-                      <th>Tipo periodo</th>
+                      <th>Tipo período</th>
                       <th>Carrera</th>
-                      <th>Periodo ingreso</th>
-                      <th>Correo / Telefono</th>
+                      <th>Período ingreso</th>
+                      <th>Correo / Teléfono</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -561,7 +561,7 @@ export function IngresoVentasView({
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7}>Sin informacion para esta tarjeta.</td>
+                        <td colSpan={7}>Sin información para esta tarjeta.</td>
                       </tr>
                     )}
                   </tbody>

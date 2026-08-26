@@ -77,6 +77,14 @@ import type {
   InstitutionalEmailApplyResponse,
   InstitutionalEmailStudentsResponse,
   InstitutionalEmailUpdateResponse,
+  ComplianceInvoiceBackupUploadResponse,
+  ComplianceDocumentsResponse,
+  ComplianceDocumentType,
+  IntegrationDatabaseEvent,
+  IntegrationHistoryDetail,
+  IntegrationHistoryPage,
+  IntegrationHistorySummary,
+  IntegrationTeacherReportEvent,
   LegacyCrystalCatalogResponse,
   LegacyDataUpdateDetailResponse,
   LegacyDataUpdateSearchResponse,
@@ -88,6 +96,19 @@ import type {
   LegacyReportsCatalogResponse,
   LegacyReportResponse,
   ModernizedLegacyReportsCatalogResponse,
+  MoodleCourseResourcesResponse,
+  MoodleCoursesResponse,
+  MoodleGradeApplyResponse,
+  MoodleGradeAlertResponse,
+  MoodleGradeCatalogResponse,
+  MoodleGradeCourseOption,
+  MoodleGradeHistoryResponse,
+  MoodleGradePreviewResponse,
+  MoodleSectionNameUpdateResponse,
+  MoodleSectionVisibilityUpdateResponse,
+  MoodleStatusResponse,
+  MoodleUserStatusUpdateResponse,
+  MoodleUsersResponse,
   MassEmailRecipient,
   MassEmailExcelResponse,
   MassEmailResolvePayload,
@@ -102,6 +123,7 @@ import type {
   MatriculaTipo,
   PortalAcademicPlanningPayload,
   PortalStudentRecordResponse,
+  PortalTeacherComplianceMoodleResourcesResponse,
   PortalTeacherCoursesResponse,
   PortalTeacherContractAnalysis,
   PortalTeacherContractDocumentSaveResponse,
@@ -195,6 +217,7 @@ import type {
   TeacherEvaluationSubmitPayload,
   TeacherEvaluationSubmitResponse,
   TeacherComplianceReportFormat,
+  TeacherComplianceMoodleResource,
   TeacherComplianceTeamsRecording,
   DefensaCalificacionPayload,
   DefensaTemaPayload,
@@ -228,6 +251,7 @@ type JsonBody =
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: BodyInit | JsonBody
   responseType?: 'json' | 'blob'
+  onResponse?: (response: Response) => void
 }
 
 type ErrorPayload = {
@@ -274,7 +298,7 @@ async function readResponsePayload(response: Response): Promise<unknown> {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, headers, credentials, responseType, ...rest } = options
+  const { body, headers, credentials, responseType, onResponse, ...rest } = options
   const resolvedHeaders = new Headers(headers)
   const resolvedBody =
     body === undefined || body === null || isBodyInit(body) ? body : JSON.stringify(body)
@@ -294,6 +318,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body: resolvedBody,
     ...rest,
   })
+  onResponse?.(response)
 
   const payload = responseType === 'blob' && response.ok ? await response.blob() : await readResponsePayload(response)
 
@@ -315,7 +340,30 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload as T
 }
 
+const MOODLE_GRADE_ALERT_CACHE_MS = 30_000
+export const MOODLE_GRADE_ALERT_INVALIDATED_EVENT = 'moodle-grade-alerts:invalidate'
+let moodleGradeAlertCache: {
+  expiresAt: number
+  value: MoodleGradeAlertResponse
+} | null = null
+let moodleGradeAlertRequest: Promise<MoodleGradeAlertResponse> | null = null
+let moodleGradeAlertGeneration = 0
+
+function clearMoodleGradeAlertCache() {
+  moodleGradeAlertGeneration += 1
+  moodleGradeAlertCache = null
+  moodleGradeAlertRequest = null
+}
+
+export function invalidateMoodleGradeAlertCache() {
+  clearMoodleGradeAlertCache()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MOODLE_GRADE_ALERT_INVALIDATED_EVENT))
+  }
+}
+
 export async function loginRequest(login: string, password: string): Promise<UserSession> {
+  clearMoodleGradeAlertCache()
   return request<UserSession>('/api/auth/login', {
     method: 'POST',
     body: { login, password },
@@ -323,6 +371,7 @@ export async function loginRequest(login: string, password: string): Promise<Use
 }
 
 export async function selectProfileRequest(role: string): Promise<UserSession> {
+  clearMoodleGradeAlertCache()
   return request<UserSession>('/api/auth/select-profile', {
     method: 'POST',
     body: { rol: role },
@@ -341,6 +390,7 @@ export async function getCurrentSession(): Promise<UserSession | null> {
 }
 
 export async function logoutRequest(): Promise<void> {
+  clearMoodleGradeAlertCache()
   await request<void>('/api/auth/logout', { method: 'POST' })
 }
 
@@ -353,6 +403,534 @@ export async function updateScreenAccessAssignment(role: string, pages: string[]
     method: 'PUT',
     body: { pages },
   })
+}
+
+export type IntegrationHistoryQuery = {
+  page?: number
+  pageSize?: number
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  operation?: '' | 'INSERT' | 'UPDATE' | 'DELETE'
+  database?: string
+  stage?: '' | 'GENERADO' | 'FIRMADO' | 'ARCHIVADO' | 'ERROR'
+  status?: '' | 'EXITOSO' | 'ERROR'
+}
+
+function buildIntegrationHistoryParams(query: IntegrationHistoryQuery): URLSearchParams {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 1),
+    page_size: String(query.pageSize ?? 25),
+  })
+  if (query.search?.trim()) params.set('search', query.search.trim())
+  if (query.dateFrom) params.set('date_from', `${query.dateFrom}T00:00:00`)
+  if (query.dateTo) params.set('date_to', `${query.dateTo}T23:59:59.999`)
+  return params
+}
+
+export async function fetchIntegrationHistorySummary(): Promise<IntegrationHistorySummary> {
+  return request<IntegrationHistorySummary>('/api/integrations/history/summary', { cache: 'no-store' })
+}
+
+export async function fetchIntegrationDatabaseEvents(
+  query: IntegrationHistoryQuery = {},
+): Promise<IntegrationHistoryPage<IntegrationDatabaseEvent>> {
+  const params = buildIntegrationHistoryParams(query)
+  if (query.operation) params.set('operation', query.operation)
+  if (query.database?.trim()) params.set('database', query.database.trim())
+  return request<IntegrationHistoryPage<IntegrationDatabaseEvent>>(
+    `/api/integrations/history/database-events?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function fetchIntegrationTeacherReportEvents(
+  query: IntegrationHistoryQuery = {},
+): Promise<IntegrationHistoryPage<IntegrationTeacherReportEvent>> {
+  const params = buildIntegrationHistoryParams(query)
+  if (query.stage) params.set('stage', query.stage)
+  if (query.status) params.set('status', query.status)
+  return request<IntegrationHistoryPage<IntegrationTeacherReportEvent>>(
+    `/api/integrations/history/teacher-reports?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function fetchIntegrationHistoryDetail(
+  kind: 'database' | 'teacher-report',
+  eventId: number,
+): Promise<IntegrationHistoryDetail> {
+  return request<IntegrationHistoryDetail>(
+    `/api/integrations/history/detail/${kind}/${eventId}`,
+    { cache: 'no-store' },
+  )
+}
+
+export type ComplianceDocumentsQuery = {
+  page?: number
+  pageSize?: number
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  documentType?: '' | ComplianceDocumentType
+}
+
+export async function fetchComplianceDocuments(
+  query: ComplianceDocumentsQuery = {},
+): Promise<ComplianceDocumentsResponse> {
+  const params = buildIntegrationHistoryParams(query)
+  if (query.documentType) params.set('document_type', query.documentType)
+  return request<ComplianceDocumentsResponse>(
+    `/api/integrations/history/compliance-documents?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function uploadComplianceInvoiceBackups(
+  eventId: number,
+  facturaXml: File,
+  ridePdf: File,
+): Promise<ComplianceInvoiceBackupUploadResponse> {
+  const formData = new FormData()
+  formData.append('factura_xml', facturaXml)
+  formData.append('ride_pdf', ridePdf)
+  return request<ComplianceInvoiceBackupUploadResponse>(
+    `/api/integrations/history/compliance-documents/${eventId}/invoice-backups`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+  )
+}
+
+export type MoodleUsersQuery = {
+  page?: number
+  pageSize?: number
+  email?: string
+  state?: 'all' | 'active' | 'suspended' | 'unconfirmed'
+  refresh?: boolean
+}
+
+export type MoodleCoursesQuery = {
+  page?: number
+  pageSize?: number
+  search?: string
+  visibility?: 'all' | 'visible' | 'hidden'
+  categoryId?: number | null
+  refresh?: boolean
+}
+
+export async function fetchMoodleStatus(): Promise<MoodleStatusResponse> {
+  const response = await request<Partial<MoodleStatusResponse>>('/api/moodle/status', {
+    cache: 'no-store',
+  })
+
+  return {
+    enabled: Boolean(response.enabled),
+    configured: Boolean(response.configured),
+    reachable: Boolean(response.reachable),
+    site_name: response.site_name ?? '',
+    site_url: response.site_url ?? '',
+    moodle_username: response.moodle_username ?? '',
+    moodle_user_id: Number(response.moodle_user_id ?? 0),
+    moodle_release: response.moodle_release ?? '',
+    moodle_version: response.moodle_version ?? '',
+    user_is_site_admin: Boolean(response.user_is_site_admin),
+    user_status_updates_enabled: Boolean(response.user_status_updates_enabled),
+    functions_count: Number(response.functions_count ?? 0),
+    required_functions: Array.isArray(response.required_functions)
+      ? response.required_functions
+      : [],
+    missing_required_functions: Array.isArray(response.missing_required_functions)
+      ? response.missing_required_functions
+      : [],
+  }
+}
+
+export async function fetchMoodleUsers(query: MoodleUsersQuery = {}): Promise<MoodleUsersResponse> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 1),
+    page_size: String(query.pageSize ?? 50),
+    state: query.state ?? 'all',
+    refresh: query.refresh ? 'true' : 'false',
+  })
+  if (query.email?.trim()) params.set('email', query.email.trim())
+  return request<MoodleUsersResponse>(`/api/moodle/users?${params.toString()}`, { cache: 'no-store' })
+}
+
+export async function updateMoodleUserStatus(
+  userId: number,
+  active: boolean,
+): Promise<MoodleUserStatusUpdateResponse> {
+  return request<MoodleUserStatusUpdateResponse>(`/api/moodle/users/${userId}/status`, {
+    method: 'PATCH',
+    body: { active },
+  })
+}
+
+export async function fetchMoodleCourses(query: MoodleCoursesQuery = {}): Promise<MoodleCoursesResponse> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 1),
+    page_size: String(query.pageSize ?? 50),
+    visibility: query.visibility ?? 'all',
+    refresh: query.refresh ? 'true' : 'false',
+  })
+  if (query.search?.trim()) params.set('search', query.search.trim())
+  if (query.categoryId !== null && query.categoryId !== undefined) {
+    params.set('category_id', String(query.categoryId))
+  }
+  return request<MoodleCoursesResponse>(`/api/moodle/courses?${params.toString()}`, { cache: 'no-store' })
+}
+
+export async function fetchMoodleCourseResources(
+  courseId: number,
+  refresh = false,
+): Promise<MoodleCourseResourcesResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleCourseResourcesResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/resources?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function fetchMoodleGradeCatalog(
+  refresh = false,
+): Promise<MoodleGradeCatalogResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  const response = await request<Partial<MoodleGradeCatalogResponse>>(
+    `/api/moodle/grades/catalog?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+  const courses = Array.isArray(response.courses)
+    ? response.courses.map((course) => ({
+        ...course,
+        periods: Array.isArray(course.periods) ? course.periods : [],
+      }))
+    : []
+  const matched = courses.filter((course) => course.has_academic_match).length
+
+  return {
+    enabled: Boolean(response.enabled),
+    apply_enabled: Boolean(response.apply_enabled),
+    nightly_enabled: Boolean(response.nightly_enabled),
+    change_detection_enabled: Boolean(response.change_detection_enabled),
+    change_detection_interval_minutes: Number(response.change_detection_interval_minutes ?? 0),
+    configured_mappings: Array.isArray(response.configured_mappings)
+      ? response.configured_mappings
+      : [],
+    totals: {
+      courses: Number(response.totals?.courses ?? courses.length),
+      matched: Number(response.totals?.matched ?? matched),
+      unmatched: Number(response.totals?.unmatched ?? Math.max(courses.length - matched, 0)),
+    },
+    courses,
+  }
+}
+
+export async function fetchMoodleGradeAlerts(
+  refresh = false,
+): Promise<MoodleGradeAlertResponse> {
+  if (!refresh && moodleGradeAlertCache && moodleGradeAlertCache.expiresAt > Date.now()) {
+    return moodleGradeAlertCache.value
+  }
+  if (!refresh && moodleGradeAlertRequest) return moodleGradeAlertRequest
+
+  if (refresh) clearMoodleGradeAlertCache()
+  const requestGeneration = moodleGradeAlertGeneration
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  const pendingRequest = request<MoodleGradeAlertResponse>(
+    `/api/moodle/grades/alerts?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+  moodleGradeAlertRequest = pendingRequest
+  try {
+    const response = await pendingRequest
+    const normalizedResponse: MoodleGradeAlertResponse = {
+      ...response,
+      summary: {
+        total: Number(response.summary?.total ?? 0),
+        ungraded: Number(response.summary?.ungraded ?? 0),
+        review: Number(response.summary?.review ?? 0),
+        data_issues: Number(response.summary?.data_issues ?? 0),
+        courses: Number(response.summary?.courses ?? 0),
+        students: Number(response.summary?.students ?? 0),
+        teachers: Number(response.summary?.teachers ?? 0),
+        assignments: Number(response.summary?.assignments ?? 0),
+        errors: Number(response.summary?.errors ?? 0),
+        missing_intecbdd: Number(response.summary?.missing_intecbdd ?? 0),
+        missing_moodle: Number(response.summary?.missing_moodle ?? 0),
+        missing_both: Number(response.summary?.missing_both ?? 0),
+        regular: Number(response.summary?.regular ?? 0),
+        homologation: Number(response.summary?.homologation ?? 0),
+      },
+      validation: {
+        selected_periods: Number(response.validation?.selected_periods ?? 0),
+        academic_enrollments: Number(response.validation?.academic_enrollments ?? 0),
+        moodle_course_users: Number(response.validation?.moodle_course_users ?? 0),
+        matched_by_email: Number(response.validation?.matched_by_email ?? 0),
+        matched_by_registry: Number(response.validation?.matched_by_registry ?? 0),
+        matched_by_data_fallback: Number(response.validation?.matched_by_data_fallback ?? 0),
+        missing_institutional_email: Number(response.validation?.missing_institutional_email ?? 0),
+        not_enrolled_in_course: Number(response.validation?.not_enrolled_in_course ?? 0),
+        ambiguous_users: Number(response.validation?.ambiguous_users ?? 0),
+      },
+      items: (response.items ?? []).map((item) => ({
+        ...item,
+        teacher_codes: item.teacher_codes ?? [],
+        teacher_assignments: item.teacher_assignments ?? [],
+        missing_components: item.missing_components ?? [],
+        academic_missing_components: item.academic_missing_components ?? [],
+        moodle_missing_components: item.moodle_missing_components ?? [],
+        missing_sources: item.missing_sources ?? [],
+        component_details: (item.component_details ?? []).map((component) => ({
+          ...component,
+          moodle_grade_items: component.moodle_grade_items ?? [],
+        })),
+        moodle_courses: item.moodle_courses ?? [],
+        moodle_checked: item.moodle_checked ?? true,
+        moodle_error: item.moodle_error ?? '',
+      })),
+      errors: response.errors ?? [],
+    }
+    if (requestGeneration === moodleGradeAlertGeneration) {
+      moodleGradeAlertCache = {
+        expiresAt: Date.now() + MOODLE_GRADE_ALERT_CACHE_MS,
+        value: normalizedResponse,
+      }
+    }
+    return normalizedResponse
+  } finally {
+    if (moodleGradeAlertRequest === pendingRequest) moodleGradeAlertRequest = null
+  }
+}
+
+export async function fetchMoodleGradeCourseContext(
+  courseId: number,
+  refresh = false,
+): Promise<MoodleGradeCourseOption> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  const response = await request<Partial<MoodleGradeCourseOption>>(
+    `/api/moodle/grades/courses/${encodeURIComponent(String(courseId))}/context?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+
+  return {
+    id: Number(response.id ?? courseId),
+    name: String(response.name ?? `Curso Moodle ${courseId}`),
+    shortname: String(response.shortname ?? ''),
+    idnumber: String(response.idnumber ?? ''),
+    matched_course_code: String(response.matched_course_code ?? ''),
+    matched_course_codes: Array.isArray(response.matched_course_codes)
+      ? response.matched_course_codes.map(String)
+      : [],
+    has_academic_match: Boolean(response.has_academic_match),
+    recommended_period_code: response.recommended_period_code == null
+      ? null
+      : Number(response.recommended_period_code),
+    recommended_period_codes: Array.isArray(response.recommended_period_codes)
+      ? response.recommended_period_codes.map(Number).filter((value) => Number.isFinite(value))
+      : [],
+    identity_key: response.identity_key === 'CorreoIntec' ? 'CorreoIntec' : undefined,
+    identity_relation: String(response.identity_relation ?? ''),
+    match_method: response.match_method ?? '',
+    matched_students: Number(response.matched_students ?? 0),
+    moodle_users: Number(response.moodle_users ?? 0),
+    moodle_users_with_email: Number(response.moodle_users_with_email ?? 0),
+    resolution_reason: String(response.resolution_reason ?? ''),
+    periods: Array.isArray(response.periods) ? response.periods : [],
+  }
+}
+
+function normalizeMoodleGradePreview(
+  response: Partial<MoodleGradePreviewResponse>,
+  courseId: number,
+  periodCodes: number[],
+): MoodleGradePreviewResponse {
+  const fallbackPeriodCode = periodCodes[0] ?? 0
+  const period = response.period ?? {
+    code: fallbackPeriodCode,
+    name: fallbackPeriodCode ? `Período ${fallbackPeriodCode}` : 'Sin período',
+    type: 'R',
+  }
+  const periods = Array.isArray(response.periods) && response.periods.length
+    ? response.periods
+    : [period]
+  const validation = response.course_validation
+
+  return {
+    course: response.course ?? { id: courseId, name: 'Curso Moodle', code: '' },
+    period,
+    periods,
+    selected_period_codes: Array.isArray(response.selected_period_codes)
+      ? response.selected_period_codes
+      : periods.map((item) => item.code),
+    rule: response.rule ?? '',
+    generated_at: response.generated_at ?? '',
+    replace_existing: Boolean(response.replace_existing),
+    counts: response.counts ?? {},
+    course_validation: {
+      selected_periods: Number(validation?.selected_periods ?? periods.length),
+      academic_enrollments: Number(validation?.academic_enrollments ?? 0),
+      moodle_course_users: Number(validation?.moodle_course_users ?? 0),
+      matched_by_email: Number(validation?.matched_by_email ?? 0),
+      matched_by_registry: Number(validation?.matched_by_registry ?? 0),
+      matched_by_data_fallback: Number(validation?.matched_by_data_fallback ?? 0),
+      missing_institutional_email: Number(validation?.missing_institutional_email ?? 0),
+      not_enrolled_in_course: Number(validation?.not_enrolled_in_course ?? 0),
+      ambiguous_users: Number(validation?.ambiguous_users ?? 0),
+    },
+    changes: Array.isArray(response.changes) ? response.changes : [],
+    enrollment_warnings: Array.isArray(response.enrollment_warnings)
+      ? response.enrollment_warnings
+      : [],
+    can_apply: Boolean(response.can_apply),
+  }
+}
+
+export async function previewMoodleGrades(
+  courseId: number,
+  periodCodes: number[],
+  refresh = false,
+  replaceExisting = false,
+): Promise<MoodleGradePreviewResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  const response = await request<Partial<MoodleGradePreviewResponse>>(
+    `/api/moodle/grades/preview?${params.toString()}`,
+    {
+      method: 'POST',
+      body: {
+        course_id: courseId,
+        period_codes: periodCodes,
+        replace_existing: replaceExisting,
+      },
+    },
+  )
+  return normalizeMoodleGradePreview(response, courseId, periodCodes)
+}
+
+export async function applyMoodleGrades(
+  courseId: number,
+  periodCodes: number[],
+  replaceExisting = false,
+): Promise<MoodleGradeApplyResponse> {
+  const response = await request<Partial<MoodleGradeApplyResponse>>('/api/moodle/grades/apply', {
+    method: 'POST',
+    body: {
+      course_id: courseId,
+      period_codes: periodCodes,
+      replace_existing: replaceExisting,
+    },
+  })
+  invalidateMoodleGradeAlertCache()
+  return {
+    ...normalizeMoodleGradePreview(response, courseId, periodCodes),
+    applied: Number(response.applied ?? 0),
+    runtime_conflicts: Array.isArray(response.runtime_conflicts)
+      ? response.runtime_conflicts
+      : [],
+    message: response.message ?? 'La migración finalizó correctamente.',
+  }
+}
+
+export async function fetchMoodleGradeHistory(
+  limit = 50,
+): Promise<MoodleGradeHistoryResponse> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  const response = await request<Partial<MoodleGradeHistoryResponse>>(
+    `/api/moodle/grades/history?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+
+  return {
+    items: Array.isArray(response.items) ? response.items : [],
+    total: Number(response.total ?? response.items?.length ?? 0),
+  }
+}
+
+export type PortalTeacherComplianceMoodleQuery = {
+  codigoPeriodos: string[]
+  codigoEstudiantes?: string[]
+  codigoMateria: string
+  paralelo: string
+  codAnioBasica?: string
+  moodleCourseId?: number | null
+  refresh?: boolean
+}
+
+export async function fetchPortalTeacherComplianceMoodleResources(
+  query: PortalTeacherComplianceMoodleQuery,
+): Promise<PortalTeacherComplianceMoodleResourcesResponse> {
+  const params = new URLSearchParams()
+  for (const codigoPeriodo of query.codigoPeriodos) {
+    params.append('codigo_periodo', codigoPeriodo)
+  }
+  for (const codigoEstudiante of query.codigoEstudiantes || []) {
+    params.append('codigo_estudiante', codigoEstudiante)
+  }
+  params.set('codigo_materia', query.codigoMateria)
+  params.set('paralelo', query.paralelo)
+  if (query.codAnioBasica?.trim()) params.set('cod_anio_basica', query.codAnioBasica.trim())
+  if (query.moodleCourseId) params.set('moodle_course_id', String(query.moodleCourseId))
+  if (query.refresh) params.set('refresh', 'true')
+  return request<PortalTeacherComplianceMoodleResourcesResponse>(
+    `/api/portal/teacher/compliance-moodle-resources?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function updateMoodleSectionVisibility(
+  courseId: number,
+  sectionId: number,
+  visible: boolean,
+): Promise<MoodleSectionVisibilityUpdateResponse> {
+  return request<MoodleSectionVisibilityUpdateResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/sections/${encodeURIComponent(String(sectionId))}/visibility`,
+    {
+      method: 'PATCH',
+      body: { visible },
+    },
+  )
+}
+
+export async function updateMoodleSectionName(
+  courseId: number,
+  sectionId: number,
+  name: string,
+): Promise<MoodleSectionNameUpdateResponse> {
+  return request<MoodleSectionNameUpdateResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/sections/${encodeURIComponent(String(sectionId))}/name`,
+    {
+      method: 'PATCH',
+      body: { name },
+    },
+  )
+}
+
+export function moodleCourseResourceFileUrl(
+  courseId: number,
+  moduleId: number,
+  fileIndex: number,
+  disposition: 'inline' | 'attachment' = 'inline',
+): string {
+  const params = new URLSearchParams({ disposition })
+  return resolveApiPath(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/modules/${encodeURIComponent(String(moduleId))}/files/${encodeURIComponent(String(fileIndex))}?${params.toString()}`,
+  )
+}
+
+export async function downloadMoodleCourseResourceFile(
+  courseId: number,
+  moduleId: number,
+  fileIndex: number,
+): Promise<Blob> {
+  const blob = await request<Blob>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/modules/${encodeURIComponent(String(moduleId))}/files/${encodeURIComponent(String(fileIndex))}?disposition=attachment`,
+    { responseType: 'blob' },
+  )
+  if (blob.size === 0) {
+    throw new ApiError('El recurso no contiene datos descargables.', 502)
+  }
+  return blob
 }
 
 export async function fetchCarnetMe(): Promise<CarnetPhotoStatus> {
@@ -870,7 +1448,7 @@ export async function downloadLegacyReportWorkbook(filters: LegacyReportFilters 
 
   if (!contentType.includes('spreadsheet') && !contentType.includes('octet-stream')) {
     const payload = await readResponsePayload(response)
-    throw new ApiError(typeof payload === 'string' ? payload : 'Respuesta invalida descargando Excel', response.status)
+    throw new ApiError(typeof payload === 'string' ? payload : 'Respuesta inválida al descargar el archivo de Excel.', response.status)
   }
 
   return response.blob()
@@ -2269,6 +2847,8 @@ type TeacherComplianceReportParams = {
   telefono?: string
   actualizaciones?: string
   observaciones?: string
+  justificacionReprobados?: string
+  recursosMoodle?: TeacherComplianceMoodleResource[]
   grabacionesTeams?: TeacherComplianceTeamsRecording[]
   evidencias?: Array<{ label: string; file: File }>
   reporteNotasFirmado?: Blob
@@ -2286,6 +2866,12 @@ function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): 
   if (params.telefono) formData.append('telefono', params.telefono)
   if (params.actualizaciones) formData.append('actualizaciones', params.actualizaciones)
   if (params.observaciones) formData.append('observaciones', params.observaciones)
+  if (params.justificacionReprobados) {
+    formData.append('justificacion_reprobados', params.justificacionReprobados)
+  }
+  if (params.recursosMoodle?.length) {
+    formData.append('moodle_resources_json', JSON.stringify(params.recursosMoodle))
+  }
   if (params.grabacionesTeams?.length) {
     formData.append('teams_recordings_json', JSON.stringify(params.grabacionesTeams))
   }
@@ -2592,7 +3178,7 @@ export async function downloadExcelSqlCrossWorkbook(dbLimit: number = 0): Promis
 
   if (!contentType.includes('spreadsheet') && !contentType.includes('octet-stream')) {
     const payload = await readResponsePayload(response)
-    throw new ApiError(typeof payload === 'string' ? payload : 'Respuesta invalida descargando Excel', response.status)
+    throw new ApiError(typeof payload === 'string' ? payload : 'Respuesta inválida al descargar el archivo de Excel.', response.status)
   }
 
   return response.blob()
@@ -2844,24 +3430,56 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   notasNombre: string
   contrato: Blob
   contratoNombre: string
+  facturaXml?: File | null
+  ridePdf?: File | null
   codigoMateria: string
   nombreMateria: string
   codigoPeriodos: string[]
-}): Promise<Blob> {
+}): Promise<{
+  archive: Blob
+  oneDriveSaved: boolean
+  storedDocumentCount: number
+  sameFolder: boolean
+}> {
   const formData = new FormData()
   formData.append('informe', params.informe, params.informeNombre)
   formData.append('notas', params.notas, params.notasNombre)
   formData.append('contrato', params.contrato, params.contratoNombre)
+  if (params.facturaXml) formData.append('factura_xml', params.facturaXml, params.facturaXml.name)
+  if (params.ridePdf) formData.append('ride_pdf', params.ridePdf, params.ridePdf.name)
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('nombre_materia', params.nombreMateria)
   for (const codigoPeriodo of params.codigoPeriodos) {
     formData.append('codigo_periodo', codigoPeriodo)
   }
-  return request<Blob>('/api/portal/teacher/signed-documents-archive', {
+  let oneDriveSaved = false
+  let storedDocumentCount = 0
+  let sameFolder = false
+  let sameFolderHeaderPresent = false
+  const archive = await request<Blob>('/api/portal/teacher/signed-documents-archive', {
     method: 'POST',
     body: formData,
     responseType: 'blob',
+    onResponse: (response) => {
+      oneDriveSaved = response.headers.get('X-OneDrive-Saved') === 'true'
+      const sameFolderHeader = response.headers.get('X-OneDrive-Same-Folder')
+      sameFolderHeaderPresent = sameFolderHeader !== null
+      sameFolder = sameFolderHeader === 'true'
+      const itemCount = Number.parseInt(response.headers.get('X-OneDrive-Item-Count') || '', 10)
+      storedDocumentCount = Number.isFinite(itemCount) ? itemCount : 0
+    },
   })
+  if (!sameFolderHeaderPresent && oneDriveSaved && storedDocumentCount > 0) {
+    // Compatibilidad con procesos backend anteriores que confirmaban la carga y
+    // el conteo, pero todavía no publicaban el encabezado de carpeta compartida.
+    sameFolder = true
+  }
+  return {
+    archive,
+    oneDriveSaved,
+    storedDocumentCount,
+    sameFolder,
+  }
 }
 
 export async function fetchPracticasCatalog(): Promise<PracticasCatalogResponse> {

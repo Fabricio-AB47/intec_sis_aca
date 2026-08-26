@@ -215,7 +215,7 @@ def _certificate_costs_for_career(scholarship: dict[str, Any], carrera: Any) -> 
 
 def _matricula_certificate_block_reason(context: dict[str, Any]) -> str:
     if not context.get("cabecera_matricula"):
-        return "No existe cabecera de matricula para generar el certificado de matricula"
+        return "No existe una cabecera de matrícula para generar el certificado de matrícula."
     return ""
 
 
@@ -431,7 +431,7 @@ def _student_list_row(row: dict[str, Any], reprobadas: list[dict[str, Any]] | No
     promo_allowed = bool(code and count == 0)
     matricula_block = ""
     if code and not matricula_allowed:
-        matricula_block = "No existe cabecera de matricula para generar el certificado de matricula"
+        matricula_block = "No existe una cabecera de matrícula para generar el certificado de matrícula."
     return {
         "codestud": code,
         "certificado_ref": _certificate_ref(code, cod_carrera, codigo_periodo) if cod_carrera or codigo_periodo else code,
@@ -716,7 +716,7 @@ def _promocion_story(context: dict[str, Any], styles: Any) -> list[Any]:
         ],
         [
             Paragraph(f"<b>Carrera:</b> {escape(context['carrera'])}", styles["CertBody"]),
-            Paragraph(f"<b>Periodo:</b> {escape(period.get('detalle_periodo') or '-')}", styles["CertBody"]),
+            Paragraph(f"<b>Período:</b> {escape(period.get('detalle_periodo') or '-')}", styles["CertBody"]),
         ],
     ]
     scholarship_label = "Incentivos tributarios patrocinado por" if context.get("es_suzuki") else "Beca"
@@ -725,7 +725,7 @@ def _promocion_story(context: dict[str, Any], styles: Any) -> list[Any]:
         meta_rows.append(
             [
                 Paragraph(
-                    f"<b>Próximo periodo:</b> {escape(context['periodo_matricula']['detalle_periodo'])}",
+                    f"<b>Próximo período:</b> {escape(context['periodo_matricula']['detalle_periodo'])}",
                     styles["CertBody"],
                 ),
                 Paragraph(scholarship_text, styles["CertBody"]),
@@ -900,7 +900,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
     detail_lines = [
         f"Carrera: {context['carrera']}",
         f"Semestre: {_semester_text(context['semestre_matricula'])}",
-        f"Periodo Académico: {period.get('detalle_periodo') or context['periodo'].get('detalle_periodo') or '-'}",
+        f"Período académico: {period.get('detalle_periodo') or context['periodo'].get('detalle_periodo') or '-'}",
         f"Fecha de inicio: {period.get('fecha_inicio') or '-'}",
         f"Fecha fin: {period.get('fecha_fin') or '-'}",
     ]
@@ -911,7 +911,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
     cost_y = _draw_rich_wrapped(
         canv,
         [
-            ("Costo Matrícula (por periodo académico):", "Times-Bold"),
+            ("Costo de matrícula (por período académico):", "Times-Bold"),
             (f"${context['matricula_base']:.2f}", "Times-Roman"),
         ],
         left,
@@ -923,7 +923,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
     cost_y = _draw_rich_wrapped(
         canv,
         [
-            ("Costo Arancel (por periodo académico):", "Times-Bold"),
+            ("Costo del arancel (por período académico):", "Times-Bold"),
             (f"${context['arancel_base']:.2f}", "Times-Roman"),
         ],
         left,
@@ -938,7 +938,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
             cost_y = _draw_rich_wrapped(
                 canv,
                 [
-                    ("Costo Matrícula Financiada (por periodo académico):", "Times-Bold"),
+                    ("Costo de matrícula financiada (por período académico):", "Times-Bold"),
                     (f"${context['matricula_financiada']:.2f}", "Times-Roman"),
                 ],
                 left,
@@ -950,7 +950,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
         cost_y = _draw_rich_wrapped(
             canv,
             [
-                ("Costo Arancel Financiado (por periodo académico):", "Times-Bold"),
+                ("Costo del arancel financiado (por período académico):", "Times-Bold"),
                 (f"${context['arancel_financiado']:.2f}", "Times-Roman"),
             ],
             left,
@@ -962,7 +962,7 @@ def _draw_matricula_certificate_page(canv: Any, context: dict[str, Any]) -> None
         cost_y = _draw_rich_wrapped(
             canv,
             [
-                ("Total a Pagar por el Estudiante (por periodo académico):", "Times-Bold"),
+                ("Total que pagará el estudiante (por período académico):", "Times-Bold"),
                 (f"${context['total_a_pagar']:.2f}", "Times-Roman"),
             ],
             left,
@@ -1085,14 +1085,14 @@ def _build_matricula_excel_template(periodos: list[dict[str, Any]], carreras: li
         formula1=f"'Carreras'!$A$2:$A${len(career_names) + 1}",
         allow_blank=False,
     )
-    career_validation.error = "Selecciona una carrera de la hoja Carreras."
-    career_validation.errorTitle = "Carrera no valida"
+    career_validation.error = "Seleccione una carrera de la hoja Carreras."
+    career_validation.errorTitle = "Carrera no válida"
     sheet.add_data_validation(career_validation)
     career_validation.add("C2:C501")
 
     semester_validation = DataValidation(type="whole", operator="between", formula1="1", formula2="4", allow_blank=False)
-    semester_validation.error = "El semestre debe ser un numero entre 1 y 4."
-    semester_validation.errorTitle = "Semestre no valido"
+    semester_validation.error = "El semestre debe ser un número entre 1 y 4."
+    semester_validation.errorTitle = "Semestre no válido"
     sheet.add_data_validation(semester_validation)
     semester_validation.add("D2:D501")
 
@@ -1102,11 +1102,11 @@ def _build_matricula_excel_template(periodos: list[dict[str, Any]], carreras: li
     help_rows = [
         ["Campo", "Detalle"],
         ["nombres_apellidos", "Obligatorio. Nombre completo tal como debe aparecer en el certificado."],
-        ["numero_cedula", "Obligatorio. Numero de cedula o documento."],
-        ["carrera", "Obligatorio. Selecciona una carrera desde la lista. No incluye Educacion Continua ni Ingles."],
-        ["semestre", "Obligatorio. Valor numerico entre 1 y 4."],
-        ["costos", "No van en el Excel. Se calculan automaticamente por carrera; Gastronomia usa su valor diferenciado."],
-        ["periodo", "No va en el Excel. Seleccionalo en la pantalla antes de subir el documento."],
+        ["numero_cedula", "Obligatorio. Número de cédula o documento."],
+        ["carrera", "Obligatorio. Seleccione una carrera de la lista. No incluye Educación Continua ni Inglés."],
+        ["semestre", "Obligatorio. Valor numérico entre 1 y 4."],
+        ["costos", "No se incluyen en el archivo Excel. Se calculan automáticamente por carrera; Gastronomía usa su valor diferenciado."],
+        ["periodo", "No se incluye en el archivo Excel. Selecciónelo en la pantalla antes de subir el documento."],
     ]
     for row in help_rows:
         help_sheet.append(row)
@@ -1139,7 +1139,7 @@ def _parse_matricula_excel(file_bytes: bytes) -> list[dict[str, Any]]:
     try:
         workbook = load_workbook(BytesIO(file_bytes), data_only=True)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo Excel no es valido") from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El archivo Excel no es válido') from exc
     sheet = workbook["Matriculas"] if "Matriculas" in workbook.sheetnames else workbook.active
     headers = [_normalize_excel_header(cell.value) for cell in sheet[1]]
     rows: list[dict[str, Any]] = []
@@ -1446,7 +1446,7 @@ def catalog(_: SessionUser = Depends(_CERTIFICATES_ACCESS)) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No se pudo cargar el catalogo de certificados",
+            detail='No se pudo cargar el catálogo de certificados',
         ) from exc
 
     return {
@@ -1497,7 +1497,7 @@ def download_matricula_excel_template(_: SessionUser = Depends(_CERTIFICATES_ACC
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No se pudo generar la plantilla de matricula",
+            detail='No se pudo generar la plantilla de matrícula',
         ) from exc
 
     return StreamingResponse(
@@ -1520,14 +1520,14 @@ async def generate_matricula_from_excel(
 ) -> StreamingResponse:
     period_code = _clean(periodo)
     if not period_code:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona un periodo")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione un período')
     filename = (file.filename or "").lower()
     if not filename.endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sube un archivo Excel .xlsx")
 
     file_bytes = await file.read()
     if not file_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo esta vacio")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El archivo esta vacío')
 
     rows = _parse_matricula_excel(file_bytes)
     if not rows:
@@ -1539,7 +1539,7 @@ async def generate_matricula_from_excel(
             f"Fila {row['row']}: {', '.join(row['errors'])}"
             for row in invalid_rows[:12]
         ]
-        suffix = f" y {len(invalid_rows) - 12} mas" if len(invalid_rows) > 12 else ""
+        suffix = f" y {len(invalid_rows) - 12} más" if len(invalid_rows) > 12 else ""
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Corrige el Excel antes de generar: {'; '.join(details)}{suffix}",
@@ -1552,11 +1552,11 @@ async def generate_matricula_from_excel(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No se pudo validar el periodo seleccionado",
+            detail='No se pudo validar el período seleccionado',
         ) from exc
 
     if not period:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El periodo seleccionado no existe")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El período seleccionado no existe')
 
     contexts = [_matricula_excel_context(row, period) for row in rows]
     pdf_bytes = _build_matricula_pdf_bundle(contexts)
@@ -1589,7 +1589,10 @@ def list_students(
     params: list[Any] = []
 
     if codigo_periodo:
-        wheres = ["TRY_CONVERT(varchar(50), CM.codigo_periodo) = ?"]
+        wheres = [
+            "TRY_CONVERT(varchar(50), CM.codigo_periodo) = ?",
+            _active_sql("D"),
+        ]
         params.append(codigo_periodo)
         if tipo:
             if tipo == "Sin beca":
@@ -1902,7 +1905,7 @@ def generate_certificates(
     proximo_periodo = _clean(payload.proximo_periodo)
     certificate_type = _clean(payload.tipo_certificado).lower() or "ambos"
     if certificate_type not in {"ambos", "matricula", "promocion"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo de certificado no valido")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tipo de certificado no válido')
     student_refs: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw_code in payload.estudiantes:
@@ -1914,7 +1917,7 @@ def generate_certificates(
             student_refs.append(ref)
 
     if not student_refs:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona estudiantes")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione estudiantes')
 
     batch_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     zip_buffer = BytesIO()
@@ -1942,7 +1945,7 @@ def generate_certificates(
                         manifest["omitidos"].append(
                             {
                                 "codestud": code,
-                                "motivo": "No se encontro periodo base ni cabecera de matricula para generar",
+                                "motivo": "No se encontró el período base ni la cabecera de matrícula para generar",
                             }
                         )
                         continue
@@ -2055,9 +2058,9 @@ def generate_certificates(
         if any("reprobado" in _clean(item.get("motivo")).lower() for item in omitted):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se genero ningun certificado: los estudiantes seleccionados tienen materias reprobadas.",
+                detail='No se generó ningún certificado: los estudiantes seleccionados tienen materias reprobadas.',
             )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se genero ningun certificado")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No se generó ningún certificado.')
 
     zip_buffer.seek(0)
     filename = f"certificados_{certificate_type}_{batch_id}.zip"
@@ -2077,7 +2080,7 @@ def generate_certificates_pdf(
     proximo_periodo = _clean(payload.proximo_periodo)
     certificate_type = _clean(payload.tipo_certificado).lower() or "matricula"
     if certificate_type not in {"matricula", "promocion"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo de certificado no valido para PDF masivo")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tipo de certificado no válido para PDF masivo')
 
     student_refs: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -2090,7 +2093,7 @@ def generate_certificates_pdf(
             student_refs.append(ref)
 
     if not student_refs:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona estudiantes")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione estudiantes')
 
     contexts: list[dict[str, Any]] = []
     omitted: list[dict[str, Any]] = []
@@ -2101,7 +2104,7 @@ def generate_certificates_pdf(
                 code = ref["codigo_estud"]
                 generation_period = periodo or ref["codigo_periodo"]
                 if not generation_period:
-                    omitted.append({"codestud": code, "motivo": "No se encontro periodo base ni cabecera de matricula"})
+                    omitted.append({"codestud": code, "motivo": "No se encontró el período base ni la cabecera de matrícula."})
                     continue
                 if not _active_student(cursor, code):
                     omitted.append({"codestud": code, "motivo": "Estudiante no activo"})
@@ -2143,9 +2146,9 @@ def generate_certificates_pdf(
         if any("reprobado" in _clean(item.get("motivo")).lower() for item in omitted):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se genero ningun certificado: los estudiantes seleccionados tienen materias reprobadas.",
+                detail='No se generó ningún certificado: los estudiantes seleccionados tienen materias reprobadas.',
             )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se genero ningun certificado")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No se generó ningún certificado.')
 
     pdf_bytes = _build_matricula_pdf_bundle(contexts) if certificate_type == "matricula" else _build_promocion_pdf_bundle(contexts)
     filename = f"certificados_{certificate_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -2203,12 +2206,12 @@ def _certificate_excel_row(
         "Correo personal": _clean((context or {}).get("correo_personal")),
         "Código carrera": _clean((context or {}).get("cod_anio_basica")),
         "Carrera": _clean((context or {}).get("carrera")),
-        "Periodo base código": _clean(period.get("cod_periodo")) or generation_period,
-        "Periodo base": _clean(period.get("detalle_periodo")),
-        "Inicio periodo base": _clean(period.get("fecha_inicio")),
-        "Fin periodo base": _clean(period.get("fecha_fin")),
-        "Periodo matrícula código": _clean(matricula_period.get("cod_periodo")),
-        "Periodo matrícula": _clean(matricula_period.get("detalle_periodo")),
+        "Período base (código)": _clean(period.get("cod_periodo")) or generation_period,
+        "Período base": _clean(period.get("detalle_periodo")),
+        "Inicio del período base": _clean(period.get("fecha_inicio")),
+        "Fin del período base": _clean(period.get("fecha_fin")),
+        "Período de matrícula (código)": _clean(matricula_period.get("cod_periodo")),
+        "Período de matrícula": _clean(matricula_period.get("detalle_periodo")),
         "Inicio matrícula": _clean(matricula_period.get("fecha_inicio")),
         "Fin matrícula": _clean(matricula_period.get("fecha_fin")),
         "Número matrícula": _clean((context or {}).get("num_matricula")),
@@ -2246,12 +2249,12 @@ def _build_certificates_workbook(rows: list[dict[str, Any]], payload: Certificat
         "Correo personal",
         "Código carrera",
         "Carrera",
-        "Periodo base código",
-        "Periodo base",
-        "Inicio periodo base",
-        "Fin periodo base",
-        "Periodo matrícula código",
-        "Periodo matrícula",
+        "Período base (código)",
+        "Período base",
+        "Inicio del período base",
+        "Fin del período base",
+        "Período de matrícula (código)",
+        "Período de matrícula",
         "Inicio matrícula",
         "Fin matrícula",
         "Número matrícula",
@@ -2290,8 +2293,8 @@ def _build_certificates_workbook(rows: list[dict[str, Any]], payload: Certificat
         ("Total filas", len(rows)),
         ("Habilitados", sum(1 for row in rows if row.get("Estado") == "Habilitado")),
         ("Omitidos", sum(1 for row in rows if row.get("Estado") != "Habilitado")),
-        ("Periodo base", _clean(payload.periodo)),
-        ("Periodo matrícula", _clean(payload.proximo_periodo)),
+        ("Período base", _clean(payload.periodo)),
+        ("Período de matrícula", _clean(payload.proximo_periodo)),
         ("Semestre", payload.semestre or ""),
         ("Tipo beca", _clean(payload.tipo_beca)),
     ]
@@ -2317,7 +2320,7 @@ def export_certificates_excel(
     proximo_periodo = _clean(payload.proximo_periodo)
     certificate_type = _clean(payload.tipo_certificado).lower() or "ambos"
     if certificate_type not in {"ambos", "matricula", "promocion"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo de certificado no valido")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tipo de certificado no válido')
 
     student_refs: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -2329,7 +2332,7 @@ def export_certificates_excel(
             seen.add(ref_key)
             student_refs.append(ref)
     if not student_refs:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona estudiantes")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione estudiantes')
 
     rows: list[dict[str, Any]] = []
     try:
@@ -2344,7 +2347,7 @@ def export_certificates_excel(
                             _certificate_excel_row(
                                 item_type,
                                 "Omitido",
-                                "No se encontro periodo base ni cabecera de matricula",
+                                "No se encontró el período base ni la cabecera de matrícula.",
                                 code,
                                 generation_period,
                             )
@@ -2393,7 +2396,7 @@ def export_certificates_excel(
                             _certificate_excel_row(
                                 item_type,
                                 "Omitido",
-                                "No existe cabecera de matricula para generar el certificado de matricula",
+                                "No existe una cabecera de matrícula para generar el certificado de matrícula.",
                                 code,
                                 generation_period,
                                 context,
@@ -2445,9 +2448,9 @@ def preview_certificate(
     period_code = _clean(periodo) or _clean(periodo_matricula)
     certificate_type = _clean(tipo).lower() or "matricula"
     if certificate_type not in {"matricula", "promocion"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo de certificado no valido")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tipo de certificado no válido')
     if not code or not period_code:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica estudiante y periodo")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Indica estudiante y período')
 
     try:
         with get_connection() as conn:

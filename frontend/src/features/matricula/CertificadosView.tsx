@@ -14,7 +14,6 @@ type CertificadosViewProps = {
 }
 
 type CertificadoTipo = 'matricula' | 'promocion'
-type MatriculaScope = 'ultima' | 'todas'
 
 function valueOrDash(value: string | number | null | undefined): string {
   const text = String(value ?? '').trim()
@@ -49,15 +48,18 @@ function certificateSelectionKey(student: CertificadosStudent): string {
   return student.certificado_ref || student.codestud
 }
 
+function normalizeSearch(value: string | number | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es-EC')
+    .trim()
+}
+
 export function CertificadosView({ displayName }: Readonly<CertificadosViewProps>) {
   const [catalog, setCatalog] = useState<CertificadosCatalogResponse | null>(null)
-  const [tipoBeca, setTipoBeca] = useState('')
   const [periodo, setPeriodo] = useState('')
-  const [proximoPeriodo, setProximoPeriodo] = useState('')
-  const [semestre, setSemestre] = useState('')
   const [busqueda, setBusqueda] = useState('')
-  const [cedulas, setCedulas] = useState('')
-  const [matriculaScope, setMatriculaScope] = useState<MatriculaScope>('todas')
   const [students, setStudents] = useState<CertificadosStudent[]>([])
   const [activeCertificateType, setActiveCertificateType] = useState<CertificadoTipo>('matricula')
   const [selectedMatriculaCodes, setSelectedMatriculaCodes] = useState<Set<string>>(new Set())
@@ -76,10 +78,17 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     () => periodos.find((item) => item.cod_periodo === periodo) || null,
     [periodo, periodos],
   )
-  const selectedMatriculaPeriod = useMemo(
-    () => periodos.find((item) => item.cod_periodo === proximoPeriodo) || selectedBasePeriod,
-    [periodos, proximoPeriodo, selectedBasePeriod],
-  )
+
+  const visibleStudents = useMemo(() => {
+    const term = normalizeSearch(busqueda)
+    if (!term) return students
+    return students.filter((student) =>
+      [student.nombres, student.codestud, student.carrera, student.num_matricula].some((value) =>
+        normalizeSearch(value).includes(term),
+      ),
+    )
+  }, [busqueda, students])
+
   function generationPeriodFor(student: CertificadosStudent): string {
     return periodo || student.codigo_periodo_matricula || ''
   }
@@ -97,12 +106,12 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
   }
 
   const selectableMatriculaStudents = useMemo(
-    () => students.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_matricula)),
-    [periodo, students],
+    () => visibleStudents.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_matricula)),
+    [periodo, visibleStudents],
   )
   const selectablePromocionStudents = useMemo(
-    () => students.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_promocion)),
-    [periodo, students],
+    () => visibleStudents.filter((student) => Boolean(certificateSelectionKey(student) && (periodo || student.codigo_periodo_matricula || '') && student.puede_generar_promocion)),
+    [periodo, visibleStudents],
   )
   const selectedMatriculaCount = selectedMatriculaCodes.size
   const selectedPromocionCount = selectedPromocionCodes.size
@@ -127,7 +136,7 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
       const payload = await fetchCertificadosCatalog()
       setCatalog(payload)
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el modulo de certificados')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el módulo de certificados')
     } finally {
       setCatalogLoading(false)
     }
@@ -136,24 +145,22 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
   async function searchStudents() {
     setError('')
     setMessage('')
+    if (!periodo) {
+      setError('Seleccione un período académico para cargar sus estudiantes matriculados.')
+      return
+    }
     setSearchLoading(true)
     setExpandedCode('')
     try {
       const payload = await fetchCertificadosStudents({
-        tipoBeca,
         periodo,
-        busqueda,
-        cedulas,
-        matriculaScope,
-        semestre,
         limit: 1000,
       })
       const items = payload.items || []
-      const shouldAutoSelect = cedulas.trim().length > 0
       setStudents(items)
-      setSelectedMatriculaCodes(shouldAutoSelect ? new Set(items.filter(canGenerateMatricula).map(certificateSelectionKey)) : new Set())
-      setSelectedPromocionCodes(shouldAutoSelect ? new Set(items.filter(canGeneratePromocion).map(certificateSelectionKey)) : new Set())
-      setMessage(`${payload.total || 0} registro(s) encontrados.`)
+      setSelectedMatriculaCodes(new Set())
+      setSelectedPromocionCodes(new Set())
+      setMessage(`${payload.total || 0} estudiante(s) matriculado(s) en el período seleccionado.`)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar estudiantes')
       setStudents([])
@@ -162,6 +169,17 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     } finally {
       setSearchLoading(false)
     }
+  }
+
+  function changePeriod(nextPeriod: string) {
+    setPeriodo(nextPeriod)
+    setBusqueda('')
+    setStudents([])
+    setSelectedMatriculaCodes(new Set())
+    setSelectedPromocionCodes(new Set())
+    setExpandedCode('')
+    setMessage('')
+    setError('')
   }
 
   function toggleStudent(tipo: CertificadoTipo, code: string) {
@@ -192,24 +210,21 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     setError('')
     setMessage('')
     const selectedCodes = tipo === 'matricula' ? selectedMatriculaCodes : selectedPromocionCodes
-    const selectedWithoutPeriod = Array.from(selectedCodes).filter((code) => !periodo && !code.split('|')[2])
-    if (selectedCodes.size === 0) {
-      setError(`Selecciona al menos un estudiante habilitado para ${tipo === 'matricula' ? 'matrícula' : 'promoción'}.`)
+    if (!periodo) {
+      setError('Seleccione el período académico antes de generar certificados.')
       return
     }
-    if (selectedWithoutPeriod.length > 0) {
-      setError('Selecciona periodo base o consulta estudiantes que tengan cabecera de matrícula con periodo.')
+    if (selectedCodes.size === 0) {
+      setError(`Selecciona al menos un estudiante habilitado para ${tipo === 'matricula' ? 'matrícula' : 'promoción'}.`)
       return
     }
 
     setGeneratingZip(true)
     try {
       const payload = {
-        tipo_beca: tipoBeca,
         tipo_certificado: tipo,
         periodo,
-        proximo_periodo: proximoPeriodo,
-        semestre: semestre ? Number(semestre) : null,
+        proximo_periodo: periodo,
         estudiantes: Array.from(selectedCodes),
       }
       const blob = await downloadCertificadosZip(payload)
@@ -226,24 +241,21 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     setError('')
     setMessage('')
     const selectedCodes = tipo === 'matricula' ? selectedMatriculaCodes : selectedPromocionCodes
-    const selectedWithoutPeriod = Array.from(selectedCodes).filter((code) => !periodo && !code.split('|')[2])
-    if (selectedCodes.size === 0) {
-      setError(`Selecciona al menos un estudiante habilitado para ${tipo === 'matricula' ? 'matrícula' : 'promoción'}.`)
+    if (!periodo) {
+      setError('Seleccione el período académico antes de generar certificados.')
       return
     }
-    if (selectedWithoutPeriod.length > 0) {
-      setError('Selecciona periodo base o consulta estudiantes que tengan cabecera de matrícula con periodo.')
+    if (selectedCodes.size === 0) {
+      setError(`Selecciona al menos un estudiante habilitado para ${tipo === 'matricula' ? 'matrícula' : 'promoción'}.`)
       return
     }
 
     setGeneratingMassivePdf(true)
     try {
       const blob = await downloadCertificadosPdf({
-        tipo_beca: tipoBeca,
         tipo_certificado: tipo,
         periodo,
-        proximo_periodo: proximoPeriodo,
-        semestre: semestre ? Number(semestre) : null,
+        proximo_periodo: periodo,
         estudiantes: Array.from(selectedCodes),
       })
       downloadBlob(blob, `certificados-${tipo}-masivo-${new Date().toISOString().slice(0, 10)}.pdf`)
@@ -261,7 +273,7 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     const code = student.codestud
     const previewPeriod = generationPeriodFor(student)
     if (!previewPeriod || !code) {
-      setError('Selecciona periodo y estudiante para ver el certificado.')
+      setError('Seleccione período y estudiante para ver el certificado.')
       return
     }
     if (tipo === 'matricula' && !canGenerateMatricula(student)) {
@@ -280,10 +292,9 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
       const blob = await previewCertificadoPdf({
         codestud: code,
         periodo: previewPeriod,
-        proximoPeriodo,
+        proximoPeriodo: periodo,
         codAnioBasica: student.cod_anio_basica,
         periodoMatricula: student.codigo_periodo_matricula,
-        semestre,
         tipo,
       })
       const url = URL.createObjectURL(blob)
@@ -309,72 +320,42 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Academico</p>
-          <h1>Certificados</h1>
+          <p className="eyebrow">Académico</p>
+          <h1>Certificados por período</h1>
         </div>
         <div className="student-topbar__right">
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Promocion y matricula</span>
+              <span>Generación automática por período</span>
             </div>
           </div>
         </div>
       </header>
 
-      <section className="certificados-overview">
-        <article>
-          <span>Periodo base</span>
-          <strong>{periodLabel(selectedBasePeriod)}</strong>
-          <small>{dateRangeLabel(selectedBasePeriod) || 'Pendiente de seleccion'}</small>
-        </article>
-        <article>
-          <span>Periodo de matricula</span>
-          <strong>{periodLabel(selectedMatriculaPeriod)}</strong>
-          <small>{dateRangeLabel(selectedMatriculaPeriod) || 'Usa el periodo base si queda vacio'}</small>
-        </article>
-        <article>
-          <span>Selección activa</span>
-          <strong>{activeSelectedCount}</strong>
-          <small>
-            {activeCertificateLabel}: {activeSelectableStudents.length} habilitado(s)
-          </small>
-        </article>
-      </section>
-
       <section className="student-grid student-grid--content certificados-grid">
-        <article className="student-card student-card--wide">
+        <article className="student-card student-card--wide certificados-period-card">
           <div className="card-head">
-            <h3>Filtros</h3>
-            <span>{catalogLoading ? 'Cargando catalogo...' : `${periodos.length} periodo(s)`}</span>
+            <div>
+              <p className="eyebrow">Paso 1</p>
+              <h3>Seleccionar el período académico</h3>
+            </div>
+            <span>{catalogLoading ? 'Cargando catálogo...' : `${periodos.length} período(s)`}</span>
           </div>
 
           <div className="certificados-format-note">
-            <strong>Formatos disponibles:</strong>
+            <strong>Generación desde el sistema:</strong>
             <span>
-              matrícula descarga un solo PDF con los certificados seleccionados. Gastronomía usa matrícula $100.00 y arancel
-              $1000.00; las demás carreras conservan sus valores configurados. La Beca INTEC se aplica únicamente al arancel
-              y no descuenta el valor de matrícula.
+              El período seleccionado determina los estudiantes matriculados. Luego podrá generar, por separado, certificados
+              de matrícula o de promoción. Este proceso no utiliza archivos de Excel.
             </span>
           </div>
 
-          <div className="matricula-acad-form certificados-form">
+          <div className="certificados-period-search">
             <label>
-              <span>Tipo de beca</span>
-              <select value={tipoBeca} onChange={(event) => setTipoBeca(event.target.value)}>
-                <option value="">Todos</option>
-                {(catalog?.becas || []).map((beca) => (
-                  <option key={beca} value={beca}>
-                    {beca}
-                  </option>
-                ))}
-                <option value="Sin beca">Sin beca</option>
-              </select>
-            </label>
-            <label>
-              <span>Periodo base</span>
-              <select value={periodo} onChange={(event) => setPeriodo(event.target.value)}>
-                <option value="">Seleccione periodo</option>
+              <span>Período académico</span>
+              <select value={periodo} onChange={(event) => changePeriod(event.target.value)}>
+                <option value="">Seleccione un período</option>
                 {periodos.map((item) => (
                   <option key={`periodo-${item.cod_periodo}`} value={item.cod_periodo}>
                     {item.detalle_periodo}
@@ -382,66 +363,47 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
                 ))}
               </select>
             </label>
-            <label>
-              <span>Periodo de matricula</span>
-              <select value={proximoPeriodo} onChange={(event) => setProximoPeriodo(event.target.value)}>
-                <option value="">Usar periodo base</option>
-                {periodos.map((item) => (
-                  <option key={`proximo-${item.cod_periodo}`} value={item.cod_periodo}>
-                    {item.detalle_periodo}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Semestre</span>
-              <select value={semestre} onChange={(event) => setSemestre(event.target.value)}>
-                <option value="">Calcular automaticamente</option>
-                {(catalog?.semestres || []).map((item) => (
-                  <option key={`semestre-${item.value}`} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="certificados-field--wide">
-              <span>Buscar estudiante</span>
-              <input
-                value={busqueda}
-                onChange={(event) => setBusqueda(event.target.value)}
-                placeholder="Nombre, codigo o cedula de estudiante"
-              />
-            </label>
-            <label className="certificados-field--wide">
-              <span>Cedulas</span>
-              <textarea
-                value={cedulas}
-                onChange={(event) => setCedulas(event.target.value)}
-                placeholder="Ingresa una o varias cedulas, separadas por enter, coma o espacio"
-                rows={3}
-              />
-            </label>
-            <label>
-              <span>Matrículas</span>
-              <select value={matriculaScope} onChange={(event) => setMatriculaScope(event.target.value as MatriculaScope)}>
-                <option value="todas">Todas las matrículas</option>
-                <option value="ultima">Última matrícula</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="teams-actions certificados-actions">
-            <button type="button" onClick={() => void searchStudents()} disabled={searchLoading || catalogLoading}>
-              {searchLoading ? 'Consultando...' : 'Consultar estudiantes'}
-            </button>
-            <button type="button" onClick={() => toggleAll(activeCertificateType)} disabled={activeSelectableStudents.length === 0}>
-              {activeSelectedCount > 0 && activeSelectedCount === activeSelectableStudents.length
-                ? `Quitar ${activeCertificateLabel}`
-                : `Seleccionar ${activeCertificateLabel}`}
+            <button type="button" onClick={() => void searchStudents()} disabled={searchLoading || catalogLoading || !periodo}>
+              {searchLoading ? 'Cargando matrículas...' : 'Cargar estudiantes matriculados'}
             </button>
           </div>
 
-          <div className="certificados-type-selector" role="tablist" aria-label="Tipo de certificado">
+          {message ? <p className="form-success">{message}</p> : null}
+          {error ? <p className="form-error">{error}</p> : null}
+        </article>
+      </section>
+
+      <section className="certificados-overview">
+        <article>
+          <span>Período seleccionado</span>
+          <strong>{periodLabel(selectedBasePeriod)}</strong>
+          <small>{dateRangeLabel(selectedBasePeriod) || 'Pendiente de selección'}</small>
+        </article>
+        <article>
+          <span>Estudiantes matriculados</span>
+          <strong>{students.length}</strong>
+          <small>{busqueda ? `${visibleStudents.length} visible(s) por el filtro` : 'Una fila por matrícula encontrada'}</small>
+        </article>
+        <article>
+          <span>Tipo de certificado</span>
+          <strong>{activeCertificateTitle}</strong>
+          <small>{activeSelectedCount} estudiante(s) seleccionado(s)</small>
+        </article>
+      </section>
+
+      <section className="student-grid student-grid--content certificados-grid">
+        <article className="student-card student-card--wide certificados-results-card">
+          <div className="card-head">
+            <div>
+              <p className="eyebrow">Pasos 2 y 3</p>
+              <h3>Elegir certificado y estudiantes</h3>
+            </div>
+            <span>
+              {visibleStudents.length} visible(s) | {reprobadasTotal} materia(s) reprobada(s)
+            </span>
+          </div>
+
+          <div className="certificados-type-selector certificados-type-selector--compact" role="tablist" aria-label="Tipo de certificado">
             <button
               type="button"
               className={activeCertificateType === 'matricula' ? 'is-active' : ''}
@@ -449,9 +411,9 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
               role="tab"
               aria-selected={activeCertificateType === 'matricula'}
             >
-              <span>Certificado de matrícula</span>
-              <strong>{selectedMatriculaCount} seleccionado(s)</strong>
-              <small>Desde CABECERA_MATRICULA</small>
+              <span>Tipo de certificado</span>
+              <strong>Matrícula</strong>
+              <small>{selectedMatriculaCount} seleccionado(s)</small>
             </button>
             <button
               type="button"
@@ -460,10 +422,35 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
               role="tab"
               aria-selected={activeCertificateType === 'promocion'}
             >
-              <span>Certificado de promoción</span>
-              <strong>{selectedPromocionCount} seleccionado(s)</strong>
-              <small>Reporte académico</small>
+              <span>Tipo de certificado</span>
+              <strong>Promoción</strong>
+              <small>{selectedPromocionCount} seleccionado(s)</small>
             </button>
+          </div>
+
+          <label className="certificados-table-filter">
+            <span>Filtrar estudiantes del período</span>
+            <input
+              value={busqueda}
+              onChange={(event) => setBusqueda(event.target.value)}
+              placeholder="Nombre, código, carrera o número de matrícula"
+              disabled={students.length === 0}
+            />
+          </label>
+
+          <div className="certificados-selection-strip">
+            <label>
+              <input
+                type="checkbox"
+                checked={activeSelectableStudents.length > 0 && activeSelectedCount === activeSelectableStudents.length}
+                onChange={() => toggleAll(activeCertificateType)}
+                disabled={activeSelectableStudents.length === 0}
+              />
+              <span>Seleccionar estudiantes habilitados para {activeCertificateLabel}</span>
+            </label>
+            <strong>
+              {activeSelectedCount} seleccionado(s) | {activeSelectableStudents.length} habilitado(s)
+            </strong>
           </div>
 
           <div className="certificados-active-panel">
@@ -478,43 +465,16 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
                 onClick={() => void generateZip(activeCertificateType)}
                 disabled={generatingZip || activeSelectedCount === 0}
               >
-                {generatingZip ? 'Generando ZIP...' : 'Generar ZIP individuales'}
+                {generatingZip ? 'Generando ZIP...' : 'Descargar certificados individuales'}
               </button>
               <button
                 type="button"
                 onClick={() => void generateMassivePdf(activeCertificateType)}
                 disabled={generatingMassivePdf || activeSelectedCount === 0}
               >
-                {generatingMassivePdf ? 'Generando PDF...' : 'Generar PDF masivo'}
+                {generatingMassivePdf ? 'Generando PDF...' : 'Descargar PDF consolidado'}
               </button>
             </div>
-          </div>
-
-          {message ? <p className="form-success">{message}</p> : null}
-          {error ? <p className="form-error">{error}</p> : null}
-        </article>
-
-        <article className="student-card student-card--wide certificados-results-card">
-          <div className="card-head">
-            <h3>Estudiantes</h3>
-            <span>
-              {students.length} resultado(s) | {reprobadasTotal} reprobada(s)
-            </span>
-          </div>
-
-          <div className="certificados-selection-strip">
-            <label>
-              <input
-                type="checkbox"
-                checked={activeSelectableStudents.length > 0 && activeSelectedCount === activeSelectableStudents.length}
-                onChange={() => toggleAll(activeCertificateType)}
-                disabled={activeSelectableStudents.length === 0}
-              />
-              <span>Seleccionar {activeCertificateLabel} habilitada</span>
-            </label>
-            <strong>
-              {activeSelectedCount} seleccionado(s) | {activeSelectableStudents.length} habilitado(s)
-            </strong>
           </div>
 
           <div className="matricula-table-wrap excel-table-wrap certificados-table-wrap">
@@ -522,7 +482,7 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
               <thead>
                 <tr>
                   <th>Sel.</th>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Estudiante</th>
                   <th>Cabecera matrícula</th>
                   <th>Correos</th>
@@ -532,8 +492,8 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
                 </tr>
               </thead>
               <tbody>
-                {students.length > 0 ? (
-                  students.map((student) => {
+                {visibleStudents.length > 0 ? (
+                  visibleStudents.map((student) => {
                     const code = student.codestud
                     const selectionKey = certificateSelectionKey(student)
                     const details = student.reprobadas_detalle || []
@@ -556,7 +516,7 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
                           <td>{valueOrDash(code)}</td>
                           <td>
                             <strong>{valueOrDash(student.nombres)}</strong>
-                            {!hasPeriod ? <small>Selecciona periodo o consulta una cédula con cabecera de matrícula</small> : null}
+                            {!hasPeriod ? <small>Seleccione período o consulte una cédula con cabecera de matrícula</small> : null}
                             {activeCertificateType === 'promocion' && hasPeriod && details.length > 0 ? (
                               <small>Promoción bloqueada por materias reprobadas</small>
                             ) : null}
@@ -626,7 +586,15 @@ export function CertificadosView({ displayName }: Readonly<CertificadosViewProps
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8}>{searchLoading ? 'Consultando...' : 'Usa los filtros para consultar estudiantes.'}</td>
+                    <td colSpan={8}>
+                      {searchLoading
+                        ? 'Cargando estudiantes matriculados...'
+                        : !periodo
+                          ? 'Seleccione un período académico para iniciar la consulta.'
+                          : students.length === 0
+                            ? 'No existen estudiantes activos matriculados en el período seleccionado.'
+                            : 'No existen coincidencias con el filtro ingresado.'}
+                    </td>
                   </tr>
                 )}
               </tbody>

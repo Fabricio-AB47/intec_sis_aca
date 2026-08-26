@@ -2763,7 +2763,7 @@ def create_student_upload_session(
                 max_expected_size=_MAX_FILE_BYTES,
             )
         except (RuntimeError, ValueError, pyodbc.Error) as exc:
-            raise HTTPException(status_code=500, detail=f"No se pudo registrar la sesion documental: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"No se pudo registrar la sesión documental: {exc}") from exc
 
         cursor.execute(
             """

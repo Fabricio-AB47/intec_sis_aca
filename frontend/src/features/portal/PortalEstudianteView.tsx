@@ -181,7 +181,7 @@ export function PortalEstudianteView({
         orden: item.orden ?? null,
         num_malla: item.num_malla ?? null,
         unidad_organiza: '',
-        estado_materia: 'Desde matricula',
+        estado_materia: 'Desde matrícula',
       })
     }
 
@@ -468,7 +468,7 @@ export function PortalEstudianteView({
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la malla academica')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la malla académica')
     } finally {
       setDownloadLoading(false)
     }
@@ -589,7 +589,7 @@ export function PortalEstudianteView({
       return (
         <div className="portal-grade-detail-grid portal-grade-detail-grid--homo">
           <article>
-            <h3>Homologacion</h3>
+            <h3>Homologación</h3>
             <div>
               {detailValue('Teoria', item.teoria_homo)}
               {detailValue('Practica', item.practica_homo)}
@@ -655,7 +655,7 @@ export function PortalEstudianteView({
             <p>Calculado con materias que ya tienen nota final.</p>
           </article>
           <article className="portal-dashboard-info">
-            <span>Creditos</span>
+            <span>Créditos</span>
             <strong>{numberText(approvedCredits, 1)} / {numberText(totalCredits, 1)}</strong>
             <p>Aprobados frente al total de la malla.</p>
           </article>
@@ -706,7 +706,7 @@ export function PortalEstudianteView({
           {payments.map((payment, index) => (
             <article className="portal-payment-card" key={`${payment.codigo_periodo || index}-${payment.num_matricula || index}`}>
               <div className="portal-payment-card__top">
-                <strong>{payment.periodo || payment.codigo_periodo || 'Periodo'}</strong>
+                <strong>{payment.periodo || payment.codigo_periodo || 'Período'}</strong>
                 <span>{payment.carrera || '-'}</span>
               </div>
               <div className="portal-payment-card__amounts">
@@ -746,7 +746,7 @@ export function PortalEstudianteView({
       <header className="student-hero portal-student-hero">
         <div>
           <p className="eyebrow">Portal estudiante</p>
-          <h1>Panel academico del estudiante</h1>
+          <h1>Panel académico del estudiante</h1>
           <p>{student?.nombre_estudiante || displayName}</p>
           <small>{careerName}</small>
         </div>
@@ -761,13 +761,13 @@ export function PortalEstudianteView({
       </header>
 
       {error ? <p className="form-error">{error}</p> : null}
-      {loading ? <p className="form-success">Consultando informacion academica...</p> : null}
+      {loading ? <p className="form-success">Consultando información académica...</p> : null}
 
       {activeSection === 'dashboard' ? (
         <section className="student-card portal-record-card">
           <div className="section-title">
             <div>
-              <span>Dashboard academico</span>
+              <span>Dashboard académico</span>
               <h2>Avance por malla</h2>
             </div>
           </div>
@@ -780,10 +780,10 @@ export function PortalEstudianteView({
               <span>Accesos rapidos</span>
               <strong>Consultas disponibles</strong>
             </div>
-            <section className="portal-nav-grid portal-nav-grid--dashboard" aria-label="Opciones academicas del estudiante">
-              {renderActionCard('curricular', 'MC', 'Malla curricular', 'Materias, codigos, niveles y creditos.', integerText(totalSubjects))}
-              {renderActionCard('academica', 'MA', 'Malla academica', 'Aprobadas, pendientes y notas finales.', integerText(missingSubjects))}
-              {renderActionCard('notas', 'NT', 'Calificaciones', 'Matriculas, parciales y HOMO.', integerText(summary?.total_materias))}
+            <section className="portal-nav-grid portal-nav-grid--dashboard" aria-label="Opciones académicas del estudiante">
+              {renderActionCard('curricular', 'MC', 'Malla curricular', 'Materias, códigos, niveles y créditos.', integerText(totalSubjects))}
+              {renderActionCard('academica', 'MA', 'Malla académica', 'Aprobadas, pendientes y notas finales.', integerText(missingSubjects))}
+              {renderActionCard('notas', 'NT', 'Calificaciones', 'Matrículas, parciales y HOMO.', integerText(summary?.total_materias))}
             </section>
           </div>
         </section>
@@ -804,10 +804,10 @@ export function PortalEstudianteView({
               <thead>
                 <tr>
                   <th>Nivel</th>
-                  <th>Codigo materia</th>
-                  <th>Codigo interno</th>
+                  <th>Código materia</th>
+                  <th>Código interno</th>
                   <th>Materia</th>
-                  <th>Creditos</th>
+                  <th>Créditos</th>
                   <th>Horas</th>
                   <th>Malla</th>
                 </tr>
@@ -839,7 +839,7 @@ export function PortalEstudianteView({
         <section className="student-card portal-record-card">
           <div className="section-title">
             <div>
-              <span>Malla academica</span>
+              <span>Malla académica</span>
               <h2>Malla y calificaciones consolidadas</h2>
               <small className="portal-section-subtitle">Carrera: {careerName}</small>
             </div>
@@ -928,9 +928,9 @@ export function PortalEstudianteView({
               <thead>
                 <tr>
                   <th>Nivel</th>
-                  <th>Codigo materia</th>
+                  <th>Código materia</th>
                   <th>Materia</th>
-                  <th>Creditos</th>
+                  <th>Créditos</th>
                   <th>Esquema</th>
                   <th>HOMO</th>
                   <th>Prom. 1</th>
@@ -964,7 +964,7 @@ export function PortalEstudianteView({
                 })}
                 {!loading && academicRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11}>No hay malla academica para mostrar.</td>
+                    <td colSpan={11}>No hay malla académica para mostrar.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -978,14 +978,14 @@ export function PortalEstudianteView({
           <div className="section-title">
             <div>
               <span>Calificaciones - solo lectura</span>
-              <h2>{selectedPeriod ? periodOptions.find((period) => period.code === selectedPeriod)?.label : 'Seleccione un periodo'}</h2>
+              <h2>{selectedPeriod ? periodOptions.find((period) => period.code === selectedPeriod)?.label : 'Seleccione un período'}</h2>
               <small className="portal-section-subtitle">Carrera: {careerName}</small>
             </div>
             <div className="portal-actions">
               <label className="portal-period-filter">
-                <span>Periodo</span>
+                <span>Período</span>
                 <select value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)} disabled={loading}>
-                  <option value="">Seleccione un periodo</option>
+                  <option value="">Seleccione un período</option>
                   {periodOptions.map((period) => (
                     <option key={period.code} value={period.code}>{period.label}</option>
                   ))}
@@ -1009,7 +1009,7 @@ export function PortalEstudianteView({
                 {selectedPeriodIsHomologation ? (
                   <tr>
                     <th>Detalle</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Nivel</th>
                     <th>Materia</th>
                     <th>Esquema</th>
@@ -1019,7 +1019,7 @@ export function PortalEstudianteView({
                 ) : (
                   <tr>
                     <th>Detalle</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Nivel</th>
                     <th>Materia</th>
                     <th>Esquema</th>
@@ -1077,7 +1077,7 @@ export function PortalEstudianteView({
                 })}
                 {!loading && selectedPeriod && filteredItems.length === 0 ? (
                   <tr>
-                    <td colSpan={selectedPeriodIsHomologation ? 7 : 10}>No hay materias para mostrar en el periodo seleccionado.</td>
+                    <td colSpan={selectedPeriodIsHomologation ? 7 : 10}>No hay materias para mostrar en el período seleccionado.</td>
                   </tr>
                 ) : null}
               </tbody>

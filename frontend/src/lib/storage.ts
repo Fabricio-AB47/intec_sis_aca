@@ -8,6 +8,9 @@ function isPage(value: string): value is Page {
     value === 'sistema-academico' ||
     value === 'teams' ||
     value === 'teams-matricula' ||
+    value === 'historico-integraciones' ||
+    value === 'informe-cumplimiento' ||
+    value === 'moodle' ||
     value === 'matricula' ||
     value === 'matricula-acad' ||
     value === 'matricula-docente' ||

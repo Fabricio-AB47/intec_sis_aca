@@ -99,6 +99,11 @@ npm run dev
 - Administracion academica: carreras, pensum, periodos, mallas, textos HOMO y catalogos.
 - Reporteria: consultas exportables desde datos legacy.
 - Integraciones Microsoft 365: credenciales y operaciones Graph.
+- Integración Moodle de solo lectura: estado del servicio, usuarios y cursos con filtros y paginación local.
+
+## Integración Moodle
+
+La primera fase de Moodle expone únicamente consultas administrativas. No crea ni modifica usuarios, cursos, matrículas o calificaciones. La configuración y las medidas operativas se documentan en `docs/MOODLE_READ_INTEGRATION.md`.
 
 ## Comandos Utiles
 

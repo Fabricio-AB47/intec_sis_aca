@@ -37,7 +37,7 @@ function statusClass(value?: string): string {
 }
 
 function boolText(value?: boolean): string {
-  return value ? 'Si' : 'No'
+  return value ? 'Sí' : 'No'
 }
 
 function csvValue(value: string | number | boolean | null | undefined): string {
@@ -50,23 +50,23 @@ function downloadCsv(rows: ExcelValidationRow[]) {
     'Fila Excel',
     'Resultado',
     'Cruce por',
-    'Codigo Excel',
-    'Cedula Excel',
+    'Código Excel',
+    'Cédula Excel',
     'Correo Excel',
     'Nombre Excel',
     'Existe DATOS_ESTUD',
     'Existe CorreosIntec',
-    'Existe PREINSCRIPCION',
-    'Tiene matricula',
-    'Codigo BD',
-    'Cedula BD',
+    'Existe preinscripción',
+    'Tiene matrícula',
+    'Código BD',
+    'Cédula BD',
     'Estudiante BD',
     'Estado BD',
     'Correo BD',
     'Correo INTEC BD',
     'Beca',
     'Porcentaje beca',
-    'Periodo',
+    'Período',
     'Carrera',
   ]
   const body = rows.map((row) => [
@@ -144,7 +144,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
   async function analyzeExcel() {
     setError('')
     if (!selectedFile) {
-      setError('Selecciona un archivo .xlsx para analizar.')
+      setError('Seleccione un archivo .xlsx para analizar.')
       return
     }
 
@@ -170,14 +170,14 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
     ['DATOS_ESTUD', summary?.en_datos_estud],
     ['Correos INTEC', summary?.en_correos_intec],
     ['PREINSCRIPCION', summary?.en_preinscripcion],
-    ['Con matricula', summary?.con_matricula],
+    ['Con matrícula', summary?.con_matricula],
   ] as const
 
   return (
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Validacion Excel</p>
+          <p className="eyebrow">Validación Excel</p>
           <h1>Verificar datos en base</h1>
         </div>
 
@@ -209,7 +209,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
             </label>
             <div className="excel-validation-help">
               <strong>Columnas reconocidas</strong>
-              <span>codigo, codestud, cedula, identificacion, correo, correo_intec, estudiante, nombres.</span>
+              <span>código, codestud, cédula, identificación, correo, correo_intec, estudiante, nombres.</span>
             </div>
           </div>
 
@@ -240,7 +240,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
           <article key={label} className="student-card student-card--stat matricula-stat-card">
             <p>{label}</p>
             <h2>{formatNumber(value)}</h2>
-            <small>{data?.filename || 'Pendiente de analisis'}</small>
+            <small>{data?.filename || 'Pendiente de análisis'}</small>
           </article>
         ))}
       </section>
@@ -248,7 +248,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
       <section className="student-grid student-grid--content">
         <article className="student-card student-card--wide excel-validation-results-card">
           <div className="card-head">
-            <h3>Resultado de validacion</h3>
+            <h3>Resultado de validación</h3>
             <span>{loading ? 'Procesando...' : `${formatNumber(rows.length)} fila(s)`}</span>
           </div>
 
@@ -269,7 +269,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
               <input
                 value={tableFilter}
                 onChange={(event) => setTableFilter(event.target.value)}
-                placeholder="Buscar por nombre, cedula, correo, estado o carrera"
+                placeholder="Buscar por nombre, cédula, correo, estado o carrera"
               />
             </label>
             <div>
@@ -289,7 +289,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
                   <th>Base de datos</th>
                   <th>Existencias</th>
                   <th>Beca</th>
-                  <th>Ultima matricula</th>
+                  <th>Última matrícula</th>
                 </tr>
               </thead>
               <tbody>
@@ -320,7 +320,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
                           <span className={row.exists?.datos_estud ? 'excel-validation-exists--ok' : ''}>DATOS {boolText(row.exists?.datos_estud)}</span>
                           <span className={row.exists?.correos_intec ? 'excel-validation-exists--ok' : ''}>Correos {boolText(row.exists?.correos_intec)}</span>
                           <span className={row.exists?.preinscripcion ? 'excel-validation-exists--ok' : ''}>Preins {boolText(row.exists?.preinscripcion)}</span>
-                          <span className={row.exists?.matricula ? 'excel-validation-exists--ok' : ''}>Matricula {boolText(row.exists?.matricula)}</span>
+                          <span className={row.exists?.matricula ? 'excel-validation-exists--ok' : ''}>Matrícula {boolText(row.exists?.matricula)}</span>
                         </div>
                       </td>
                       <td>
@@ -339,7 +339,7 @@ export function ExcelValidationView({ displayName }: Readonly<ExcelValidationVie
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7}>{loading ? 'Analizando Excel...' : 'Sube un archivo .xlsx para ver resultados.'}</td>
+                    <td colSpan={7}>{loading ? 'Analizando Excel...' : 'Suba un archivo .xlsx para ver resultados.'}</td>
                   </tr>
                 )}
               </tbody>

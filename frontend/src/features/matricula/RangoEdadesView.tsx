@@ -95,7 +95,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
       const payload = await fetchAgeRangesCatalog()
       setCatalog(payload)
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catalogo de rango de edades')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catálogo de rango de edades')
     } finally {
       setCatalogLoading(false)
     }
@@ -137,7 +137,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
   const statItems = [
     ['Total estudiantes', data?.summary?.total],
     ['Edad calculada', data?.summary?.edad_calculada],
-    ['Sin fecha valida', data?.summary?.sin_fecha],
+    ['Sin fecha válida', data?.summary?.sin_fecha],
     ['Con beca', data?.summary?.con_beca],
     ['Sin beca', data?.summary?.sin_beca],
   ] as const
@@ -174,17 +174,17 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
         <article className="student-card student-card--wide age-ranges-filter-card">
           <div className="card-head">
             <h3>Filtros</h3>
-            <span>{catalogLoading ? 'Cargando catalogo...' : `${catalog?.becas?.length || 0} beca(s)`}</span>
+            <span>{catalogLoading ? 'Cargando catálogo...' : `${catalog?.becas?.length || 0} beca(s)`}</span>
           </div>
 
           <div className="matricula-acad-form age-ranges-form">
             <label>
-              <span>Periodo</span>
-              <input value={periodo} onChange={(event) => setPeriodo(event.target.value)} placeholder="Codigo periodo" />
+              <span>Período</span>
+              <input value={periodo} onChange={(event) => setPeriodo(event.target.value)} placeholder="Código período" />
             </label>
             <label>
               <span>Carrera</span>
-              <input value={carrera} onChange={(event) => setCarrera(event.target.value)} placeholder="Codigo carrera" />
+              <input value={carrera} onChange={(event) => setCarrera(event.target.value)} placeholder="Código carrera" />
             </label>
             <label>
               <span>Estado</span>
@@ -221,7 +221,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
               </select>
             </label>
             <label>
-              <span>Limite</span>
+              <span>Límite</span>
               <input
                 type="number"
                 min={1}
@@ -232,7 +232,7 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
             </label>
             <label className="age-ranges-field--wide">
               <span>Buscar</span>
-              <input value={buscar} onChange={(event) => setBuscar(event.target.value)} placeholder="Nombre, cedula, codigo, carrera o beca" />
+              <input value={buscar} onChange={(event) => setBuscar(event.target.value)} placeholder="Nombre, cédula, código, carrera o beca" />
             </label>
           </div>
 
@@ -302,13 +302,13 @@ export function RangoEdadesView({ displayName }: Readonly<RangoEdadesViewProps>)
             <table className="matricula-table age-ranges-table">
               <thead>
                 <tr>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Estudiante</th>
                   <th>Contacto</th>
                   <th>Edad</th>
                   <th>Rango</th>
                   <th>Beca</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Carrera</th>
                 </tr>
               </thead>

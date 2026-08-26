@@ -323,7 +323,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
     setSendResults([])
 
     if (!excelFile) {
-      setError('Selecciona un Excel para analizar.')
+      setError('Seleccione un Excel para analizar.')
       return
     }
 
@@ -388,7 +388,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
     setSendResults([])
 
     if (!cedulasText.trim()) {
-      setError('Ingresa al menos una cédula para buscar destinatarios.')
+      setError('Ingrese al menos una cédula para buscar destinatarios.')
       return
     }
 
@@ -442,7 +442,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
 
     const query = userSearch.trim()
     if (query.length < 2) {
-      setError('Ingresa al menos 2 caracteres para buscar usuarios.')
+      setError('Ingrese al menos 2 caracteres para buscar usuarios.')
       return
     }
 
@@ -464,7 +464,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
     setMessage('')
     const query = ccSearch.trim()
     if (query.length < 2) {
-      setError('Ingresa al menos 2 caracteres para buscar usuarios en copia.')
+      setError('Ingrese al menos 2 caracteres para buscar usuarios en copia.')
       return
     }
 
@@ -529,7 +529,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
   async function executeAssignmentSearch() {
     const query = assignmentSearch.trim()
     if (query.length < 2) {
-      setError('Ingresa al menos 2 caracteres para buscar estudiantes en la asignación.')
+      setError('Ingrese al menos 2 caracteres para buscar estudiantes en la asignación.')
       return
     }
 
@@ -567,7 +567,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
   function addCcFromInput() {
     const emails = parseEmails(ccInput)
     if (!emails.length) {
-      setError('Ingresa al menos un correo válido para copia.')
+      setError('Ingrese al menos un correo válido para copia.')
       return
     }
     addCcEmails(emails)
@@ -812,7 +812,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
             <div>
               <span className="mass-email-step-label">Paso 1</span>
               <h3>Destinatarios</h3>
-              <p>Ingresa cédulas, busca correos y selecciona quién recibirá el mensaje.</p>
+              <p>Ingrese cédulas, busca correos y selecciona quién recibirá el mensaje.</p>
             </div>
             <span>{loading ? 'Consultando...' : `${recipients.length} destinatario(s)`}</span>
           </div>
@@ -882,7 +882,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
               <div>
                 <strong>Excel para envío masivo</strong>
                 <span>
-                  Carga una lista con cédula, nombre, correo, documento o referencia. La cédula valida a quién se enviará y ayuda a asociar PDFs.
+                  Cargue una lista con cédula, nombre, correo, documento o referencia. La cédula permite validar a quién se enviará y ayuda a asociar los PDF.
                 </span>
               </div>
               <div className="mass-email-document-stats">
@@ -895,7 +895,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
             <div className="mass-email-template-callout">
               <div>
                 <strong>Plantilla disponible</strong>
-                <span>Cédula, nombre, correo, documento, carrera, periodo y referencia.</span>
+                <span>Cédula, nombre, correo, documento, carrera, período y referencia.</span>
               </div>
               <a className="ghost-button" href={massEmailTemplatePath} download>
                 Descargar plantilla
@@ -1048,7 +1048,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
               <>
                 <div className="mass-email-user-search__summary">
                   <strong>{userSearchResults.length} resultado(s)</strong>
-                  <span>Selecciona uno o agrega todos los visibles.</span>
+                  <span>Seleccione uno o agrega todos los visibles.</span>
                 </div>
                 <div className="mass-email-search-results">
                   {userSearchResults.map((recipient) => {
@@ -1118,7 +1118,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
           <button type="button" className="mass-email-preview-launch" onClick={() => setPreviewModalOpen(true)}>
             <div>
               <strong>Vista previa institucional</strong>
-              <span>Abre una subpantalla para revisar el correo con logo, colores y mensaje.</span>
+              <span>Abra una subpantalla para revisar el correo con logo, colores y mensaje.</span>
             </div>
             <b>Ver</b>
           </button>
@@ -1135,7 +1135,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
                 onClick={() => setSendMode('individual')}
               >
                 <strong>Individual masivo</strong>
-                <span>Un correo por destinatario. Usa documentos personalizados por cédula y adjuntos comunes.</span>
+                <span>Un correo por destinatario. Use documentos personalizados por cédula y adjuntos comunes.</span>
               </button>
               <button
                 type="button"
@@ -1337,7 +1337,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
                               ) : (
                                 <>
                                   <strong>Sin asignar</strong>
-                                  <span>Busca o selecciona el estudiante antes de enviar.</span>
+                                  <span>Busque o selecciona el estudiante antes de enviar.</span>
                                   {row.detectedCedula ? <small>Cédula detectada pendiente de cargar en destinatarios.</small> : null}
                                 </>
                               )}
@@ -1464,7 +1464,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
             <div>
               <span className="mass-email-step-label">Paso 3</span>
               <h3>Revisión y envío</h3>
-              <p>Verifica destinatarios, documentos y modo de envío antes de confirmar.</p>
+              <p>Verifique destinatarios, documentos y modo de envío antes de confirmar.</p>
             </div>
             <div className="mass-email-review-actions">
               <button
@@ -1569,7 +1569,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
           ) : (
             <div className="mass-email-recipient-empty">
               <strong>Sin destinatarios cargados</strong>
-              <span>Busca por cédula o agrega usuarios desde la búsqueda para preparar el envío.</span>
+              <span>Busque por cédula o agrega usuarios desde la búsqueda para preparar el envío.</span>
             </div>
           )}
 
@@ -1652,7 +1652,7 @@ export function MassEmailView({ displayName }: Readonly<MassEmailViewProps>) {
             ) : (
               <div className="mass-email-recipient-empty">
                 <strong>Sin involucrados seleccionados</strong>
-                <span>Busca destinatarios o agrega correos manuales antes de continuar.</span>
+                <span>Busque destinatarios o agrega correos manuales antes de continuar.</span>
               </div>
             )}
           </section>

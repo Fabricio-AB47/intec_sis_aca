@@ -144,7 +144,7 @@ LEFT JOIN dbo.PENSUM P
 GO
 
 /* ---------------------------------------------------------------------------
-   Admision, pagos y documentos
+   Admisión, pagos y documentos
    --------------------------------------------------------------------------- */
 CREATE OR ALTER VIEW sisv1.vw_preinscripciones
 AS
@@ -271,4 +271,3 @@ GO
 
 SELECT 'Parche sisv1 de compatibilidad creado/actualizado correctamente.' AS Resultado;
 GO
-

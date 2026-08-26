@@ -486,7 +486,7 @@ def _ensure_authority_record(cursor: pyodbc.Cursor, authority: dict[str, Any]) -
 
     source_key = _authority_source_key(authority)
     if not source_key:
-        raise HTTPException(status_code=400, detail="El usuario academico no tiene identificador en USUARIO_SIS.")
+        raise HTTPException(status_code=400, detail='El usuario académico no tiene identificador en USUARIO_SIS.')
 
     cursor.execute(
         """
@@ -507,14 +507,14 @@ def _ensure_authority_record(cursor: pyodbc.Cursor, authority: dict[str, Any]) -
         source_key,
         _clean_text(authority.get("cedula")) or None,
         _clean_text(authority.get("login")) or None,
-        _clean_text(authority.get("nombres")) or _clean_text(authority.get("login")) or "Autoridad academica",
+        _clean_text(authority.get("nombres")) or _clean_text(authority.get("login")) or "Autoridad académica",
         _clean_text(authority.get("email")) or None,
         _clean_text(authority.get("coordcarrera")) or None,
-        "Registrado automaticamente desde el modulo de evaluacion 360 usando INTECBDD.dbo.USUARIO_SIS.cedula.",
+        "Registrado automáticamente desde el módulo de evaluación 360 mediante INTECBDD.dbo.USUARIO_SIS.cedula.",
     )
     row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=500, detail="No se pudo registrar la autoridad academica.")
+        raise HTTPException(status_code=500, detail='No se pudo registrar la autoridad académica.')
     return _row_dict(cursor, row)
 
 
@@ -1650,7 +1650,7 @@ def _find_student_course(cursor: pyodbc.Cursor, student_code: int, payload: Teac
         detail = (
             "La materia seleccionada no tiene promedio final registrado para la autoevaluación estudiantil."
             if payload.flow == "auto_estudiante"
-            else "La materia seleccionada no está asignada al estudiante en ese periodo."
+            else "La materia seleccionada no está asignada al estudiante en ese período."
         )
         raise HTTPException(status_code=404, detail=detail)
     course = _course_from_row(_row_dict(cursor, row))
@@ -1730,7 +1730,7 @@ def _find_authority_course(
                 return course
         raise HTTPException(
             status_code=404,
-            detail="La materia seleccionada no esta asignada a esta autoridad academica.",
+            detail='La materia seleccionada no está asignada a esta autoridad académica.',
         )
 
     coordcarrera = _clean_text(authority.get("coordcarrera"))
@@ -2442,7 +2442,7 @@ def _fetch_teacher_grade_report(
     normalized_document_type = _clean_text(document_type or "certificado")
     is_consolidated_document = normalized_document_type == "consolidado"
     if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
-        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el PDF.")
+        raise HTTPException(status_code=400, detail='Tipo de evaluación no válido para el PDF.')
     teachers, subjects, student_coverage, period_label = _teacher_evaluation_academic_maps(periodo)
     subject_group_by_code = _subject_equivalence_groups(periodo)
     with get_evaluation_connection() as conn:
@@ -2590,7 +2590,7 @@ def _fetch_teacher_grade_report(
                 a.Jornada,
                 a.Paralelo,
                 te.Nombre AS Tipo_Evaluacion,
-                COALESCE(dg.Nombre, di.Nombre, 'Sin dimensiÃ³n') AS Dimension_Global,
+                COALESCE(dg.Nombre, di.Nombre, N'Sin dimensión') AS Dimension_Global,
                 COUNT(DISTINCT a.Id_Aplicacion) AS Total_Evaluaciones,
                 COUNT(r.Id_Respuesta) AS Total_Respuestas,
                 AVG(TRY_CONVERT(float, r.Puntaje)) AS Promedio_Dimension
@@ -2614,7 +2614,7 @@ def _fetch_teacher_grade_report(
                 a.Jornada,
                 a.Paralelo,
                 te.Nombre,
-                COALESCE(dg.Nombre, di.Nombre, 'Sin dimensiÃ³n')
+                COALESCE(dg.Nombre, di.Nombre, N'Sin dimensión')
             """,
             *params,
         )
@@ -2669,7 +2669,7 @@ def _fetch_teacher_grade_report(
                 a.Paralelo,
                 te.Codigo AS Codigo_Tipo_Evaluacion,
                 te.Nombre AS Tipo_Evaluacion,
-                COALESCE(dg.Nombre, di.Nombre, 'Sin dimensión') AS Dimension_Global,
+                COALESCE(dg.Nombre, di.Nombre, N'Sin dimensión') AS Dimension_Global,
                 p.Id_Pregunta,
                 p.NoPregunta,
                 p.Detalle_Preg,
@@ -2697,7 +2697,7 @@ def _fetch_teacher_grade_report(
                 a.Paralelo,
                 te.Codigo,
                 te.Nombre,
-                COALESCE(dg.Nombre, di.Nombre, 'Sin dimensión'),
+                COALESCE(dg.Nombre, di.Nombre, N'Sin dimensión'),
                 p.Id_Pregunta,
                 p.NoPregunta,
                 p.Detalle_Preg,
@@ -3265,7 +3265,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         rightMargin=1.05 * cm,
         topMargin=1.15 * cm,
         bottomMargin=1.0 * cm,
-        title="Certificado de evaluacion docente",
+        title="Certificado de evaluación docente",
     )
     story: list[Any] = []
 
@@ -3279,13 +3279,13 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 Spacer(1, 0.35 * cm),
                 Paragraph(document_title, styles["EvalTitle"]),
                 Paragraph(
-                    f"Periodo: {escape(report.get('periodo_detalle') or report.get('periodo') or '-')}",
+                    f"Período: {escape(report.get('periodo_detalle') or report.get('periodo') or '-')}",
                     styles["EvalSubtitle"],
                 ),
                 Spacer(1, 0.5 * cm),
             ]
         )
-        story.append(Paragraph("No existen calificaciones registradas para el periodo seleccionado.", styles["EvalBody"]))
+        story.append(Paragraph("No existen calificaciones registradas para el período seleccionado.", styles["EvalBody"]))
     for teacher_index, teacher_group in enumerate(teachers):
         if teacher_index:
             story.append(PageBreak())
@@ -3338,7 +3338,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     Paragraph(
                         f"<b>Cédula:</b> {escape(_clean(teacher.get('cedula_doc')) or '-')}<br/>"
                         f"<b>Docente:</b> {escape(_clean(teacher.get('docente')) or '-')}<br/>"
-                        f"<b>Periodo:</b> {escape(period_label or '-')}",
+                        f"<b>Período:</b> {escape(period_label or '-')}",
                         styles["EvalBody"],
                     ),
                     Paragraph(
@@ -3447,7 +3447,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ]))
-            story.append(Paragraph("<b>PONDERACIONES DEL PERIODO</b>", styles["EvalSection"]))
+            story.append(Paragraph("<b>PONDERACIONES DEL PERÍODO</b>", styles["EvalSection"]))
             story.append(weights_table)
             story.append(Spacer(1, 0.2 * cm))
 
@@ -3769,7 +3769,10 @@ def get_teacher_evaluation_admin_periods(limit: int = Query(default=20, ge=1, le
             items = [_period_row(row) for row in cursor.fetchall()]
             return {"items": items, "total": len(items)}
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar periodos de evaluacion docente: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudieron consultar los períodos de evaluación docente: {exc}",
+        ) from exc
 
 
 @router.get("/admin/pendientes")
@@ -3782,7 +3785,7 @@ def get_teacher_evaluation_admin_pending(
     flows = list(allowed_flows) if flow == "all" else [flow]
     for item in flows:
         if item not in allowed_flows:
-            raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para reporte administrativo.")
+            raise HTTPException(status_code=400, detail='Tipo de evaluación no válido para reporte administrativo.')
 
     items: list[dict[str, Any]] = []
     summary: dict[str, dict[str, Any]] = {
@@ -3954,7 +3957,7 @@ def get_teacher_evaluation_admin_pending(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar pendientes de evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudieron consultar los pendientes de evaluación docente: {exc}") from exc
 
 
 def _related_subject_codes(cursor: pyodbc.Cursor, codigo_materia: str) -> list[str]:
@@ -4000,7 +4003,7 @@ def get_teacher_evaluation_progress_detail(
 ) -> dict[str, Any]:
     report_flow = _clean_text(flow or "all")
     if report_flow != "all" and report_flow not in {"student", "auto_docente", "par_docente", "academico_docente"}:
-        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para el grafico.")
+        raise HTTPException(status_code=400, detail='Tipo de evaluación no válido para el gráfico.')
     try:
         teachers, subjects, _, period_label = _teacher_evaluation_academic_maps(periodo)
         teacher = teachers.get(
@@ -4078,8 +4081,8 @@ def get_teacher_evaluation_progress_detail(
             items.append(
                 {
                     "flow": item_flow or "all",
-                    "flow_label": _clean_text(row.get("Tipo_Evaluacion")) or "Evaluacion",
-                    "categoria": _clean_text(row.get("Dimension_Global")) or "Categoria general",
+                    "flow_label": _clean_text(row.get("Tipo_Evaluacion")) or "Evaluación",
+                    "categoria": _clean_text(row.get("Dimension_Global")) or "Categoría general",
                     "promedio": average,
                     "promedio_ajustado": adjusted_average,
                     "ponderacion": round(category_weight, 2),
@@ -4126,9 +4129,9 @@ def get_teacher_evaluation_progress_participants(
     report_flow = _clean_text(flow or "all")
     status = _clean_text(estado).lower()
     if report_flow != "all" and report_flow not in _EVALUATION_FLOWS:
-        raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para participantes.")
+        raise HTTPException(status_code=400, detail='Tipo de evaluación no válido para participantes.')
     if status not in {"completadas", "pendientes"}:
-        raise HTTPException(status_code=400, detail="Estado no valido para participantes.")
+        raise HTTPException(status_code=400, detail='Estado no válido para participantes.')
     flows = ("student", "auto_estudiante", "auto_docente", "par_docente", "academico_docente") if report_flow == "all" else (report_flow,)
 
     try:
@@ -4212,7 +4215,7 @@ def get_teacher_evaluation_progress_participants(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar participantes de evaluacion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudieron consultar los participantes de la evaluación: {exc}") from exc
 
 
 @router.get("/admin/avance-estudiantes")
@@ -4319,7 +4322,7 @@ def get_teacher_evaluation_auto_student_list(
 ) -> dict[str, Any]:
     normalized_status = _clean_text(estado).lower()
     if normalized_status not in {"pendientes", "realizadas", "todos"}:
-        raise HTTPException(status_code=400, detail="Estado no valido para autoevaluacion estudiantil.")
+        raise HTTPException(status_code=400, detail='Estado no válido para la autoevaluación estudiantil.')
     try:
         with get_connection() as academic_conn, get_evaluation_connection() as evaluation_conn:
             academic_cursor = academic_conn.cursor()
@@ -4376,7 +4379,7 @@ def get_teacher_evaluation_auto_student_list(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar autoevaluacion estudiantil: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar la autoevaluación estudiantil: {exc}") from exc
 
 
 @router.get("/admin/estudiante-notas")
@@ -4400,7 +4403,7 @@ def get_teacher_evaluation_student_grades(
             )
             row = cursor.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="No se encontro el estudiante.")
+                raise HTTPException(status_code=404, detail='No se encontró el estudiante.')
             grades = _student_period_grades(cursor, periodo, codigo_estud)
             return {
                 "periodo": periodo,
@@ -4553,7 +4556,7 @@ def get_teacher_evaluation_graded_teachers(
             else:
                 weight_rows = []
                 if report_flow not in _EVALUATION_FLOWS or report_flow == "auto_estudiante":
-                    raise HTTPException(status_code=400, detail="Tipo de evaluacion no valido para docentes calificados.")
+                    raise HTTPException(status_code=400, detail='Tipo de evaluación no válido para docentes calificados.')
                 instrument = _get_instrument(cursor, report_flow)
                 flow_label = _flow_config(report_flow)["label"]
                 cursor.execute(
@@ -4724,10 +4727,10 @@ def download_teacher_evaluation_grades_pdf(
 
 @router.get("/identity/{cedula}")
 def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
-    """Resolve una cedula contra estudiantes y docentes para abrir el flujo correcto."""
+    """Resuelve una cédula entre estudiantes y docentes para abrir el flujo correcto."""
     cleaned = _clean_text(cedula)
     if not cleaned:
-        raise HTTPException(status_code=400, detail="Ingrese un numero de cedula valido.")
+        raise HTTPException(status_code=400, detail='Ingrese un número de cédula válido.')
 
     try:
         with get_connection() as conn:
@@ -4739,7 +4742,7 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
             if not student and not teacher and not authority:
                 raise HTTPException(
                     status_code=404,
-                    detail="No se encontro informacion activa para esa cedula en estudiantes, docentes ni usuarios academicos.",
+                    detail='No se encontró información activa para esa cédula en estudiantes, docentes ni usuarios académicos.',
                 )
 
             student_courses: list[dict[str, Any]] = []
@@ -4761,9 +4764,9 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
                     student["codigo_estud"], auto_student_courses, "auto_estudiante"
                 )
                 if not student_courses:
-                    warnings.append("No existen materias con docente asignado para esta cedula.")
+                    warnings.append("No existen materias con un docente asignado para esta cédula.")
                 if not auto_student_courses:
-                    warnings.append("No existen materias con promedio final para autoevaluacion estudiantil.")
+                    warnings.append("No existen materias con promedio final para la autoevaluación estudiantil.")
 
             if teacher:
                 cursor.execute(_teacher_courses_query(), teacher["codigo_doc"])
@@ -4775,7 +4778,7 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
                 auto_courses = _apply_evaluation_status(teacher["codigo_doc"], auto_courses, "auto_docente")
                 peer_courses = _apply_evaluation_status(teacher["codigo_doc"], peer_courses, "par_docente")
                 if not auto_courses and not peer_courses:
-                    warnings.append("No existen materias asignadas ni docentes pares para esta cedula.")
+                    warnings.append("No existen materias asignadas ni docentes pares para esta cédula.")
 
             if authority:
                 registered_authority: dict[str, Any] | None = None
@@ -4812,7 +4815,7 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
                         authority_evaluator_code, authority_courses, "academico_docente"
                     )
                 if not authority_courses:
-                    warnings.append("No existen docentes asignados para evaluacion academica en esta cedula.")
+                    warnings.append("No existen docentes asignados para la evaluación académica de esta cédula.")
 
             roles: list[str] = []
             if student:
@@ -4838,7 +4841,7 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
     except HTTPException:
         raise
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluación docente: {exc}") from exc
 
 @router.get("/student/{cedula}")
 def get_teacher_evaluation_student(cedula: str) -> dict[str, Any]:
@@ -4847,7 +4850,7 @@ def get_teacher_evaluation_student(cedula: str) -> dict[str, Any]:
             cursor = conn.cursor()
             student = _fetch_student(cursor, cedula)
             if not student:
-                raise HTTPException(status_code=404, detail="No se encontro un estudiante activo con esa cedula.")
+                raise HTTPException(status_code=404, detail='No se encontró un estudiante activo con esa cédula.')
 
             cursor.execute(_courses_query(), student["codigo_estud"])
             courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
@@ -4857,7 +4860,7 @@ def get_teacher_evaluation_student(cedula: str) -> dict[str, Any]:
     except HTTPException:
         raise
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluación docente: {exc}") from exc
 
 
 @router.get("/teacher/{cedula}")
@@ -4867,7 +4870,7 @@ def get_teacher_evaluation_teacher(cedula: str) -> dict[str, Any]:
             cursor = conn.cursor()
             teacher = _fetch_teacher(cursor, cedula)
             if not teacher:
-                raise HTTPException(status_code=404, detail="No se encontro un docente activo con esa cedula.")
+                raise HTTPException(status_code=404, detail='No se encontró un docente activo con esa cédula.')
 
             cursor.execute(_teacher_courses_query(), teacher["codigo_doc"])
             auto_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
@@ -4888,7 +4891,7 @@ def get_teacher_evaluation_teacher(cedula: str) -> dict[str, Any]:
     except HTTPException:
         raise
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluación docente: {exc}") from exc
 
 
 @router.post("/evaluate")
@@ -4899,7 +4902,7 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
             academic_cursor = academic_conn.cursor()
             student = _fetch_student(academic_cursor, payload.cedula)
             if not student:
-                raise HTTPException(status_code=404, detail="No se encontro un estudiante activo con esa cedula.")
+                raise HTTPException(status_code=404, detail='No se encontró un estudiante activo con esa cédula.')
             course = _find_student_course(academic_cursor, student["codigo_estud"], payload)
 
         with get_evaluation_connection() as evaluation_conn:
@@ -4919,7 +4922,7 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
             if existing > 0:
                 raise HTTPException(
                     status_code=409,
-                    detail="Ya registraste la evaluacion de esta materia en este periodo. La evaluacion quedo cerrada.",
+                    detail='Ya registró la evaluación de esta materia en este período. La evaluación quedó cerrada.',
                 )
 
             campaign_id = _get_or_create_campaign(
@@ -4948,9 +4951,9 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
                 **result,
                 "student": student,
                 "message": (
-                    "Autoevaluacion estudiantil registrada correctamente."
+                    "Autoevaluación estudiantil registrada correctamente."
                     if flow == "auto_estudiante"
-                    else "Evaluacion docente registrada correctamente."
+                    else "Evaluación docente registrada correctamente."
                 ),
             }
     except HTTPException:
@@ -4958,7 +4961,7 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo guardar la evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar la evaluación docente: {exc}") from exc
 
 
 @router.post("/teacher/evaluate")
@@ -4974,11 +4977,11 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
             if flow == "academico_docente":
                 authority = _fetch_authority(academic_cursor, payload.cedula)
                 if not authority:
-                    raise HTTPException(status_code=404, detail="No se encontro un usuario academico activo con esa cedula.")
+                    raise HTTPException(status_code=404, detail='No se encontró un usuario académico activo con esa cédula.')
             else:
                 teacher = _fetch_teacher(academic_cursor, payload.cedula)
                 if not teacher:
-                    raise HTTPException(status_code=404, detail="No se encontro un docente activo con esa cedula.")
+                    raise HTTPException(status_code=404, detail='No se encontró un docente activo con esa cédula.')
                 course = _find_teacher_course(academic_cursor, teacher["codigo_doc"], payload)
                 evaluator_code = teacher["codigo_doc"]
                 origin_evaluator_table = "INTECBDD.dbo.DATOSDOCENTE"
@@ -4988,7 +4991,7 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
 
                 if flow == "academico_docente":
                     if authority is None:
-                        raise HTTPException(status_code=404, detail="No se encontro un usuario academico activo con esa cedula.")
+                        raise HTTPException(status_code=404, detail='No se encontró un usuario académico activo con esa cédula.')
                     registered_authority = _ensure_authority_record(evaluation_cursor, authority)
                     authority["id_autoridad_eval360"] = _safe_int(registered_authority.get("Id_Autoridad"))
                     authority["cargo"] = registered_authority.get("Cargo")
@@ -5016,7 +5019,7 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
                 if existing > 0:
                     raise HTTPException(
                         status_code=409,
-                        detail="Ya registraste esta evaluacion para la materia seleccionada en este periodo. La evaluacion quedo cerrada.",
+                        detail='Ya registró esta evaluación para la materia seleccionada en este período. La evaluación quedó cerrada.',
                     )
 
                 campaign_id = _get_or_create_campaign(
@@ -5048,7 +5051,7 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
                 evaluation_conn.commit()
                 response = {
                     **result,
-                    "message": "Evaluacion docente registrada correctamente.",
+                    "message": 'Evaluación docente registrada correctamente.',
                 }
                 if teacher:
                     response["teacher"] = teacher
@@ -5060,4 +5063,4 @@ def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) ->
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo guardar la evaluacion docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar la evaluación docente: {exc}") from exc

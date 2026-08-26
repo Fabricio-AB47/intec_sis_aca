@@ -102,7 +102,7 @@ def _validate_cedula(value: str) -> str:
     if not _CEDULA_PATTERN.fullmatch(cedula):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="La cedula debe contener exactamente 10 digitos.",
+            detail='La cédula debe contener exactamente 10 dígitos.',
         )
     return cedula
 
@@ -117,11 +117,11 @@ def _validate_institutional_email(value: str) -> str:
 def _validate_password(value: str) -> str:
     password = str(value or "")
     if password != password.strip():
-        raise ValueError("La contrasena no puede iniciar ni terminar con espacios.")
+        raise ValueError('La contraseña no puede iniciar ni terminar con espacios.')
     if len(password) < 6 or len(password) > 20:
-        raise ValueError("La contrasena debe tener entre 6 y 20 caracteres.")
+        raise ValueError('La contraseña debe tener entre 6 y 20 caracteres.')
     if any(character in "\r\n\t" for character in password):
-        raise ValueError("La contrasena contiene caracteres no permitidos.")
+        raise ValueError('La contraseña contiene caracteres no permitidos.')
     return password
 
 
@@ -249,17 +249,23 @@ def _read_workbook(content: bytes, filename: str) -> list[dict[str, Any]]:
     if not filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Sube un archivo Excel con extension .xlsx.")
     if len(content) > _MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo supera el maximo permitido de 12 MB.")
+        raise HTTPException(status_code=400, detail='El archivo supera el máximo permitido de 12 MB.')
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="No se pudo leer el archivo Excel.") from exc
 
-    worksheet = workbook["Actualizacion"] if "Actualizacion" in workbook.sheetnames else workbook.active
+    if "Actualización" in workbook.sheetnames:
+        worksheet = workbook["Actualización"]
+    elif "Actualizacion" in workbook.sheetnames:
+        # Compatibilidad con plantillas descargadas antes de corregir la ortografía.
+        worksheet = workbook["Actualizacion"]
+    else:
+        worksheet = workbook.active
     raw_rows = list(worksheet.iter_rows(values_only=True, max_row=_MAX_ROWS + 12))
     workbook.close()
     if not raw_rows:
-        raise HTTPException(status_code=400, detail="El archivo Excel esta vacio.")
+        raise HTTPException(status_code=400, detail='El archivo Excel esta vacío.')
 
     header_index = _find_header_row(raw_rows)
     headers = [_slug(value) for value in raw_rows[header_index]]
@@ -299,7 +305,7 @@ def _build_template_bytes(cedulas: list[str]) -> bytes:
     """Build a plain XLSX range that Excel can open without repairing it."""
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = "Actualizacion"
+    worksheet.title = "Actualización"
     worksheet.append(_TEMPLATE_HEADERS)
     for cedula in cedulas:
         # Avoid materializing empty inline strings in thousands of table rows.
@@ -319,14 +325,14 @@ def _build_template_bytes(cedulas: list[str]) -> bytes:
         cell.number_format = "@"
 
     instructions = workbook.create_sheet("Instrucciones")
-    instructions.append(["Actualizacion masiva de correo institucional"])
-    instructions.append(["La cedula es la unica clave de identificacion incluida en la plantilla."])
-    instructions.append(["El sistema valida su existencia y obtiene automaticamente el codigo_estud unico desde DATOS_ESTUD."])
+    instructions.append(["Actualización masiva del correo institucional"])
+    instructions.append(["La cédula es la única clave de identificación incluida en la plantilla."])
+    instructions.append(["El sistema valida su existencia y obtiene automáticamente el codigo_estud único desde DATOS_ESTUD."])
     instructions.append(["No agregue codigo_estud, nombres, carrera ni otros campos de referencia."])
-    instructions.append(["Complete correo_intec_nuevo y password_nueva solo para las cedulas que desea actualizar."])
-    instructions.append(["La cedula debe tener 10 digitos y el correo debe terminar en @intec.edu.ec."])
-    instructions.append(["La contrasena debe tener entre 6 y 20 caracteres."])
-    instructions.append(["Las contrasenas existentes nunca se exportan."])
+    instructions.append(["Complete correo_intec_nuevo y password_nueva solo para las cédulas que desea actualizar."])
+    instructions.append(["La cédula debe tener 10 dígitos y el correo debe terminar en @intec.edu.ec."])
+    instructions.append(["La contraseña debe tener entre 6 y 20 caracteres."])
+    instructions.append(["Las contraseñas existentes nunca se exportan."])
     instructions["A1"].font = Font(bold=True, size=14, color="A91F1B")
     instructions.column_dimensions["A"].width = 110
 
@@ -446,17 +452,17 @@ def _analyze_rows(cursor: Any, parsed: list[dict[str, Any]]) -> dict[str, Any]:
         password = str(item["password"])
 
         if not _CEDULA_PATTERN.fullmatch(cedula):
-            messages.append("La cedula debe contener exactamente 10 digitos")
+            messages.append("La cédula debe contener exactamente 10 dígitos")
         if cedula_counts.get(cedula, 0) > 1:
-            messages.append("La cedula esta repetida en el archivo")
+            messages.append("La cédula está repetida en el archivo")
         if student is None and _CEDULA_PATTERN.fullmatch(cedula):
-            messages.append("La cedula no existe en DATOS_ESTUD")
+            messages.append("La cédula no existe en DATOS_ESTUD")
         elif student is not None and student_code is None:
             codes = student.get("_codigos_estud")
             if isinstance(codes, list) and len(codes) > 1:
-                messages.append("La cedula esta asociada a mas de un codigo de estudiante")
+                messages.append("La cédula está asociada a más de un código de estudiante")
             else:
-                messages.append("La cedula no tiene un codigo unico valido")
+                messages.append("La cédula no tiene un código único válido")
         try:
             new_email = _validate_institutional_email(str(item["correo_intec"]))
         except ValueError as exc:
@@ -510,7 +516,7 @@ def _analyze_rows(cursor: Any, parsed: list[dict[str, Any]]) -> dict[str, Any]:
 def _upsert_student_email(cursor: Any, row: dict[str, Any]) -> None:
     code = int(row.get("codigo_estud") or 0)
     if code <= 0:
-        raise ValueError("El estudiante no tiene codigo valido.")
+        raise ValueError('El estudiante no tiene código válido.')
     email = str(row["correo_nuevo"])
     password = str(row["password_nueva"])
     student_name = _clean(row.get("estudiante"))[:100]
@@ -683,7 +689,7 @@ async def apply_workbook(
         connection.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No se pudo aplicar la actualizacion de correos institucionales.",
+            detail='No se pudo aplicar la actualización de correos institucionales.',
         ) from exc
     finally:
         connection.close()
@@ -715,7 +721,7 @@ def update_student_email(
         if student_code is None:
             raise HTTPException(
                 status_code=409,
-                detail="La cedula no esta asociada a un codigo unico de estudiante.",
+                detail='La cédula no está asociada a un código único de estudiante.',
             )
         owners = _email_owners(cursor, [payload.correo_intec])
         if any(owner != student_code for owner in owners.get(payload.correo_intec, set())):
@@ -741,7 +747,7 @@ def update_student_email(
     response.headers["Cache-Control"] = "no-store"
     return {
         "ok": True,
-        "message": "Correo institucional y contrasena actualizados.",
+        "message": 'Correo institucional y contraseña actualizados.',
         "cedula": normalized_cedula,
         "correo_intec": payload.correo_intec,
     }

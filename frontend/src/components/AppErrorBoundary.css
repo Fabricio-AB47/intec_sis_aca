@@ -1,0 +1,88 @@
+.app-error-boundary {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f4f5f7;
+}
+
+.app-error-boundary__panel {
+  width: min(100%, 640px);
+  padding: 28px;
+  border: 1px solid #d3dae3;
+  border-left: 5px solid #a6201a;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(31, 39, 66, 0.12);
+}
+
+.app-error-boundary__eyebrow {
+  margin: 0 0 8px;
+  color: #69748b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.app-error-boundary h1 {
+  margin: 0;
+  color: #14213d;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.app-error-boundary p:not(.app-error-boundary__eyebrow) {
+  margin: 14px 0 0;
+  color: #3f4a61;
+}
+
+.app-error-boundary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.app-error-boundary__actions button {
+  min-height: 42px;
+  padding: 8px 18px;
+  border: 1px solid #a6201a;
+  border-radius: 7px;
+  background: #a6201a;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.app-error-boundary__actions button:hover {
+  background: #8d1a16;
+}
+
+.app-error-boundary__actions .app-error-boundary__secondary {
+  border-color: #bcc8d4;
+  background: #ffffff;
+  color: #14213d;
+}
+
+.app-error-boundary__actions .app-error-boundary__secondary:hover {
+  background: #eef3f6;
+}
+
+@media (max-width: 540px) {
+  .app-error-boundary {
+    padding: 14px;
+  }
+
+  .app-error-boundary__panel {
+    padding: 22px 18px;
+  }
+
+  .app-error-boundary h1 {
+    font-size: 24px;
+  }
+
+  .app-error-boundary__actions button {
+    width: 100%;
+  }
+}

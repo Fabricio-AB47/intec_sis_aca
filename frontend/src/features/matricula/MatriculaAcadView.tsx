@@ -285,7 +285,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         })
       } catch (error) {
         if (cancelled) return
-        setCatalogError(handleError(error, 'Error consultando catalogo academico'))
+        setCatalogError(handleError(error, 'Error consultando catálogo académico'))
       } finally {
         if (!cancelled) {
           setCatalogLoading(false)
@@ -524,7 +524,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
     promotionSourceStudents.length === 0
       ? ''
       : promotionPlanGroups.length === 0
-        ? 'No hay promocion habilitada: revisa que existan materias configuradas en el nivel inmediato superior.'
+        ? 'No hay promoción habilitada: revisa que existan materias configuradas en el nivel inmediato superior.'
         : `Plan automatico: ${promotionPlanGroups.length} grupo(s), ${promotionPlanGroups.reduce((total, group) => total + group.studentCodes.length, 0)} estudiante(s), ${promotionPlanGroups.reduce((total, group) => total + group.subjectCodes.length, 0)} materia(s) destino.`
   const englishCareerCode =
     selectedCareerCodes.find((code) => {
@@ -546,7 +546,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
   function downloadBulkValidationDocument() {
     const rows = bulkPreview?.items || []
     if (rows.length === 0) {
-      setActionError('Genera primero la vista previa masiva para descargar la validacion.')
+      setActionError('Genere primero la vista previa masiva para descargar la validación.')
       return
     }
 
@@ -618,29 +618,29 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           </style>
         </head>
         <body>
-          <h1>VALIDACION DE MATRICULA ACADEMICA</h1>
+          <h1>VALIDACIÓN DE MATRÍCULA ACADÉMICA</h1>
           <table class="meta">
             <tr><td>Fecha de generacion</td><td>${escapeHtml(generatedAtLabel)}</td></tr>
-            <tr><td>Periodo inscrito</td><td>${escapeHtml(sourcePeriodLabel)}</td></tr>
-            <tr><td>Periodo matricula</td><td>${escapeHtml(targetPeriodLabel)}</td></tr>
+            <tr><td>Período inscrito</td><td>${escapeHtml(sourcePeriodLabel)}</td></tr>
+            <tr><td>Período de matrícula</td><td>${escapeHtml(targetPeriodLabel)}</td></tr>
             <tr><td>Carrera(s)</td><td>${escapeHtml(careerLabel)}</td></tr>
             <tr><td>Total revisados</td><td>${rows.length}</td></tr>
             <tr><td>Matriculados/listos</td><td>${readyRows.length}</td></tr>
             <tr><td>No matriculados</td><td>${blockedRows}</td></tr>
           </table>
 
-          <h2>Detalle de validacion</h2>
+          <h2>Detalle de validación</h2>
           <table>
             <thead>
               <tr>
                 <th>No.</th>
                 <th>Resultado</th>
-                <th>Codigo estudiante</th>
-                <th>Cedula</th>
+                <th>Código del estudiante</th>
+                <th>Cédula</th>
                 <th>Estudiante</th>
                 <th>Carrera</th>
-                <th>Periodo inscrito</th>
-                <th>Periodo matricula</th>
+                <th>Período inscrito</th>
+                <th>Período de matrícula</th>
                 <th>Nivel origen</th>
                 <th>Nivel destino</th>
                 <th>Paralelo</th>
@@ -648,10 +648,10 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                 <th>Insertar</th>
                 <th>Existentes</th>
                 <th>Bloq. prerrequisito</th>
-                <th>Bloq. matricula</th>
+                <th>Bloq. matrícula</th>
                 <th>Materias a matricular</th>
                 <th>Materias bloqueadas</th>
-                <th>Observacion</th>
+                <th>Observación</th>
               </tr>
             </thead>
             <tbody>${bodyRows}</tbody>
@@ -666,7 +666,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
       'application/vnd.ms-excel;charset=utf-8'
     )
     setActionError('')
-    setActionMessage('Documento de validacion descargado.')
+    setActionMessage('Documento de validación descargado.')
   }
 
   async function loadCohort(
@@ -675,7 +675,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
     parallelFilter: string = selectedParallelFilter
   ) {
     if (!periodCode) {
-      setCohortError('Selecciona un periodo para cargar estudiantes.')
+      setCohortError('Seleccione un período para cargar estudiantes.')
       return
     }
     setCohortLoading(true)
@@ -695,7 +695,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           : await fetchAcademicEnrollmentCohort(periodCode, careerCodes[0] || '', parallelFilter)
       setCohort(payload)
     } catch (error) {
-      setCohortError(handleError(error, 'Error consultando estudiantes por periodo'))
+      setCohortError(handleError(error, 'Error consultando estudiantes por período'))
       setCohort(null)
     } finally {
       setCohortLoading(false)
@@ -712,7 +712,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
       return items
     } catch (error) {
       setPeriodCareers([])
-      setPeriodCareersError(handleError(error, 'Error consultando carreras del periodo inscrito'))
+      setPeriodCareersError(handleError(error, 'Error consultando carreras del período inscrito'))
       return []
     } finally {
       setPeriodCareersLoading(false)
@@ -881,7 +881,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         setPaymentDate(cabecera.fecha_pago || '')
       }
     } catch (error) {
-      setDetailError(handleError(error, 'Error consultando detalle de matricula'))
+      setDetailError(handleError(error, 'Error consultando detalle de matrícula'))
       setDetail(null)
       setSelectedSubjects([])
     } finally {
@@ -932,11 +932,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
   function buildPayload(): AcademicEnrollmentPayload | null {
     if (!selectedStudent || !selectedCareer || !selectedPeriod) {
-      setActionError('Selecciona estudiante, carrera y periodo de matricula.')
+      setActionError('Seleccione estudiante, carrera y período de matrícula.')
       return null
     }
     if (selectedSubjects.length === 0) {
-      setActionError('Selecciona al menos una materia.')
+      setActionError('Seleccione al menos una materia.')
       return null
     }
 
@@ -978,22 +978,22 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
   async function buildBulkPayloads(): Promise<{ payloads: AcademicBulkEnrollmentPayload[]; groups: BulkPlanGroup[] } | null> {
     const careerCodes = selectedCareerCodes.length ? selectedCareerCodes : selectedCareer ? [selectedCareer] : []
     if (careerCodes.length === 0 || !sourcePeriod || !selectedPeriod) {
-      setActionError('Selecciona una o varias carreras, periodo inscrito y periodo de matricula.')
+      setActionError('Seleccione una o varias carreras, período inscrito y período de matrícula.')
       return null
     }
     if (cohortStudents.length === 0) {
-      setActionError('Carga la lista de estudiantes del periodo inscrito antes de matricular masivamente.')
+      setActionError('Cargue la lista de estudiantes del período inscrito antes de matricular masivamente.')
       return null
     }
     if (bulkScope === 'PARCIAL' && selectedBulkStudentKeys.length === 0) {
-      setActionError('Selecciona al menos un estudiante para la matriculacion parcial.')
+      setActionError('Seleccione al menos un estudiante para la matriculación parcial.')
       return null
     }
 
     const pensumMap = await getPensumMapForCareers(careerCodes)
     const groups = createPromotionPlanGroups(pensumMap)
     if (groups.length === 0) {
-      setActionError('No hay estudiantes habilitados para matricular: revisa niveles, pensum o reprobadas de nivel 4.')
+      setActionError('No hay estudiantes habilitados para matricular. Revise los niveles, el pensum o las asignaturas reprobadas de nivel 4.')
       return null
     }
 
@@ -1059,8 +1059,8 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
     const payload = buildPayload()
     if (!payload) return
     const confirmed = await requestConfirm(
-      'Guardar matricula',
-      'Guardar los cambios de matricula academica seleccionados?'
+      'Guardar matrícula',
+      '¿Desea guardar los cambios de matrícula académica seleccionados?'
     )
     if (!confirmed) return
 
@@ -1071,7 +1071,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
       const response = await saveAcademicEnrollment(payload)
       const blockedByPeriod = response.blocked_by_period ?? 0
       const changedRows = (response.inserted ?? 0) + (response.updated ?? 0) + (response.removed ?? 0)
-      const resultMessage = `${response.message || 'Matricula guardada.'} Insertadas ${response.inserted ?? 0}, bloqueadas por periodo ${blockedByPeriod}, existentes sin cambio ${response.existing_skipped ?? 0}, removidas ${response.removed ?? 0}.`
+      const resultMessage = `${response.message || 'Matrícula guardada.'} Insertadas ${response.inserted ?? 0}, bloqueadas por periodo ${blockedByPeriod}, existentes sin cambio ${response.existing_skipped ?? 0}, removidas ${response.removed ?? 0}.`
       if (blockedByPeriod > 0 && changedRows === 0) {
         setActionError(resultMessage)
       } else {
@@ -1083,7 +1083,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         await loadCohort(sourcePeriod, selectedCareer, selectedParallelFilter)
       }
     } catch (error) {
-      setActionError(handleError(error, 'Error guardando matricula academica'))
+      setActionError(handleError(error, 'Error guardando matrícula académica'))
     } finally {
       setSaveLoading(false)
     }
@@ -1152,14 +1152,14 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
   async function saveBulkEnrollment() {
     if (!canSaveBulkEnrollment) {
-      setActionError('Genera una vista previa masiva con estudiantes listos antes de matricular.')
+      setActionError('Genere una vista previa masiva con estudiantes listos antes de matricular.')
       return
     }
     const plan = await buildBulkPayloads()
     if (!plan) return
     const confirmed = await requestConfirm(
-      'Matricula masiva',
-      `Matricular ${bulkScope === 'TOTAL' ? 'total' : 'parcialmente'} ${bulkStudentCount} estudiante(s) en ${new Set(plan.groups.map((group) => group.careerCode)).size} carrera(s) y ${plan.groups.length} grupo(s) de nivel hacia ${selectedPeriodName || 'el periodo destino'}?`
+      'Matrícula masiva',
+      `¿Desea matricular ${bulkScope === 'TOTAL' ? 'total' : 'parcialmente'} ${bulkStudentCount} estudiante(s) en ${new Set(plan.groups.map((group) => group.careerCode)).size} carrera(s) y ${plan.groups.length} grupo(s) de nivel hacia ${selectedPeriodName || 'el período destino'}?`
     )
     if (!confirmed) return
 
@@ -1204,7 +1204,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         .map((response) => response.audit_id)
         .filter((auditId): auditId is number => typeof auditId === 'number')
       setActionMessage(
-        `Matriculacion masiva guardada${auditIds.length ? `, auditoria ${auditIds.join(', ')}` : ''}. Grupos ${plan.groups.length}, estudiantes procesados ${summary.estudiantes_procesados}, insertadas ${summary.inserted}, ya matriculados ${summary.already_enrolled_students}, existentes sin cambio ${summary.existing_skipped}, ya auditadas ${summary.already_audited}, bloqueadas por matricula ${summary.blocked_by_repetition}.`
+        `Matriculación masiva guardada${auditIds.length ? `; auditoría ${auditIds.join(', ')}` : ''}. Grupos: ${plan.groups.length}; estudiantes procesados: ${summary.estudiantes_procesados}; inserciones: ${summary.inserted}; ya matriculados: ${summary.already_enrolled_students}; existentes sin cambios: ${summary.existing_skipped}; ya auditados: ${summary.already_audited}; bloqueados por matrícula: ${summary.blocked_by_repetition}.`
       )
       setBulkPreview({
         criteria: plan.payloads[0],
@@ -1254,7 +1254,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         await loadStudentDetail(selectedStudent, selectedCareer, selectedPeriod)
       }
     } catch (error) {
-      setActionError(handleError(error, 'Error guardando matriculacion masiva'))
+      setActionError(handleError(error, 'Error guardando matriculación masiva'))
     } finally {
       setBulkSaveLoading(false)
     }
@@ -1294,12 +1294,12 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
   async function runParallelBalance() {
     if (!englishCareerCode || !sourcePeriod) {
-      setBalanceActionError('Selecciona Ingles y el periodo de estudiantes para balancear paralelos.')
+      setBalanceActionError('Seleccione Inglés y el período de los estudiantes para balancear paralelos.')
       return
     }
     const confirmed = await requestConfirm(
       'Balancear paralelos',
-      'Balancear Ingles usando los paralelos de las otras carreras del periodo y redistribuir ABS entre PBS? Esta accion actualiza CARRERAXESTUD.'
+      '¿Desea balancear Inglés usando los paralelos de las otras carreras del período y redistribuir ABS entre PBS? Esta acción actualiza CARRERAXESTUD.'
     )
     if (!confirmed) return
 
@@ -1373,7 +1373,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
           <div className="matricula-acad-form">
             <label>
-              <span>Periodo inscrito</span>
+              <span>Período inscrito</span>
               <select
                 value={sourcePeriod}
                 disabled={catalogLoading}
@@ -1390,7 +1390,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               </select>
             </label>
             <label>
-              <span>Periodo matricula</span>
+              <span>Período matrícula</span>
               <select
                 value={selectedPeriod}
                 disabled={catalogLoading}
@@ -1411,10 +1411,10 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
             </label>
             <div className="matricula-acad-career-picker">
               <span>Carrera</span>
-              {periodCareersLoading ? <p>Cargando carreras del periodo...</p> : null}
-              {!sourcePeriod ? <p>Selecciona primero el periodo inscrito.</p> : null}
+              {periodCareersLoading ? <p>Cargando carreras del período...</p> : null}
+              {!sourcePeriod ? <p>Seleccione primero el período inscrito.</p> : null}
               {sourcePeriod && !periodCareersLoading && careerOptions.length === 0 ? (
-                <p>No hay carreras matriculadas en el periodo inscrito.</p>
+                <p>No hay carreras matriculadas en el período inscrito.</p>
               ) : null}
               <div className="matricula-acad-inline-actions">
                 <button
@@ -1499,14 +1499,14 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               <input value={String(bulkStudentCount)} disabled readOnly />
             </label>
             <label>
-              <span>Nivel promocion</span>
+              <span>Nivel promoción</span>
               <input value={promotionLevelText} disabled readOnly />
             </label>
             <label>
               <span>Tipo</span>
               <select value={enrollmentType} onChange={(event) => setEnrollmentType(event.target.value as MatriculaTipo)}>
                 <option value="R">Regular</option>
-                <option value="H">Homologacion</option>
+                <option value="H">Homologación</option>
               </select>
             </label>
             <label>
@@ -1538,11 +1538,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               />
             </label>
             <label>
-              <span>Inscripcion</span>
+              <span>Inscripción</span>
               <input type="number" min="0" step="0.01" value={inscripValue} onChange={(event) => setInscripValue(event.target.value)} />
             </label>
             <label>
-              <span>Matricula</span>
+              <span>Matrícula</span>
               <input type="number" min="0" step="0.01" value={matriValue} onChange={(event) => setMatriValue(event.target.value)} />
             </label>
             <label>
@@ -1557,11 +1557,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
           <div className="matricula-acad-context">
             <span>{selectedCareerNames || selectedCareerName || 'Carrera pendiente'}</span>
-            <span>Inscrito: {sourcePeriodName || 'Periodo pendiente'}</span>
-            <span>Matricula: {selectedPeriodName || 'Periodo pendiente'}</span>
+            <span>Inscrito: {sourcePeriodName || 'Período pendiente'}</span>
+            <span>Matrícula: {selectedPeriodName || 'Período pendiente'}</span>
             <span>Jornada: {selectedJourneyName || 'Pendiente'}</span>
-            <span>{sourcePeriod ? `${careerOptions.length} carrera(s) del periodo inscrito` : 'Carreras pendientes'}</span>
-            <span>{promotionMessage || 'Nivel promocion pendiente'}</span>
+            <span>{sourcePeriod ? `${careerOptions.length} carrera(s) del período inscrito` : 'Carreras pendientes'}</span>
+            <span>{promotionMessage || 'Nivel promoción pendiente'}</span>
             <label className="matricula-acad-check">
               <input
                 type="checkbox"
@@ -1579,7 +1579,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           <div className="section-title">
             <div>
               <span>Estudiantes</span>
-              <h2>Estudiantes del periodo</h2>
+              <h2>Estudiantes del período</h2>
             </div>
             <div className="matricula-acad-title-actions">
               <button type="button" className="ghost-button" onClick={selectAllBulkStudents} disabled={cohortStudents.length === 0}>
@@ -1654,7 +1654,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           <div className="section-title">
             <div>
               <span>Balance</span>
-              <h2>Distribucion por paralelo</h2>
+              <h2>Distribución por paralelo</h2>
             </div>
             <div className="matricula-acad-title-actions">
               <button
@@ -1683,7 +1683,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           <div className="section-title">
             <div>
               <span>Niveles</span>
-              <h2>Distribucion</h2>
+              <h2>Distribución</h2>
             </div>
           </div>
           <div className="matricula-acad-balance matricula-acad-balance--compact">
@@ -1733,10 +1733,10 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               <thead>
                 <tr>
                   <th>Sel.</th>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Materia</th>
                   <th>Nivel</th>
-                  <th>Creditos</th>
+                  <th>Créditos</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -1818,11 +1818,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                 onClick={downloadBulkValidationDocument}
                 disabled={!canDownloadBulkValidation}
               >
-                Descargar validacion
+                Descargar validación
               </button>
             </div>
             {!bulkPreview ? (
-              <p className="matricula-acad-hint">Genera primero la vista previa masiva para validar estudiantes y materias.</p>
+              <p className="matricula-acad-hint">Genere primero la vista previa masiva para validar estudiantes y materias.</p>
             ) : null}
           </div>
 
@@ -1830,8 +1830,8 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
           {actionMessage ? <p className="form-success">{actionMessage}</p> : null}
           {previewBlockedByPeriod ? (
             <p className="form-error">
-              El estudiante ya tiene matricula registrada en la carrera y periodo destino. No se puede crear otra
-              matricula academica para la misma carrera y periodo.
+              El estudiante ya tiene matrícula registrada en la carrera y período destino. No se puede crear otra
+              matrícula académica para la misma carrera y período.
             </p>
           ) : null}
 
@@ -1857,7 +1857,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               <strong>{preview?.summary?.remover ?? 0}</strong>
             </div>
             <div>
-              <span>Bloq. periodo</span>
+              <span>Bloq. período</span>
               <strong>{preview?.summary?.bloqueadas_por_periodo ?? 0}</strong>
             </div>
           </div>
@@ -1893,7 +1893,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                 <strong>{bulkPreview.summary?.bloqueadas_por_prerrequisito ?? 0}</strong>
               </div>
             <div>
-              <span>Bloq. matricula</span>
+              <span>Bloq. matrícula</span>
               <strong>{bulkPreview.summary?.bloqueadas_por_num_matricula ?? 0}</strong>
             </div>
             <div>
@@ -1915,13 +1915,13 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
             <div className="matricula-acad-bulk-preview matricula-acad-bulk-preview--compact">
               <div className="matricula-acad-bulk-preview-head">
                 <div>
-                  <span>Revision masiva</span>
+                  <span>Revisión masiva</span>
                   <strong>{bulkPreviewReadyStudents.length} estudiante(s) listos</strong>
                 </div>
                 <small>{(bulkPreview.items || []).length} candidato(s) revisado(s)</small>
               </div>
               <button type="button" className="ghost-button" onClick={() => setBulkPreviewModalOpen(true)}>
-                Abrir revision completa
+                Abrir revisión completa
               </button>
             </div>
           ) : null}
@@ -1942,12 +1942,12 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
             <div className="matricula-modal-head matricula-acad-bulk-modal-head">
               <div className="matricula-modal-title matricula-acad-bulk-modal-title">
                 <span>Vista previa masiva</span>
-                <h3 id="matricula-bulk-preview-title">Validacion de matricula academica</h3>
+                <h3 id="matricula-bulk-preview-title">Validación de matrícula académica</h3>
                 <small>{selectedCareerNames || selectedCareerName || 'Carreras seleccionadas'}</small>
               </div>
               <div className="matricula-modal-actions">
                 <button type="button" className="ghost-button" onClick={downloadBulkValidationDocument}>
-                  Descargar validacion
+                  Descargar validación
                 </button>
                 <button
                   type="button"
@@ -1965,11 +1965,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
             <div className="matricula-acad-bulk-modal-summary">
               <div>
-                <span>Periodo inscrito</span>
+                <span>Período inscrito</span>
                 <strong>{sourcePeriodName || sourcePeriod || '-'}</strong>
               </div>
               <div>
-                <span>Periodo matricula</span>
+                <span>Período matrícula</span>
                 <strong>{selectedPeriodName || selectedPeriod || '-'}</strong>
               </div>
               <div>
@@ -1992,7 +1992,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
             <div className="matricula-acad-bulk-preview">
               <div className="matricula-acad-bulk-preview-head">
                 <div>
-                  <span>Detalle de validacion</span>
+                  <span>Detalle de validación</span>
                   <strong>{bulkPreviewReadyStudents.length} estudiante(s) listos</strong>
                 </div>
                 <small>{(bulkPreview.items || []).length} candidato(s) revisado(s)</small>
@@ -2006,7 +2006,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                       <th>Carrera</th>
                       <th>Nivel</th>
                       <th>Materias a matricular</th>
-                      <th>Observacion</th>
+                      <th>Observación</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2082,7 +2082,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                     <strong>{formatBulkPreviewStatus(bulkBlockDetail, false)}</strong>
                   </div>
                   <div>
-                    <span>Cedula</span>
+                    <span>Cédula</span>
                     <strong>{bulkBlockDetail.cedula || bulkBlockDetail.codigo_estud || '-'}</strong>
                   </div>
                   <div>
@@ -2099,7 +2099,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
                 <section className="matricula-block-detail-section">
                   <h4>Motivo principal</h4>
-                  <p>{bulkBlockDetail.motivo || bulkBlockDetail.cabecera || 'No hay una observacion registrada para esta validacion.'}</p>
+                  <p>{bulkBlockDetail.motivo || bulkBlockDetail.cabecera || 'No hay una observación registrada para esta validación.'}</p>
                 </section>
 
                 <section className="matricula-block-detail-section">
@@ -2165,7 +2165,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                     <strong>{bulkBlockDetail.bloqueadas_por_prerrequisito || 0}</strong>
                   </div>
                   <div>
-                    <span>Num. matricula</span>
+                    <span>Num. matrícula</span>
                     <strong>{bulkBlockDetail.bloqueadas_por_num_matricula || 0}</strong>
                   </div>
                   <div>
@@ -2196,11 +2196,11 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
             <div className="matricula-acad-ficha-summary">
               <div>
-                <span>Codigo</span>
+                <span>Código</span>
                 <strong>{fichaResolvedStudent?.codigo_estud || fichaStudent.codigo_estud}</strong>
               </div>
               <div>
-                <span>Cedula</span>
+                <span>Cédula</span>
                 <strong>{fichaResolvedStudent?.cedula_normalizada || fichaResolvedStudent?.cedula || fichaStudent.cedula_normalizada || '-'}</strong>
               </div>
               <div>
@@ -2216,7 +2216,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                 <strong>{fichaResolvedStudent?.carrera_actual || '-'}</strong>
               </div>
               <div>
-                <span>Periodo actual</span>
+                <span>Período actual</span>
                 <strong>{fichaResolvedStudent?.detalle_periodo_actual || fichaResolvedStudent?.periodo_actual || '-'}</strong>
               </div>
             </div>
@@ -2242,12 +2242,12 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               <div className="section-title">
                 <div>
                   <span>Cabecera</span>
-                  <h2>Matriculas registradas</h2>
+                  <h2>Matrículas registradas</h2>
                 </div>
                 <span>{fichaCabeceras.length} registro(s)</span>
               </div>
               {fichaCabeceras.length === 0 ? (
-                <p className="empty-block">No hay cabeceras de matricula para mostrar.</p>
+                <p className="empty-block">No hay cabeceras de matrícula para mostrar.</p>
               ) : (
                 <div className="matricula-acad-ficha-card-list">
                   {fichaCabeceras.map((cabecera) => (
@@ -2264,7 +2264,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                       </div>
                       <div className="matricula-acad-ficha-card-grid">
                         <div>
-                          <span>Num. matricula</span>
+                          <span>Num. matrícula</span>
                           <strong>{valueOrDash(cabecera.num_matricula)}</strong>
                         </div>
                         <div>
@@ -2290,12 +2290,12 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
               <div className="section-title">
                 <div>
                   <span>Trayectoria</span>
-                  <h2>Periodos cursados y materias</h2>
+                  <h2>Períodos cursados y materias</h2>
                 </div>
-                <span>{fichaHistorialAcademico.length} periodo(s)</span>
+                <span>{fichaHistorialAcademico.length} período(s)</span>
               </div>
               {fichaHistorialAcademico.length === 0 ? (
-                <p className="empty-block">No hay periodos ni materias cursadas para mostrar.</p>
+                <p className="empty-block">No hay períodos ni materias cursadas para mostrar.</p>
               ) : (
                 <div className="matricula-acad-history">
                   {fichaHistorialAcademico.map((period, index) => (
@@ -2316,7 +2316,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                       </summary>
                       <div className="matricula-acad-history-meta">
                         <div>
-                          <span>Codigo de periodo</span>
+                          <span>Código de período</span>
                           <strong>{period.codigo_periodo}</strong>
                         </div>
                         <div>
@@ -2326,7 +2326,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                           </strong>
                         </div>
                         <div>
-                          <span>Num. matricula</span>
+                          <span>Num. matrícula</span>
                           <strong>{valueOrDash(period.num_matricula)}</strong>
                         </div>
                         <div>
@@ -2339,7 +2339,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                           <thead>
                             <tr>
                               <th>Nivel</th>
-                              <th>Codigo</th>
+                              <th>Código</th>
                               <th>Materia cursada</th>
                               <th>Paralelo</th>
                               <th>Tipo</th>
@@ -2350,7 +2350,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                           <tbody>
                             {(period.materias || []).length === 0 ? (
                               <tr>
-                                <td colSpan={7}>La matricula no tiene materias asociadas en CARRERAXESTUD.</td>
+                                <td colSpan={7}>La matrícula no tiene materias asociadas en CARRERAXESTUD.</td>
                               </tr>
                             ) : (
                               (period.materias || []).map((subject) => (
@@ -2408,9 +2408,9 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
                   <thead>
                     <tr>
                       <th>Nivel</th>
-                      <th>Codigo</th>
+                      <th>Código</th>
                       <th>Materia</th>
-                      <th>Creditos</th>
+                      <th>Créditos</th>
                       <th>Paralelo</th>
                       <th>Tipo</th>
                       <th>Notas</th>
@@ -2449,7 +2449,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
         <div className="matricula-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="matricula-confirm-title">
           <div className="matricula-confirm-modal">
             <div>
-              <span>Confirmacion</span>
+              <span>Confirmación</span>
               <h2 id="matricula-confirm-title">{confirmDialog.title}</h2>
               <p>{confirmDialog.message}</p>
             </div>

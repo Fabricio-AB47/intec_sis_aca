@@ -1743,7 +1743,7 @@ async def upload_titulacion_document(
     if doc_type not in _DOCUMENT_FORMATS:
         raise HTTPException(status_code=400, detail="Tipo de documento de titulación no válido.")
     if not file.filename:
-        raise HTTPException(status_code=400, detail="Selecciona un archivo.")
+        raise HTTPException(status_code=400, detail='Seleccione un archivo.')
     extension = Path(file.filename).suffix.lower()
     if extension not in _ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Formato no permitido.")

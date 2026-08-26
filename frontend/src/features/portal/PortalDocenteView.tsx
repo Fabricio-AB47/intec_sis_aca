@@ -8,6 +8,7 @@ import {
   downloadPortalTeacherStudentGradeReport,
   fetchMyTeamRecordings,
   fetchMyTeamsCatalog,
+  fetchPortalTeacherComplianceMoodleResources,
   fetchPortalTeacherCourses,
   fetchPortalTeacherProfile,
   fetchPortalTeacherSubjectStudents,
@@ -25,9 +26,11 @@ import {
 import type {
   GraphTeam,
   PortalAcademicRecordItem,
+  PortalTeacherComplianceMoodleResourcesResponse,
   PortalTeacherCourse,
   PortalTeacherContractAnalysis,
   PortalTeacherGradePayload,
+  TeacherComplianceMoodleResource,
   TeacherComplianceTeamsRecording,
   TeamRecording,
 } from '../../types/app'
@@ -53,9 +56,12 @@ const GRADE_PARTIAL_OPTIONS: Array<{ value: GradePartial; label: string }> = [
 
 const COMPLIANCE_EVIDENCE_OPTIONS = [
   { key: 'pea', label: 'Captura PEA y sílabo firmado' },
-  { key: 'aula', label: 'Captura aula virtual y recursos' },
+  { key: 'aula', label: 'Aula virtual y recursos de Moodle' },
   { key: 'teams', label: 'TEAMS y clases grabadas' },
 ] as const
+
+const MAX_COMPLIANCE_INVOICE_XML_BYTES = 20 * 1024 * 1024
+const MAX_COMPLIANCE_RIDE_PDF_BYTES = 50 * 1024 * 1024
 
 type ComplianceEvidenceKey = (typeof COMPLIANCE_EVIDENCE_OPTIONS)[number]['key']
 
@@ -66,8 +72,13 @@ type SignedReportBundle = {
   gradesFilename: string
   contractUrl: string
   contractFilename: string
+  invoiceXmlUrl: string | null
+  invoiceXmlFilename: string | null
+  ridePdfUrl: string | null
+  ridePdfFilename: string | null
   archiveUrl: string
   archiveFilename: string
+  storedDocumentCount: number
 }
 
 type GradeDraft = {
@@ -465,10 +476,12 @@ function hasGradeUpdates(payload: PortalTeacherGradePayload) {
 
 function evidencePayload(files: Record<ComplianceEvidenceKey, File[]>) {
   return COMPLIANCE_EVIDENCE_OPTIONS.flatMap((option) =>
-    files[option.key].map((file) => ({
-      label: `${option.label}: ${file.name}`,
-      file,
-    }))
+    option.key === 'aula'
+      ? []
+      : files[option.key].map((file) => ({
+          label: `${option.label}: ${file.name}`,
+          file,
+        }))
   )
 }
 
@@ -479,6 +492,22 @@ function normalizeTeamText(value: unknown) {
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, ' ')
     .trim()
+}
+
+function planningDocumentTypes(...values: unknown[]): Array<'pea' | 'silabo'> {
+  const searchable = normalizeTeamText(values.filter(Boolean).join(' '))
+  const tokens = new Set(searchable.split(' ').filter(Boolean))
+  const documentTypes: Array<'pea' | 'silabo'> = []
+  if (
+    tokens.has('PEA') ||
+    searchable.includes('PROGRAMA DE ESTUDIOS DE ASIGNATURA') ||
+    searchable.includes('PLAN DE ESTUDIO DE ASIGNATURA') ||
+    searchable.includes('PLAN DE ESTUDIOS DE ASIGNATURA')
+  ) {
+    documentTypes.push('pea')
+  }
+  if (tokens.has('SILABO') || tokens.has('SYLLABUS')) documentTypes.push('silabo')
+  return documentTypes
 }
 
 function teamCourseMatchScore(team: GraphTeam, course: PortalTeacherCourse, periodCodes: string[]) {
@@ -615,6 +644,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [complianceContractFile, setComplianceContractFile] = useState<File | null>(null)
   const [complianceContractInputKey, setComplianceContractInputKey] = useState(0)
   const [complianceContractAnalysis, setComplianceContractAnalysis] = useState<PortalTeacherContractAnalysis | null>(null)
+  const [complianceInvoiceXml, setComplianceInvoiceXml] = useState<File | null>(null)
+  const [complianceRidePdf, setComplianceRidePdf] = useState<File | null>(null)
+  const [complianceInvoiceInputKey, setComplianceInvoiceInputKey] = useState(0)
   const complianceStartDate = complianceContractAnalysis?.fecha_inicio || ''
   const complianceEndDate = complianceContractAnalysis?.fecha_fin || ''
   const [analyzingComplianceContract, setAnalyzingComplianceContract] = useState(false)
@@ -627,11 +659,19 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [selectedComplianceStudentCodes, setSelectedComplianceStudentCodes] = useState<string[]>([])
   const [loadingComplianceStudents, setLoadingComplianceStudents] = useState(false)
   const complianceStudentsRequestRef = useRef(0)
+  const complianceMoodleSectionRef = useRef<HTMLDivElement | null>(null)
   const [complianceEvidenceFiles, setComplianceEvidenceFiles] = useState<Record<ComplianceEvidenceKey, File[]>>({
     pea: [],
     aula: [],
     teams: [],
   })
+  const [complianceMoodle, setComplianceMoodle] = useState<PortalTeacherComplianceMoodleResourcesResponse | null>(null)
+  const [selectedComplianceMoodleCourseId, setSelectedComplianceMoodleCourseId] = useState<number | null>(null)
+  const [selectedComplianceMoodleModuleIds, setSelectedComplianceMoodleModuleIds] = useState<number[]>([])
+  const [loadingComplianceMoodle, setLoadingComplianceMoodle] = useState(false)
+  const [complianceMoodleError, setComplianceMoodleError] = useState('')
+  const [complianceFailureJustification, setComplianceFailureJustification] = useState('')
+  const [complianceMoodleRefreshToken, setComplianceMoodleRefreshToken] = useState(0)
   const [complianceTeams, setComplianceTeams] = useState<GraphTeam[]>([])
   const [selectedComplianceTeamId, setSelectedComplianceTeamId] = useState('')
   const [complianceRecordings, setComplianceRecordings] = useState<TeamRecording[]>([])
@@ -655,6 +695,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const [gradeScreenOpen, setGradeScreenOpen] = useState(initialMode === 'compliance' ? false : false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (!message || signingComplianceReport) return
+    const timeoutId = window.setTimeout(() => setMessage(''), 3000)
+    return () => window.clearTimeout(timeoutId)
+  }, [message, signingComplianceReport])
+
+  useEffect(() => {
+    setComplianceFailureJustification('')
+  }, [targetCourseKey, compliancePeriodCodes, selectedComplianceStudentCodes])
 
   const gradeCourseGroups = useMemo(() => teacherGradeCourseGroups(courses), [courses])
   const exactCourses = useMemo(
@@ -807,6 +857,59 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   const availableCompliancePeriodOptions = useMemo(
     () => targetCoursePeriodOptions.filter((option) => !compliancePeriodCodes.includes(option.code)),
     [compliancePeriodCodes, targetCoursePeriodOptions]
+  )
+  const complianceMoodleModules = useMemo(() => {
+    const course = complianceMoodle?.resources?.course
+    if (!course) return []
+    return (complianceMoodle?.resources?.sections || []).flatMap((section) =>
+      (section.modules || []).map((module) => ({ course, section, module }))
+    )
+  }, [complianceMoodle])
+  const complianceMoodleReportPayload = useMemo<TeacherComplianceMoodleResource[]>(
+    () =>
+      complianceMoodleModules
+        .filter(({ module }) => selectedComplianceMoodleModuleIds.includes(module.id))
+        .map(({ course, section, module }) => ({
+          course_id: course.id,
+          course_name: course.displayname || course.fullname || course.shortname || 'Curso Moodle',
+          section_id: section.id,
+          section_name: section.name || 'General',
+          module_id: module.id,
+          name: module.name || 'Recurso sin nombre',
+          module_type: module.modplural || module.modname || 'Recurso',
+          visible: Boolean(module.visible && module.uservisible),
+          file_count: module.contents?.length || 0,
+          file_names: (module.contents || [])
+            .map((content) => content.filename)
+            .filter(Boolean)
+            .slice(0, 30),
+          planning_document_types:
+            module.planning_document_types?.length
+              ? module.planning_document_types
+              : planningDocumentTypes(
+                  section.name,
+                  module.name,
+                  ...(module.contents || []).map((content) => content.filename)
+                ),
+          web_url: module.url || '',
+          source: 'Moodle',
+        })),
+    [complianceMoodleModules, selectedComplianceMoodleModuleIds]
+  )
+  const compliancePlanningMoodlePayload = useMemo(
+    () => complianceMoodleReportPayload.filter((resource) => resource.planning_document_types.length > 0),
+    [complianceMoodleReportPayload]
+  )
+  const complianceGradeValidation = complianceMoodle?.grade_validation || null
+  const complianceFailureJustificationValid = Boolean(
+    !complianceGradeValidation?.requires_justification ||
+      complianceFailureJustification.trim().length >= complianceGradeValidation.justification_min_length
+  )
+  const complianceReportCanGenerate = Boolean(
+    complianceGradeValidation?.can_generate &&
+      complianceFailureJustificationValid &&
+      !loadingComplianceMoodle &&
+      !complianceMoodleError
   )
   const selectedComplianceTeam = useMemo(
     () => complianceTeams.find((team) => team.id === selectedComplianceTeamId) || null,
@@ -1034,17 +1137,27 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
           : []
     if (periodos.length > 4) {
       setLoadingComplianceStudents(false)
-      setError('Seleccione máximo 4 periodos para generar el informe.')
+      setError('Seleccione máximo 4 períodos para generar el informe.')
       return
     }
     if (!course || !periodos.length || !subjectCode) {
       setLoadingComplianceStudents(false)
       setComplianceStudents([])
       setSelectedComplianceStudentCodes([])
-      setError('Seleccione una materia y al menos un periodo para cargar estudiantes del informe.')
+      setComplianceMoodle(null)
+      setSelectedComplianceMoodleCourseId(null)
+      setSelectedComplianceMoodleModuleIds([])
+      setComplianceMoodleError('')
+      setComplianceFailureJustification('')
+      setError('Seleccione una materia y al menos un período para cargar estudiantes del informe.')
       return
     }
     setLoadingComplianceStudents(true)
+    setComplianceMoodle(null)
+    setSelectedComplianceMoodleCourseId(null)
+    setSelectedComplianceMoodleModuleIds([])
+    setComplianceMoodleError('')
+    setComplianceFailureJustification('')
     setError('')
     setMessage('')
     try {
@@ -1087,7 +1200,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       setMessage(
         items.length > 0
           ? `${studentCodes.length} estudiante(s) cargado(s) automáticamente para el anexo de notas.`
-          : 'No se encontraron estudiantes matriculados en la materia y periodos seleccionados.'
+          : 'No se encontraron estudiantes matriculados en la materia y períodos seleccionados.'
       )
     } catch (apiError) {
       if (requestId !== complianceStudentsRequestRef.current) return
@@ -1105,6 +1218,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const visibleCodes = filteredComplianceStudents
       .map((item) => String(item.codigo_estud || '').trim())
       .filter(Boolean)
+    setComplianceMoodle(null)
+    setSelectedComplianceMoodleCourseId(null)
+    setSelectedComplianceMoodleModuleIds([])
+    setComplianceMoodleError('')
     setSelectedComplianceStudentCodes((current) => Array.from(new Set([...current, ...visibleCodes])))
   }
 
@@ -1216,7 +1333,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const subjectCode = course.cod_materia || course.codigo_materia || ''
     const parallel = aggregatesSubjectScopes ? '*' : course.paralelo || ''
     if (!periodos.length || !subjectCode || !parallel) {
-      setError('Seleccione una materia con periodo y paralelo para descargar el reporte.')
+      setError('Seleccione una materia con período y paralelo para descargar el reporte.')
       return
     }
     return {
@@ -1261,15 +1378,20 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     const params = reportRequestParams(course, compliancePeriodCodes)
     if (!params) return null
     if (params.periodos.length > 4) {
-      setError('Seleccione máximo 4 periodos para generar el informe.')
+      setError('Seleccione máximo 4 períodos para generar el informe.')
       return null
     }
     if (complianceStudents.length === 0) {
-      setError('Cargue los estudiantes de los periodos seleccionados antes de generar el informe.')
+      setError('Cargue los estudiantes de los períodos seleccionados antes de generar el informe.')
       return null
     }
     if (selectedComplianceStudentCodes.length === 0) {
       setError('Seleccione al menos un estudiante para anexar calificaciones al informe.')
+      return null
+    }
+    const validationError = complianceGenerationError()
+    if (validationError) {
+      setError(validationError)
       return null
     }
     return downloadPortalTeacherComplianceReport({
@@ -1284,9 +1406,28 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       telefono: compliancePhone,
       actualizaciones: complianceUpdates,
       observaciones: complianceObservations,
+      justificacionReprobados: complianceFailureJustification.trim(),
+      recursosMoodle: complianceMoodleReportPayload,
       grabacionesTeams: complianceTeamsReportPayload,
       evidencias: evidencePayload(complianceEvidenceFiles),
     })
+  }
+
+  function complianceGenerationError() {
+    if (loadingComplianceMoodle) {
+      return 'Espere mientras se verifican las calificaciones académicas y de Moodle.'
+    }
+    if (complianceMoodleError) return complianceMoodleError
+    if (!complianceGradeValidation) {
+      return 'Actualice la verificación de Moodle antes de generar el informe de cumplimiento.'
+    }
+    if (!complianceGradeValidation.can_generate) {
+      return complianceGradeValidation.blockers[0] || 'Existen calificaciones pendientes o inconsistentes.'
+    }
+    if (!complianceFailureJustificationValid) {
+      return `Justifique los estudiantes reprobados con al menos ${complianceGradeValidation.justification_min_length} caracteres.`
+    }
+    return ''
   }
 
   async function previewCourseReport() {
@@ -1313,7 +1454,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         : []
     const subjectCode = reportCourse.cod_materia || reportCourse.codigo_materia || ''
     if (!periodos.length || !subjectCode || !reportCourse.paralelo) {
-      setError('Seleccione una materia con periodo y paralelo para descargar el reporte.')
+      setError('Seleccione una materia con período y paralelo para descargar el reporte.')
       return
     }
     setDownloadingReport(true)
@@ -1458,16 +1599,27 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setSigningCertificateInputKey((current) => current + 1)
   }
 
+  function clearComplianceInvoiceBackups() {
+    setComplianceInvoiceXml(null)
+    setComplianceRidePdf(null)
+    setComplianceInvoiceInputKey((current) => current + 1)
+  }
+
   async function signComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
     if (!course) return
     const params = reportRequestParams(course, compliancePeriodCodes)
     if (!params) return
     if (params.periodos.length > 4) {
-      setError('Seleccione máximo 4 periodos para generar el informe.')
+      setError('Seleccione máximo 4 períodos para generar el informe.')
       return
     }
     if (complianceStudents.length === 0 || selectedComplianceStudentCodes.length === 0) {
       setError('Cargue y seleccione al menos un estudiante para anexar calificaciones al informe.')
+      return
+    }
+    const validationError = complianceGenerationError()
+    if (validationError) {
+      setError(validationError)
       return
     }
     if (!complianceContractFile || !complianceContractAnalysis) {
@@ -1480,6 +1632,30 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     }
     if (!complianceContractAnalysis.fecha_inicio || !complianceContractAnalysis.fecha_fin) {
       setError('El contrato debe contener una fecha de inicio y una fecha de finalización reconocibles.')
+      return
+    }
+    const hasInvoiceXml = Boolean(complianceInvoiceXml)
+    const hasRidePdf = Boolean(complianceRidePdf)
+    if (hasInvoiceXml !== hasRidePdf) {
+      setError('Para archivar la factura debe seleccionar juntos el XML y el RIDE en PDF.')
+      return
+    }
+    if (
+      complianceInvoiceXml &&
+      (!complianceInvoiceXml.name.toLowerCase().endsWith('.xml') ||
+        complianceInvoiceXml.size <= 0 ||
+        complianceInvoiceXml.size > MAX_COMPLIANCE_INVOICE_XML_BYTES)
+    ) {
+      setError('Seleccione una factura XML válida de máximo 20 MB.')
+      return
+    }
+    if (
+      complianceRidePdf &&
+      (!complianceRidePdf.name.toLowerCase().endsWith('.pdf') ||
+        complianceRidePdf.size <= 0 ||
+        complianceRidePdf.size > MAX_COMPLIANCE_RIDE_PDF_BYTES)
+    ) {
+      setError('Seleccione un RIDE en PDF válido de máximo 50 MB.')
       return
     }
     if (!signingCertificate || !signingPassword) {
@@ -1541,6 +1717,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         telefono: compliancePhone,
         actualizaciones: complianceUpdates,
         observaciones: complianceObservations,
+        justificacionReprobados: complianceFailureJustification.trim(),
+        recursosMoodle: complianceMoodleReportPayload,
         grabacionesTeams: complianceTeamsReportPayload,
         evidencias: evidencePayload(complianceEvidenceFiles),
         reporteNotasFirmado: gradesBlob,
@@ -1552,17 +1730,33 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         firmaContacto: signingContact,
       })
       setMessage('Preparando la descarga conjunta de los documentos firmados...')
-      const archiveBlob = await downloadPortalTeacherSignedDocumentsArchive({
+      const invoiceXmlFile = complianceInvoiceXml
+      const ridePdfFile = complianceRidePdf
+      const archiveResult = await downloadPortalTeacherSignedDocumentsArchive({
         informe: complianceBlob,
         informeNombre: complianceFilename,
         notas: gradesBlob,
         notasNombre: gradesFilename,
         contrato: contractBlob,
         contratoNombre: contractFilename,
+        facturaXml: invoiceXmlFile,
+        ridePdf: ridePdfFile,
         codigoMateria: params.subjectCode,
         nombreMateria: course.nombre_materia || '',
         codigoPeriodos: params.periodos,
       })
+      const invoiceBackupsIncluded = Boolean(invoiceXmlFile && ridePdfFile)
+      const expectedDocumentCount = invoiceBackupsIncluded ? 5 : 3
+      if (
+        !archiveResult.oneDriveSaved ||
+        !archiveResult.sameFolder ||
+        archiveResult.storedDocumentCount !== expectedDocumentCount
+      ) {
+        throw new Error(
+          `Microsoft OneDrive no confirmó los ${expectedDocumentCount} documentos en una misma carpeta. ` +
+          'No se registró la operación como completada.',
+        )
+      }
       setSignedReportBundle({
         complianceUrl: window.URL.createObjectURL(complianceBlob),
         complianceFilename,
@@ -1570,12 +1764,20 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         gradesFilename,
         contractUrl: window.URL.createObjectURL(contractBlob),
         contractFilename,
-        archiveUrl: window.URL.createObjectURL(archiveBlob),
+        invoiceXmlUrl: invoiceXmlFile ? window.URL.createObjectURL(invoiceXmlFile) : null,
+        invoiceXmlFilename: invoiceXmlFile ? 'factura-electronica.xml' : null,
+        ridePdfUrl: ridePdfFile ? window.URL.createObjectURL(ridePdfFile) : null,
+        ridePdfFilename: ridePdfFile ? 'ride-factura.pdf' : null,
+        archiveUrl: window.URL.createObjectURL(archiveResult.archive),
         archiveFilename,
+        storedDocumentCount: archiveResult.storedDocumentCount,
       })
       setSigningConsent(false)
+      clearComplianceInvoiceBackups()
       setMessage(
-        'Informe, reporte de notas, contrato y paquete ZIP firmados y guardados en OneDrive / DOCENTES. Puede descargarlos también desde esta pantalla.',
+        invoiceBackupsIncluded
+          ? 'Se guardaron juntos cinco documentos en la misma carpeta de OneDrive / DOCENTES: informe, notas, contrato, factura XML y RIDE. El ZIP quedó disponible como descarga conjunta.'
+          : 'Se guardaron juntos tres documentos firmados en la misma carpeta de OneDrive / DOCENTES. El ZIP quedó disponible como descarga conjunta.',
       )
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo firmar electrónicamente el informe')
@@ -1628,6 +1830,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       window.URL.revokeObjectURL(signedReportBundle.complianceUrl)
       window.URL.revokeObjectURL(signedReportBundle.gradesUrl)
       window.URL.revokeObjectURL(signedReportBundle.contractUrl)
+      if (signedReportBundle.invoiceXmlUrl) window.URL.revokeObjectURL(signedReportBundle.invoiceXmlUrl)
+      if (signedReportBundle.ridePdfUrl) window.URL.revokeObjectURL(signedReportBundle.ridePdfUrl)
       window.URL.revokeObjectURL(signedReportBundle.archiveUrl)
     }
   }, [signedReportBundle])
@@ -1665,6 +1869,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setComplianceStudentSearch('')
     setComplianceStudents([])
     setSelectedComplianceStudentCodes([])
+    setComplianceMoodle(null)
+    setSelectedComplianceMoodleCourseId(null)
+    setSelectedComplianceMoodleModuleIds([])
+    setComplianceMoodleError('')
   }, [targetCoursePeriodOptions])
 
   useEffect(() => {
@@ -1676,6 +1884,79 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     if (initialMode !== 'compliance' || !targetCourse || compliancePeriodCodes.length === 0) return
     void loadComplianceStudents(targetCourse, compliancePeriodCodes)
   }, [compliancePeriodCodes, initialMode, loadComplianceStudents, targetCourse])
+
+  useEffect(() => {
+    const subjectCode = targetCourse?.cod_materia || targetCourse?.codigo_materia || ''
+    if (
+      initialMode !== 'compliance' ||
+      !targetCourse ||
+      !subjectCode ||
+      compliancePeriodCodes.length === 0 ||
+      selectedComplianceStudentCodes.length === 0
+    ) {
+      setComplianceMoodle(null)
+      setSelectedComplianceMoodleCourseId(null)
+      setSelectedComplianceMoodleModuleIds([])
+      setComplianceMoodleError('')
+      setLoadingComplianceMoodle(false)
+      return
+    }
+    if (loadingComplianceStudents) {
+      setLoadingComplianceMoodle(false)
+      return
+    }
+
+    let cancelled = false
+    const aggregatesSubjectScopes = Boolean(targetCourse.asignaciones?.length || targetCourse.alcances_periodo?.length)
+    setLoadingComplianceMoodle(true)
+    setComplianceMoodleError('')
+    void fetchPortalTeacherComplianceMoodleResources({
+      codigoPeriodos: compliancePeriodCodes,
+      codigoEstudiantes: selectedComplianceStudentCodes,
+      codigoMateria: subjectCode,
+      paralelo: aggregatesSubjectScopes ? '*' : targetCourse.paralelo || '*',
+      codAnioBasica: aggregatesSubjectScopes ? '' : targetCourse.cod_anio_basica || '',
+      moodleCourseId: selectedComplianceMoodleCourseId,
+      refresh: complianceMoodleRefreshToken > 0,
+    })
+      .then((payload) => {
+        if (cancelled) return
+        setComplianceMoodle(payload)
+        setSelectedComplianceMoodleCourseId(payload.selected_course_id)
+        const moduleIds = (payload.resources?.sections || []).flatMap((section) =>
+          (section.modules || []).map((module) => module.id)
+        )
+        setSelectedComplianceMoodleModuleIds(Array.from(new Set(moduleIds)))
+        if (!payload.matched) {
+          setComplianceMoodleError(
+            'No se encontró un curso Moodle cuya matrícula coincida por correo con los estudiantes seleccionados.'
+          )
+        }
+      })
+      .catch((apiError) => {
+        if (cancelled) return
+        setComplianceMoodle(null)
+        setSelectedComplianceMoodleModuleIds([])
+        setComplianceMoodleError(
+          apiError instanceof Error ? apiError.message : 'No se pudieron consultar los recursos de Moodle'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingComplianceMoodle(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    complianceMoodleRefreshToken,
+    compliancePeriodCodes,
+    initialMode,
+    loadingComplianceStudents,
+    selectedComplianceMoodleCourseId,
+    selectedComplianceStudentCodes,
+    targetCourse,
+  ])
 
   useEffect(() => {
     if (initialMode !== 'compliance' || !targetCourse) {
@@ -1870,11 +2151,11 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
             </div>
             <p>
               El documento se genera con el formato configurado por administración y toma docente, materia,
-              carrera, periodo, paralelo, estudiantes y notas desde el sistema.
+              carrera, período, paralelo, estudiantes y notas desde el sistema.
             </p>
             <ol className="portal-compliance-steps" aria-label="Puntos del informe docente">
-              <li><span>1</span><div><strong>Datos del informe</strong><small>Materia, periodos y fechas</small></div></li>
-              <li><span>2</span><div><strong>Evidencias</strong><small>PEA, aula, TEAMS y notas</small></div></li>
+              <li><span>1</span><div><strong>Datos del informe</strong><small>Materia, períodos y fechas</small></div></li>
+              <li><span>2</span><div><strong>Evidencias</strong><small>PEA, Moodle, TEAMS y notas</small></div></li>
               <li><span>3</span><div><strong>Estudiantes</strong><small>Selección para el anexo de calificaciones</small></div></li>
               <li><span>4</span><div><strong>Firma electrónica</strong><small>Certificado temporal del docente</small></div></li>
             </ol>
@@ -1904,14 +2185,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 </select>
               </label>
               <fieldset className="portal-compliance-periods">
-                <legend>Periodos del informe</legend>
+                <legend>Períodos del informe</legend>
                 <div className="portal-compliance-period-picker">
                   <select
                     value={compliancePeriodToAdd}
                     onChange={(event) => setCompliancePeriodToAdd(event.target.value)}
                     disabled={availableCompliancePeriodOptions.length === 0 || compliancePeriodCodes.length >= 4}
                   >
-                    <option value="">Seleccione periodo</option>
+                    <option value="">Seleccione período</option>
                     {availableCompliancePeriodOptions.map((option) => (
                       <option key={option.code} value={option.code}>
                         {option.label}
@@ -1931,7 +2212,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     }}
                     disabled={!compliancePeriodToAdd || compliancePeriodCodes.length >= 4}
                   >
-                    Agregar periodo
+                    Agregar período
                   </button>
                 </div>
                 <div className="portal-compliance-selected-periods">
@@ -1949,7 +2230,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                             setComplianceStudents([])
                             setSelectedComplianceStudentCodes([])
                           }}
-                          aria-label={`Quitar periodo ${option?.label || code}`}
+                          aria-label={`Quitar período ${option?.label || code}`}
                         >
                           x
                         </button>
@@ -1958,11 +2239,11 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   })}
                 </div>
                 {targetCoursePeriodOptions.length === 0 ? (
-                  <p>No hay periodos disponibles para esta materia.</p>
+                  <p>No hay períodos disponibles para esta materia.</p>
                 ) : null}
               </fieldset>
               <div className="portal-compliance-period-note">
-                Puede seleccionar hasta 4 periodos para cargar estudiantes y anexar calificaciones.
+                Puede seleccionar hasta 4 períodos para cargar estudiantes y anexar calificaciones.
               </div>
               <div className="portal-compliance-contract-source">
                 <label>
@@ -2033,17 +2314,387 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   <h2>Evidencias del informe</h2>
                 </div>
                 <strong>
-                  {evidencePayload(complianceEvidenceFiles).length + complianceTeamsReportPayload.length} cargada(s) · 1 automática
+                  {evidencePayload(complianceEvidenceFiles).length} captura(s) ·{' '}
+                  {complianceMoodleReportPayload.length} recurso(s) Moodle ·{' '}
+                  {complianceTeamsReportPayload.length} grabación(es)
                 </strong>
+              </div>
+              <div className="portal-compliance-moodle" ref={complianceMoodleSectionRef}>
+                <div className="portal-compliance-moodle-header">
+                  <div>
+                    <span>Integración Moodle</span>
+                    <strong>Recursos del curso incluidos en el informe</strong>
+                    <small>
+                      La materia y el período se contrastan con la matrícula real del curso en Moodle mediante el
+                      correo institucional registrado en CorreosEstudIntec para los estudiantes seleccionados.
+                    </small>
+                  </div>
+                  <div className="portal-compliance-moodle-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setComplianceMoodleRefreshToken((current) => current + 1)}
+                      disabled={loadingComplianceMoodle || !targetCourse || selectedComplianceStudentCodes.length === 0}
+                    >
+                      {loadingComplianceMoodle ? 'Consultando Moodle...' : 'Actualizar recursos'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() =>
+                        setSelectedComplianceMoodleModuleIds(
+                          Array.from(new Set(complianceMoodleModules.map(({ module }) => module.id)))
+                        )
+                      }
+                      disabled={complianceMoodleModules.length === 0}
+                    >
+                      Incluir todos
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setSelectedComplianceMoodleModuleIds([])}
+                      disabled={selectedComplianceMoodleModuleIds.length === 0}
+                    >
+                      Quitar todos
+                    </button>
+                  </div>
+                </div>
+
+                {complianceMoodle?.candidates?.length ? (
+                  <div className="portal-compliance-moodle-course">
+                    <label>
+                      <span>Curso Moodle asociado</span>
+                      <select
+                        value={selectedComplianceMoodleCourseId || ''}
+                        onChange={(event) => {
+                          setSelectedComplianceMoodleCourseId(Number(event.target.value) || null)
+                          setSelectedComplianceMoodleModuleIds([])
+                          setComplianceMoodleError('')
+                        }}
+                        disabled={loadingComplianceMoodle}
+                      >
+                        {complianceMoodle.candidates.map((course) => (
+                          <option key={course.id} value={course.id}>
+                            {course.displayname || course.fullname || course.shortname} · coincidencia académica{' '}
+                            {course.match_score}
+                            {course.subject_code_similarity > 0
+                              ? ` · código ${course.subject_code_similarity.toFixed(0)} %`
+                              : ''}
+                            {course.student_email_total > 0
+                              ? ` · ${course.student_email_matches}/${course.student_email_total} correos`
+                              : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="portal-compliance-moodle-summary">
+                      <span>Secciones <strong>{complianceMoodle.resources?.totals.sections || 0}</strong></span>
+                      <span>Recursos <strong>{complianceMoodle.resources?.totals.modules || 0}</strong></span>
+                      <span>Archivos <strong>{complianceMoodle.resources?.totals.files || 0}</strong></span>
+                      <span>Incluidos <strong>{complianceMoodleReportPayload.length}</strong></span>
+                      <span>
+                        Correos validados{' '}
+                        <strong>
+                          {complianceMoodle.student_email_validation.matched_students}/
+                          {complianceMoodle.student_email_validation.students_with_email}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {complianceMoodle?.student_email_validation.mode === 'institutional_email_missing' &&
+                complianceMoodle.student_email_validation.requested_students > 0 ? (
+                  <p className="portal-compliance-moodle-alert">
+                    Los estudiantes seleccionados no tienen un correo institucional válido en CorreosEstudIntec.
+                    Registre el correo antes de seleccionar el curso Moodle.
+                  </p>
+                ) : null}
+
+                {complianceMoodle?.student_email_validation.mode === 'moodle_enrollment' &&
+                complianceMoodle.student_email_validation.students_without_registry_email > 0 ? (
+                  <p className="portal-compliance-moodle-alert">
+                    {complianceMoodle.student_email_validation.students_without_registry_email} estudiante(s) no
+                    tienen correo institucional válido en CorreosEstudIntec; la validación usa únicamente los correos
+                    oficiales disponibles.
+                  </p>
+                ) : null}
+
+                {complianceMoodleError ? (
+                  <p className="portal-compliance-moodle-alert">{complianceMoodleError}</p>
+                ) : null}
+
+                {loadingComplianceMoodle ? (
+                  <div className="portal-compliance-moodle-empty">Consultando secciones, actividades y archivos del curso...</div>
+                ) : complianceMoodleModules.length > 0 ? (
+                  <div className="excel-table-wrap portal-compliance-moodle-table-wrap">
+                    <table className="matricula-table portal-compliance-moodle-table">
+                      <thead>
+                        <tr>
+                          <th>Incluye</th>
+                          <th>Sección</th>
+                          <th>Recurso o actividad</th>
+                          <th>Tipo</th>
+                          <th>Archivos</th>
+                          <th>Estado</th>
+                          <th>Enlace</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {complianceMoodleModules.map(({ section, module }) => (
+                          <tr key={`${section.id}-${module.id}`}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedComplianceMoodleModuleIds.includes(module.id)}
+                                onChange={(event) =>
+                                  setSelectedComplianceMoodleModuleIds((current) =>
+                                    event.target.checked
+                                      ? Array.from(new Set([...current, module.id]))
+                                      : current.filter((moduleId) => moduleId !== module.id)
+                                  )
+                                }
+                                aria-label={`Incluir ${module.name || 'recurso Moodle'}`}
+                              />
+                            </td>
+                            <td>{section.name || 'General'}</td>
+                            <td>
+                              <strong>{module.name || 'Recurso sin nombre'}</strong>
+                              {module.contents?.length ? (
+                                <small>{module.contents.map((content) => content.filename).filter(Boolean).join(', ')}</small>
+                              ) : null}
+                            </td>
+                            <td>{module.modplural || module.modname || 'Recurso'}</td>
+                            <td>{module.contents?.length || 0}</td>
+                            <td>{module.visible && module.uservisible ? 'Visible' : 'Oculto'}</td>
+                            <td>
+                              {module.url ? (
+                                <a href={module.url} target="_blank" rel="noreferrer">Abrir</a>
+                              ) : 'Sin enlace'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : !complianceMoodleError ? (
+                  <div className="portal-compliance-moodle-empty">
+                    Moodle no devolvió recursos para el curso asociado.
+                  </div>
+                ) : null}
+
+                {complianceGradeValidation ? (
+                  <section className="portal-compliance-grade-validation" aria-live="polite">
+                    <div className="portal-compliance-grade-header">
+                      <div>
+                        <span>Control previo del informe</span>
+                        <strong>Calificaciones académicas y verificación con Moodle</strong>
+                      </div>
+                      <span
+                        className={`portal-compliance-grade-status ${
+                          complianceReportCanGenerate
+                            ? 'portal-compliance-grade-status--ready'
+                            : 'portal-compliance-grade-status--blocked'
+                        }`}
+                      >
+                        {complianceReportCanGenerate ? 'Informe habilitado' : 'Informe bloqueado'}
+                      </span>
+                    </div>
+
+                    <div className="portal-compliance-grade-summary">
+                      <div><small>Matrículas revisadas</small><strong>{complianceGradeValidation.total_records}</strong></div>
+                      <div><small>Con nota final</small><strong>{complianceGradeValidation.graded_records}</strong></div>
+                      <div><small>Sin calificación</small><strong>{complianceGradeValidation.missing_academic_count}</strong></div>
+                      <div><small>Reprobados</small><strong>{complianceGradeValidation.failed_count}</strong></div>
+                      <div><small>Porcentaje reprobado</small><strong>{complianceGradeValidation.failed_percentage.toFixed(2)} %</strong></div>
+                      <div><small>Verificados en Moodle</small><strong>{complianceGradeValidation.moodle.verified_students}</strong></div>
+                    </div>
+
+                    {complianceGradeValidation.blockers.length > 0 ? (
+                      <div className="portal-compliance-grade-alert" role="alert">
+                        <strong>Faltan calificaciones por revisar</strong>
+                        <ul>
+                          {complianceGradeValidation.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    <div className="portal-compliance-grade-details">
+                      {complianceGradeValidation.missing_academic_students.length > 0 ? (
+                        <details open>
+                          <summary>Sin nota final en INTECBDD ({complianceGradeValidation.missing_academic_students.length})</summary>
+                          <ul>
+                            {complianceGradeValidation.missing_academic_students.map((student, index) => (
+                              <li key={`academic-${student.codigo_estud || student.cedula || index}`}>
+                                {student.nombre_estudiante} · {student.nombre_carrera || 'Carrera no registrada'} · {student.detalle_periodo || 'Período no registrado'}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {complianceGradeValidation.moodle.missing_grade_students.length > 0 ? (
+                        <details open>
+                          <summary>Sin calificación en Moodle ({complianceGradeValidation.moodle.missing_grade_students.length})</summary>
+                          <ul>
+                            {complianceGradeValidation.moodle.missing_grade_students.map((student, index) => (
+                              <li key={`moodle-${student.codigo_estud || student.cedula || index}`}>
+                                {student.nombre_estudiante} · {student.correo_intec || 'Sin correo institucional'}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {complianceGradeValidation.moodle.not_enrolled_students.length > 0 ? (
+                        <details open>
+                          <summary>No matriculados en el curso Moodle ({complianceGradeValidation.moodle.not_enrolled_students.length})</summary>
+                          <ul>
+                            {complianceGradeValidation.moodle.not_enrolled_students.map((student, index) => (
+                              <li key={`not-enrolled-${student.codigo_estud || student.cedula || index}`}>
+                                {student.nombre_estudiante} · {student.correo_intec || 'Sin correo institucional'}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {complianceGradeValidation.moodle.discrepancies.length > 0 ? (
+                        <details open>
+                          <summary>Diferencias entre Moodle e INTECBDD ({complianceGradeValidation.moodle.discrepancies.length})</summary>
+                          <ul>
+                            {complianceGradeValidation.moodle.discrepancies.map((student, index) => (
+                              <li key={`difference-${student.codigo_estud || student.cedula || index}`}>
+                                {student.nombre_estudiante} · Moodle {student.nota_moodle.toFixed(2)} · INTECBDD {student.notas_intec.map((grade) => grade.toFixed(2)).join(', ')}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {complianceGradeValidation.failed_students.length > 0 ? (
+                        <details>
+                          <summary>Estudiantes reprobados ({complianceGradeValidation.failed_students.length})</summary>
+                          <ul>
+                            {complianceGradeValidation.failed_students.map((student, index) => (
+                              <li key={`failed-${student.codigo_estud || student.cedula || index}`}>
+                                {student.nombre_estudiante} · Nota final {student.promedio_final?.toFixed(2) || '0.00'} · {student.detalle_periodo || 'Período no registrado'}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                    </div>
+
+                    {complianceGradeValidation.requires_justification ? (
+                      <label className="portal-compliance-grade-justification">
+                        <span>Justificación académica obligatoria</span>
+                        <textarea
+                          value={complianceFailureJustification}
+                          onChange={(event) => setComplianceFailureJustification(event.target.value)}
+                          maxLength={1500}
+                          placeholder={`Explique los casos reprobados. Mínimo ${complianceGradeValidation.justification_min_length} caracteres.`}
+                        />
+                        <small>
+                          {complianceFailureJustification.trim().length}/{complianceGradeValidation.justification_min_length} caracteres mínimos. El porcentaje de reprobación alcanzó el umbral de {complianceGradeValidation.failed_threshold_percent.toFixed(0)} %.
+                        </small>
+                      </label>
+                    ) : null}
+                  </section>
+                ) : null}
               </div>
               <div className="portal-compliance-evidence-grid">
                 {COMPLIANCE_EVIDENCE_OPTIONS.map((option, optionIndex) => (
                   <div
-                    className={`portal-compliance-evidence-item${option.key === 'teams' ? ' portal-compliance-evidence-item--teams' : ''}`}
+                    className={`portal-compliance-evidence-item${option.key === 'aula' || option.key === 'pea' ? ' portal-compliance-evidence-item--automatic' : ''}${option.key === 'teams' ? ' portal-compliance-evidence-item--teams' : ''}`}
                     key={option.key}
                   >
                     <span className="portal-compliance-evidence-title"><b>{optionIndex + 1}</b>{option.label}</span>
-                    {option.key === 'teams' ? (
+                    {option.key === 'pea' ? (
+                      <div className="portal-compliance-moodle-evidence">
+                        <strong>
+                          {loadingComplianceMoodle
+                            ? 'Buscando PEA y sílabo en Moodle...'
+                            : compliancePlanningMoodlePayload.length > 0
+                              ? `${compliancePlanningMoodlePayload.length} documento(s) identificado(s) automáticamente`
+                              : 'No se identificaron documentos PEA o sílabo en el curso'}
+                        </strong>
+                        <small>
+                          Se utiliza el mismo curso Moodle validado por asignatura, período y estudiantes seleccionados.
+                        </small>
+                        {compliancePlanningMoodlePayload.length > 0 ? (
+                          <ul className="portal-compliance-planning-resources">
+                            {compliancePlanningMoodlePayload.map((resource) => (
+                              <li key={resource.module_id}>
+                                <span>
+                                  <strong>{resource.name}</strong>
+                                  <small>
+                                    {resource.planning_document_types
+                                      .map((type) => (type === 'pea' ? 'PEA' : 'Sílabo'))
+                                      .join(' y ')}
+                                    {resource.file_names.length > 0 ? ` · ${resource.file_names.join(', ')}` : ''}
+                                  </small>
+                                </span>
+                                {resource.web_url ? (
+                                  <a href={resource.web_url} target="_blank" rel="noreferrer">Abrir</a>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() =>
+                            complianceMoodleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          }
+                          disabled={!targetCourse}
+                        >
+                          Revisar en recursos de Moodle
+                        </button>
+                        <details className="portal-compliance-teams-fallback">
+                          <summary>Agregar captura manual de respaldo</summary>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(event) => {
+                              const selectedFiles = Array.from(event.target.files || [])
+                              setComplianceEvidenceFiles((current) => ({
+                                ...current,
+                                pea: [...current.pea, ...selectedFiles],
+                              }))
+                              event.target.value = ''
+                            }}
+                          />
+                        </details>
+                      </div>
+                    ) : option.key === 'aula' ? (
+                      <div className="portal-compliance-moodle-evidence">
+                        <strong>
+                          {loadingComplianceMoodle
+                            ? 'Consultando Moodle...'
+                            : complianceMoodleReportPayload.length > 0
+                              ? `${complianceMoodleReportPayload.length} recurso(s) listo(s) para anexar`
+                              : 'Sin recursos Moodle seleccionados'}
+                        </strong>
+                        <small>
+                          {complianceMoodle?.resources?.course
+                            ? complianceMoodle.resources.course.displayname ||
+                              complianceMoodle.resources.course.fullname ||
+                              complianceMoodle.resources.course.shortname ||
+                              'Curso Moodle asociado'
+                            : 'El curso se vincula con la materia, el período y los correos institucionales de la matrícula seleccionada.'}
+                        </small>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() =>
+                            complianceMoodleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          }
+                          disabled={!targetCourse}
+                        >
+                          Revisar recursos de Moodle
+                        </button>
+                      </div>
+                    ) : option.key === 'teams' ? (
                       <div className="portal-compliance-teams">
                         <div className="portal-compliance-teams-toolbar">
                           <label>
@@ -2218,22 +2869,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                           />
                         </details>
                       </div>
-                    ) : (
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={(event) => {
-                          const selectedFiles = Array.from(event.target.files || [])
-                          setComplianceEvidenceFiles((current) => ({
-                            ...current,
-                            [option.key]: [...current[option.key], ...selectedFiles],
-                          }))
-                          event.target.value = ''
-                        }}
-                      />
-                    )}
-                    {complianceEvidenceFiles[option.key].length > 0 ? (
+                    ) : null}
+                    {option.key !== 'aula' && (complianceEvidenceFiles[option.key].length > 0 ? (
                       <ul className="portal-compliance-evidence-files">
                         {complianceEvidenceFiles[option.key].map((file, fileIndex) => (
                           <li key={`${file.name}-${file.lastModified}-${fileIndex}`}>
@@ -2254,8 +2891,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         ))}
                       </ul>
                     ) : (
-                      <small>{option.key === 'teams' && complianceTeamsReportPayload.length > 0 ? 'Evidencia automática lista' : 'Sin capturas seleccionadas'}</small>
-                    )}
+                      <small>
+                        {option.key === 'teams' && complianceTeamsReportPayload.length > 0
+                          ? 'Evidencia automática lista'
+                          : option.key === 'pea' && compliancePlanningMoodlePayload.length > 0
+                            ? 'Evidencia automática lista; sin capturas manuales.'
+                            : 'Sin capturas seleccionadas'}
+                      </small>
+                    ))}
                   </div>
                 ))}
                 <div className="portal-compliance-evidence-item portal-compliance-evidence-item--automatic">
@@ -2279,7 +2922,18 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   <button type="button" className="ghost-button" onClick={selectVisibleComplianceStudents} disabled={filteredComplianceStudents.length === 0}>
                     Incluir visibles
                   </button>
-                  <button type="button" className="ghost-button" onClick={() => setSelectedComplianceStudentCodes([])} disabled={complianceStudents.length === 0}>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setSelectedComplianceStudentCodes([])
+                      setComplianceMoodle(null)
+                      setSelectedComplianceMoodleCourseId(null)
+                      setSelectedComplianceMoodleModuleIds([])
+                      setComplianceMoodleError('')
+                    }}
+                    disabled={complianceStudents.length === 0}
+                  >
                     Limpiar selección
                   </button>
                 </div>
@@ -2313,7 +2967,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                         <th>Estudiante</th>
                         <th>Cédula</th>
                         <th>Carrera</th>
-                        <th>Periodo</th>
+                        <th>Período</th>
                         <th>Final</th>
                       </tr>
                     </thead>
@@ -2327,6 +2981,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                                 type="checkbox"
                                 checked={selectedComplianceStudentCodes.includes(code)}
                                 onChange={(event) => {
+                                  setComplianceMoodle(null)
+                                  setSelectedComplianceMoodleCourseId(null)
+                                  setSelectedComplianceMoodleModuleIds([])
+                                  setComplianceMoodleError('')
                                   setSelectedComplianceStudentCodes((current) =>
                                     event.target.checked
                                       ? Array.from(new Set([...current, code]))
@@ -2349,14 +3007,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               ) : complianceStudents.length > 0 ? (
                 <p className="form-success">No hay resultados cargados que coincidan con la búsqueda actual.</p>
               ) : (
-                <p className="form-success">Los estudiantes se cargarán automáticamente al seleccionar la materia y sus periodos.</p>
+                <p className="form-success">Los estudiantes se cargarán automáticamente al seleccionar la materia y sus períodos.</p>
               )}
             </div>
             <section className="portal-signature-panel" aria-labelledby="portal-signature-title">
               <div className="section-title">
                 <div>
                   <span>Firma electrónica</span>
-                  <h2 id="portal-signature-title">Firmar informe, notas y contrato</h2>
+                  <h2 id="portal-signature-title">Firmar y archivar el informe de cumplimiento</h2>
                 </div>
                 <strong>Uso único por solicitud</strong>
               </div>
@@ -2365,6 +3023,50 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 reporte de notas en formato Secretaría y el contrato docente validado. Al finalizar deberá
                 seleccionarlos nuevamente para otra firma.
               </p>
+              <div className="portal-signature-invoice-backups">
+                <div>
+                  <span>Respaldos de facturación</span>
+                  <strong>Factura XML y RIDE</strong>
+                  <small>
+                    Son opcionales, pero deben seleccionarse juntos. Se guardarán sin modificaciones en la misma
+                    carpeta del docente y dentro del paquete ZIP.
+                  </small>
+                </div>
+                <div className="compliance-invoice-files">
+                  <label>
+                    <span>Factura electrónica XML</span>
+                    <input
+                      key={`invoice-xml-${complianceInvoiceInputKey}`}
+                      type="file"
+                      accept=".xml,text/xml,application/xml"
+                      disabled={signingComplianceReport}
+                      onChange={(event) => setComplianceInvoiceXml(event.target.files?.[0] || null)}
+                    />
+                    <small>{complianceInvoiceXml ? complianceInvoiceXml.name : 'Archivo XML de máximo 20 MB'}</small>
+                  </label>
+                  <label>
+                    <span>RIDE en PDF</span>
+                    <input
+                      key={`invoice-ride-${complianceInvoiceInputKey}`}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      disabled={signingComplianceReport}
+                      onChange={(event) => setComplianceRidePdf(event.target.files?.[0] || null)}
+                    />
+                    <small>{complianceRidePdf ? complianceRidePdf.name : 'Documento PDF de máximo 50 MB'}</small>
+                  </label>
+                </div>
+                {complianceInvoiceXml || complianceRidePdf ? (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={clearComplianceInvoiceBackups}
+                    disabled={signingComplianceReport}
+                  >
+                    Limpiar respaldos
+                  </button>
+                ) : null}
+              </div>
               <div className="portal-signature-grid">
                 <label className="portal-signature-certificate">
                   <span>Archivo de certificado</span>
@@ -2420,7 +3122,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   checked={signingConsent}
                   onChange={(event) => setSigningConsent(event.target.checked)}
                 />
-                <span>Confirmo que soy titular del certificado y apruebo el contenido definitivo de los tres documentos.</span>
+                <span>
+                  Confirmo que soy titular del certificado y apruebo los tres PDF definitivos y los respaldos de
+                  facturación seleccionados.
+                </span>
               </label>
               <div className="portal-signature-actions">
                 <button
@@ -2440,48 +3145,76 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     !targetCourse ||
                     !complianceContractFile ||
                     !complianceContractAnalysis ||
-                    !signingCertificate ||
-                    !signingPassword ||
-                    !signingConsent
+                     !signingCertificate ||
+                     !signingPassword ||
+                     !signingConsent ||
+                     !complianceReportCanGenerate ||
+                     Boolean(complianceInvoiceXml) !== Boolean(complianceRidePdf)
                   }
                 >
-                  {signingComplianceReport ? 'Firmando los 3 PDF...' : 'Firmar los 3 documentos'}
+                  {signingComplianceReport ? 'Firmando y archivando...' : 'Firmar y archivar documentos'}
                 </button>
               </div>
               {signedReportBundle ? (
                 <div className="portal-signed-documents" aria-live="polite">
-                  <div>
-                    <strong>Documentos firmados</strong>
-                    <small>Guardados en OneDrive / DOCENTES. Descargue el paquete completo o cada PDF por separado.</small>
+                  <div className="portal-signed-documents-copy">
+                    <strong>{signedReportBundle.storedDocumentCount} documentos guardados</strong>
+                    <small>
+                      Informe, notas y contrato firmados
+                      {signedReportBundle.invoiceXmlUrl ? ', factura XML y RIDE' : ''} guardados juntos en una misma
+                      carpeta de OneDrive / DOCENTES. El ZIP es únicamente la descarga conjunta.
+                    </small>
                   </div>
-                  <button
-                    type="button"
-                    className="primary-action"
-                    onClick={() => downloadObjectUrl(signedReportBundle.archiveUrl, signedReportBundle.archiveFilename)}
-                  >
-                    Descargar todo
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => downloadObjectUrl(signedReportBundle.complianceUrl, signedReportBundle.complianceFilename)}
-                  >
-                    Descargar informe firmado
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => downloadObjectUrl(signedReportBundle.gradesUrl, signedReportBundle.gradesFilename)}
-                  >
-                    Descargar notas firmadas
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => downloadObjectUrl(signedReportBundle.contractUrl, signedReportBundle.contractFilename)}
-                  >
-                    Descargar contrato firmado
-                  </button>
+                  <div className="portal-signed-documents-actions">
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={() => downloadObjectUrl(signedReportBundle.archiveUrl, signedReportBundle.archiveFilename)}
+                    >
+                      Descargar todo
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => downloadObjectUrl(signedReportBundle.complianceUrl, signedReportBundle.complianceFilename)}
+                    >
+                      Descargar informe firmado
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => downloadObjectUrl(signedReportBundle.gradesUrl, signedReportBundle.gradesFilename)}
+                    >
+                      Descargar notas firmadas
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => downloadObjectUrl(signedReportBundle.contractUrl, signedReportBundle.contractFilename)}
+                    >
+                      Descargar contrato firmado
+                    </button>
+                    {signedReportBundle.invoiceXmlUrl && signedReportBundle.invoiceXmlFilename ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() =>
+                          downloadObjectUrl(signedReportBundle.invoiceXmlUrl!, signedReportBundle.invoiceXmlFilename!)
+                        }
+                      >
+                        Descargar factura XML
+                      </button>
+                    ) : null}
+                    {signedReportBundle.ridePdfUrl && signedReportBundle.ridePdfFilename ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => downloadObjectUrl(signedReportBundle.ridePdfUrl!, signedReportBundle.ridePdfFilename!)}
+                      >
+                        Descargar RIDE
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </section>
@@ -2490,7 +3223,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void previewComplianceReport(targetCourse)}
-                disabled={previewingComplianceReport || !targetCourse}
+                disabled={previewingComplianceReport || !targetCourse || !complianceReportCanGenerate}
               >
                 {previewingComplianceReport ? 'Generando vista...' : 'Visualización previa'}
               </button>
@@ -2498,7 +3231,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 type="button"
                 className="ghost-button"
                 onClick={() => void downloadComplianceReport(targetCourse)}
-                disabled={downloadingComplianceReport || !targetCourse}
+                disabled={downloadingComplianceReport || !targetCourse || !complianceReportCanGenerate}
               >
                 {downloadingComplianceReport ? 'Generando informe...' : 'Descargar PDF sin firma'}
               </button>
@@ -2520,7 +3253,6 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               </button>
             </div>
             {error ? <p className="form-error">{error}</p> : null}
-            {message ? <p className="form-success">{message}</p> : null}
           </div>
           ) : null}
 
@@ -2704,20 +3436,19 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
             </p>
           ) : null}
           {error ? <p className="form-error">{error}</p> : null}
-          {message ? <p className="form-success">{message}</p> : null}
 
           <div className="excel-table-wrap portal-table-wrap">
             <table className="matricula-table portal-grade-table">
               <thead>
                 <tr>
                   <th>Estudiante</th>
-                  <th>Cedula</th>
+                  <th>Cédula</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   {courseUsesHomologation ? (
                     <>
                       <th>Teoria 40%</th>
-                      <th>Practica 60%</th>
+                      <th>Práctica 60%</th>
                       <th>Final</th>
                       <th>Estado</th>
                       <th>Recup.</th>
@@ -2939,6 +3670,30 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         ) : null}
       </section>
 
+      {message ? (
+        <div className="institutional-email-notification-overlay" role="presentation">
+          <section className="institutional-email-notification" role="status" aria-live="polite" aria-atomic="true">
+            <span className="institutional-email-notification__mark" aria-hidden="true">
+              {signingComplianceReport ? '...' : '✓'}
+            </span>
+            <div>
+              <p className="eyebrow">
+                {signingComplianceReport ? 'Firma electrónica en proceso' : 'Proceso completado'}
+              </p>
+              <h3>{message}</h3>
+              <small>
+                {signingComplianceReport
+                  ? 'Esta ventana permanecerá visible hasta finalizar la firma y el archivo de los documentos.'
+                  : 'Esta ventana se cerrará automáticamente en 3 segundos.'}
+              </small>
+            </div>
+            {!signingComplianceReport ? (
+              <span className="institutional-email-notification__timer" aria-hidden="true" />
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
       {reportPreviewUrl ? (
         <div className="portal-report-preview-overlay" role="dialog" aria-modal="true" aria-label="Vista previa del reporte docente">
           <article className="portal-report-preview-modal">
@@ -2999,7 +3754,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <p>{selectedCourse?.nombre_materia || 'Materia seleccionada'}</p>
               </div>
               <div className="portal-report-preview-actions">
-                <button type="button" className="ghost-button" onClick={() => void downloadComplianceReport()} disabled={downloadingComplianceReport}>
+                <button type="button" className="ghost-button" onClick={() => void downloadComplianceReport()} disabled={downloadingComplianceReport || !complianceReportCanGenerate}>
                   {downloadingComplianceReport ? 'Descargando...' : 'Descargar informe'}
                 </button>
                 <button type="button" className="primary-action" onClick={closeCompliancePreview}>

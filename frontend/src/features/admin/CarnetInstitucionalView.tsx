@@ -159,7 +159,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
     try {
       setMyStatus(await fetchCarnetMe())
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar el carnet.')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar el carné.')
     } finally {
       setMyLoading(false)
     }
@@ -208,7 +208,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
       return
     }
     if (target === 'selected' && !selectedPerson) {
-      setError('Selecciona una persona antes de subir una foto.')
+      setError('Seleccione una persona antes de subir una foto.')
       return
     }
     setUploading(true)
@@ -235,7 +235,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
 
   async function handleDownload(target: 'me' | 'selected') {
     if (target === 'selected' && !selectedPerson) {
-      setError('Selecciona una persona antes de generar el carnet.')
+      setError('Seleccione una persona antes de generar el carné.')
       return
     }
     setDownloading(true)
@@ -247,14 +247,14 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
           ? await downloadCarnetMePdf()
           : await downloadCarnetPersonaPdf(selectedPerson!.tipo_persona, selectedPerson!.codigo_persona)
       downloadBlob(blob, carnetFilename(target === 'me' ? myStatus : selectedStatus))
-      setMessage('Carnet generado correctamente.')
+      setMessage('Carné generado correctamente.')
       if (target === 'me') {
         void loadMyStatus()
       } else if (selectedPerson) {
         void selectPerson(selectedPerson)
       }
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo generar el carnet.')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo generar el carné.')
     } finally {
       setDownloading(false)
     }
@@ -273,12 +273,12 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
       const response =
         action === 'approve'
           ? await approveCarnetPhoto(requestId)
-          : await rejectCarnetPhoto(requestId, 'Foto rechazada desde carnet institucional')
+          : await rejectCarnetPhoto(requestId, 'Foto rechazada desde el carné institucional')
       setSelectedStatus(response.foto || null)
-      setMessage(response.message || 'Revision actualizada.')
+      setMessage(response.message || 'Revisión actualizada.')
       void runSearch()
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo actualizar la revision.')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo actualizar la revisión.')
     } finally {
       setReviewing(false)
     }
@@ -303,12 +303,12 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
     <section className="content-stack carnet-page">
       <article className="student-topbar carnet-hero">
         <div>
-          <span className="eyebrow">{canManage ? 'Carnetizacion' : 'Carnet institucional'}</span>
-          <h1>{canManage ? 'Aprobacion de carnet institucional' : 'Mi carnet institucional'}</h1>
+          <span className="eyebrow">{canManage ? 'Carnetización' : 'Carné institucional'}</span>
+          <h1>{canManage ? 'Aprobación de carné institucional' : 'Mi carné institucional'}</h1>
           <p>
             {canManage
-              ? 'Revisa solicitudes, aprueba o rechaza fotos y genera carnets para estudiantes, docentes y administrativos.'
-              : 'Carga tu foto y revisa el estado de aprobacion para el carnet.'}
+              ? 'Revise solicitudes, apruebe o rechace fotos y genere carnés para estudiantes, docentes y administrativos.'
+              : 'Cargue su foto y revise el estado de aprobación del carné.'}
           </p>
         </div>
         <div className="carnet-hero__user">
@@ -324,7 +324,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
         <article className="student-card carnet-panel">
           <div className="section-title section-title--inline">
             <div>
-              <span className="eyebrow">Mi carnet</span>
+              <span className="eyebrow">Mi carné</span>
               <h2>{currentPerson?.nombre || displayName || 'Usuario conectado'}</h2>
             </div>
             <span className={statusTone(myStatus?.estado)}>{statusText(myStatus?.estado)}</span>
@@ -336,21 +336,21 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
 
           <div className="carnet-meta-grid">
             <InfoTile label="Tipo" value={currentPerson?.tipo || normalizedRole || '-'} />
-            <InfoTile label="Codigo" value={currentPerson?.codigo || '-'} />
-            <InfoTile label="Cedula/Login" value={currentPerson?.cedula || '-'} />
+            <InfoTile label="Código" value={currentPerson?.codigo || '-'} />
+            <InfoTile label="Cédula/Login" value={currentPerson?.cedula || '-'} />
             <InfoTile label="Correo" value={currentPerson?.correo || '-'} />
             <InfoTile label="Vigencia" value={myStatus?.fecha_vigencia_hasta || '-'} />
-            <InfoTile label="Renovacion" value={`${myStatus?.meses_vigencia || (normalizedRole === 'ESTUDIANTE' ? 8 : 24)} meses`} />
+            <InfoTile label="Renovación" value={`${myStatus?.meses_vigencia || (normalizedRole === 'ESTUDIANTE' ? 8 : 24)} meses`} />
           </div>
 
           {myStatus?.mensaje_vigencia ? <p className="carnet-validity-note">{myStatus.mensaje_vigencia}</p> : null}
 
           <div className="carnet-actions carnet-actions--stacked">
             <label className={`file-input-card ${uploading || !myCanUpload ? 'file-input-card--disabled' : ''}`}>
-              <span>{myCanUpload ? 'Subir foto de carnet' : 'Foto vigente bloqueada'}</span>
+              <span>{myCanUpload ? 'Subir foto para el carné' : 'Foto vigente bloqueada'}</span>
               <small>
                 {myCanUpload
-                  ? 'JPG, PNG o WEBP hasta 8 MB. Queda pendiente de aprobacion.'
+                  ? 'JPG, PNG o WEBP hasta 8 MB. Queda pendiente de aprobación.'
                   : 'La nueva solicitud se habilita al finalizar la vigencia.'}
               </small>
               <input
@@ -370,7 +370,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
               disabled={downloading || !myCanDownload}
               onClick={() => void handleDownload('me')}
             >
-              {downloading ? 'Generando...' : 'Descargar carnet'}
+              {downloading ? 'Generando...' : 'Descargar carné'}
             </button>
           </div>
         </article>
@@ -380,7 +380,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
             <div className="section-title section-title--inline">
               <div>
                 <span className="eyebrow">Panel administrativo</span>
-                <h2>Solicitudes de carnetizacion</h2>
+                <h2>Solicitudes de carnetización</h2>
               </div>
               <span className="credential-status">{people.length} resultado(s)</span>
             </div>
@@ -400,7 +400,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
               }}
             >
               <label>
-                Buscar por nombre, cedula, codigo o correo
+                Buscar por nombre, cédula, código o correo
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -430,7 +430,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
             </form>
 
             <div className="carnet-workspace">
-              <div className="carnet-results" aria-label="Resultados de busqueda">
+              <div className="carnet-results" aria-label="Resultados de búsqueda">
                 {people.length === 0 ? (
                   <p className="empty-state">No hay personas para mostrar.</p>
                 ) : (
@@ -458,7 +458,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
                 <div className="section-title section-title--inline">
                   <div>
                     <span className="eyebrow">Persona seleccionada</span>
-                    <h3>{activePerson?.nombre || 'Sin seleccion'}</h3>
+                    <h3>{activePerson?.nombre || 'Sin selección'}</h3>
                   </div>
                   <span className={statusTone(selectedStatus?.estado)}>{statusText(selectedStatus?.estado)}</span>
                 </div>
@@ -469,14 +469,14 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
 
                 <div className="carnet-meta-grid carnet-meta-grid--compact">
                   <InfoTile label="Tipo" value={activePerson?.tipo || '-'} />
-                  <InfoTile label="Codigo" value={activePerson?.codigo || '-'} />
-                  <InfoTile label="Cedula/Login" value={activePerson?.cedula || '-'} />
+                  <InfoTile label="Código" value={activePerson?.codigo || '-'} />
+                  <InfoTile label="Cédula/Login" value={activePerson?.cedula || '-'} />
                   <InfoTile label="Correo" value={activePerson?.correo || '-'} />
                   <InfoTile label="Fuente" value={activePerson?.fuente || '-'} />
-                  <InfoTile label="Tamano" value={formatBytes(selectedStatus?.tamano_bytes)} />
+                  <InfoTile label="Tamaño" value={formatBytes(selectedStatus?.tamano_bytes)} />
                   <InfoTile label="Vigencia" value={selectedStatus?.fecha_vigencia_hasta || '-'} />
-                  <InfoTile label="Emision" value={selectedStatus?.fecha_emision || '-'} />
-                  <InfoTile label="Renovacion" value={`${selectedStatus?.meses_vigencia || '-'} meses`} />
+                  <InfoTile label="Emisión" value={selectedStatus?.fecha_emision || '-'} />
+                  <InfoTile label="Renovación" value={`${selectedStatus?.meses_vigencia || '-'} meses`} />
                 </div>
 
                 {selectedStatus?.mensaje_vigencia ? (
@@ -503,7 +503,7 @@ export function CarnetInstitucionalView({ displayName, role = '' }: Readonly<Car
                     disabled={downloading || !selectedCanDownload}
                     onClick={() => void handleDownload('selected')}
                   >
-                    Generar carnet
+                    Generar carné
                   </button>
                   <button
                     type="button"
@@ -549,7 +549,7 @@ function CarnetPhotoBlock({ status, loading }: Readonly<{ status?: CarnetPhotoSt
         {loading ? (
           <span>Cargando...</span>
         ) : imageUrl ? (
-          <img src={imageUrl} alt="Foto de carnet" />
+          <img src={imageUrl} alt="Foto para el carné" />
         ) : (
           <span>Sin foto</span>
         )}
@@ -557,9 +557,9 @@ function CarnetPhotoBlock({ status, loading }: Readonly<{ status?: CarnetPhotoSt
       <div className="carnet-photo-copy">
         <span className={statusTone(status?.estado)}>{statusText(status?.estado)}</span>
         <strong>{status?.nombre_archivo || 'Foto no cargada'}</strong>
-        <p>{status?.observacion || status?.mensaje || 'La foto se mostrara cuando exista una solicitud o aprobacion.'}</p>
+        <p>{status?.observacion || status?.mensaje || 'La foto se mostrará cuando exista una solicitud o aprobación.'}</p>
         <small>
-          Solicitud: {status?.fecha_solicitud || '-'} · Revision: {status?.fecha_revision || '-'}
+          Solicitud: {status?.fecha_solicitud || '-'} · Revisión: {status?.fecha_revision || '-'}
         </small>
       </div>
     </div>
@@ -582,10 +582,10 @@ function CarnetCardPreview({
         ? 'DOCENTE'
         : type === 'ADMINISTRATIVO'
           ? 'ADMINISTRATIVO'
-          : 'INSTITUTO SUPERIOR TECNOLOGICO INTEC'
+          : 'INSTITUTO SUPERIOR TECNOLÓGICO INTEC'
 
   return (
-    <div className="carnet-card-preview" aria-label="Vista previa del carnet institucional">
+    <div className="carnet-card-preview" aria-label="Vista previa del carné institucional">
       <div className="carnet-card-preview__brand">
         <img src="/Intec-Logowithslogangray.svg" alt="INTEC" />
       </div>
@@ -603,7 +603,7 @@ function CarnetCardPreview({
         <span>CUARTA COHORTE</span>
       </div>
       <div className="carnet-card-preview__photo">
-        {imageUrl ? <img src={imageUrl} alt="Foto aprobada para carnet" /> : <span>Foto</span>}
+        {imageUrl ? <img src={imageUrl} alt="Foto aprobada para el carné" /> : <span>Foto</span>}
       </div>
     </div>
   )

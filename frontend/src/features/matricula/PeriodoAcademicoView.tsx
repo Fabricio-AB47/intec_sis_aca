@@ -104,10 +104,10 @@ export function PeriodoAcademicoView({
   })
   const listSummary = selectedListLabel
     ? `${selectedListLabel} / ${selectedStudents.length} estudiantes`
-    : 'Selecciona una tarjeta'
-  const titleEyebrow = isMovement ? 'Periodo matriculados' : 'Periodo academico'
-  const titleHeading = isMovement ? 'Movimiento por primera y ultima matricula' : 'Primera matricula historica por año'
-  const userLabel = isMovement ? 'Periodo matriculados' : 'Periodo academico'
+    : 'Seleccione una tarjeta'
+  const titleEyebrow = isMovement ? 'Período matriculados' : 'Período académico'
+  const titleHeading = isMovement ? 'Movimiento por primera y última matrícula' : 'Primera matrícula histórica por año'
+  const userLabel = isMovement ? 'Período matriculados' : 'Período académico'
 
   const handleYearClick = (yearValue: string, label: string, anio: number | null) => {
     setSelectedYear(yearValue)
@@ -143,7 +143,7 @@ export function PeriodoAcademicoView({
         >
           <p>Todos los años</p>
           <h2>{years.reduce((sum, year) => sum + year.total_estudiantes, 0)}</h2>
-          <small>{isMovement ? 'Primera + ultima matricula' : 'Primera matricula'}</small>
+          <small>{isMovement ? 'Primera + última matrícula' : 'Primera matrícula'}</small>
         </button>
         {years.map((year) => (
           <button
@@ -154,7 +154,7 @@ export function PeriodoAcademicoView({
           >
             <p>{year.anio_periodo ?? 'Sin año'}</p>
             <h2>{year.total_estudiantes}</h2>
-            <small>{isMovement ? `Primera ${year.primeras ?? 0} / Ultima ${year.ultimas ?? 0}` : 'Primera matricula unicamente'}</small>
+            <small>{isMovement ? `Primera ${year.primeras ?? 0} / Última ${year.ultimas ?? 0}` : 'Primera matrícula únicamente'}</small>
           </button>
         ))}
       </section>
@@ -162,7 +162,7 @@ export function PeriodoAcademicoView({
       <section className="student-grid student-grid--content">
         <article className="student-card student-card--wide periodo-panel">
           <div className="card-head">
-            <h3>Detalle de periodos</h3>
+            <h3>Detalle de períodos</h3>
             <span>{loading ? 'Cargando...' : `${filteredRows.length} registros`}</span>
           </div>
 
@@ -172,32 +172,32 @@ export function PeriodoAcademicoView({
               <select value={tipoFilter} onChange={(event) => setTipoFilter(event.target.value as 'ALL' | MatriculaTipo)}>
                 <option value="ALL">Todos</option>
                 <option value="R">Regular (R)</option>
-                <option value="H">Homologacion (H)</option>
+                <option value="H">Homologación (H)</option>
               </select>
             </label>
             {isMovement ? (
               <label>
-                <span>Punto de matricula</span>
+                <span>Punto de matrícula</span>
                 <select value={puntoFilter} onChange={(event) => setPuntoFilter(event.target.value as PuntoFilter)}>
-                  <option value="ALL">Primera y ultima</option>
-                  <option value="PRIMERA">Primera matricula</option>
-                  <option value="ULTIMA">Ultima matricula</option>
+                  <option value="ALL">Primera y última</option>
+                  <option value="PRIMERA">Primera matrícula</option>
+                  <option value="ULTIMA">Última matrícula</option>
                 </select>
               </label>
             ) : null}
             <label>
-              <span>Buscar periodo</span>
+              <span>Buscar período</span>
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Codigo o detalle"
+                placeholder="Código o detalle"
               />
             </label>
           </div>
 
           <div className="teams-actions">
             <button type="button" onClick={onLoadSummary} disabled={loading}>
-              {loading ? 'Actualizando...' : 'Actualizar periodos'}
+              {loading ? 'Actualizando...' : 'Actualizar períodos'}
             </button>
           </div>
 
@@ -226,7 +226,7 @@ export function PeriodoAcademicoView({
                   {([
                     ['ALL', 'Ambos', `${selectedYearSummary.primeras ?? 0} / ${selectedYearSummary.ultimas ?? 0}`],
                     ['PRIMERA', 'Primera', `${selectedYearSummary.primeras ?? 0}`],
-                    ['ULTIMA', 'Ultima', `${selectedYearSummary.ultimas ?? 0}`],
+                    ['ULTIMA', 'Última', `${selectedYearSummary.ultimas ?? 0}`],
                   ] as const).map(([punto, label, total]) => (
                     <button
                       key={punto}
@@ -250,7 +250,7 @@ export function PeriodoAcademicoView({
                 <tr>
                   <th>Año</th>
                   {isMovement ? <th>Punto</th> : null}
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Detalle</th>
                   <th>Tipo</th>
                   <th>Activo</th>
@@ -278,7 +278,7 @@ export function PeriodoAcademicoView({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isMovement ? 10 : 9}>Sin datos por periodo para los filtros seleccionados.</td>
+                    <td colSpan={isMovement ? 10 : 9}>Sin datos por período para los filtros seleccionados.</td>
                   </tr>
                 )}
               </tbody>
@@ -301,13 +301,13 @@ export function PeriodoAcademicoView({
             <table className="matricula-table">
               <thead>
                 <tr>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Estudiante</th>
                   <th>Año</th>
                   {isMovement ? <th>Punto</th> : null}
                   <th>Tipo</th>
                   <th>Estado</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Correo personal</th>
                   <th>Nombre Carrera</th>
                 </tr>
@@ -332,7 +332,7 @@ export function PeriodoAcademicoView({
                     <td colSpan={isMovement ? 9 : 8}>
                       {selectedListLabel
                         ? 'Sin estudiantes para la tarjeta seleccionada.'
-                        : 'Selecciona una tarjeta de año para cargar estudiantes.'}
+                        : 'Seleccione una tarjeta de año para cargar estudiantes.'}
                     </td>
                   </tr>
                 )}

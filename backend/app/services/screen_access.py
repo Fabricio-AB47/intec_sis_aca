@@ -19,18 +19,18 @@ _catalog_bootstrapped = False
 
 
 ROLE_CATALOG: tuple[dict[str, str], ...] = (
-    {"value": "ADMINISTRADOR", "label": "Administrador", "description": "Acceso total y configuracion institucional."},
-    {"value": "ACADEMICO", "label": "Academico", "description": "Matricula, estudiantes, notas y titulacion."},
-    {"value": "BIENESTAR", "label": "Bienestar", "description": "Indicadores, becas, calificaciones y acompanamiento estudiantil."},
-    {"value": "ADMISIONES", "label": "Admisiones", "description": "Inscripcion, aspirantes y matricula inicial."},
+    {"value": "ADMINISTRADOR", "label": "Administrador", "description": 'Acceso total y configuración institucional.'},
+    {"value": "ACADEMICO", "label": "Académico", "description": 'Matrícula, estudiantes, notas y titulación.'},
+    {"value": "BIENESTAR", "label": "Bienestar", "description": "Indicadores, becas, calificaciones y acompañamiento estudiantil."},
+    {"value": "ADMISIONES", "label": "Admisiones", "description": 'Inscripción, aspirantes y matrícula inicial.'},
     {"value": "FINANCIERO", "label": "Financiero", "description": "Pagos, convenios, becas e ingresos."},
-    {"value": "SECRETARIA", "label": "Secretaria", "description": "Practicas, grado, titulacion y registros."},
-    {"value": "SOPORTE", "label": "Soporte", "description": "Soporte tecnico y operacion extendida."},
-    {"value": "INVITADO_SOP", "label": "Invitado de soporte", "description": "Consulta tecnica temporal y controlada."},
+    {"value": "SECRETARIA", "label": "Secretaría", "description": 'Prácticas, grado, titulación y registros.'},
+    {"value": "SOPORTE", "label": "Soporte", "description": 'Soporte técnico y operación extendida.'},
+    {"value": "INVITADO_SOP", "label": "Invitado de soporte", "description": "Consulta técnica temporal y controlada."},
     {"value": "RECTOR", "label": "Rector", "description": "Consulta ejecutiva de indicadores."},
     {"value": "VICERRECTOR", "label": "Vicerrector", "description": "Consulta ejecutiva y seguimiento."},
     {"value": "DOCENTE", "label": "Docente", "description": "Cursos, calificaciones y documentos docentes."},
-    {"value": "ESTUDIANTE", "label": "Estudiante", "description": "Portal academico y servicios estudiantiles."},
+    {"value": "ESTUDIANTE", "label": "Estudiante", "description": 'Portal académico y servicios estudiantiles.'},
 )
 
 
@@ -58,174 +58,206 @@ def _flow(parent_page: str, key: str, label: str, group: str) -> dict[str, str]:
 
 BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("dashboard", "Dashboard", "Indicadores generales y resumen institucional.", "Inicio"),
-    _screen("sistema-academico", "Sistema academico", "Flujo academico institucional integrado.", "Inicio"),
+    _screen("sistema-academico", "Sistema académico", "Flujo académico institucional integrado.", "Inicio"),
     _screen(
         "preinscripcion",
-        "Inscripcion de estudiantes",
-        "Registro previo, inscripcion, becas y matricula inicial.",
-        "Inscripcion",
+        "Inscripción de estudiantes",
+        "Registro previo, inscripción, becas y matrícula inicial.",
+        "Inscripción",
     ),
-    _screen("matricula", "Consulta de matriculas", "Resumen y consulta general de matriculas.", "Matricula"),
+    _screen("matricula", "Consulta de matrículas", "Resumen y consulta general de matrículas.", "Matrícula"),
     _screen(
         "matricula-acad",
-        "Matriculacion academica",
-        "Registro y actualizacion de la cabecera de matricula y materias del estudiante.",
-        "Matricula",
+        "Matriculación académica",
+        "Registro y actualización de la cabecera de matrícula y materias del estudiante.",
+        "Matrícula",
     ),
-    _screen("matricula-docente", "Matricula docente", "Asignacion docente por materia y periodo.", "Docencia"),
-    _screen("estado-docente", "Estado docente", "Activacion, inactivacion y observaciones docentes.", "Docencia"),
-    _screen("actualizar-datos-estudiante", "Actualizacion de datos", "Datos personales de estudiantes y docentes.", "Personas"),
+    _screen("matricula-docente", "Matrícula docente", "Asignación docente por materia y período.", "Docencia"),
+    _screen("estado-docente", "Estado docente", "Activación, inactivación y observaciones docentes.", "Docencia"),
+    _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Personas"),
     _screen(
         "actualizar-correo-intec",
-        "Actualizacion de correo INTEC",
-        "Consulta, comparacion y actualizacion individual o masiva del correo institucional estudiantil.",
+        "Actualización de correo INTEC",
+        "Consulta, comparación y actualización individual o masiva del correo institucional estudiantil.",
         "Actualizaciones",
     ),
-    _screen("gestion-sisacademico", "Gestion operativa", "Tablas y procesos modernizados de SisAcademicoV1.", "Operacion"),
-    _screen("asignacion-pantallas", "Asignacion de pantallas", "Permisos de navegacion por tipo de usuario.", "Administracion"),
-    _screen("periodo-academico", "Periodo academico", "Resumen por periodo y estudiantes.", "Academico"),
-    _screen("periodo-matriculados", "Matriculados por periodo", "Detalle de matriculados por periodo academico.", "Academico"),
-    _screen("admin-notas-asignatura", "Notas por asignatura", "Docente, asignatura, periodo y estudiantes.", "Calificaciones"),
-    _screen("reporteria-carreras", "Reporteria por carreras", "Indicadores y resultados por carrera.", "Reportes"),
-    _screen("reporteria-integral", "Reporteria integral", "Reportes institucionales modernos.", "Reportes"),
+    _screen("gestion-sisacademico", "Gestión operativa", "Tablas y procesos modernizados de SisAcademicoV1.", "Operación"),
+    _screen("asignacion-pantallas", "Asignación de pantallas", "Permisos de navegación por tipo de usuario.", "Administración"),
+    _screen("periodo-academico", "Período académico", "Resumen por período y estudiantes.", "Académico"),
+    _screen("periodo-matriculados", "Matriculados por período", "Detalle de matriculados por período académico.", "Académico"),
+    _screen("admin-notas-asignatura", "Notas por asignatura", "Docente, asignatura, período y estudiantes.", "Calificaciones"),
+    _screen("reporteria-carreras", "Reportería por carreras", "Indicadores y resultados por carrera.", "Reportes"),
+    _screen("reporteria-integral", "Reportería integral", "Reportes institucionales modernos.", "Reportes"),
     _screen("reportes-individuales", "Reportes individuales", "Notas y documentos por estudiante o docente.", "Reportes"),
     _screen("senescyt-estudiantes", "Datos SENESCYT", "Reportes regulatorios y datos de estudiantes.", "Reportes"),
-    _screen("rango-edades", "Rangos de edad", "Distribucion estudiantil por edades.", "Reportes"),
+    _screen("rango-edades", "Rangos de edad", "Distribución estudiantil por edades.", "Reportes"),
     _screen("ingreso-ventas", "Ingresos y ventas", "Movimientos e indicadores financieros.", "Financiero"),
-    _screen("cruce-datos", "Cruce de datos", "Comparacion de informacion academica y archivos.", "Herramientas"),
-    _screen("validar-excel", "Validar Excel", "Validacion estructurada de archivos de carga.", "Herramientas"),
+    _screen("cruce-datos", "Cruce de datos", "Comparación de información académica y archivos.", "Herramientas"),
+    _screen("validar-excel", "Validar Excel", "Validación estructurada de archivos de carga.", "Herramientas"),
     _screen("teams", "Movimientos Teams", "Equipos, clases, grabaciones y actividad Microsoft 365.", "Microsoft 365"),
-    _screen("teams-matricula", "Matricula en Teams", "Creacion de aulas y matriculacion en Microsoft Teams.", "Microsoft 365"),
-    _screen("certificados", "Certificados", "Emision y consulta de certificados.", "Documentos"),
-    _screen("matricula-excel-certificados", "Certificados desde Excel", "Generacion masiva de certificados desde Excel.", "Documentos"),
-    _screen("renombrar-certificados", "Renombrar certificados", "Organizacion y renombrado de documentos.", "Documentos"),
-    _screen("credenciales", "Credenciales", "Generacion institucional de credenciales.", "Documentos"),
-    _screen("correos-masivos", "Correos masivos", "Envios institucionales y documentos asociados.", "Comunicacion"),
-    _screen("carnet-institucional", "Carnet institucional", "Foto, aprobacion y emision de carnets.", "Comunicacion"),
-    _screen("fecha-grado", "Fecha de grado", "Carga SENESCYT, actas y datos de grado.", "Titulacion"),
-    _screen("titulacion", "Verificacion de titulacion", "Requisitos previos y seleccion de modalidad.", "Titulacion"),
-    _screen("titulacion-proceso", "Proceso de titulacion", "Complexivo, defensa, fechas y enlaces.", "Titulacion"),
-    _screen("titulacion-responsables", "Responsables de titulacion", "Tribunal y responsables de examen complexivo.", "Titulacion"),
-    _screen("titulos-registrados", "Titulos registrados", "Registro y documentos de titulos emitidos.", "Titulacion"),
-    _screen("practicas-institucionales", "Practicas institucionales", "Practicas preprofesionales y vinculacion con la sociedad.", "Practicas"),
-    _screen("evaluacion-docente", "Evaluacion docente", "Formulario de evaluacion para estudiantes.", "Evaluacion"),
-    _screen("evaluacion-docente-admin", "Administrar evaluacion", "Configuracion administrativa de evaluaciones.", "Evaluacion"),
-    _screen("evaluacion-docente-avance", "Avance de evaluacion", "Seguimiento y ponderacion de evaluaciones.", "Evaluacion"),
-    _screen("evaluacion-docente-reportes", "Reportes de evaluacion", "Documentos y resultados de evaluacion docente.", "Evaluacion"),
-    _screen("formato-informe-docente", "Formato de informe docente", "Configuracion institucional del informe docente.", "Evaluacion"),
-    _screen("portal-estudiante", "Inicio del estudiante", "Resumen y estado academico del estudiante.", "Portal estudiante"),
-    _screen("portal-estudiante-malla-curricular", "Malla curricular del estudiante", "Materias, niveles, codigos y creditos de la carrera.", "Portal estudiante"),
-    _screen("portal-estudiante-malla-academica", "Avance de malla del estudiante", "Materias aprobadas, pendientes y avance academico.", "Portal estudiante"),
-    _screen("portal-estudiante-calificaciones", "Calificaciones del estudiante", "Notas del estudiante organizadas por periodo academico.", "Portal estudiante"),
+    _screen("teams-matricula", "Matrícula en Teams", "Creación de aulas y matriculación en Microsoft Teams.", "Microsoft 365"),
+    _screen(
+        "historico-integraciones",
+        "Movimientos de auditoría",
+        "Registro de inserciones, actualizaciones, eliminaciones y ciclo documental de informes docentes.",
+        "Auditoría",
+    ),
+    _screen(
+        "informe-cumplimiento",
+        "Informe de cumplimiento",
+        "Consulta de informes, notas, contratos y paquetes firmados archivados.",
+        "Documentos",
+    ),
+    _screen(
+        "moodle",
+        "Moodle",
+        "Estado de la integración y consultas de usuarios, cursos y recursos en modo de solo lectura.",
+        "Moodle",
+    ),
+    _screen(
+        "certificados",
+        "Matrícula y promoción por período",
+        "Certificados de matrícula y promoción generados directamente desde las matrículas del período seleccionado.",
+        "Certificados",
+    ),
+    _screen("matricula-excel-certificados", "Certificados desde Excel", "Generación masiva de certificados desde Excel.", "Certificados"),
+    _screen("renombrar-certificados", "Renombrar certificados", "Organización y renombrado de documentos.", "Certificados"),
+    _screen("credenciales", "Credenciales", "Generación institucional de credenciales.", "Documentos"),
+    _screen("correos-masivos", "Correos masivos", "Envíos institucionales y documentos asociados.", "Comunicación"),
+    _screen("carnet-institucional", "Carné institucional", "Foto, aprobación y emisión de carnés.", "Comunicación"),
+    _screen("fecha-grado", "Fecha de grado", "Carga SENESCYT, actas y datos de grado.", "Actualización"),
+    _screen("titulacion", "Verificación de titulación", "Requisitos previos y selección de modalidad.", "Titulación"),
+    _screen("titulacion-proceso", "Proceso de titulación", "Examen complexivo, defensa, fechas y enlaces.", "Titulación"),
+    _screen("titulacion-responsables", "Responsables de titulación", "Tribunal y responsables del examen complexivo.", "Titulación"),
+    _screen("titulos-registrados", "Títulos registrados", "Registro y documentos de títulos emitidos.", "Titulación"),
+    _screen("practicas-institucionales", "Prácticas institucionales", "Prácticas preprofesionales y vinculación con la sociedad.", "Prácticas"),
+    _screen("evaluacion-docente", "Evaluación docente", "Formulario de evaluación para estudiantes.", "Evaluación"),
+    _screen("evaluacion-docente-admin", "Administrar evaluación", "Configuración administrativa de evaluaciones.", "Evaluación"),
+    _screen("evaluacion-docente-avance", "Avance de evaluación", "Seguimiento y ponderación de evaluaciones.", "Evaluación"),
+    _screen("evaluacion-docente-reportes", "Reportes de evaluación", "Documentos y resultados de evaluación docente.", "Evaluación"),
+    _screen("formato-informe-docente", "Formato de informe docente", "Configuración institucional del informe docente.", "Evaluación"),
+    _screen("portal-estudiante", "Inicio del estudiante", "Resumen y estado académico del estudiante.", "Portal estudiante"),
+    _screen("portal-estudiante-malla-curricular", "Malla curricular del estudiante", "Materias, niveles, códigos y créditos de la carrera.", "Portal estudiante"),
+    _screen("portal-estudiante-malla-academica", "Avance de malla del estudiante", "Materias aprobadas, pendientes y avance académico.", "Portal estudiante"),
+    _screen("portal-estudiante-calificaciones", "Calificaciones del estudiante", "Notas del estudiante organizadas por período académico.", "Portal estudiante"),
     _screen(
         "ingles",
         "Escuela de Idiomas",
-        "Matricula vigente, evidencias por parcial y calificaciones de idiomas.",
+        "Matrícula vigente, evidencias por parcial y calificaciones de idiomas.",
         "Calificaciones",
     ),
-    _screen("expedientes-documentales", "Expedientes documentales", "Documentos de Ingles, titulacion, practicas y vinculacion almacenados en Microsoft 365.", "Documentos"),
+    _screen("expedientes-documentales", "Expedientes documentales", "Documentos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE almacenados en Microsoft 365.", "Documentos"),
     _screen("portal-docente", "Cursos y calificaciones docentes", "Cursos asignados, estudiantes y registro de calificaciones.", "Portal docente"),
-    _screen("portal-docente-informe", "Informe docente", "Informe de cumplimiento y firma electronica.", "Portales"),
-    _screen("portal-docente-planificacion", "Silabo y PEA", "Planificacion academica y firma electronica.", "Portales"),
+    _screen("portal-docente-informe", "Informe docente", "Informe de cumplimiento y firma electrónica.", "Portales"),
+    _screen("portal-docente-planificacion", "Sílabo y PEA", "Planificación académica y firma electrónica.", "Portales"),
     _screen("portal-docente-contratos", "Contrato docente", "Condiciones contractuales y carga asignada.", "Portales"),
 )
 
 
 PREINSCRIPTION_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("preinscripcion", "registro", "Inscripcion", "Inscripcion / Flujo"),
-    _flow("preinscripcion", "inscritos", "Estudiantes inscritos", "Inscripcion / Flujo"),
-    _flow("preinscripcion", "cabecera", "Cabecera de matricula", "Inscripcion / Matricula"),
-    _flow("preinscripcion", "documentos", "Documentos de matricula", "Inscripcion / Matricula"),
-    _flow("preinscripcion", "materias", "Matricular primer nivel", "Inscripcion / Matricula"),
-    _flow("preinscripcion", "seguimiento", "Seguimiento de inscripcion", "Inscripcion / Seguimiento"),
-    _flow("preinscripcion", "gestion-becas", "Gestion de becas", "Inscripcion / Becas"),
-    _flow("preinscripcion", "becas", "Aprobaciones de becas", "Inscripcion / Becas"),
-    _flow("preinscripcion", "becados", "Listado de becados", "Inscripcion / Becas"),
+    _flow("preinscripcion", "registro", "Inscripción", "Inscripción / Flujo"),
+    _flow("preinscripcion", "inscritos", "Estudiantes inscritos", "Inscripción / Flujo"),
+    _flow("preinscripcion", "cabecera", "Cabecera de matrícula", "Inscripción / Matrícula"),
+    _flow("preinscripcion", "documentos", "Documentos de matrícula", "Inscripción / Matrícula"),
+    _flow("preinscripcion", "materias", "Matricular primer nivel", "Inscripción / Matrícula"),
+    _flow("preinscripcion", "seguimiento", "Seguimiento de inscripción", "Inscripción / Seguimiento"),
+    _flow("preinscripcion", "gestion-becas", "Gestión de becas", "Inscripción / Becas"),
+    _flow("preinscripcion", "becas", "Aprobaciones de becas", "Inscripción / Becas"),
+    _flow("preinscripcion", "becados", "Listado de becados", "Inscripción / Becas"),
 )
 
 
 MATRICULA_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("matricula-acad", "individual", "Matricula individual", "Matricula / Operacion"),
-    _flow("matricula-acad", "masiva", "Matricula masiva", "Matricula / Operacion"),
+    _flow("matricula-acad", "individual", "Matrícula individual", "Matrícula / Operación"),
+    _flow("matricula-acad", "masiva", "Matrícula masiva", "Matrícula / Operación"),
     _flow(
         "matricula-acad",
         "prerrequisitos",
         "Prerrequisitos de materias",
-        "Matricula / Control academico",
+        "Matrícula / Control académico",
     ),
 )
 
 
 SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("gestion-sisacademico", "preinscripciones", "Aspirantes y asesores", "Operacion / Matricula"),
-    _flow("gestion-sisacademico", "datos_factura", "Datos de factura", "Operacion / Matricula"),
-    _flow("gestion-sisacademico", "cabecera_matricula", "Cabecera de matricula y pagos", "Operacion / Matricula"),
-    _flow("gestion-sisacademico", "matricula_materias", "Materias matriculadas y notas", "Operacion / Matricula"),
-    _flow("gestion-sisacademico", "pagos_matricula", "Pagos y valores", "Operacion / Matricula"),
-    _flow("gestion-sisacademico", "estudiantes", "Ficha del estudiante", "Operacion / Estudiantes"),
-    _flow("gestion-sisacademico", "registro_documentos_estudiante", "Documentos del estudiante", "Operacion / Estudiantes"),
-    _flow("gestion-sisacademico", "seguimiento", "Seguimiento academico", "Operacion / Estudiantes"),
-    _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Operacion / Estudiantes"),
-    _flow("gestion-sisacademico", "docentes", "Ficha docente", "Operacion / Docentes"),
-    _flow("gestion-sisacademico", "docente_materias", "Materias asignadas al docente", "Operacion / Docentes"),
-    _flow("gestion-sisacademico", "actualizacion_est", "Estado docente", "Operacion / Docentes"),
-    _flow("gestion-sisacademico", "numero_preguntas", "Control de cuestionarios", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "cuestionarios", "Banco de preguntas", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "preguntas_evaluacion", "Preguntas de evaluacion", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "planes_foros", "Planes, cuestionarios y foros", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "evaluacion_resultados", "Resultados de evaluacion", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "autoevaluacion_resultados", "Resultados de autoevaluacion", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "fechas_autoevaluacion", "Apertura de autoevaluacion", "Operacion / Evaluacion"),
-    _flow("gestion-sisacademico", "usuarios", "Registrar usuarios", "Operacion / Seguridad"),
-    _flow("gestion-sisacademico", "menu_usuarios", "Accesos por usuario", "Operacion / Seguridad"),
-    _flow("gestion-sisacademico", "menu_general", "Mapa operativo", "Operacion / Seguridad"),
-    _flow("gestion-sisacademico", "talento_humano_empleados", "Empleados", "Operacion / Talento humano"),
-    _flow("gestion-sisacademico", "talento_humano_solicitudes", "Solicitudes de talento humano", "Operacion / Talento humano"),
-    _flow("gestion-sisacademico", "talento_humano_tareas", "Tareas de talento humano", "Operacion / Talento humano"),
-    _flow("gestion-sisacademico", "moodle_notas", "Notas Moodle", "Operacion / Integraciones"),
-    _flow("gestion-sisacademico", "moodle_sincronizacion", "Sincronizacion Moodle", "Operacion / Integraciones"),
-    _flow("gestion-sisacademico", "microsoft365_audit", "Auditoria Microsoft 365", "Operacion / Integraciones"),
-    _flow("gestion-sisacademico", "practicas", "Practicas profesionales", "Operacion / Practicas"),
-    _flow("gestion-sisacademico", "practicas_vinculacion", "Vinculacion con la sociedad", "Operacion / Practicas"),
-    _flow("gestion-sisacademico", "empresas", "Empresas de practicas", "Operacion / Practicas"),
-    _flow("gestion-sisacademico", "carreras", "Carreras", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "materias", "Materias y pensum", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "mallas", "Mallas academicas", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "materia_homo_textof", "Textos de materias de homologacion", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "paralelos", "Paralelos", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "periodos", "Periodos academicos", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "provincias", "Provincias", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "jornadas", "Jornadas", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "modalidades", "Modalidades", "Operacion / Catalogos"),
-    _flow("gestion-sisacademico", "fechas_notas", "Apertura de notas", "Operacion / Control academico"),
-    _flow("gestion-sisacademico", "asistencia_estudiantes", "Asistencia de estudiantes", "Operacion / Control academico"),
-    _flow("gestion-sisacademico", "dias_matricula", "Dias de matricula", "Operacion / Control academico"),
-    _flow("gestion-sisacademico", "horarios_matricula", "Horarios de matricula", "Operacion / Control academico"),
-    _flow("gestion-sisacademico", "cambio_periodo_hr", "Migracion de homologacion a regular", "Operacion / Control academico"),
-    _flow("gestion-sisacademico", "certificados_generados", "Historial de certificados", "Operacion / Documentos"),
-    _flow("gestion-sisacademico", "credenciales_curso", "Credenciales de curso", "Operacion / Documentos"),
-    _flow("gestion-sisacademico", "repositorio", "Repositorio digital", "Operacion / Documentos"),
-    _flow("gestion-sisacademico", "cursos_edu_continua", "Cursos de educacion continua", "Operacion / Educacion continua"),
-    _flow("gestion-sisacademico", "corte_curso", "Cortes de curso", "Operacion / Educacion continua"),
-    _flow("gestion-sisacademico", "corte_curso_estudiante", "Estudiantes por corte", "Operacion / Educacion continua"),
+    _flow("gestion-sisacademico", "preinscripciones", "Aspirantes y asesores", "Operación / Matrícula"),
+    _flow("gestion-sisacademico", "datos_factura", "Datos de factura", "Operación / Matrícula"),
+    _flow("gestion-sisacademico", "cabecera_matricula", "Cabecera de matrícula y pagos", "Operación / Matrícula"),
+    _flow("gestion-sisacademico", "matricula_materias", "Materias matriculadas y notas", "Operación / Matrícula"),
+    _flow("gestion-sisacademico", "pagos_matricula", "Pagos y valores", "Operación / Matrícula"),
+    _flow("gestion-sisacademico", "estudiantes", "Ficha del estudiante", "Operación / Estudiantes"),
+    _flow("gestion-sisacademico", "registro_documentos_estudiante", "Documentos del estudiante", "Operación / Estudiantes"),
+    _flow("gestion-sisacademico", "seguimiento", "Seguimiento académico", "Operación / Estudiantes"),
+    _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Operación / Estudiantes"),
+    _flow("gestion-sisacademico", "docentes", "Ficha docente", "Operación / Docentes"),
+    _flow("gestion-sisacademico", "docente_materias", "Materias asignadas al docente", "Operación / Docentes"),
+    _flow("gestion-sisacademico", "actualizacion_est", "Estado docente", "Operación / Docentes"),
+    _flow("gestion-sisacademico", "numero_preguntas", "Control de cuestionarios", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "cuestionarios", "Banco de preguntas", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "preguntas_evaluacion", "Preguntas de evaluación", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "planes_foros", "Planes, cuestionarios y foros", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "evaluacion_resultados", "Resultados de evaluación", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "autoevaluacion_resultados", "Resultados de autoevaluación", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "fechas_autoevaluacion", "Apertura de autoevaluación", "Operación / Evaluación"),
+    _flow("gestion-sisacademico", "usuarios", "Registrar usuarios", "Operación / Seguridad"),
+    _flow("gestion-sisacademico", "menu_usuarios", "Accesos por usuario", "Operación / Seguridad"),
+    _flow("gestion-sisacademico", "menu_general", "Mapa operativo", "Operación / Seguridad"),
+    _flow("gestion-sisacademico", "talento_humano_empleados", "Empleados", "Operación / Talento humano"),
+    _flow("gestion-sisacademico", "talento_humano_solicitudes", "Solicitudes de talento humano", "Operación / Talento humano"),
+    _flow("gestion-sisacademico", "talento_humano_tareas", "Tareas de talento humano", "Operación / Talento humano"),
+    _flow("gestion-sisacademico", "moodle_notas", "Notas Moodle", "Operación / Integraciones"),
+    _flow("gestion-sisacademico", "moodle_sincronizacion", "Sincronización Moodle", "Operación / Integraciones"),
+    _flow("gestion-sisacademico", "microsoft365_audit", "Auditoría de Microsoft 365", "Operación / Integraciones"),
+    _flow("gestion-sisacademico", "practicas", "Prácticas profesionales", "Operación / Prácticas"),
+    _flow("gestion-sisacademico", "practicas_vinculacion", "Vinculación con la sociedad", "Operación / Prácticas"),
+    _flow("gestion-sisacademico", "empresas", "Empresas de prácticas", "Operación / Prácticas"),
+    _flow("gestion-sisacademico", "carreras", "Carreras", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "materias", "Materias y pensum", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "mallas", "Mallas académicas", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "materia_homo_textof", "Textos de materias de homologación", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "paralelos", "Paralelos", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "periodos", "Períodos académicos", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "provincias", "Provincias", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "jornadas", "Jornadas", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "modalidades", "Modalidades", "Operación / Catálogos"),
+    _flow("gestion-sisacademico", "fechas_notas", "Apertura de notas", "Operación / Control académico"),
+    _flow("gestion-sisacademico", "asistencia_estudiantes", "Asistencia de estudiantes", "Operación / Control académico"),
+    _flow("gestion-sisacademico", "dias_matricula", "Días de matrícula", "Operación / Control académico"),
+    _flow("gestion-sisacademico", "horarios_matricula", "Horarios de matrícula", "Operación / Control académico"),
+    _flow("gestion-sisacademico", "cambio_periodo_hr", "Migración de homologación a regular", "Operación / Control académico"),
+    _flow("gestion-sisacademico", "certificados_generados", "Historial de certificados", "Certificados"),
+    _flow("gestion-sisacademico", "repositorio", "Repositorio digital", "Operación / Documentos"),
+    _flow("gestion-sisacademico", "cursos_edu_continua", "Cursos de educación continua", "Operación / Educación continua"),
+    _flow("gestion-sisacademico", "corte_curso", "Cortes de curso", "Operación / Educación continua"),
+    _flow("gestion-sisacademico", "corte_curso_estudiante", "Estudiantes por corte", "Operación / Educación continua"),
 )
 
 
 REPORT_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("reporteria-integral", "carrera", "Reporte por carrera", "Reporteria / Institucional"),
-    _flow("reporteria-integral", "genero", "Reporte por genero", "Reporteria / Institucional"),
-    _flow("reporteria-integral", "genero_docentes", "Genero de docentes", "Reporteria / Institucional"),
-    _flow("reporteria-integral", "graduados_2025", "Reporte de graduados", "Reporteria / Institucional"),
-    _flow("reporteria-integral", "periodo", "Reporte por periodo", "Reporteria / Institucional"),
-    _flow("reporteria-integral", "provincia", "Reporte por provincia", "Reporteria / Institucional"),
-    _flow("reportes-individuales", "evaluacion_docente", "Evaluacion docente individual", "Reporteria / Individual"),
-    _flow("reportes-individuales", "notas_carrera_materia", "Calificaciones de estudiantes", "Reporteria / Individual"),
+    _flow("reporteria-integral", "carrera", "Reporte por carrera", "Reportería / Institucional"),
+    _flow("reporteria-integral", "genero", "Reporte por género", "Reportería / Institucional"),
+    _flow("reporteria-integral", "genero_docentes", "Género de docentes", "Reportería / Institucional"),
+    _flow("reporteria-integral", "graduados_2025", "Reporte de graduados", "Reportería / Institucional"),
+    _flow("reporteria-integral", "periodo", "Reporte por período", "Reportería / Institucional"),
+    _flow("reporteria-integral", "provincia", "Reporte por provincia", "Reportería / Institucional"),
+    _flow("reportes-individuales", "evaluacion_docente", "Evaluación docente individual", "Reportería / Individual"),
+    _flow("reportes-individuales", "notas_carrera_materia", "Calificaciones de estudiantes", "Reportería / Individual"),
 )
 
 
 TITLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("titulos-registrados", "senescyt", "Titulos registrados SENESCYT", "Titulacion / Registros"),
-    _flow("titulos-registrados", "institucional", "Titulos institucionales", "Titulacion / Registros"),
+    _flow("titulos-registrados", "senescyt", "Títulos registrados SENESCYT", "Titulación / Registros"),
+    _flow("titulos-registrados", "institucional", "Títulos institucionales", "Titulación / Registros"),
+)
+
+
+MOODLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("moodle", "alerts", "Alertas de calificación", "Moodle"),
+    _flow("moodle", "courses", "Cursos", "Moodle"),
+    _flow("moodle", "resources", "Recursos por curso", "Moodle"),
+    _flow("moodle", "grades", "Migración de notas", "Moodle"),
+    _flow("moodle", "status", "Estado de la integración", "Moodle"),
+    _flow("moodle", "users", "Usuarios", "Moodle"),
 )
 
 
@@ -235,6 +267,7 @@ FLOW_SCREEN_CATALOG = (
     + SISACADEMICO_FLOW_CATALOG
     + REPORT_FLOW_CATALOG
     + TITLE_FLOW_CATALOG
+    + MOODLE_FLOW_CATALOG
 )
 SCREEN_CATALOG: tuple[dict[str, str], ...] = BASE_SCREEN_CATALOG + FLOW_SCREEN_CATALOG
 
@@ -303,7 +336,7 @@ _ACADEMIC_SIS_FLOWS = _flow_codes(
         "autoevaluacion_resultados", "fechas_autoevaluacion", "carreras",
         "materias", "mallas", "paralelos", "periodos", "fechas_notas",
         "asistencia_estudiantes", "jornadas", "modalidades", "practicas",
-        "practicas_vinculacion", "empresas",
+        "practicas_vinculacion", "empresas", "certificados_generados",
     ),
 )
 _ACADEMIC_REPORT_FLOWS = _combine_pages(
@@ -325,6 +358,13 @@ _FINANCIAL_REPORT_FLOWS = _flow_codes(
     "reporteria-integral",
     ("provincia", "genero", "carrera", "periodo", "graduados_2025"),
 )
+_MOODLE_ASSIGNABLE_PAGES = frozenset(_flow_codes("moodle"))
+_SYSTEM_GENERATED_ACCESS_USERS = (
+    "SISTEMA_INICIAL",
+    "SISTEMA_CATALOGO",
+    "SISTEMA_FLUJOS",
+    "SISTEMA_MIGRACION",
+)
 
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "ADMINISTRADOR": ALL_PAGES,
@@ -334,6 +374,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
         _flow_codes("matricula-acad"),
         _ACADEMIC_SIS_FLOWS,
         _ACADEMIC_REPORT_FLOWS,
+        ("moodle/alerts",),
     ),
     "BIENESTAR": _combine_pages(
         (
@@ -353,7 +394,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
         (
             "dashboard", "preinscripcion", "ingreso-ventas",
             "gestion-sisacademico", "reporteria-integral",
-            "carnet-institucional",
+            "carnet-institucional", "expedientes-documentales",
         ),
         _flow_codes("preinscripcion", ("registro", "documentos")),
         _FINANCIAL_SIS_FLOWS,
@@ -371,6 +412,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
         page for page in ALL_PAGES
         if page not in ADMIN_ONLY_PAGES
         and not page.startswith("portal-")
+        and page not in _MOODLE_ASSIGNABLE_PAGES
         and page not in {"evaluacion-docente", "asignacion-pantallas", "expedientes-documentales"}
     ),
     "INVITADO_SOP": ("dashboard", "teams"),
@@ -378,7 +420,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "VICERRECTOR": ("dashboard",),
     "DOCENTE": (
         "portal-docente", "portal-docente-informe", "portal-docente-planificacion",
-        "portal-docente-contratos", "ingles", "carnet-institucional",
+        "portal-docente-contratos", "ingles", "carnet-institucional", "moodle/alerts",
     ),
     "ESTUDIANTE": (
         "portal-estudiante", "portal-estudiante-malla-curricular",
@@ -395,6 +437,17 @@ _SPLIT_SCREEN_MIGRATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "portal-estudiante-malla-curricular",
             "portal-estudiante-malla-academica",
             "portal-estudiante-calificaciones",
+        ),
+    ),
+    (
+        "moodle",
+        (
+            "moodle/alerts",
+            "moodle/courses",
+            "moodle/resources",
+            "moodle/grades",
+            "moodle/status",
+            "moodle/users",
         ),
     ),
 )
@@ -591,6 +644,55 @@ def _deactivate_container_assignments(cursor: Any) -> None:
     )
 
 
+def _deactivate_non_admin_automatic_moodle_assignments(cursor: Any) -> None:
+    """Leaves Moodle enabled only for explicit non-administrator assignments."""
+    optional_pages = _MOODLE_ASSIGNABLE_PAGES - {"moodle/alerts"}
+    if not optional_pages:
+        return
+
+    page_placeholders = ", ".join("?" for _ in optional_pages)
+    user_placeholders = ", ".join("?" for _ in _SYSTEM_GENERATED_ACCESS_USERS)
+    cursor.execute(
+        f"""
+        UPDATE cfg.AccesoPantallaRol
+           SET Activo = 0,
+               FechaActualizacion = SYSDATETIME(),
+               UsuarioActualizacion = N'SISTEMA_PREDETERMINADO_ADMIN'
+         WHERE RolCodigo <> N'ADMINISTRADOR'
+           AND PantallaCodigo IN ({page_placeholders})
+           AND Activo <> 0
+           AND ISNULL(UsuarioActualizacion, N'') IN ({user_placeholders})
+        """,
+        *sorted(optional_pages),
+        *_SYSTEM_GENERATED_ACCESS_USERS,
+    )
+
+
+def _ensure_mandatory_moodle_alert_assignments(cursor: Any) -> None:
+    """Mantiene la bandeja de alertas activa para Docente y Académico."""
+    for role in ("DOCENTE", "ACADEMICO"):
+        cursor.execute(
+            """
+            MERGE cfg.AccesoPantallaRol AS target
+            USING
+            (
+                SELECT ? AS RolCodigo, N'moodle/alerts' AS PantallaCodigo
+            ) AS source
+               ON target.RolCodigo = source.RolCodigo
+              AND target.PantallaCodigo = source.PantallaCodigo
+            WHEN MATCHED AND target.Activo <> 1 THEN
+                UPDATE SET
+                    target.Activo = 1,
+                    target.FechaActualizacion = SYSDATETIME(),
+                    target.UsuarioActualizacion = N'SISTEMA_ALERTAS_MOODLE'
+            WHEN NOT MATCHED THEN
+                INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+                VALUES (source.RolCodigo, source.PantallaCodigo, 1, N'SISTEMA_ALERTAS_MOODLE');
+            """,
+            role,
+        )
+
+
 def _materialize_role_screen_matrix(cursor: Any) -> None:
     """Create missing role/screen rows without changing saved assignments."""
     role_codes = tuple(role["value"] for role in ROLE_CATALOG)
@@ -623,7 +725,7 @@ def _materialize_role_screen_matrix(cursor: Any) -> None:
 
 
 def _initialize_role_assignments(cursor: Any) -> None:
-    """Materializa una sola vez la configuracion inicial de cada perfil."""
+    """Materializa una sola vez la configuración inicial de cada perfil."""
     cursor.execute("SELECT DISTINCT RolCodigo FROM cfg.AccesoPantallaRol")
     configured_roles: set[str] = set()
     for row in cursor.fetchall():
@@ -672,23 +774,47 @@ def _migrate_split_screen_assignments(cursor: Any) -> None:
                         SELECT
                             ? AS RolCodigo,
                             ? AS PantallaCodigo,
+                            CAST(CASE WHEN legacy.Activo = 1 THEN 1 ELSE 0 END AS BIT) AS Activo,
                             CAST(
-                                CASE WHEN EXISTS
-                                (
-                                    SELECT 1
-                                    FROM cfg.AccesoPantallaRol AS legacy
-                                    WHERE legacy.RolCodigo = ?
-                                      AND legacy.PantallaCodigo = ?
-                                      AND legacy.Activo = 1
-                                ) THEN 1 ELSE 0 END
-                                AS BIT
-                            ) AS Activo
+                                CASE
+                                    WHEN legacy.Activo = 1
+                                     AND ISNULL(legacy.UsuarioActualizacion, N'') NOT LIKE N'SISTEMA%'
+                                    THEN 1 ELSE 0
+                                END AS BIT
+                            ) AS EsAsignacionManual
+                        FROM (VALUES (1)) AS seed(Valor)
+                        OUTER APPLY
+                        (
+                            SELECT TOP (1) access.Activo, access.UsuarioActualizacion
+                            FROM cfg.AccesoPantallaRol AS access
+                            WHERE access.RolCodigo = ?
+                              AND access.PantallaCodigo = ?
+                        ) AS legacy
                     ) AS source
                        ON target.RolCodigo = source.RolCodigo
                       AND target.PantallaCodigo = source.PantallaCodigo
+                    WHEN MATCHED AND target.UsuarioActualizacion = N'SISTEMA_INICIAL' THEN
+                        UPDATE SET
+                            target.Activo = source.Activo,
+                            target.UsuarioActualizacion = CASE
+                                WHEN source.EsAsignacionManual = 1
+                                THEN N'MIGRACION_ASIGNACION_MANUAL'
+                                ELSE N'SISTEMA_MIGRACION'
+                            END,
+                            target.FechaActualizacion = SYSDATETIME()
                     WHEN NOT MATCHED THEN
                         INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
-                        VALUES (source.RolCodigo, source.PantallaCodigo, source.Activo, N'SISTEMA_MIGRACION');
+                        VALUES
+                        (
+                            source.RolCodigo,
+                            source.PantallaCodigo,
+                            source.Activo,
+                            CASE
+                                WHEN source.EsAsignacionManual = 1
+                                THEN N'MIGRACION_ASIGNACION_MANUAL'
+                                ELSE N'SISTEMA_MIGRACION'
+                            END
+                        );
                     """,
                     role,
                     split_page,
@@ -774,6 +900,8 @@ def _synchronize_screen_catalog(cursor: Any) -> None:
         _migrate_split_screen_assignments(cursor)
         _migrate_flow_screen_assignments(cursor)
         _materialize_role_screen_matrix(cursor)
+    _deactivate_non_admin_automatic_moodle_assignments(cursor)
+    _ensure_mandatory_moodle_alert_assignments(cursor)
     _deactivate_container_assignments(cursor)
 
 
@@ -832,7 +960,7 @@ def _role_payloads(cursor: Any, roles: Iterable[str]) -> list[dict[str, Any]]:
     for role in role_codes:
         meta = metadata[role]
         configured = role in stored and stored[role]["rows"] > 0
-        # La navegacion efectiva siempre sale de cfg.AccesoPantallaRol. Los
+        # La navegación efectiva siempre sale de cfg.AccesoPantallaRol. Los
         # valores recomendados solo se usan al inicializar un perfil nuevo.
         pages = _ordered_pages(stored[role]["pages"]) if configured else []
         if role == "ADMINISTRADOR":
@@ -898,7 +1026,7 @@ def role_has_screen_access(role: str, page: str) -> bool:
             return cursor.fetchone() is not None
     except (RuntimeError, pyodbc.Error) as exc:
         raise ScreenAccessUnavailableError(
-            "No se pudo consultar la asignacion central de pantallas."
+            'No se pudo consultar la asignación central de pantallas.'
         ) from exc
 
 
@@ -906,7 +1034,7 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
     current_role = normalize_role(role)
     valid_roles = {item["value"] for item in ROLE_CATALOG}
     if current_role not in valid_roles:
-        raise ValueError("El tipo de usuario no forma parte del catalogo de accesos.")
+        raise ValueError('El tipo de usuario no forma parte del catálogo de accesos.')
 
     requested_roles = [item["value"] for item in ROLE_CATALOG] if include_all else [current_role]
     _ensure_screen_catalog_ready()
@@ -927,7 +1055,7 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
     role_code = normalize_role(role)
     valid_roles = {item["value"] for item in ROLE_CATALOG}
     if role_code not in valid_roles:
-        raise ValueError("El tipo de usuario no forma parte del catalogo de accesos.")
+        raise ValueError('El tipo de usuario no forma parte del catálogo de accesos.')
 
     requested_pages = [str(page).strip() for page in pages]
     invalid_pages = sorted({page for page in requested_pages if page not in ALL_PAGES})

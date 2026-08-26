@@ -42,7 +42,7 @@ def _get_msal_app():
 
     if missing:
         raise RuntimeError(
-            "Configuracion de Microsoft Graph incompleta o invalida. "
+            "La configuración de Microsoft Graph está incompleta o no es válida. "
             f"Revisa: {', '.join(missing)}"
         )
 
@@ -144,7 +144,7 @@ def delegated_token_available(login: str) -> bool:
 
 def get_delegated_access_token(login: str) -> str:
     if not delegated_token_available(login):
-        raise RuntimeError("Debes conectar Microsoft para usar envio delegado en Teams.")
+        raise RuntimeError('Debe conectar Microsoft para usar envío delegado en Teams.')
     cached = _DELEGATED_TOKENS[login]
     return str(cached.get("access_token") or "")
 

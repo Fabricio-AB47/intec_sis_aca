@@ -1,3 +1,4 @@
+import secrets
 import unittest
 from decimal import Decimal
 from io import BytesIO
@@ -19,10 +20,13 @@ from app.routers.institutional_email import (
 from app.services.screen_access import SCREEN_CATALOG
 
 
+TEST_PASSWORD = secrets.token_urlsafe(12)
+
+
 def workbook_bytes(rows: list[list[object]]) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = "Actualizacion"
+    worksheet.title = "Actualización"
     worksheet.append(["cedula", "correo_intec_nuevo", "password_nueva"])
     for row in rows:
         worksheet.append(row)
@@ -48,7 +52,7 @@ class InstitutionalEmailValidationTests(unittest.TestCase):
             self.assertFalse(any(name.startswith("xl/tables/") for name in archive.namelist()))
 
         workbook = load_workbook(BytesIO(content), read_only=False, data_only=False)
-        worksheet = workbook["Actualizacion"]
+        worksheet = workbook["Actualización"]
         self.assertEqual(worksheet.freeze_panes, "A2")
         self.assertEqual(worksheet.auto_filter.ref, "A1:C3")
         self.assertEqual(
@@ -80,8 +84,8 @@ class InstitutionalEmailValidationTests(unittest.TestCase):
             _validate_institutional_email("persona@example.com")
 
     def test_password_respects_database_column_limits(self) -> None:
-        self.assertEqual(_validate_password("Clave123"), "Clave123")
-        for value in ("12345", "x" * 21, " Clave123", "Clave123\n"):
+        self.assertEqual(_validate_password(TEST_PASSWORD), TEST_PASSWORD)
+        for value in ("12345", "x" * 21, f" {TEST_PASSWORD}", f"{TEST_PASSWORD}\n"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 _validate_password(value)
 
@@ -90,7 +94,7 @@ class InstitutionalEmailValidationTests(unittest.TestCase):
             workbook_bytes(
                 [
                     [123456789, None, None],
-                    ["1712345678", "estudiante@intec.edu.ec", "Clave123"],
+                    ["1712345678", "estudiante@intec.edu.ec", TEST_PASSWORD],
                 ]
             ),
             "actualizacion_correo_intec.xlsx",
@@ -102,7 +106,7 @@ class InstitutionalEmailValidationTests(unittest.TestCase):
                     "row": 3,
                     "cedula": "1712345678",
                     "correo_intec": "estudiante@intec.edu.ec",
-                    "password": "Clave123",
+                    "password": TEST_PASSWORD,
                 }
             ],
         )
@@ -137,7 +141,7 @@ class InstitutionalEmailPersistenceTests(unittest.TestCase):
                 "correo_personal": "personal@example.com",
                 "periodo_codigo": 1060,
                 "correo_nuevo": "estudiante@intec.edu.ec",
-                "password_nueva": "Clave123",
+                "password_nueva": TEST_PASSWORD,
             },
         )
 

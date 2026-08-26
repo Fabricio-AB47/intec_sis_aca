@@ -214,7 +214,7 @@ export function ActualizarCorreoIntecView({ displayName }: Readonly<ActualizarCo
 
   async function analyzeWorkbook() {
     if (!workbook) {
-      setError('Selecciona el archivo Excel que deseas comparar.')
+      setError('Seleccione el archivo Excel que deseas comparar.')
       return
     }
     setAnalyzing(true)
@@ -470,7 +470,7 @@ export function ActualizarCorreoIntecView({ displayName }: Readonly<ActualizarCo
                       <td className="institutional-email-address">{valueOrDash(row.correo_actual)}</td>
                       <td className="institutional-email-address">{valueOrDash(row.correo_nuevo)}</td>
                       <td>{row.password_informada ? 'Informada' : 'Faltante'}</td>
-                      <td><span className={`institutional-email-badge institutional-email-badge--${row.estado === 'VALIDO' ? 'ready' : 'error'}`}>{row.estado}</span></td>
+                      <td><span className={`institutional-email-badge institutional-email-badge--${row.estado === 'VALIDO' ? 'ready' : 'error'}`}>{row.estado === 'VALIDO' ? 'VÁLIDO' : row.estado}</span></td>
                       <td>{row.detalle}</td>
                     </tr>
                   ))}

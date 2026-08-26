@@ -28,8 +28,12 @@ type ExpedientSectionProps = {
 }
 
 const MAX_FILE_BYTES = 1024 * 1024 * 1024
-const ACCEPTED_FILES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jpg,.jpeg,.png,.webp,.mp3,.wav,.m4a,.mp4,.mov,.mkv,.webm'
-const REVIEW_ROLES = new Set(['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'])
+const ACCEPTED_FILES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jpg,.jpeg,.png,.webp,.mp3,.wav,.m4a,.mp4,.mov,.mkv,.webm,.xml'
+const REVIEW_ROLES = new Set(['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA', 'FINANCIERO'])
+const INVOICE_FILE_RULES: Record<string, { accept: string; extension: string }> = {
+  FACTURA_XML: { accept: '.xml,application/xml,text/xml', extension: '.xml' },
+  RIDE_FACTURA: { accept: '.pdf,application/pdf', extension: '.pdf' },
+}
 
 function normalizedRole(value: string) {
   return value
@@ -73,6 +77,11 @@ function statusClass(status: string) {
   return 'document-expedient-status document-expedient-status--pending'
 }
 
+function acceptedFiles(moduleCode: string, documentType: string) {
+  if (moduleCode === 'FACTURACION') return INVOICE_FILE_RULES[documentType]?.accept || ''
+  return ACCEPTED_FILES
+}
+
 function ExpedientSection({
   identification,
   maxFileBytes,
@@ -106,10 +115,27 @@ function ExpedientSection({
     if (selected.size > maxFileBytes) {
       setFile(null)
       setFileInputKey((value) => value + 1)
-      setError(`El archivo supera el limite de ${fileSize(maxFileBytes)}.`)
+      setError(`El archivo supera el límite de ${fileSize(maxFileBytes)}.`)
+      return
+    }
+    const invoiceRule = module.module_code === 'FACTURACION'
+      ? INVOICE_FILE_RULES[documentType]
+      : undefined
+    if (invoiceRule && !selected.name.toLowerCase().endsWith(invoiceRule.extension)) {
+      setFile(null)
+      setFileInputKey((value) => value + 1)
+      setError(`El tipo documental seleccionado requiere un archivo ${invoiceRule.extension.toUpperCase()}.`)
       return
     }
     setFile(selected)
+  }
+
+  function changeDocumentType(value: string) {
+    setDocumentType(value)
+    setFile(null)
+    setFileInputKey((current) => current + 1)
+    setError('')
+    setMessage('')
   }
 
   async function uploadDocument() {
@@ -146,7 +172,7 @@ function ExpedientSection({
         <div>
           <span>{module.module_code}</span>
           <h3>{module.module_name}</h3>
-          <p>{module.expedient_code || 'El proceso todavia no tiene un expediente abierto.'}</p>
+          <p>{module.expedient_code || 'El proceso todavía no tiene un expediente abierto.'}</p>
         </div>
         <div className="document-expedient-module__state">
           <span className={statusClass(module.status)}>{module.status || 'SIN ESTADO'}</span>
@@ -160,8 +186,8 @@ function ExpedientSection({
             <tr>
               <th>Documento</th>
               <th>Tipo</th>
-              <th>Version y estado</th>
-              <th>Tamano y fecha</th>
+              <th>Versión y estado</th>
+              <th>Tamaño y fecha</th>
               <th>Registrado por</th>
               <th>Acciones</th>
             </tr>
@@ -205,7 +231,7 @@ function ExpedientSection({
         <div className="document-expedient-upload">
           <label>
             <span>Tipo de documento</span>
-            <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} disabled={uploading}>
+            <select value={documentType} onChange={(event) => changeDocumentType(event.target.value)} disabled={uploading}>
               {module.document_types.map((type) => <option key={type.code} value={type.code}>{type.name}</option>)}
             </select>
           </label>
@@ -214,11 +240,11 @@ function ExpedientSection({
             <input
               key={fileInputKey}
               type="file"
-              accept={ACCEPTED_FILES}
+              accept={acceptedFiles(module.module_code, documentType)}
               disabled={uploading}
               onChange={(event) => selectFile(event.target.files?.[0] || null)}
             />
-            <small>{file ? `${file.name} · ${fileSize(file.size)}` : `Maximo ${fileSize(maxFileBytes)}`}</small>
+            <small>{file ? `${file.name} · ${fileSize(file.size)}` : `Máximo ${fileSize(maxFileBytes)}`}</small>
           </label>
           <button
             type="button"
@@ -231,7 +257,7 @@ function ExpedientSection({
           {uploading ? <div className="document-expedient-progress"><span style={{ width: `${progress}%` }} /></div> : null}
         </div>
       ) : (
-        <p className="document-expedient-note">{module.upload_message || 'La carga no esta habilitada para este expediente.'}</p>
+        <p className="document-expedient-note">{module.upload_message || 'La carga no está habilitada para este expediente.'}</p>
       )}
 
       {error ? <div className="document-expedient-alert document-expedient-alert--error" role="alert">{error}</div> : null}
@@ -276,7 +302,7 @@ export function ExpedientesDocumentalesView({
     event.preventDefault()
     const term = query.trim()
     if (term.length < 2) {
-      setError('Ingrese al menos dos caracteres del nombre, cedula o codigo.')
+      setError('Ingrese al menos dos caracteres del nombre, cédula o código.')
       return
     }
     setSearching(true)
@@ -306,10 +332,10 @@ export function ExpedientesDocumentalesView({
           <p className="eyebrow">Documentos</p>
           <h2>Expedientes documentales</h2>
           <p className="report-description">
-            Archivos de Ingles, titulacion, practicas preprofesionales y vinculacion con trazabilidad en Microsoft 365.
+            Archivos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE con trazabilidad en Microsoft 365.
           </p>
         </div>
-        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isReviewer ? 'Gestion documental' : 'Portal estudiante'}</span></div></div>
+        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isReviewer ? 'Gestión documental' : 'Portal estudiante'}</span></div></div>
       </header>
 
       {isReviewer ? (
@@ -320,7 +346,7 @@ export function ExpedientesDocumentalesView({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Nombre, cedula o codigo estudiantil"
+                placeholder="Nombre, cédula o código estudiantil"
               />
             </label>
             <button type="submit" className="primary-action" disabled={searching}>
@@ -331,7 +357,7 @@ export function ExpedientesDocumentalesView({
             <div className="document-expedient-search__results">
               {results.map((student) => (
                 <button key={`${student.code}-${student.identification}`} type="button" onClick={() => void selectStudent(student)}>
-                  <span><strong>{student.name}</strong><small>{student.identification} · Codigo {student.code}</small></span>
+                  <span><strong>{student.name}</strong><small>{student.identification} · Código {student.code}</small></span>
                   <i>{student.status || 'Sin estado'}</i>
                 </button>
               ))}
@@ -346,9 +372,9 @@ export function ExpedientesDocumentalesView({
       {context && !loading ? (
         <>
           <section className="document-expedient-student-summary">
-            <div><span>Estudiante</span><strong>{context.student.name}</strong><small>Codigo {context.student.code}</small></div>
-            <div><span>Cedula</span><strong>{context.student.identification}</strong><small>{context.student.email || 'Sin correo registrado'}</small></div>
-            <div><span>Carrera</span><strong>{context.student.career || 'Sin carrera registrada'}</strong><small>{context.student.period_code || 'Sin periodo registrado'}</small></div>
+            <div><span>Estudiante</span><strong>{context.student.name}</strong><small>Código {context.student.code}</small></div>
+            <div><span>Cédula</span><strong>{context.student.identification}</strong><small>{context.student.email || 'Sin correo registrado'}</small></div>
+            <div><span>Carrera</span><strong>{context.student.career || 'Sin carrera registrada'}</strong><small>{context.student.period_code || 'Sin período registrado'}</small></div>
             <div><span>Registro documental</span><strong>{context.total_documents} documento(s)</strong><small>{context.total_expedients} expediente(s) abierto(s)</small></div>
           </section>
 
@@ -369,7 +395,7 @@ export function ExpedientesDocumentalesView({
       {isReviewer && !context && !loading ? (
         <section className="document-expedient-empty">
           <strong>Seleccione un estudiante</strong>
-          <span>Busque por nombre, cedula o codigo para consultar y gestionar sus expedientes.</span>
+          <span>Busque por nombre, cédula o código para consultar y gestionar sus expedientes.</span>
         </section>
       ) : null}
     </section>

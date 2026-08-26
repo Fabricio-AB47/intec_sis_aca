@@ -72,8 +72,8 @@ def _grade_condition(final_grade: float | None) -> tuple[str | None, str]:
 REPORTS: dict[str, dict[str, Any]] = {
     "matriculados": {
         "title": "Estudiantes matriculados",
-        "description": "Equivalente agil de los reportes de matricula por periodo, carrera, estado y paralelo.",
-        "category": "Academico",
+        "description": 'Equivalente ágil de los reportes de matrícula por período, carrera, estado y paralelo.',
+        "category": "Académico",
         "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PERIODO", "PENSUM", "ESTADO"],
         "filters": ["periodo", "carrera", "estado", "buscar", "limite"],
         "estado_options": [
@@ -98,19 +98,19 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "preinscritos": {
         "title": "Preinscritos y ventas",
-        "description": "Cartera de aspirantes con asesor, medio de contacto, periodo, carrera y avance del ingreso.",
-        "category": "Admision",
+        "description": 'Cartera de aspirantes con asesor, medio de contacto, período, carrera y avance del ingreso.',
+        "category": "Admisión",
         "source_tables": ["PREINSCRIPCION", "PERIODO", "CARRERAS", "Provincias", "IN_LECONTACTO", "USUARIO_SIS"],
         "filters": ["periodo", "carrera", "estado", "buscar", "limite"],
         "estado_options": [
-            {"value": "PREMATRICULA", "label": "Prematricula"},
+            {"value": "PREMATRICULA", "label": "Prematrícula"},
             {"value": "FINALIZADO", "label": "Proceso finalizado"},
             {"value": "PENDIENTE", "label": "Pendiente"},
         ],
     },
     "docentes": {
         "title": "Docentes asignados",
-        "description": "Docentes por periodo, carrera, materia, jornada y paralelo para reemplazar consultas Crystal.",
+        "description": 'Docentes por período, carrera, materia, jornada y paralelo para reemplazar consultas Crystal.',
         "category": "Docencia",
         "source_tables": ["CARRERAXDOCENTE", "DATOSDOCENTE", "CARRERAS", "PENSUM", "PERIODO", "JORNADA"],
         "filters": ["periodo", "carrera", "estado", "buscar", "limite"],
@@ -120,9 +120,9 @@ REPORTS: dict[str, dict[str, Any]] = {
         ],
     },
     "documentos": {
-        "title": "Documentos de matricula",
-        "description": "Control de cedula, titulo, deposito y convenio registrados en cabecera de matricula.",
-        "category": "Documentacion",
+        "title": "Documentos de matrícula",
+        "description": 'Control de cédula, título, depósito y convenio registrados en cabecera de matrícula.',
+        "category": "Documentación",
         "source_tables": ["CABECERA_MATRICULA", "DATOS_ESTUD", "CARRERAS", "PERIODO"],
         "filters": ["periodo", "carrera", "estado", "buscar", "limite"],
         "estado_options": [
@@ -132,23 +132,23 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "seguimiento": {
         "title": "Seguimiento estudiante",
-        "description": "Bitacora activa de seguimiento por estudiante, periodo y materia.",
-        "category": "Acompanamiento",
+        "description": 'Bitácora activa de seguimiento por estudiante, período y materia.',
+        "category": "Acompañamiento",
         "source_tables": ["SEGUIMIENTO_ESTUDIANTE", "DATOS_ESTUD", "PERIODO", "PENSUM", "CARRERAS"],
         "filters": ["periodo", "carrera", "buscar", "limite"],
         "estado_options": [],
     },
     "practicas": {
         "title": "Prácticas laborales",
-        "description": "Practicas por estudiante, carrera, periodo, empresa, docente tutor y horas registradas.",
-        "category": "Vinculacion",
+        "description": 'Prácticas por estudiante, carrera, período, empresa, docente tutor y horas registradas.',
+        "category": "Vinculación",
         "source_tables": ["PRACTICASPROFESIONALES", "DATOS_ESTUD", "CARRERAS", "PERIODO", "EMPRESA", "DATOSDOCENTE"],
         "filters": ["periodo", "carrera", "buscar", "limite"],
         "estado_options": [],
     },
     "evaluacion_docente": {
-        "title": "Evaluacion docente",
-        "description": "Resultado consolidado de evaluaciones por docente, periodo, materia, jornada y paralelo.",
+        "title": "Evaluación docente",
+        "description": 'Resultado consolidado de evaluaciones por docente, período, materia, jornada y paralelo.',
         "category": "Docencia",
         "source_tables": ["RESULTADO_EVALUACION", "DATOSDOCENTE", "CARRERAXDOCENTE", "PENSUM", "PERIODO", "CARRERAS"],
         "filters": ["periodo", "carrera", "buscar", "limite"],
@@ -168,16 +168,16 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "notas_carrera_materia": {
         "title": "Calificaciones de estudiantes",
-        "description": "Consulte todos los estudiantes activos y filtre por nombre para revisar sus materias, periodos, calificaciones y docente responsable.",
-        "category": "Academico",
+        "description": 'Consulte todos los estudiantes activos y filtre por nombre para revisar sus materias, períodos, calificaciones y docente responsable.',
+        "category": "Académico",
         "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO", "CARRERAXDOCENTE", "DATOSDOCENTE"],
         "filters": ["buscar"],
         "estado_options": [],
     },
     "estud_per_c_m": {
-        "title": "Estudiantes por periodo, carrera y materia",
-        "description": "Estudiantes matriculados por periodo y carrera, materias tomadas y estado aprobado/reprobado segun promedio final.",
-        "category": "Academico",
+        "title": "Estudiantes por período, carrera y materia",
+        "description": 'Estudiantes matriculados por período y carrera, materias tomadas y estado aprobado/reprobado según promedio final.',
+        "category": "Académico",
         "source_tables": ["CARRERAXESTUD", "DATOS_ESTUD", "CARRERAS", "PENSUM", "PERIODO"],
         "filters": ["periodo", "carrera", "estado", "buscar", "limite"],
         "estado_options": [
@@ -188,7 +188,7 @@ REPORTS: dict[str, dict[str, Any]] = {
     },
     "correos_intec": {
         "title": "Correos institucionales",
-        "description": "Correos INTEC asignados a estudiantes, envio, estado y ultimo acceso Moodle.",
+        "description": 'Correos INTEC asignados a estudiantes, envío, estado y último acceso Moodle.',
         "category": "Cuentas",
         "source_tables": ["CorreosEstudIntec", "DATOS_ESTUD", "PERIODO"],
         "filters": ["periodo", "estado", "buscar", "limite"],
@@ -199,8 +199,8 @@ REPORTS: dict[str, dict[str, Any]] = {
         ],
     },
     "microsoft_audit": {
-        "title": "Auditoria Microsoft 365",
-        "description": "Auditoria de acciones sobre cuentas Microsoft 365 y licencias asignadas.",
+        "title": "Auditoría de Microsoft 365",
+        "description": 'Auditoría de acciones sobre cuentas Microsoft 365 y licencias asignadas.',
         "category": "Cuentas",
         "source_tables": ["Microsoft365Audit"],
         "filters": ["estado", "buscar", "limite"],
@@ -210,8 +210,8 @@ REPORTS: dict[str, dict[str, Any]] = {
         ],
     },
     "pagos_matricula": {
-        "title": "Pagos de matricula",
-        "description": "Pagos registrados por estudiante, periodo, carrera, deposito y valor.",
+        "title": "Pagos de matrícula",
+        "description": 'Pagos registrados por estudiante, período, carrera, depósito y valor.',
         "category": "Financiero",
         "source_tables": ["REGISTROPAGOS", "DATOS_ESTUD", "PERIODO", "CARRERAS"],
         "filters": ["periodo", "carrera", "buscar", "limite"],
@@ -221,46 +221,46 @@ REPORTS: dict[str, dict[str, Any]] = {
 
 FUNCTIONAL_INVENTORY = [
     {
-        "module": "Academico y matricula",
+        "module": "Gestión académica y matrícula",
         "legacy_sources": ["CARRERAXESTUD", "CABECERA_MATRICULA", "PENSUM", "CARRERAS", "PERIODO"],
         "capabilities": [
-            "matriculas por carrera, periodo, paralelo y tipo",
+            "matrículas por carrera, período, paralelo y tipo",
             "promedios y notas finales",
             "mallas y materias por nivel",
         ],
     },
     {
-        "module": "Admision y ventas",
+        "module": "Admisión y ventas",
         "legacy_sources": ["PREINSCRIPCION", "USUARIO_SIS", "IN_LECONTACTO", "Provincias"],
         "capabilities": [
             "aspirantes por asesor",
             "seguimiento de ingreso",
-            "documentos de preinscripcion",
+            "documentos de preinscripción",
         ],
     },
     {
         "module": "Docencia",
         "legacy_sources": ["DATOSDOCENTE", "CARRERAXDOCENTE", "RESULTADO_EVALUACION", "CUESTIONARIOEVALUA"],
         "capabilities": [
-            "asignacion docente",
-            "evaluacion docente",
-            "estado de sincronizacion Moodle",
+            "asignación docente",
+            "evaluación docente",
+            "estado de sincronización con Moodle",
         ],
     },
     {
-        "module": "Documentacion y certificacion",
+        "module": "Documentación y certificación",
         "legacy_sources": ["CABECERA_MATRICULA", "PRACTICASPROFESIONALES", "EMPRESA", "Microsoft365Audit"],
         "capabilities": [
             "control documental",
             "prácticas laborales",
-            "auditoria de correos institucionales",
+            "auditoría de correos institucionales",
         ],
     },
     {
         "module": "Integraciones modernas",
         "legacy_sources": ["intec_moodleconfig", "intec_logmatriculacion", "intec_estudiantenota", "auth_user"],
         "capabilities": [
-            "sincronizacion Moodle",
+            "sincronización con Moodle",
             "logs operativos",
             "base Django/API para reemplazar pantallas WebForms",
         ],
@@ -2354,7 +2354,7 @@ def update_student_grade(
             if matches == 0:
                 raise HTTPException(
                     status_code=404,
-                    detail="No se encontro una matricula activa para la materia seleccionada",
+                    detail='No se encontró una matrícula activa para la materia seleccionada',
                 )
             if matches > 1:
                 raise HTTPException(status_code=409, detail="La matrícula seleccionada no es única; no se realizaron cambios")

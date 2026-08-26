@@ -1,5 +1,6 @@
 import type {
   AcademicEnrollmentMode,
+  MoodleSection,
   Page,
   PreinscriptionStage,
   ScreenPermissionCode,
@@ -7,6 +8,7 @@ import type {
 
 export type ActiveScreenContext = {
   matriculaAcadMode?: AcademicEnrollmentMode
+  moodleSection?: MoodleSection
   preinscriptionStage?: PreinscriptionStage
   sisAcademicoSection?: string
   reportKey?: string
@@ -20,6 +22,7 @@ const FLOW_PARENT_PAGES = new Set<Page>([
   'reporteria-integral',
   'reportes-individuales',
   'titulos-registrados',
+  'moodle',
 ])
 
 export function screenPermissionAllowsPage(
@@ -50,6 +53,7 @@ export function firstPermissionForPage(
 }
 
 export function screenPermissionForView(page: Page, context: ActiveScreenContext = {}) {
+  if (page === 'moodle') return `${page}/${context.moodleSection || 'status'}`
   if (page === 'preinscripcion') return `${page}/${context.preinscriptionStage || 'registro'}`
   if (page === 'matricula-acad') return `${page}/${context.matriculaAcadMode || 'individual'}`
   if (page === 'gestion-sisacademico') {

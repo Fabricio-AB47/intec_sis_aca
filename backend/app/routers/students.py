@@ -255,7 +255,7 @@ def _quote_powershell_literal(value: Path) -> str:
 
 def _refresh_matriz_desagregada_cache() -> None:
     if not _MATRIZ_DESAGREGADA_PATH.exists():
-        raise FileNotFoundError(f"No se encontro {_MATRIZ_DESAGREGADA_PATH.name}")
+        raise FileNotFoundError(f"No se encontró {_MATRIZ_DESAGREGADA_PATH.name}")
 
     script = f"""
 $ErrorActionPreference = 'Stop'
@@ -320,7 +320,7 @@ try {{
 
 def _matriz_desagregada_cache_path(warnings: list[str]) -> Path | None:
     if not _MATRIZ_DESAGREGADA_PATH.exists():
-        warnings.append(f"No se encontro {_MATRIZ_DESAGREGADA_PATH.name}; se usa solo la base de datos.")
+        warnings.append(f"No se encontró {_MATRIZ_DESAGREGADA_PATH.name}; se usa solo la base de datos.")
         return None
 
     cache_is_current = (
@@ -339,7 +339,7 @@ def _matriz_desagregada_cache_path(warnings: list[str]) -> Path | None:
 
     for fallback in (_MATRIZ_DESAGREGADA_CACHE_PATH, _MATRIZ_DESAGREGADA_TEMP_CACHE_PATH):
         if fallback.exists():
-            warnings.append(f"Se usa cache existente {fallback.name} para la referencia de matriz.")
+            warnings.append(f"Se usa la caché existente {fallback.name} para la referencia de matriz.")
             return fallback
     return None
 
@@ -467,7 +467,7 @@ def _dataframe_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
 def _read_registro(path: Path = _REGISTRO_PATH) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     if not path.exists():
-        return [], [f"No se encontro {path.name}"]
+        return [], [f"No se encontró {path.name}"]
 
     if path.suffix.lower() == ".xlsx":
         rows = _read_xlsx_rows(path)
@@ -476,7 +476,7 @@ def _read_registro(path: Path = _REGISTRO_PATH) -> tuple[list[dict[str, Any]], l
     if not rows and path.suffix.lower() != ".xlsx":
         sheet_path = _excel_html_sheet_path(path)
         if sheet_path is None:
-            return [], [f"No se encontro una hoja de datos en {path.name}"]
+            return [], [f"No se encontró una hoja de datos en {path.name}"]
         if not sheet_path.exists():
             return [], [
                 f"{path.name} es un contenedor HTML de Excel y referencia {sheet_path.parent.name}\\{sheet_path.name}, pero esa hoja no existe en la carpeta del proyecto"
@@ -534,7 +534,7 @@ def _read_registro(path: Path = _REGISTRO_PATH) -> tuple[list[dict[str, Any]], l
             break
 
     if header_row is None:
-        return [], [f"No se detecto la cabecera de cedula/nombres en {path.name}"]
+        return [], [f"No se detectó la cabecera de cédula y nombres en {path.name}."]
 
     records: list[dict[str, Any]] = []
     seen_records: set[str] = set()
@@ -586,7 +586,7 @@ def _read_registro(path: Path = _REGISTRO_PATH) -> tuple[list[dict[str, Any]], l
 def _read_moodle_users(path: Path = _DATA_MOODLE_PATH) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     if not path.exists():
-        return [], [f"No se encontro {path.name}"]
+        return [], [f"No se encontró {path.name}"]
 
     workbook = load_workbook(path, read_only=True, data_only=True)
     worksheet = workbook[workbook.sheetnames[0]]
@@ -1436,7 +1436,7 @@ def _build_excel_sql_cross(limit: int, db_limit: int) -> dict[str, Any]:
         summary.pop(key, None)
     if duplicate_code_count or duplicate_id_count:
         warnings.append(
-            f"Validacion duplicados SQL: codigos duplicados={duplicate_code_count}, cedulas duplicadas={duplicate_id_count}."
+            f"Validación de duplicados SQL: códigos duplicados={duplicate_code_count}, cédulas duplicadas={duplicate_id_count}."
         )
 
     return {
@@ -1445,7 +1445,7 @@ def _build_excel_sql_cross(limit: int, db_limit: int) -> dict[str, Any]:
             "limit": limit,
             "db_limit": db_limit,
             "almacenamiento": "Fuentes cargadas y consolidadas en DataFrames pandas antes de generar JSON y Excel.",
-            "validacion": "DATOS_ESTUD es el punto de partida SQL; solo se consideran estados A/G/P/R con matricula registrada en CARRERAXESTUD. PENSUM se une para detalle de materia y no excluye registros.",
+            "validacion": "DATOS_ESTUD es el punto de partida SQL; solo se consideran los estados A/G/P/R con matrícula registrada en CARRERAXESTUD. PENSUM se une para obtener el detalle de la materia y no excluye registros.",
         },
         "files": {
             "registro": _REGISTRO_PATH.name,
@@ -1471,8 +1471,8 @@ _CRUCE_STATUS_LABELS = {
 
 _CRUCE_EXPORT_HEADERS = [
     "Fuente principal",
-    "Codigo estudiante",
-    "Cedula",
+    "Código del estudiante",
+    "Cédula",
     "Nombre DATOS_ESTUD",
     "Estado DATOS_ESTUD",
     "Correo Intec DATOS_ESTUD",
@@ -1522,7 +1522,7 @@ _CRUCE_EXPORT_HEADERS = [
     "Moodle username",
     "Moodle idnumber",
     "Registro nombre",
-    "Registro cedula",
+    "Registro cédula",
     "Registro correo",
     "Registro balance",
     "Registro credito",
@@ -1648,7 +1648,7 @@ def _build_cross_workbook(payload: dict[str, Any]) -> BytesIO:
     summary_sheet.append(["Archivo Moodle", (payload.get("files") or {}).get("data_moodle", "")])
     summary_sheet.append(["Tablas SQL", " + ".join(payload.get("sql_tables") or [])])
     summary_sheet.append(["Almacenamiento", (payload.get("criteria") or {}).get("almacenamiento", "")])
-    summary_sheet.append(["Validacion", (payload.get("criteria") or {}).get("validacion", "")])
+    summary_sheet.append(["Validación", (payload.get("criteria") or {}).get("validacion", "")])
     summary_sheet.append(["Total base de datos", (payload.get("summary") or {}).get("total_tablas", 0)])
     summary_sheet.append([])
     summary_sheet.append(["Indicador", "Total"])
@@ -1710,7 +1710,7 @@ def _validate_tipo(tipo_matricula: str) -> str:
 
 @router.get(
     "/cruce-excel-moodle-tablas",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def cruce_excel_moodle_tablas(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -1726,7 +1726,7 @@ def cruce_excel_moodle_tablas(
 
 @router.get(
     "/cruce-excel-moodle-tablas/export",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def cruce_excel_moodle_tablas_export(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -2476,7 +2476,7 @@ def _dashboard_admisiones(current_user: SessionUser | None = None) -> dict[str, 
     by_user_period_query = f"""
         SELECT
             COALESCE(TRY_CONVERT(varchar(50), p.codperiodo), '') AS codigo_periodo,
-            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo') AS detalle_periodo,
+            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin período') AS detalle_periodo,
             COALESCE(TRY_CONVERT(int, pe.anio), YEAR(TRY_CONVERT(date, p.Fecha_Ingreso))) AS anio_periodo,
             COALESCE(TRY_CONVERT(varchar(50), u.id_usuarios), TRY_CONVERT(varchar(50), p.codasesor), 'SIN_USUARIO') AS usuario_id,
             COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.nombres))), N''), N'Sin asesor vinculado') AS usuario_nombre,
@@ -2552,7 +2552,7 @@ def _dashboard_admisiones(current_user: SessionUser | None = None) -> dict[str, 
          )
         GROUP BY
             COALESCE(TRY_CONVERT(varchar(50), p.codperiodo), ''),
-            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo'),
+            COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin período'),
             COALESCE(TRY_CONVERT(int, pe.anio), YEAR(TRY_CONVERT(date, p.Fecha_Ingreso))),
             COALESCE(TRY_CONVERT(varchar(50), u.id_usuarios), TRY_CONVERT(varchar(50), p.codasesor), 'SIN_USUARIO'),
             COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), u.nombres))), N''), N'Sin asesor vinculado'),
@@ -2645,7 +2645,7 @@ def _dashboard_admisiones(current_user: SessionUser | None = None) -> dict[str, 
             "por_usuario_periodo": [
                 {
                     "codigo_periodo": str(row.codigo_periodo or ""),
-                    "detalle_periodo": str(row.detalle_periodo or "Sin periodo"),
+                    "detalle_periodo": str(row.detalle_periodo or "Sin período"),
                     "anio_periodo": int(row.anio_periodo) if row.anio_periodo is not None else None,
                     "usuario_id": str(row.usuario_id or ""),
                     "usuario_nombre": str(row.usuario_nombre or "Sin asesor"),
@@ -2666,8 +2666,8 @@ def _dashboard_admisiones(current_user: SessionUser | None = None) -> dict[str, 
         },
         "criteria": {
             "fecha": "PREINSCRIPCION.Fecha_Ingreso",
-            "fuente": "PREINSCRIPCION para estudiantes ingresados; PREINSCRIPCION.codasesor se cruza exclusivamente con USUARIO_SIS.id_usuarios; CABECERA_MATRICULA confirma conversion a matricula; DATOS_ESTUD valida estado activo/inactivo/graduado/retirado",
-            "excluidos": [f"Cedula {_DASHBOARD_IGNORED_CEDULA} solo en dashboard"],
+            "fuente": "PREINSCRIPCION para estudiantes ingresados; PREINSCRIPCION.codasesor se cruza exclusivamente con USUARIO_SIS.id_usuarios; CABECERA_MATRICULA confirma la conversión a matrícula; DATOS_ESTUD valida los estados activo, inactivo, graduado y retirado.",
+            "excluidos": [f"Cédula {_DASHBOARD_IGNORED_CEDULA}: visible solo en el tablero."],
         },
     }
 
@@ -2686,7 +2686,7 @@ def _matricula_list_point_param(punto: str | None) -> str:
 
 @router.get(
     "/matricula-summary",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -2752,12 +2752,12 @@ def matricula_summary(
             "consultado_en": datetime.now(timezone.utc).isoformat(),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando resumen de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el resumen de matrícula: {exc}") from exc
 
 
 @router.get(
     "/matricula-career-state-summary",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_career_state_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -2841,12 +2841,12 @@ def matricula_career_state_summary(
 
 @router.get(
     "/matricula-career-state-students",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_career_state_students(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
     response: Response,
-    cod_anio_basica: Annotated[str | None, Query(description="Codigo de carrera")] = None,
+    cod_anio_basica: Annotated[str | None, Query(description='Código de carrera')] = None,
     nombre_carrera: Annotated[str | None, Query(description="Nombre de carrera")] = None,
     escuela: Annotated[str | None, Query(description="Escuela")] = None,
     estado_codigo: Annotated[str | None, Query(description="Estado A, P, R, G")] = None,
@@ -2959,7 +2959,7 @@ def matricula_career_state_students(
 
 @router.get(
     "/dashboard-matricula",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def dashboard_matricula(
     current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
@@ -3133,17 +3133,17 @@ def dashboard_matricula(
             "criteria": {
                 "fecha": "PERIODO.fechain",
                 "excluidos": [],
-                "fuente": "dbo.TOTALESTUDMATRICCNE enlazada con dbo.ESTADO; consulta directa sin cache para igualar el reporte institucional",
+                "fuente": "dbo.TOTALESTUDMATRICCNE enlazada con dbo.ESTADO; consulta directa sin caché para igualar el reporte institucional.",
             },
             "admissions": admissions_dashboard.get("admissions", {}),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando dashboard de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el tablero de matrícula: {exc}") from exc
 
 
 @router.get(
     "/dashboard-matricula/admisiones-students",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def dashboard_admisiones_students(
     current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
@@ -3155,13 +3155,13 @@ def dashboard_admisiones_students(
             )
         ),
     ] = "ALL",
-    codigo_periodo: Annotated[str | None, Query(description="Periodo academico de PREINSCRIPCION.codperiodo")] = None,
+    codigo_periodo: Annotated[str | None, Query(description='Período académico de PREINSCRIPCION.codperiodo')] = None,
     limit: Annotated[int, Query(ge=1, le=20000)] = 10000,
 ) -> dict[str, Any]:
     status = (estado or "ALL").strip().upper()
     allowed_statuses = {"ALL", "A", "P", "G", "R", "CABECERA_MATRICULA", "PENDIENTE_MATRICULA", "SIN_ESTADO"}
     if status not in allowed_statuses:
-        raise HTTPException(status_code=400, detail="Estado de admisiones no valido.")
+        raise HTTPException(status_code=400, detail='Estado de admisiones no válido.')
 
     period_filter = ""
     period_params: list[Any] = []
@@ -3211,7 +3211,7 @@ def dashboard_admisiones_students(
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), p.correo))) AS correo_preinscripcion,
                     LTRIM(RTRIM(TRY_CONVERT(varchar(50), p.telefono))) AS telefono,
                     TRY_CONVERT(varchar(50), p.codperiodo) AS codigo_periodo,
-                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin periodo') AS detalle_periodo,
+                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pe.Detalle_Periodo))), N'Sin período') AS detalle_periodo,
                     LTRIM(RTRIM(TRY_CONVERT(varchar(10), pe.TipoMatricula))) AS tipo_matricula,
                     TRY_CONVERT(int, pe.anio) AS anio_periodo,
                     TRY_CONVERT(varchar(50), p.codcarrera) AS codcarrera,
@@ -3297,8 +3297,8 @@ def dashboard_admisiones_students(
             "P": "Inactivo",
             "G": "Graduado",
             "R": "Retirado",
-            "PENDIENTE_MATRICULA": "Pendiente de matricula",
-            "CABECERA_MATRICULA": "Con cabecera de matricula",
+            "PENDIENTE_MATRICULA": "Pendiente de matrícula",
+            "CABECERA_MATRICULA": "Con cabecera de matrícula",
             "SIN_ESTADO": "Sin estado",
             "ALL": "Todos",
         }
@@ -3351,12 +3351,12 @@ def dashboard_admisiones_students(
 
 @router.get(
     "/dashboard-matricula/students",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def dashboard_matricula_students(
     current_user: Annotated[SessionUser, Depends(_DASHBOARD_ACCESS)],
-    anio: Annotated[int, Query(ge=2000, le=2100, description="Anio de PERIODO.fechain")],
-    mes: Annotated[int, Query(ge=1, le=12, description="Mes de PERIODO.fechain")],
+    anio: Annotated[int, Query(ge=2000, le=2100, description='Año de PERIODO.fechain')],
+    mes: Annotated[int, Query(ge=1, le=12, description='Mes de PERIODO.fechain')],
     limit: Annotated[int, Query(ge=1, le=20000)] = 10000,
 ) -> dict[str, Any]:
     del current_user
@@ -3457,7 +3457,7 @@ def dashboard_matricula_students(
 
 @router.get(
     "/matricula-period-summary",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_period_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -3576,12 +3576,12 @@ def matricula_period_summary(
             "referencia_matriz": _matricula_reference_meta(reference, len(rows), len(filtered_rows)),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando resumen por periodo: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el resumen por período: {exc}") from exc
 
 
 @router.get(
     "/matricula-movement-summary",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_movement_summary(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -3658,12 +3658,12 @@ def matricula_movement_summary(
             "total": len(items),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando resumen de movimiento de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el resumen de movimientos de matrícula: {exc}") from exc
 
 
 @router.get(
     "/matricula-cruce-completo",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_cruce_completo(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -3771,27 +3771,27 @@ def matricula_cruce_completo(
                 "total_homologacion_h": total_h,
                 "total_r_h": total_r + total_h,
                 "total_registros_unicos": len(cruce_por_codigo),
-                "criterio_cruce": "Universo desde DATOS_ESTUD; CARRERAXESTUD clasifica R/H cuando existe y PENSUM enriquece materia; excluye Cambio Periodo, Reingreso, Educacion Continua y el registro indicado.",
+                "criterio_cruce": "Universo desde DATOS_ESTUD; CARRERAXESTUD clasifica R/H cuando existe y PENSUM enriquece la materia; excluye Cambio de período, Reingreso, Educación continua y el registro indicado.",
             },
             "resumen_por_tipo": resumen_tipo,
             "resumen_por_anio": [_row_to_year_summary(row) for row in resumen_anio_rows],
             "cruce_por_codigo": cruce_por_codigo,
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando cruce completo de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el cruce completo de matrícula: {exc}") from exc
 
 
 @router.get(
     "/matricula-list",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def matricula_list(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
     response: Response,
-    tipo_matricula: Annotated[str | None, Query(description="R, H o vacio para cruce unico global")] = None,
-    estado_codigo: Annotated[str | None, Query(description="Codigo de estado, por ejemplo A, P, R, G")] = None,
-    anio_periodo: Annotated[int | None, Query(description="Anio academico de la primera matricula")] = None,
-    punto_matricula: Annotated[str | None, Query(description="PRIMERA, ULTIMA o BOTH para movimiento")] = None,
+    tipo_matricula: Annotated[str | None, Query(description='R, H o vacío para cruce único global')] = None,
+    estado_codigo: Annotated[str | None, Query(description='Código de estado, por ejemplo A, P, R, G')] = None,
+    anio_periodo: Annotated[int | None, Query(description='Año académico de la primera matrícula')] = None,
+    punto_matricula: Annotated[str | None, Query(description='PRIMERA, ULTIMA o BOTH para el movimiento')] = None,
     fuente: Annotated[str | None, Query(description="CNE para replicar el reporte Crystal total de estudiantes")] = None,
     limit: Annotated[int, Query(ge=1, le=10000)] = 300,
 ) -> dict[str, Any]:
@@ -3803,9 +3803,9 @@ def matricula_list(
     punto = punto_matricula.strip().upper() if punto_matricula else None
     fuente_reporte = _clean_cell(fuente).upper()
     if fuente_reporte not in {"", "CNE"}:
-        raise HTTPException(status_code=400, detail="fuente debe ser CNE o permanecer vacia")
+        raise HTTPException(status_code=400, detail='fuente debe ser CNE o permanecer vacía')
     if punto and punto not in {"PRIMERA", "ULTIMA", "BOTH", "ALL"}:
-        raise HTTPException(status_code=400, detail="punto_matricula debe ser PRIMERA, ULTIMA, BOTH o ALL")
+        raise HTTPException(status_code=400, detail='punto_matricula debe ser PRIMERA, ULTIMA, BOTH o ALL')
     punto_filter = _matricula_list_punto_filter(punto)
     punto_return = _matricula_list_point_param(punto)
 
@@ -3876,7 +3876,7 @@ def matricula_list(
                 "consultado_en": datetime.now(timezone.utc).isoformat(),
             }
         except pyodbc.Error as exc:
-            raise HTTPException(status_code=500, detail=f"Error consultando listado CNE de matricula: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"Error al consultar el listado CNE de matrícula: {exc}") from exc
 
     source_cte = _MATRICULA_ACTUAL_CTE
     base_row_filter = ""
@@ -3968,7 +3968,7 @@ def matricula_list(
             "referencia_matriz": _matricula_reference_meta(reference, len(rows), len(filtered_rows)),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando listado de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el listado de matrícula: {exc}") from exc
 
 
 def _bool_from_db(value: Any) -> bool:
@@ -4500,14 +4500,14 @@ def _build_ingreso_ventas_payload(top_limit: int) -> dict[str, Any]:
         "criteria": {
             "fuente": "PREINSCRIPCION + USUARIO_SIS para ventas; base real desde DATOS_ESTUD, clasificada con CARRERAXESTUD cuando existe y enriquecida con PENSUM",
             "join_usuario": "PREINSCRIPCION.codasesor -> USUARIO_SIS.id_usuarios",
-            "join_estudiante": "PREINSCRIPCION.Codestu -> DATOS_ESTUD.codigo_estud; respaldo por Cedula",
+            "join_estudiante": "PREINSCRIPCION.Codestu -> DATOS_ESTUD.codigo_estud; respaldo por cédula.",
         },
     }
 
 
 @router.get(
     "/ingreso-ventas",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def ingreso_ventas(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
@@ -5395,7 +5395,7 @@ def _validate_graduation_pdf_upload(filename: str, content: bytes) -> None:
 
 async def _read_graduation_pdf_uploads(files: list[UploadFile]) -> list[tuple[str, bytes]]:
     if not files:
-        raise HTTPException(status_code=400, detail="Selecciona al menos un documento PDF SENESCYT")
+        raise HTTPException(status_code=400, detail='Seleccione al menos un documento PDF SENESCYT')
     if len(files) > _GRADUATION_PDF_MAX_FILES:
         raise HTTPException(
             status_code=400,
@@ -5603,7 +5603,7 @@ def graduation_date_catalog(
     except HTTPException:
         raise
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo cargar el catalogo de fecha de grado: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar el catálogo de fechas de grado: {exc}") from exc
 
 
 @router.get("/fecha-grado/estudiantes")
@@ -5781,8 +5781,8 @@ def graduation_date_template(
         formula2="DATE(2100,12,31)",
         allow_blank=True,
         showErrorMessage=True,
-        errorTitle="Fecha no valida",
-        error="Ingresa una fecha valida en formato AAAA-MM-DD.",
+        errorTitle="Fecha no válida",
+        error='Ingrese una fecha válida en formato AAAA-MM-DD.',
         promptTitle="Fecha de grado",
         prompt="Formato requerido: AAAA-MM-DD. Ejemplo: 2026-06-30.",
     )
@@ -6225,7 +6225,7 @@ def _numeric_catalog_options(values: list[int | str]) -> list[dict[str, str]]:
     return [{"value": str(value), "label": str(value)} for value in values]
 
 
-_YES_NO_OPTIONS = [("1", "Si"), ("2", "No")]
+_YES_NO_OPTIONS = [("1", "Sí"), ("2", "No")]
 _BLOOD_TYPE_OPTIONS = [
     ("1", "A +"),
     ("2", "A -"),

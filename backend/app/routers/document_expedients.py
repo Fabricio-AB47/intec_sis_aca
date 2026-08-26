@@ -39,18 +39,27 @@ from app.services.graph_documents import (
 
 router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients"])
 
-_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "ADMINISTRADOR")
-_REVIEW_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "ADMINISTRADOR")
+_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_REVIEW_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
     ".zip", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".wav", ".m4a", ".mp4",
-    ".mov", ".mkv", ".webm",
+    ".mov", ".mkv", ".webm", ".xml",
 }
 _MODULE_NAMES = {
-    "INGLES": "Ingles",
-    "TITULACION": "Titulacion",
-    "PRACTICAS": "Practicas preprofesionales",
-    "VINCULACION": "Vinculacion con la sociedad",
+    "INGLES": "Inglés",
+    "TITULACION": "Titulación",
+    "PRACTICAS": "Prácticas preprofesionales",
+    "VINCULACION": "Vinculación con la sociedad",
+    "FACTURACION": "Facturas",
+}
+_INVOICE_DOCUMENT_TYPES = [
+    {"code": "FACTURA_XML", "name": "Factura electrónica (XML)"},
+    {"code": "RIDE_FACTURA", "name": "RIDE de la factura (PDF)"},
+]
+_INVOICE_FILE_EXTENSIONS = {
+    "FACTURA_XML": ".xml",
+    "RIDE_FACTURA": ".pdf",
 }
 
 
@@ -93,7 +102,7 @@ def _student_profile(current_user: SessionUser, requested_identification: str = 
     document = _identification(current_user.cedula if is_student else requested_identification)
     code = current_user.codigo_estud if is_student else None
     if not document and not code:
-        raise HTTPException(status_code=400, detail="Indique la cedula del estudiante.")
+        raise HTTPException(status_code=400, detail='Indique la cédula del estudiante.')
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -132,7 +141,7 @@ def _student_profile(current_user: SessionUser, requested_identification: str = 
         )
         row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="No se encontro al estudiante en INTECBDD.")
+        raise HTTPException(status_code=404, detail='No se encontró al estudiante en INTECBDD.')
     return {
         "code": int(row.CodigoEstud),
         "identification": _clean(row.Cedula),
@@ -151,7 +160,7 @@ def _titulation_document_types() -> list[dict[str, str]]:
         {"code": "ACTA_GRADO", "name": "Acta de grado"},
         {"code": "ACTA_GRADO_FIRMADA", "name": "Acta de grado firmada"},
         {"code": "TITULO_REGISTRO_SENESCYT", "name": "Registro SENESCYT"},
-        {"code": "TITULO_INTEC", "name": "Titulo"},
+        {"code": "TITULO_INTEC", "name": "Título"},
     ]
     try:
         with get_titulation_connection() as conn:
@@ -186,6 +195,24 @@ def _practice_document_types(process_code: str) -> list[dict[str, str]]:
             process_code,
         )
         return [{"code": _clean(row[0]), "name": _clean(row[1])} for row in cursor.fetchall()]
+
+
+def _invoice_expedient(profile: dict[str, Any]) -> dict[str, Any]:
+    student_code = int(profile["code"])
+    return {
+        "module_code": "FACTURACION",
+        "module_name": _MODULE_NAMES["FACTURACION"],
+        "origin_id": str(student_code),
+        "domain_expedient_id": student_code,
+        "expedient_code": f"FACT-{student_code}",
+        "status": "ABIERTO",
+        "base_origin": "INTECBDD",
+        "schema_origin": "dbo",
+        "table_origin": "DATOS_ESTUD",
+        "document_types": [dict(item) for item in _INVOICE_DOCUMENT_TYPES],
+        "upload_enabled": True,
+        "upload_message": "",
+    }
 
 
 def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -223,7 +250,7 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                             "table_origin": "ExamenIngles",
                             "document_types": [],
                             "upload_enabled": False,
-                            "upload_message": "La evidencia de Ingles se carga desde Evaluacion de Ingles para aplicar el plazo de 15 minutos.",
+                            "upload_message": "La evidencia de Inglés se carga desde Evaluación de Inglés para aplicar el plazo de 15 minutos.",
                         }
                     )
     except (RuntimeError, pyodbc.Error):
@@ -305,6 +332,7 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     except (RuntimeError, pyodbc.Error):
         pass
 
+    expedients.append(_invoice_expedient(profile))
     return expedients
 
 
@@ -316,7 +344,7 @@ def _context_payload(profile: dict[str, Any], role: str) -> dict[str, Any]:
             if expedient["module_code"] == "TITULACION":
                 expedient["upload_enabled"] = False
                 expedient["upload_message"] = (
-                    "Los documentos oficiales de titulacion son cargados por Secretaria o el area Academica."
+                    "Los documentos oficiales de titulación son cargados por Secretaría o el área Académica."
                 )
     graph_rows = list_documents(profile["identification"])
     documents_by_origin: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -358,7 +386,7 @@ def _context_payload(profile: dict[str, Any], role: str) -> dict[str, Any]:
                     "document_types": [],
                     "documents": [],
                     "upload_enabled": False,
-                    "upload_message": "Primero debe abrirse el expediente en el modulo correspondiente.",
+                    "upload_message": "Primero debe abrirse el expediente en el módulo correspondiente.",
                 }
             )
     expedients.sort(key=lambda item: list(_MODULE_NAMES).index(item["module_code"]))
@@ -383,10 +411,38 @@ def _validate_document_type(expedient: dict[str, Any], document_type_code: str) 
     code = _clean(document_type_code).upper()
     valid_codes = {item["code"].upper() for item in expedient.get("document_types", [])}
     if not expedient.get("upload_enabled"):
-        raise HTTPException(status_code=409, detail=expedient.get("upload_message") or "La carga no esta habilitada.")
+        raise HTTPException(status_code=409, detail=expedient.get("upload_message") or "La carga no está habilitada.")
     if code not in valid_codes:
-        raise HTTPException(status_code=400, detail="Seleccione un tipo documental valido para el expediente.")
+        raise HTTPException(status_code=400, detail='Seleccione un tipo documental válido para el expediente.')
     return code
+
+
+def _validate_upload_filename(
+    expedient: dict[str, Any],
+    document_type_code: str,
+    filename: str,
+) -> str:
+    try:
+        normalized = safe_filename(filename, _ALLOWED_EXTENSIONS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if expedient.get("module_code") != "FACTURACION":
+        return normalized
+    expected_extension = _INVOICE_FILE_EXTENSIONS.get(document_type_code)
+    if expected_extension and not normalized.lower().endswith(expected_extension):
+        document_name = next(
+            (
+                item["name"]
+                for item in _INVOICE_DOCUMENT_TYPES
+                if item["code"] == document_type_code
+            ),
+            document_type_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"{document_name} debe cargarse en formato {expected_extension.upper()}.",
+        )
+    return normalized
 
 
 def _register_domain_document(
@@ -402,6 +458,9 @@ def _register_domain_document(
     web_url = _clean(graph_document.get("graph_web_url"))
     content_type = _clean(graph_document.get("content_type"))
     size = int(graph_document.get("size") or 0)
+
+    if module == "FACTURACION":
+        return int(graph_document["document_graph_id"])
 
     if module == "TITULACION":
         with get_titulation_connection() as conn:
@@ -472,7 +531,7 @@ def _register_domain_document(
             cursor.execute("SELECT EstadoDocumentoId FROM cat.EstadoDocumento WHERE Codigo = 'CARGADO' AND Activo = 1")
             state_row = cursor.fetchone()
             if not type_row or not state_row:
-                raise RuntimeError("Faltan catalogos documentales de Practicas/Vinculacion.")
+                raise RuntimeError('Faltan catálogos documentales de Prácticas/Vinculación.')
             cursor.execute(
                 """
                 SELECT TOP (1) DocumentoId, VersionActual
@@ -524,7 +583,7 @@ def _register_domain_document(
             conn.commit()
             return document_id
 
-    raise RuntimeError("El modulo no admite carga desde el expediente documental general.")
+    raise RuntimeError('El módulo no admite carga desde el expediente documental general.')
 
 
 def _can_access_document(current_user: SessionUser, record: dict[str, Any]) -> bool:
@@ -596,13 +655,10 @@ def start_document_upload(
     if is_student and expedient["module_code"] == "TITULACION":
         raise HTTPException(
             status_code=403,
-            detail="Los documentos oficiales de titulacion son cargados por Secretaria o el area Academica.",
+            detail='Los documentos oficiales de titulación son cargados por Secretaría o el área Académica.',
         )
     type_code = _validate_document_type(expedient, payload.document_type_code)
-    try:
-        filename = safe_filename(payload.filename, _ALLOWED_EXTENSIONS)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = _validate_upload_filename(expedient, type_code, payload.filename)
 
     session_id = uuid4()
     try:
@@ -639,7 +695,7 @@ def start_document_upload(
         graph_session = create_upload_session(graph_path)
         upload_url = _clean(graph_session.get("uploadUrl"))
         if not upload_url:
-            raise RuntimeError("Microsoft Graph no devolvio una URL de carga.")
+            raise RuntimeError("Microsoft Graph no devolvió una URL de carga.")
         register_upload_session(
             session_id=session_id,
             expedient_graph_id=int(graph_expedient["expedient_graph_id"]),
@@ -674,9 +730,9 @@ def finalize_document_upload(
 ) -> dict[str, Any]:
     session = upload_session(payload.upload_id)
     if not session:
-        raise HTTPException(status_code=404, detail="No existe la sesion de carga indicada.")
+        raise HTTPException(status_code=404, detail='No existe la sesión de carga indicada.')
     if _role(current_user.rol) == "ESTUDIANTE" and _identification(current_user.cedula) != _identification(session["NumeroIdentificacion"]):
-        raise HTTPException(status_code=403, detail="La sesion no pertenece al estudiante autenticado.")
+        raise HTTPException(status_code=403, detail='La sesión no pertenece al estudiante autenticado.')
     if _clean(session["EstadoDocumentoGraphCodigo"]) == "CARGADO":
         raise HTTPException(status_code=409, detail="La carga ya fue finalizada.")
     try:
@@ -688,6 +744,7 @@ def finalize_document_upload(
             graph_item=graph_item,
             edit_deadline=None,
             audit_user=current_user.login,
+            append_document=_clean(session["TipoExpedienteGraphCodigo"]) == "FACTURACION",
         )
         domain_document_id = _register_domain_document(session, graph_document, graph_item, current_user.login)
         set_document_origin(int(graph_document["document_graph_id"]), domain_document_id)
@@ -721,7 +778,7 @@ def open_document(
     item = item_by_id(_clean(record.get("GraphItemId")))
     url = _clean((item or {}).get("webUrl")) or _clean(record.get("GraphWebUrl"))
     if not url:
-        raise HTTPException(status_code=404, detail="El archivo no esta disponible en Microsoft 365.")
+        raise HTTPException(status_code=404, detail='El archivo no está disponible en Microsoft 365.')
     return RedirectResponse(url=url, status_code=307)
 
 

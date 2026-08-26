@@ -64,6 +64,9 @@ export type Page =
   | 'sistema-academico'
   | 'teams'
   | 'teams-matricula'
+  | 'historico-integraciones'
+  | 'informe-cumplimiento'
+  | 'moodle'
   | 'matricula'
   | 'matricula-acad'
   | 'matricula-docente'
@@ -111,6 +114,711 @@ export type Page =
   | 'portal-docente-contratos'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
+
+export type IntegrationHistoryPage<T> = {
+  items: T[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  has_previous: boolean
+  has_next: boolean
+}
+
+export type IntegrationDatabaseEvent = {
+  id: number
+  fecha_utc: string
+  fecha_ecuador: string
+  base_datos: string
+  esquema: string
+  objeto: string
+  operacion: 'INSERT' | 'UPDATE' | 'DELETE'
+  cantidad_filas: number
+  muestra_limitada: boolean
+  usuario: string
+  rol?: string | null
+  origen?: string | null
+  solicitud?: string | null
+  metodo?: string | null
+  ruta?: string | null
+}
+
+export type IntegrationTeacherReportEvent = {
+  id: number
+  fecha_utc: string
+  fecha_ecuador: string
+  etapa: 'GENERADO' | 'FIRMADO' | 'ARCHIVADO' | 'ERROR'
+  estado: 'EXITOSO' | 'ERROR'
+  tipo_documento: string
+  codigo_docente?: string | null
+  cedula_docente?: string | null
+  nombre_docente?: string | null
+  codigo_materia?: string | null
+  nombre_materia?: string | null
+  paralelo?: string | null
+  nombre_archivo?: string | null
+  ruta_documento?: string | null
+  cantidad_estudiantes?: number | null
+  usuario: string
+  rol?: string | null
+  solicitud?: string | null
+  detalle?: string | null
+}
+
+export type IntegrationHistorySummary = {
+  changes_last_24_hours: {
+    inserts: number
+    updates: number
+    deletes: number
+    total: number
+  }
+  teacher_reports_last_30_days: {
+    total: number
+    generated: number
+    signed: number
+    archived: number
+    errors: number
+  }
+  coverage: {
+    installed: number
+    pending: number
+    total: number
+  }
+  databases: string[]
+}
+
+export type IntegrationHistoryDetail = {
+  kind: 'database' | 'teacher-report'
+  event: Record<string, unknown>
+}
+
+export type ComplianceDocumentType =
+  | 'INFORME'
+  | 'NOTAS'
+  | 'CONTRATO'
+  | 'PAQUETE'
+  | 'FACTURA_XML'
+  | 'RIDE'
+  | 'CARPETA'
+  | 'OTRO'
+
+export type ComplianceDocumentItem = {
+  id: string
+  event_id: number
+  fecha_utc: string
+  fecha_ecuador: string
+  codigo_docente?: string | null
+  cedula_docente?: string | null
+  nombre_docente?: string | null
+  codigo_materia?: string | null
+  nombre_materia?: string | null
+  periodos: string[]
+  paralelo?: string | null
+  jornada?: string | null
+  ruta_carpeta?: string | null
+  url_carpeta?: string | null
+  detalle?: string | null
+  documento_id?: string | null
+  nombre_documento: string
+  tipo_documento: ComplianceDocumentType
+  url_documento?: string | null
+}
+
+export type ComplianceDocumentsResponse = IntegrationHistoryPage<ComplianceDocumentItem> & {
+  summary: {
+    documents: number
+    packages: number
+    teachers: number
+  }
+}
+
+export type ComplianceInvoiceBackupUploadResponse = {
+  message: string
+  event_id: number
+  backup_id: string
+  folder_path: string
+  folder_url?: string | null
+  documents: Array<{
+    id?: string | null
+    nombre: string
+    nombre_original: string
+    url?: string | null
+    tipo_documento: 'FACTURA_XML' | 'RIDE'
+    content_type: string
+    tamano_bytes: number
+    respaldo_factura_id: string
+  }>
+}
+
+export type MoodleStatusResponse = {
+  enabled: boolean
+  configured: boolean
+  reachable: boolean
+  site_name: string
+  site_url: string
+  moodle_username: string
+  moodle_user_id: number
+  moodle_release: string
+  moodle_version: string
+  user_is_site_admin: boolean
+  user_status_updates_enabled: boolean
+  functions_count: number
+  required_functions: string[]
+  missing_required_functions: string[]
+}
+
+export type MoodlePagination = {
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
+  has_previous: boolean
+  has_next: boolean
+}
+
+export type MoodleSource = {
+  cached: boolean
+  fetched_at: string
+  moodle_function: string
+}
+
+export type MoodleUser = {
+  id: number
+  username: string
+  firstname: string
+  lastname: string
+  fullname: string
+  email: string
+  idnumber: string
+  institution: string
+  department: string
+  auth: string
+  suspended: boolean
+  confirmed: boolean
+  firstaccess: number
+  lastaccess: number
+  profileimageurlsmall: string
+  status: 'ACTIVO' | 'SUSPENDIDO' | 'NO_CONFIRMADO'
+}
+
+export type MoodleCourse = {
+  id: number
+  fullname: string
+  displayname: string
+  shortname: string
+  idnumber: string
+  categoryid: number
+  categoryname: string
+  summary: string
+  format: string
+  visible: boolean
+  startdate: number
+  enddate: number
+  enablecompletion: boolean
+  timecreated: number
+  timemodified: number
+}
+
+export type MoodlePagedResponse<T> = {
+  items: T[]
+  pagination: MoodlePagination
+  source: MoodleSource
+}
+
+export type MoodleUsersResponse = MoodlePagedResponse<MoodleUser>
+export type MoodleCoursesResponse = MoodlePagedResponse<MoodleCourse>
+
+export type MoodleCourseContent = {
+  type: string
+  filename: string
+  filepath: string
+  filesize: number
+  fileurl: string
+  timecreated: number
+  timemodified: number
+  sortorder: number
+  userid: number
+  author: string
+  license: string
+  mimetype: string
+  isexternalfile: boolean
+  repositorytype: string
+}
+
+export type MoodleCourseDate = {
+  label: string
+  timestamp: number
+  dataid: string
+}
+
+export type MoodleCourseCompletion = {
+  state: number
+  timecompleted: number
+  overrideby: number
+  valueused: boolean
+  hascompletion: boolean
+  uservisible: boolean
+}
+
+export type MoodleCourseLink = {
+  name: string
+  url: string
+  provider: string
+  domain: string
+}
+
+export type MoodleCourseModule = {
+  id: number
+  url: string
+  name: string
+  instance: number
+  contextid: number
+  visible: boolean
+  uservisible: boolean
+  visibleoncoursepage: boolean
+  availabilityinfo: string
+  description: string
+  modicon: string
+  modname: string
+  modplural: string
+  indent: number
+  noviewlink: boolean
+  completion: number
+  completiondata: MoodleCourseCompletion
+  dates: MoodleCourseDate[]
+  links: MoodleCourseLink[]
+  contents: MoodleCourseContent[]
+  planning_document_types?: Array<'pea' | 'silabo'>
+}
+
+export type MoodleCourseSection = {
+  id: number
+  section: number
+  name: string
+  summary: string
+  visible: boolean
+  uservisible: boolean
+  edit_url: string
+  can_update_visibility: boolean
+  can_update_name: boolean
+  modules: MoodleCourseModule[]
+}
+
+export type MoodleCourseResourcesResponse = {
+  course: MoodleCourse
+  sections: MoodleCourseSection[]
+  totals: {
+    sections: number
+    modules: number
+    files: number
+    links: number
+    visible_modules: number
+  }
+  source: MoodleSource
+  section_management: {
+    name_updates_enabled: boolean
+    visibility_updates_enabled: boolean
+    full_edit_in_moodle: boolean
+  }
+}
+
+export type MoodleGradePeriodOption = {
+  period_code: number
+  period_name: string
+  period_type: 'R' | 'H'
+  course_code: string
+  matter: string
+  career: string
+  career_count?: number
+  students: number
+}
+
+export type MoodleGradeCourseOption = {
+  id: number
+  name: string
+  shortname: string
+  idnumber: string
+  matched_course_code: string
+  matched_course_codes?: string[]
+  has_academic_match: boolean
+  recommended_period_code?: number | null
+  recommended_period_codes?: number[]
+  identity_key?: 'CorreoIntec'
+  identity_relation?: string
+  match_method?:
+    | 'codigo_pensum_y_correointec'
+    | 'asignatura_pensum_y_correointec'
+    | 'codigo_y_correointec'
+    | 'asignatura_y_correointec'
+    | ''
+  matched_students?: number
+  moodle_users?: number
+  moodle_users_with_email?: number
+  resolution_reason?: string
+  periods: MoodleGradePeriodOption[]
+}
+
+export type MoodleGradeCatalogResponse = {
+  enabled: boolean
+  apply_enabled: boolean
+  nightly_enabled: boolean
+  change_detection_enabled: boolean
+  change_detection_interval_minutes: number
+  configured_mappings: Array<{ course_id: number; period_code: number }>
+  totals: {
+    courses: number
+    matched: number
+    unmatched: number
+  }
+  courses: MoodleGradeCourseOption[]
+}
+
+export type MoodleGradeChange = {
+  student_code: number
+  student: string
+  identity: string
+  email: string
+  email_source: string
+  moodle_email: string
+  moodle_user_id: number
+  course_enrollment_validated: boolean
+  career: string
+  matter: string
+  period: string
+  period_code: number
+  type: 'R' | 'H'
+  row_id: number
+  field:
+    | 'P1Tareas'
+    | 'P1Proyectos'
+    | 'P1Examen'
+    | 'P2Tareas'
+    | 'P2Proyectos'
+    | 'P2Examen'
+    | 'P3Tareas'
+    | 'P3Proyectos'
+    | 'P3Examen'
+    | 'teoriaHomo'
+    | 'practicahomo'
+  component: string
+  current_grade: number | null
+  incoming_grade: number
+  previous_synced_grade: number | null
+  moodle_grade_item: string
+  moodle_grade_item_count?: number
+  moodle_grade_items?: string[]
+  moodle_grade_selection?: 'single_grade' | 'highest_grade'
+  moodle_raw_grade?: number | null
+  moodle_grade_min?: number | null
+  moodle_grade_max?: number | null
+  moodle_grade_raw_source?: string
+  moodle_grade_scale_source?: string
+  duplicated_generic_grade: boolean
+  duplicated_component_grade?: boolean
+  status: string
+  reason: string
+}
+
+export type MoodleGradeEnrollmentWarning = {
+  student_code: number
+  student: string
+  identity: string
+  email: string
+  email_source: string
+  moodle_email: string
+  moodle_user_id: number
+  course_enrollment_validated: boolean
+  career: string
+  matter: string
+  period: string
+  period_code: number
+  type: 'R' | 'H'
+  malla_code?: number
+  matter_code?: number
+  parallel?: string
+  status: string
+  reason: string
+}
+
+export type MoodleGradeAlertKind = 'SIN_CALIFICAR' | 'REVISAR' | 'DATOS'
+export type MoodleGradeAlertSeverity = 'alert' | 'warning'
+
+export type MoodleGradeAlertComponent = {
+  field: MoodleGradeChange['field']
+  component: string
+  academic_grade: number | null
+  academic_registered: boolean
+  moodle_grade: number | null
+  moodle_registered: boolean
+  previous_synced_grade: number | null
+  moodle_grade_item_id: number
+  moodle_grade_item: string
+  moodle_grade_item_count: number
+  moodle_grade_items: string[]
+  moodle_grade_selection: string
+  moodle_raw_grade: number | null
+  moodle_grade_min: number | null
+  moodle_grade_max: number | null
+  moodle_grade_raw_source: string
+  moodle_grade_scale_source: string
+  status: string
+  reason: string
+}
+
+export type MoodleGradeAlertItem = {
+  id: string
+  kind: MoodleGradeAlertKind
+  severity: MoodleGradeAlertSeverity
+  status: string
+  student_code: number
+  student: string
+  identity: string
+  email: string
+  email_source: string
+  moodle_email: string
+  moodle_user_id: number
+  course_enrollment_validated: boolean
+  teacher_codes: number[]
+  teacher: string
+  teacher_assignments: Array<{
+    teacher_code: number
+    teacher: string
+  }>
+  course_id: number
+  course: string
+  course_code: string
+  malla_code: number
+  matter_code: number
+  matter: string
+  career: string
+  period_code: number
+  period: string
+  type: 'R' | 'H' | string
+  parallel: string
+  record_id: number
+  enrollment_number: number
+  group_number: number
+  recovery_grade: number | null
+  final_grade: number | null
+  approval: string
+  missing_components: string[]
+  academic_missing_components: string[]
+  moodle_missing_components: string[]
+  missing_sources: string[]
+  message: string
+  component_details: MoodleGradeAlertComponent[]
+  moodle_checked: boolean
+  moodle_error: string
+  moodle_courses: Array<{
+    course_id: number
+    course: string
+    course_code: string
+  }>
+}
+
+export type MoodleGradeAlertSummary = {
+  total: number
+  ungraded: number
+  review: number
+  data_issues: number
+  courses: number
+  students: number
+  teachers: number
+  assignments: number
+  errors: number
+  missing_intecbdd: number
+  missing_moodle: number
+  missing_both: number
+  regular: number
+  homologation: number
+}
+
+export type MoodleGradeAlertResponse = {
+  scope: 'DOCENTE' | 'INSTITUCIONAL'
+  role: string
+  generated_at: string
+  cached: boolean
+  summary: MoodleGradeAlertSummary
+  validation: MoodleGradeCourseValidation
+  items: MoodleGradeAlertItem[]
+  errors: Array<{
+    course_id: number
+    period_codes: number[]
+    message: string
+  }>
+}
+
+export type MoodleGradeCourseValidation = {
+  selected_periods: number
+  academic_enrollments: number
+  moodle_course_users: number
+  matched_by_email: number
+  matched_by_registry: number
+  matched_by_data_fallback: number
+  missing_institutional_email: number
+  not_enrolled_in_course: number
+  ambiguous_users: number
+}
+
+export type MoodleGradePreviewResponse = {
+  course: { id: number; name: string; code: string }
+  period: { code: number; name: string; type: 'R' | 'H' }
+  periods: Array<{ code: number; name: string; type: 'R' | 'H' }>
+  selected_period_codes: number[]
+  rule: string
+  generated_at: string
+  replace_existing: boolean
+  counts: Record<string, number>
+  course_validation: MoodleGradeCourseValidation
+  changes: MoodleGradeChange[]
+  enrollment_warnings: MoodleGradeEnrollmentWarning[]
+  can_apply: boolean
+}
+
+export type MoodleGradeApplyResponse = MoodleGradePreviewResponse & {
+  applied: number
+  runtime_conflicts?: MoodleGradeChange[]
+  message: string
+}
+
+export type MoodleGradeHistoryItem = {
+  id: number
+  fecha_inicio: string
+  fecha_fin: string | null
+  duracion_segundos: number | null
+  periodo: number
+  modo_ejecucion: string
+  estado: string
+  notas_procesadas: number
+  notas_actualizadas: number
+  notas_insertadas: number
+  notas_error: number
+  mensaje: string
+  usuario_id: string
+}
+
+export type MoodleGradeHistoryResponse = {
+  items: MoodleGradeHistoryItem[]
+  total: number
+}
+
+export type PortalTeacherComplianceMoodleCourse = MoodleCourse & {
+  match_score: number
+  match_reasons: string[]
+  subject_code_similarity: number
+  student_email_matches: number
+  student_email_total: number
+  student_email_coverage: number
+  validated_by_email: boolean
+}
+
+export type PortalTeacherComplianceGradeStudent = {
+  codigo_estud: number | null
+  cedula: string
+  nombre_estudiante: string
+  correo_intec: string
+  nombre_carrera: string
+  detalle_periodo: string
+  promedio_final: number | null
+}
+
+export type PortalTeacherComplianceGradeValidation = {
+  passing_grade: number
+  failed_threshold_percent: number
+  justification_min_length: number
+  total_records: number
+  graded_records: number
+  missing_academic_count: number
+  failed_count: number
+  failed_percentage: number
+  requires_justification: boolean
+  can_generate: boolean
+  blockers: string[]
+  missing_academic_students: PortalTeacherComplianceGradeStudent[]
+  failed_students: PortalTeacherComplianceGradeStudent[]
+  students_without_email: PortalTeacherComplianceGradeStudent[]
+  moodle: {
+    checked: boolean
+    course_id: number | null
+    course_name: string
+    error: string
+    verified_students: number
+    not_enrolled_students: PortalTeacherComplianceGradeStudent[]
+    missing_grade_students: PortalTeacherComplianceGradeStudent[]
+    discrepancies: Array<PortalTeacherComplianceGradeStudent & {
+      nota_moodle: number
+      notas_intec: number[]
+    }>
+  }
+}
+
+export type PortalTeacherComplianceMoodleResourcesResponse = {
+  matched: boolean
+  academic: {
+    nombre_materia: string
+    cod_materia: string
+    codigo_materia: string
+    nombre_carrera: string
+    detalle_periodo: string
+    paralelo: string
+  }
+  candidates: PortalTeacherComplianceMoodleCourse[]
+  selected_course_id: number | null
+  resources: MoodleCourseResourcesResponse | null
+  student_email_validation: {
+    mode: 'moodle_enrollment' | 'institutional_email_missing'
+    email_source: string
+    requested_students: number
+    students_with_email: number
+    students_without_registry_email: number
+    matched_students: number
+    unmatched_students: number
+  }
+  grade_validation: PortalTeacherComplianceGradeValidation
+}
+
+export type TeacherComplianceMoodleResource = {
+  course_id: number
+  course_name: string
+  section_id: number
+  section_name: string
+  module_id: number
+  name: string
+  module_type: string
+  visible: boolean
+  file_count: number
+  file_names: string[]
+  planning_document_types: Array<'pea' | 'silabo'>
+  web_url: string
+  source: 'Moodle'
+}
+
+export type MoodleSectionUpdateResponse = {
+  ok: boolean
+  changed: boolean
+  message: string
+  section: MoodleCourseSection
+  audit_recorded: boolean
+}
+
+export type MoodleSectionNameUpdateResponse = MoodleSectionUpdateResponse
+export type MoodleSectionVisibilityUpdateResponse = MoodleSectionUpdateResponse
+
+export type MoodleInstitutionalEmailValidation = {
+  validated: boolean
+  codigo_estud: number
+  estudiante: string
+  correo_intec: string
+}
+
+export type MoodleUserStatusUpdateResponse = {
+  ok: boolean
+  changed: boolean
+  message: string
+  user: MoodleUser
+  institutional_validation: MoodleInstitutionalEmailValidation
+  audit_recorded: boolean
+}
 
 export type EnglishExamFile = {
   upload_id: string
@@ -373,6 +1081,7 @@ export type DocumentExpedientFinalizeResponse = {
 }
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
+export type MoodleSection = 'alerts' | 'status' | 'users' | 'courses' | 'resources' | 'grades'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
@@ -3608,6 +4317,8 @@ export type PortalAcademicRecordItem = {
   nombre_estudiante?: string
   correo_personal?: string
   correo_intec?: string
+  correo_intec_registro?: string
+  correo_intec_validado?: boolean
 }
 
 export type PortalAcademicSummary = {

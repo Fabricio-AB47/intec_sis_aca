@@ -32,7 +32,7 @@ Se han creado sus credenciales Microsoft para el curso {curso}.
 Usuario: {usuario}
 Clave temporal: {clave}
 
-Revise el siguiente enlace de induccion:
+Revise el siguiente enlace de inducción:
 {link}
 
 Saludos,
@@ -194,10 +194,10 @@ def _render_message(template: str, user: CredentialUserPayload, curso: str, usua
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Variable no valida en el mensaje: {exc.args[0]}",
+            detail=f"Variable no válida en el mensaje: {exc.args[0]}",
         ) from exc
     if link not in message:
-        message = f"{message.rstrip()}\n\nEnlace de induccion:\n{link}"
+        message = f"{message.rstrip()}\n\nEnlace de inducción:\n{link}"
     return message
 
 
@@ -505,7 +505,7 @@ def save_credentials_bulk(
                 if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", correo):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Correo no valido para la cedula {cedula or '-'}",
+                        detail=f"Correo no válido para la cédula {cedula or '-'}",
                     )
                 key = (payload.cod_curso, cedula)
                 if key in seen:
@@ -568,7 +568,7 @@ def save_credentials_bulk(
                         failed += 1
                 elif payload.enviar_correo and not correo_enviado and estado_graph.startswith("ERROR"):
                     estado_envio = "NO_ENVIADO_GRAPH"
-                    error_envio = "No se envio correo porque la creacion/actualizacion en Microsoft Graph fallo."
+                    error_envio = "No se envió el correo porque falló la creación o actualización en Microsoft Graph."
                     failed += 1
 
                 cursor.execute(

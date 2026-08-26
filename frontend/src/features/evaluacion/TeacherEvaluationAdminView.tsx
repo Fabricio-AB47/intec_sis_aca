@@ -85,7 +85,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         const first = response.items?.[0]?.codigo_periodo || ''
         setPeriodo((current) => current || first)
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudieron cargar los periodos.')
+        if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudieron cargar los períodos.')
       } finally {
         if (!cancelled) setCatalogLoading(false)
       }
@@ -98,7 +98,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
 
   async function loadPending(selectedPeriod = periodo, selectedFlow = flow, silent = false) {
     if (!selectedPeriod) {
-      setError('Selecciona un periodo.')
+      setError('Seleccione un período.')
       return
     }
     if (!silent) {
@@ -180,16 +180,16 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
     subjectOverride?: TeacherEvaluationGradedSubject,
   ) {
     if (!periodo) {
-      setError('Selecciona un periodo.')
+      setError('Seleccione un período.')
       return
     }
     if (mode === 'teacher' && !selectedTeacher) {
-      setError('Selecciona un docente.')
+      setError('Seleccione un docente.')
       return
     }
     const selectedSubject = subjectOverride || gradedSubjects.find((item) => reportSubjectKey(item) === selectedSubjectKey)
     if (mode === 'teacher' && !selectedSubject) {
-      setError('Selecciona una materia del docente.')
+      setError('Seleccione una materia del docente.')
       return
     }
     setPdfLoading(true)
@@ -212,7 +212,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       if (action === 'preview') {
         const opened = window.open(url, '_blank', 'noopener,noreferrer')
         if (!opened) {
-          setError('No se pudo abrir la vista previa. Revisa si el navegador bloqueó ventanas emergentes.')
+          setError('No se pudo abrir la vista previa. Revise si el navegador bloqueó ventanas emergentes.')
           URL.revokeObjectURL(url)
           return
         }
@@ -248,7 +248,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       )
       setDetail(response)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo consultar el detalle del grafico.')
+      setError(err instanceof Error ? err.message : 'No se pudo consultar el detalle del gráfico.')
     } finally {
       setDetailLoading(false)
     }
@@ -290,7 +290,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
 
   async function openAutoStudentList(estado: 'realizadas' | 'pendientes', codigoEstud?: number) {
     if (!periodo) {
-      setError('Selecciona un periodo.')
+      setError('Seleccione un período.')
       return
     }
     setDetailLoading(true)
@@ -299,7 +299,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       const response = await fetchTeacherEvaluationAutoStudents(periodo, estado, 2000, codigoEstud)
       setAutoStudentList(response)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo consultar estudiantes de autoevaluacion.')
+      setError(err instanceof Error ? err.message : 'No se pudieron consultar los estudiantes de autoevaluación.')
     } finally {
       setDetailLoading(false)
     }
@@ -407,8 +407,8 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
           <h1>{showReports && !showProgress ? 'Documentos de evaluación' : 'Avance y ponderación'}</h1>
           <p>
             {showReports && !showProgress
-              ? 'Generación por docente o masiva en base a la calificación del periodo. Quito - Ecuador. Conserva evaluaciones históricas registradas.'
-              : 'Control por periodo y código único de materia; las carreras relacionadas se consolidan en una sola materia. Conserva evaluaciones históricas registradas.'}
+              ? 'Generación por docente o masiva en base a la calificación del período. Quito - Ecuador. Conserva evaluaciones históricas registradas.'
+              : 'Control por período y código único de materia; las carreras relacionadas se consolidan en una sola materia. Conserva evaluaciones históricas registradas.'}
           </p>
         </div>
       </section>
@@ -416,7 +416,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
       <section className={`teacher-evaluation__panel teacher-evaluation__search-panel teacher-evaluation__admin-controls${showProgress ? ' teacher-evaluation__admin-controls--attached' : ''}`}>
         <div className="teacher-evaluation__lookup-row">
           <select value={periodo} onChange={(event) => setPeriodo(event.target.value)} disabled={catalogLoading || loading}>
-            <option value="">Periodo</option>
+            <option value="">Período</option>
             {periods.map((period) => (
               <option key={period.codigo_periodo} value={period.codigo_periodo}>
                 {period.detalle_periodo || period.codigo_periodo}
@@ -496,7 +496,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                   ? `Estudiantes: ${studentProgress?.summary.estudiantes || studentProgress?.items.length || 0}`
                   : `Docente/materia: ${data.teacher_progress?.length || 0}`}
               </span>
-              <span className="teacher-evaluation__summary-pill">Periodo: {data.periodo_detalle || data.periodo}</span>
+              <span className="teacher-evaluation__summary-pill">Período: {data.periodo_detalle || data.periodo}</span>
               <span className="teacher-evaluation__summary-pill">
                 Avance total: {displayTotals.expected ? Number((displayTotals.completed / displayTotals.expected) * 100).toFixed(2) : '0.00'}%
               </span>
@@ -638,7 +638,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                 </table>
               </div>
               {(studentProgress?.items || []).length === 0 ? (
-                <div className="teacher-evaluation__empty">No hay estudiantes con materias calificadas para el periodo seleccionado.</div>
+                <div className="teacher-evaluation__empty">No hay estudiantes con materias calificadas para el período seleccionado.</div>
               ) : null}
             </>
           ) : (
@@ -757,7 +757,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                 </table>
               </div>
               {(data.teacher_progress || []).length === 0 ? (
-                <div className="teacher-evaluation__empty">No hay docentes con materias evaluables para el periodo seleccionado.</div>
+                <div className="teacher-evaluation__empty">No hay docentes con materias evaluables para el período seleccionado.</div>
               ) : null}
             </>
           )}
@@ -768,7 +768,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
         <section className="teacher-evaluation__panel teacher-evaluation__panel--compact">
           <div className="teacher-evaluation__summary-actions">
             <span className="teacher-evaluation__summary-pill">Docentes calificados: {gradedTeachers.length}</span>
-            <span className="teacher-evaluation__summary-pill">Periodo: {periodo || '-'}</span>
+            <span className="teacher-evaluation__summary-pill">Período: {periodo || '-'}</span>
             <span className="teacher-evaluation__summary-pill">
               Evaluación: {REPORT_FLOW_OPTIONS.find((option) => option.value === reportFlow)?.label || 'Resultado final 360'}
             </span>
@@ -928,8 +928,8 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
                   <tr>
                     <td colSpan={8}>
                       <div className="teacher-evaluation__empty teacher-evaluation__empty--table">
-                        <strong>No hay docentes calificados para el periodo seleccionado.</strong>
-                        <span>Seleccione otro periodo o tipo de evaluación para consultar registros.</span>
+                        <strong>No hay docentes calificados para el período seleccionado.</strong>
+                        <span>Seleccione otro período o tipo de evaluación para consultar registros.</span>
                       </div>
                     </td>
                   </tr>
@@ -957,7 +957,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               {chartItems.length > 0 ? (
                 <>
                   <div className="teacher-evaluation__chart-wrap">
-                    <svg className="teacher-evaluation__radar-chart" viewBox={`0 0 ${chartSize} ${chartSize}`} role="img" aria-label="Grafico radar por categoria">
+                    <svg className="teacher-evaluation__radar-chart" viewBox={`0 0 ${chartSize} ${chartSize}`} role="img" aria-label="Gráfico de radar por categoría">
                       {[20, 40, 60, 80, 100].map((tick) => (
                         <polygon
                           key={tick}
@@ -1099,7 +1099,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               <div>
                 <p className="teacher-evaluation__eyebrow">Autoevaluación estudiantil</p>
                 <h2>{autoStudentList.estado === 'realizadas' ? 'Estudiantes que completaron' : 'Estudiantes pendientes'}</h2>
-                <p>Periodo {autoStudentList.periodo} · {autoStudentList.total} registro(s)</p>
+                <p>Período {autoStudentList.periodo} · {autoStudentList.total} registro(s)</p>
               </div>
               <button type="button" className="teacher-evaluation__ghost" onClick={() => setAutoStudentList(null)}>
                 Cerrar
@@ -1183,7 +1183,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
               <div>
                 <p className="teacher-evaluation__eyebrow">Notas del estudiante</p>
                 <h2>{studentGrades.estudiante}</h2>
-                <p>{studentGrades.cedula} · Periodo {studentGrades.periodo}</p>
+                <p>{studentGrades.cedula} · Período {studentGrades.periodo}</p>
               </div>
               <button type="button" className="teacher-evaluation__ghost" onClick={() => setStudentGrades(null)}>
                 Cerrar

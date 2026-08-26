@@ -60,7 +60,7 @@ function keyOf(course: PortalTeacherCourse) {
 }
 
 function courseLabel(course: PortalTeacherCourse) {
-  return `${course.nombre_materia || course.cod_materia || 'Materia'} · ${course.nombre_carrera || 'Carrera'} · ${course.detalle_periodos || course.detalle_periodo || 'Periodo'} · Paralelo ${course.paralelo || '-'}`
+  return `${course.nombre_materia || course.cod_materia || 'Materia'} · ${course.nombre_carrera || 'Carrera'} · ${course.detalle_periodos || course.detalle_periodo || 'Período'} · Paralelo ${course.paralelo || '-'}`
 }
 
 function planningStorageKey(course: PortalTeacherCourse) {

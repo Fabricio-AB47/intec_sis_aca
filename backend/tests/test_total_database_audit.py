@@ -1,3 +1,4 @@
+import secrets
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,9 @@ from scripts.install_total_audit import (
     _build_dml_trigger,
     _snapshot_expression,
 )
+
+
+TEST_DATABASE_PASSWORD = secrets.token_urlsafe(12)
 
 
 class AuditContextTests(unittest.TestCase):
@@ -77,7 +81,7 @@ class AuditContextTests(unittest.TestCase):
         value = _build_connection_string(
             database="INTECBDD",
             user="usuario",
-            password="clave",
+            password=TEST_DATABASE_PASSWORD,
             host="127.0.0.1",
             port=1433,
             driver="ODBC Driver 17 for SQL Server",

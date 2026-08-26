@@ -17,7 +17,7 @@ type ActualizarDatosEstudianteViewProps = {
 
 const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
   {
-    title: 'Identificacion',
+    title: 'Identificación',
     fields: ['tipodocumento', 'tipoDocumentoId', 'Cedula_Est', 'Apellidos_nombre', 'numeroIdentificacion', 'primerApellido', 'segundoApellido', 'primerNombre', 'segundoNombre'],
   },
   {
@@ -63,7 +63,7 @@ const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
     ],
   },
   {
-    title: 'Carrera y matricula',
+    title: 'Carrera y matrícula',
     fields: [
       'tipoColegioId',
       'ModalidadEstudio',
@@ -134,7 +134,7 @@ const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
 
 const TEACHER_FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
   {
-    title: 'Identificacion',
+    title: 'Identificación',
     fields: ['tipoDocumentoId', 'cedula_doc', 'apellidos_nombre', 'sexo', 'generoId', 'estado_civil', 'etniaId', 'nacionalidad'],
   },
   {
@@ -146,7 +146,7 @@ const TEACHER_FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
     fields: ['discapacidad', 'porcen_discapa', 'tipo_discapa', 'carnet_conadis', 'tipoEnfermedadCatastrofica'],
   },
   {
-    title: 'Relacion institucional',
+    title: 'Relación institucional',
     fields: [
       'nivelFormacion',
       'fechaIngresoIES',
@@ -226,60 +226,60 @@ const STUDENT_READONLY_FIELDS = new Set(['Cedula_Est', 'correointec'])
 
 const STUDENT_FIELD_LABELS: Record<string, string> = {
   tipodocumento: 'Tipo de documento',
-  Cedula_Est: 'Numero de documento de identificacion',
+  Cedula_Est: 'Número de documento de identificación',
   Apellidos_nombre: 'Apellidos y nombres',
   Sexo: 'Sexo',
-  generoId: 'Genero',
+  generoId: 'Género',
   EstadoCivil: 'Estado civil',
   Etnia: 'Etnia',
   Nacionalidad: 'Pueblo y nacionalidad',
   tiposangre: 'Tipo de sangre',
   discapacidad: 'Discapacidad',
   Porce_Capacidad: 'Porcentaje de discapacidad',
-  No_Carnet: 'Numero de carnet',
+  No_Carnet: 'Número de carné',
   Tipo_Capacidad: 'Tipo de discapacidad',
   Fecha_Nac: 'Fecha de nacimiento',
-  paisNacionalidadId: 'Pais de nacionalidad',
+  paisNacionalidadId: 'País de nacionalidad',
   provinciaNacimeintoId: 'Provincia de nacimiento',
-  cantonNacimeintoId: 'Canton de nacimiento',
-  paisResidenciaId: 'Pais de residencia',
+  cantonNacimeintoId: 'Cantón de nacimiento',
+  paisResidenciaId: 'País de residencia',
   codprov: 'Provincia de residencia',
-  Canton: 'Canton de residencia',
+  Canton: 'Cantón de residencia',
   tipoColegioId: 'Tipo de colegio',
   ModalidadEstudio: 'Modalidad de estudio',
   Jornada: 'Jornada',
   Fecha_Ingreso: 'Fecha de ingreso',
-  fechaMatricula: 'Fecha de matricula',
-  tipoMatriculaId: 'Tipo de matricula',
-  nivelAcademicoQueCursa: 'Nivel academico que cursa',
-  duracionPeriodoAcademico: 'Duracion del periodo academico',
+  fechaMatricula: 'Fecha de matrícula',
+  tipoMatriculaId: 'Tipo de matrícula',
+  nivelAcademicoQueCursa: 'Nivel académico que cursa',
+  duracionPeriodoAcademico: 'Duración del período académico',
   haRepetidoAlMenosUnaMateria: 'Ha repetido al menos una materia',
   Paralelo: 'Paralelo',
   haPerdidoLaGratuidad: 'Ha perdido la gratuidad',
-  recibePensionDiferenciada: 'Posee pension diferenciada',
-  Ocupacion: 'Ocupacion',
+  recibePensionDiferenciada: 'Posee pensión diferenciada',
+  Ocupacion: 'Ocupación',
   ingresoEstudianteId: 'Uso de ingresos del estudiante',
   bonoDesarrolloId: 'Recibe bono de desarrollo humano',
-  haRealizadoPracticasPreprofesionales: 'Ha realizado practicas preprofesionales',
-  nroHorasPracticasPreprofesionales: 'Horas de practicas preprofesionales',
-  entornoInstitucionalPracticasProfesionales: 'Tipo de institucion de practicas',
-  sectorEconomicoPracticaProfesional: 'Sector economico de practicas',
+  haRealizadoPracticasPreprofesionales: 'Ha realizado prácticas preprofesionales',
+  nroHorasPracticasPreprofesionales: 'Horas de prácticas preprofesionales',
+  entornoInstitucionalPracticasProfesionales: 'Tipo de institución de prácticas',
+  sectorEconomicoPracticaProfesional: 'Sector económico de prácticas',
   tipoBecaId: 'Tipo de beca',
   montoBeca: 'Monto de beca',
-  montoAyudaEconomica: 'Monto de ayuda economica',
-  montoCreditoEducativo: 'Monto de credito educativo',
-  participaEnProyectoVinculacionSociedad: 'Participa en proyecto de vinculacion',
-  tipoAlcanceProyectoVinculacionId: 'Alcance del proyecto de vinculacion',
+  montoAyudaEconomica: 'Monto de ayuda económica',
+  montoCreditoEducativo: 'Monto de crédito educativo',
+  participaEnProyectoVinculacionSociedad: 'Participa en un proyecto de vinculación',
+  tipoAlcanceProyectoVinculacionId: 'Alcance del proyecto de vinculación',
   correo: 'Correo personal',
   movil: 'Celular',
-  nivelFormacionPadre: 'Nivel de formacion del padre',
-  nivelFormacionMadre: 'Nivel de formacion de la madre',
+  nivelFormacionPadre: 'Nivel de formación del padre',
+  nivelFormacionMadre: 'Nivel de formación de la madre',
   IngresoHogar: 'Ingreso del hogar',
   Numpersonasvive: 'Personas que viven en el hogar',
   ciudad: 'Ciudad de residencia',
   calle_principal: 'Calle principal',
   referencia: 'Referencia de domicilio',
-  NumHogar: 'Telefono del hogar',
+  NumHogar: 'Teléfono del hogar',
   correointec: 'Correo institucional',
 }
 
@@ -501,7 +501,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   async function runSearch() {
     const cleanQuery = query.trim()
     if (!cleanQuery) {
-      setError('Ingrese el numero de cedula o pasaporte.')
+      setError('Ingrese el número de cédula o pasaporte.')
       return
     }
     setLoading(true)
@@ -528,7 +528,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
         return
       }
 
-      setError('No se encontro estudiante o docente con la cedula ingresada.')
+      setError('No se encontró ningún estudiante ni docente con la cédula ingresada.')
     } catch (requestError) {
       setError(handleError(requestError, 'Error buscando estudiante o docente.'))
     } finally {
@@ -549,7 +549,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
       setFormFields(normalizedFields)
       setOriginalFields(fields)
     } catch (requestError) {
-      setError(handleError(requestError, 'Error cargando datos para actualizacion.'))
+      setError(handleError(requestError, 'Error cargando datos para actualización.'))
       setDetail(null)
       setFormFields({})
       setOriginalFields({})
@@ -621,8 +621,8 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
       <section className="student-grid student-grid--content senescyt-update-grid">
         <article className="student-card senescyt-update-search">
           <div className="card-head">
-            <h3>Ingrese su numero de cedula o pasaporte</h3>
-            <span>{selected ? `${selected.tipo === 'docente' ? 'Docente' : 'Estudiante'} encontrado` : 'Busqueda unica'}</span>
+            <h3>Ingrese su número de cédula o pasaporte</h3>
+            <span>{selected ? `${selected.tipo === 'docente' ? 'Docente' : 'Estudiante'} encontrado` : 'Búsqueda única'}</span>
           </div>
 
           <form
@@ -633,10 +633,10 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
             }}
           >
             <label>
-              Numero de cedula o pasaporte
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cedula o pasaporte" />
+              Número de cédula o pasaporte
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cédula o pasaporte" />
             </label>
-            <button type="submit" className="senescyt-update-search-icon" disabled={loading} aria-label="Buscar por cedula o pasaporte" title="Buscar">
+            <button type="submit" className="senescyt-update-search-icon" disabled={loading} aria-label="Buscar por cédula o pasaporte" title="Buscar">
               {loading ? (
                 <span>...</span>
               ) : (
@@ -672,7 +672,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
             {detail?.person ? (
               <div className="matricula-acad-preview senescyt-update-summary">
                 <div>
-                  <span>Cedula</span>
+                  <span>Cédula</span>
                   <strong>{detail.person.cedula}</strong>
                 </div>
                 <div>

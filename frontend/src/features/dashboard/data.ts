@@ -1,12 +1,12 @@
 export const studentStats = [
-  { label: 'Materias activas', value: '6', trend: '+1 este periodo' },
+  { label: 'Materias activas', value: '6', trend: '+1 este período' },
   { label: 'Promedio general', value: '89', trend: '+2 vs mes pasado' },
   { label: 'Asistencia', value: '94%', trend: 'Meta: 90%' },
   { label: 'Pendientes', value: '4', trend: '2 vencen hoy' },
 ]
 
 export const studentTasks = [
-  { task: 'Proyecto de Base de Datos', subject: 'Sistemas de Informacion', due: 'Hoy, 8:00 PM' },
+  { task: 'Proyecto de base de datos', subject: 'Sistemas de Información', due: 'Hoy, 8:00 p. m.' },
   { task: 'Foro de Etica Profesional', subject: 'Humanidades', due: 'Manana, 10:00 AM' },
   { task: 'Laboratorio de Redes', subject: 'Infraestructura TI', due: 'Viernes, 5:00 PM' },
 ]

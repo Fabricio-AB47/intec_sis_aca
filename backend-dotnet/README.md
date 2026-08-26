@@ -23,7 +23,7 @@ La API lee la conexion desde:
 }
 ```
 
-Tambien se puede sobreescribir con variable de entorno:
+También se puede sobrescribir con una variable de entorno:
 
 ```powershell
 $env:ConnectionStrings__Titulacion="Server=...;Database=TITULACION_INTEC;User Id=...;Password=...;TrustServerCertificate=True"
@@ -34,12 +34,12 @@ Para crear reuniones Teams desde el apartado de examen complexivo, configure Mic
 ```powershell
 $env:Titulacion__Teams__TenantId="AZURE_TENANT_ID"
 $env:Titulacion__Teams__ClientId="AZURE_APP_CLIENT_ID"
-$env:Titulacion__Teams__ClientSecret="AZURE_APP_CLIENT_SECRET"
+$env:Titulacion__Teams__ClientSecret=$env:AZURE_APP_CLIENT_SECRET
 $env:Titulacion__Teams__OrganizerUser="titulacion@intec.edu.ec"
 $env:Titulacion__Teams__TimeZone="SA Pacific Standard Time"
 ```
 
-La app de Entra necesita permiso de aplicacion `Calendars.ReadWrite` con consentimiento de administrador.
+La aplicación de Entra necesita el permiso `Calendars.ReadWrite` con consentimiento del administrador.
 
 Antes de usar la API debe estar aplicado el script SQL:
 

@@ -10,6 +10,17 @@ venv/
 env/
 backend/.venv/
 
+# Secretos y material criptográfico privado
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.jks
+*.keystore
+secrets/
+credentials/
+
 # Python
 __pycache__/
 **/__pycache__/

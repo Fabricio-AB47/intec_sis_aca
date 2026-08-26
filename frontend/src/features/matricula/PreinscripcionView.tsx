@@ -98,13 +98,13 @@ function valueOrDash(value?: string | number | null): string {
 }
 
 function boolLabel(value?: boolean): string {
-  return value ? 'Si' : 'No'
+  return value ? 'Sí' : 'No'
 }
 
 function photoStatusLabel(status?: string): string {
   const normalized = String(status || 'SIN_FOTO').toUpperCase()
   if (normalized === 'APROBADA') return 'Aprobada'
-  if (normalized === 'PENDIENTE') return 'Pendiente de aprobacion'
+  if (normalized === 'PENDIENTE') return 'Pendiente de aprobación'
   if (normalized === 'RECHAZADA') return 'Rechazada'
   if (normalized === 'CANCELADA') return 'Cancelada'
   return 'Sin foto'
@@ -449,9 +449,9 @@ export function PreinscripcionView({
 
   const selectedDocuments = useMemo(
     (): Array<{ key: keyof PreinscriptionDocumentsPayload; label: string; value: string }> => [
-      { key: 'urlcedula', label: 'Cedula identidad', value: documents.urlcedula || '' },
-      { key: 'urltitulo', label: 'Titulo bachiller', value: documents.urltitulo || '' },
-      { key: 'urldeposito', label: 'Deposito/transferencia', value: documents.urldeposito || '' },
+      { key: 'urlcedula', label: 'Cédula identidad', value: documents.urlcedula || '' },
+      { key: 'urltitulo', label: 'Título de bachiller', value: documents.urltitulo || '' },
+      { key: 'urldeposito', label: 'Depósito o transferencia', value: documents.urldeposito || '' },
       { key: 'urlconvenio', label: 'Convenio INTEC', value: documents.urlconvenio || '' },
     ],
     [documents],
@@ -560,7 +560,7 @@ export function PreinscripcionView({
         }
       })
     } catch (requestError) {
-      setCatalogError(requestError instanceof Error ? requestError.message : 'Error consultando catalogo')
+      setCatalogError(requestError instanceof Error ? requestError.message : 'Error consultando catálogo')
     }
   }
 
@@ -595,14 +595,14 @@ export function PreinscripcionView({
       setEnrollmentPensum([])
       setEnrollmentDetail(null)
       setEnrollmentSubjectCodes([])
-      setEnrollmentError('Selecciona un estudiante antes de matricular el primer nivel.')
+      setEnrollmentError('Seleccione un estudiante antes de matricular el primer nivel.')
       return
     }
     if (!selectedEnrollmentCareer || !selectedEnrollmentPeriod) {
       setEnrollmentPensum([])
       setEnrollmentDetail(null)
       setEnrollmentSubjectCodes([])
-      setEnrollmentError('La inscripción seleccionada no tiene carrera o periodo definido.')
+      setEnrollmentError('La inscripción seleccionada no tiene carrera o período definido.')
       return
     }
 
@@ -665,7 +665,7 @@ export function PreinscripcionView({
       setEnrollmentPensum([])
       setEnrollmentDetail(null)
       setEnrollmentSubjectCodes([])
-      setEnrollmentError(requestError instanceof Error ? requestError.message : 'Error consultando pensum para matricula')
+      setEnrollmentError(requestError instanceof Error ? requestError.message : 'Error consultando pensum para matrícula')
     } finally {
       setEnrollmentLoading(false)
     }
@@ -843,12 +843,12 @@ export function PreinscripcionView({
 
   async function revertSelectedProcess(item: PreinscriptionItem | null = selectedItem) {
     if (!item?.num) {
-      setRevertError('Selecciona una inscripción para revertir.')
+      setRevertError('Seleccione una inscripción para revertir.')
       return
     }
     const studentLabel = item.apellidos_nombre || item.cedula || item.num
     const confirmed = window.confirm(
-      `Se eliminara la inscripcion, cabecera, materias, documentos vinculados y datos de factura del proceso de ${studentLabel}. Esta accion no se puede deshacer.`
+      `¿Desea eliminar la inscripción, la cabecera, las materias, los documentos vinculados y los datos de factura del proceso de ${studentLabel}? Esta acción no se puede deshacer.`
     )
     if (!confirmed) return
 
@@ -877,7 +877,7 @@ export function PreinscripcionView({
 
   async function registerCabecera() {
     if (!selectedItem?.num) {
-      setCabeceraError('Selecciona una inscripción.')
+      setCabeceraError('Seleccione una inscripción.')
       return
     }
     if (scholarshipNeedsApproval) {
@@ -885,7 +885,7 @@ export function PreinscripcionView({
       return
     }
     if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
-      setCabeceraError('Ingresa el porcentaje otorgado para la beca seleccionada.')
+      setCabeceraError('Ingrese el porcentaje otorgado para la beca seleccionada.')
       return
     }
     setCabeceraLoading(true)
@@ -916,10 +916,10 @@ export function PreinscripcionView({
         replaceSelectedItem(response.item)
       }
       setCabeceraMessage(
-        `${response.message || 'Matricula y convenio registrados.'} Codigo documentacion ${response.codigo_documentacion || response.num_matricula || '-'}.`
+        `${response.message || 'Matrícula y convenio registrados.'} Código de documentación: ${response.codigo_documentacion || response.num_matricula || '-'}.`
       )
     } catch (requestError) {
-      setCabeceraError(requestError instanceof Error ? requestError.message : 'Error registrando matricula y convenio de pago')
+      setCabeceraError(requestError instanceof Error ? requestError.message : 'Error registrando matrícula y convenio de pago')
     } finally {
       setCabeceraLoading(false)
     }
@@ -1028,7 +1028,7 @@ export function PreinscripcionView({
 
   async function saveFollowup() {
     if (!selectedItem?.num) {
-      setFollowupError('Selecciona una inscripción.')
+      setFollowupError('Seleccione una inscripción.')
       return
     }
     setFollowupLoading(true)
@@ -1049,11 +1049,11 @@ export function PreinscripcionView({
 
   async function saveDocuments() {
     if (!selectedItem?.num) {
-      setSaveError('Selecciona una inscripción con identificador num.')
+      setSaveError('Seleccione una inscripción con identificador num.')
       return
     }
     if (!hasCabecera) {
-      setSaveError('Primero registra la cabecera de matricula para generar el codigo de documentacion.')
+      setSaveError('Primero registra la cabecera de matrícula para generar el código de documentación.')
       return
     }
     setSaveLoading(true)
@@ -1065,7 +1065,7 @@ export function PreinscripcionView({
       replaceSelectedItem(nextItem)
       setSaveMessage(
         `${response.message || 'Documentos actualizados.'} ${
-          response.en_cabecera_matricula ? 'Cabecera de matricula vinculada.' : 'Sin cabecera de matricula vinculada.'
+          response.en_cabecera_matricula ? 'Cabecera de matrícula vinculada.' : 'Sin cabecera de matrícula vinculada.'
         }`
       )
     } catch (requestError) {
@@ -1078,7 +1078,7 @@ export function PreinscripcionView({
   async function uploadDocument(field: string, file?: File | null) {
     if (!file || !selectedItem?.num) return
     if (!hasCabecera) {
-      setSaveError('Primero registra la matricula/cabecera y genera el convenio de pago para habilitar documentacion.')
+      setSaveError('Primero registra la matrícula/cabecera y genera el convenio de pago para habilitar documentación.')
       return
     }
     setUploadingField(field)
@@ -1091,7 +1091,7 @@ export function PreinscripcionView({
         setDocuments(documentPayloadFromItem(response.item))
       }
       setSaveMessage(
-        `${response.message || 'Documento subido.'} Codigo documentacion ${response.codigo_documentacion || codigoDocumentacion || '-'}.`
+        `${response.message || 'Documento subido.'} Código de documentación: ${response.codigo_documentacion || codigoDocumentacion || '-'}.`
       )
     } catch (requestError) {
       setSaveError(requestError instanceof Error ? requestError.message : 'Error subiendo documento')
@@ -1112,7 +1112,7 @@ export function PreinscripcionView({
       setPhotoStatus(response.foto || null)
     } catch (requestError) {
       setPhotoStatus(null)
-      setPhotoError(requestError instanceof Error ? requestError.message : 'Error consultando foto de carnet')
+      setPhotoError(requestError instanceof Error ? requestError.message : 'Error al consultar la foto para el carné.')
     } finally {
       setPhotoLoading(false)
     }
@@ -1121,7 +1121,7 @@ export function PreinscripcionView({
   async function uploadCarnetPhoto(file?: File | null) {
     if (!file || !selectedItem?.num) return
     if (!hasCabecera) {
-      setPhotoError('Primero registra la cabecera de matricula para crear el estudiante.')
+      setPhotoError('Primero registra la cabecera de matrícula para crear el estudiante.')
       return
     }
     setPhotoLoading(true)
@@ -1130,9 +1130,9 @@ export function PreinscripcionView({
     try {
       const response = await uploadPreinscriptionCarnetPhoto(selectedItem.num, file)
       setPhotoStatus(response.foto || null)
-      setPhotoMessage(response.message || 'Foto cargada para aprobacion previa.')
+      setPhotoMessage(response.message || 'Foto cargada para aprobación previa.')
     } catch (requestError) {
-      setPhotoError(requestError instanceof Error ? requestError.message : 'Error subiendo foto de carnet')
+      setPhotoError(requestError instanceof Error ? requestError.message : 'Error al subir la foto para el carné.')
     } finally {
       setPhotoLoading(false)
     }
@@ -1148,7 +1148,7 @@ export function PreinscripcionView({
       setPhotoStatus(response.foto || null)
       setPhotoMessage(response.message || 'Foto aprobada.')
     } catch (requestError) {
-      setPhotoError(requestError instanceof Error ? requestError.message : 'Error aprobando foto de carnet')
+      setPhotoError(requestError instanceof Error ? requestError.message : 'Error al aprobar la foto para el carné.')
     } finally {
       setPhotoLoading(false)
     }
@@ -1156,7 +1156,7 @@ export function PreinscripcionView({
 
   async function rejectCarnetPhoto() {
     if (!selectedItem?.num || !photoStatus?.id_solicitud_foto) return
-    const observacion = window.prompt('Indica el motivo del rechazo para que el estudiante suba una nueva imagen:', '')
+    const observacion = window.prompt('Indique el motivo del rechazo para que el estudiante suba una nueva imagen:', '')
     if (observacion === null) return
     setPhotoLoading(true)
     setPhotoError('')
@@ -1166,7 +1166,7 @@ export function PreinscripcionView({
       setPhotoStatus(response.foto || null)
       setPhotoMessage(response.message || 'Foto rechazada.')
     } catch (requestError) {
-      setPhotoError(requestError instanceof Error ? requestError.message : 'Error rechazando foto de carnet')
+      setPhotoError(requestError instanceof Error ? requestError.message : 'Error al rechazar la foto para el carné.')
     } finally {
       setPhotoLoading(false)
     }
@@ -1176,15 +1176,15 @@ export function PreinscripcionView({
     const allowedCodes = new Set(enrollmentPensum.map((subject) => subject.codigo_materia))
     const validSubjectCodes = enrollmentSubjectCodes.filter((code) => allowedCodes.has(code))
     if (!selectedItem?.num) {
-      setEnrollmentError('Selecciona un estudiante para continuar con la matrícula del primer nivel.')
+      setEnrollmentError('Seleccione un estudiante para continuar con la matrícula del primer nivel.')
       return null
     }
     if (!selectedStudentCode || !selectedEnrollmentCareer || !selectedEnrollmentPeriod) {
-      setEnrollmentError('Faltan código de estudiante, carrera o periodo para matricular el primer nivel.')
+      setEnrollmentError('Faltan código de estudiante, carrera o período para matricular el primer nivel.')
       return null
     }
     if (validSubjectCodes.length === 0) {
-      setEnrollmentError('Selecciona al menos una materia de primer nivel para matricular.')
+      setEnrollmentError('Seleccione al menos una materia de primer nivel para matricular.')
       return null
     }
 
@@ -1253,12 +1253,12 @@ export function PreinscripcionView({
       await loadEnrollmentData()
       setEnrollmentPreview(response.preview || null)
       setEnrollmentMessage(
-        `${response.message || 'Matricula de materias guardada.'} Insertadas ${response.inserted ?? 0}, actualizadas ${
+        `${response.message || 'Matrícula de materias guardada.'} Insertadas ${response.inserted ?? 0}, actualizadas ${
           response.updated ?? 0
         }.${processMessage}`,
       )
     } catch (requestError) {
-      setEnrollmentError(requestError instanceof Error ? requestError.message : 'Error guardando matricula de materias')
+      setEnrollmentError(requestError instanceof Error ? requestError.message : 'Error guardando matrícula de materias')
     } finally {
       setEnrollmentSaveLoading(false)
     }
@@ -1290,11 +1290,11 @@ export function PreinscripcionView({
   async function registerPreinscription() {
     const fullName = createFullName.trim()
     if (!fullName) {
-      setCreateError('Ingresa nombres y apellidos del estudiante.')
+      setCreateError('Ingrese nombres y apellidos del estudiante.')
       return
     }
     if (createCedulaClean.length !== 10) {
-      setCreateError('Ingresa un numero de cedula de 10 digitos.')
+      setCreateError('Ingrese un número de cédula de 10 dígitos.')
       return
     }
     if (
@@ -1305,27 +1305,27 @@ export function PreinscripcionView({
       return
     }
     if (!createValues.correo?.trim()) {
-      setCreateError('Ingresa el correo del estudiante.')
+      setCreateError('Ingrese el correo del estudiante.')
       return
     }
     if (!createValues.telefono?.trim()) {
-      setCreateError('Ingresa el telefono del estudiante.')
+      setCreateError('Ingrese el teléfono del estudiante.')
       return
     }
     if (!createValues.codprov) {
-      setCreateError('Selecciona la provincia.')
+      setCreateError('Seleccione la provincia.')
       return
     }
     if (!createValues.codperiodo || !createValues.codcarrera) {
-      setCreateError('Selecciona periodo y carrera para registrar la inscripción.')
+      setCreateError('Seleccione período y carrera para registrar la inscripción.')
       return
     }
     if (!createValues.codmodalida || !createValues.codjornada) {
-      setCreateError('Selecciona modalidad y jornada.')
+      setCreateError('Seleccione modalidad y jornada.')
       return
     }
     if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
-      setCreateError('Ingresa el porcentaje otorgado para la beca seleccionada.')
+      setCreateError('Ingrese el porcentaje otorgado para la beca seleccionada.')
       return
     }
     if (paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold && !cabeceraValues.motivo_beca.trim()) {
@@ -1390,7 +1390,7 @@ export function PreinscripcionView({
         } ${canContinue ? 'Continúa con matrícula, convenio de pago y documentación.' : 'Un responsable debe aprobar la beca para habilitar el siguiente paso.'}`
       )
     } catch (requestError) {
-      setCreateError(requestError instanceof Error ? requestError.message : 'Error registrando inscripcion')
+      setCreateError(requestError instanceof Error ? requestError.message : 'Error registrando inscripción')
     } finally {
       setCreateLoading(false)
     }
@@ -1437,7 +1437,7 @@ export function PreinscripcionView({
     setFollowupSearchResults([])
 
     if (!allowEmpty && term.length < 2) {
-      setFollowupSearchError('Ingresa al menos 2 caracteres para buscar por nombre, cedula o correo.')
+      setFollowupSearchError('Ingrese al menos 2 caracteres para buscar por nombre, cédula o correo.')
       return
     }
 
@@ -1484,7 +1484,7 @@ export function PreinscripcionView({
     }
     const selected = followupSearchResults.find((item) => item.num === pendingStudentNum)
     if (!selected) {
-      setFollowupSearchError('No se encontro el estudiante seleccionado en la lista cargada.')
+      setFollowupSearchError('No se encontró al estudiante seleccionado en la lista cargada.')
       return
     }
     selectFollowupApplicant(selected)
@@ -1546,7 +1546,7 @@ export function PreinscripcionView({
 
   async function approvePendingScholarship(item: PreinscriptionScholarshipApprovalItem) {
     const accepted = window.confirm(
-      `¿Aprobar la beca ${item.tipo_beca} del ${item.porcentaje_beca}% para ${item.estudiante}?`,
+      `¿Desea aprobar la beca ${item.tipo_beca} del ${item.porcentaje_beca}% para ${item.estudiante}?`,
     )
     if (!accepted) return
     setApprovingScholarshipId(item.beca_id)
@@ -1611,7 +1611,7 @@ export function PreinscripcionView({
 
   async function saveScholarshipConfiguration() {
     if (!scholarshipConfigurationForm.nombre.trim()) {
-      setScholarshipConfigurationError('Ingresa el nombre de la beca.')
+      setScholarshipConfigurationError('Ingrese el nombre de la beca.')
       return
     }
     if (
@@ -1680,7 +1680,7 @@ export function PreinscripcionView({
       <header className="student-hero">
         <div>
           <p className="eyebrow">{isScholarshipAdminStage ? 'Bienestar estudiantil' : 'Admisiones'}</p>
-          <h1>{isScholarshipAdminStage ? 'Gestión y aprobación de becas' : 'Inscripcion y matricula'}</h1>
+          <h1>{isScholarshipAdminStage ? 'Gestión y aprobación de becas' : 'Inscripción y matrícula'}</h1>
           <div className="student-user-pill preinscripcion-advisor-pill">
             <span>{isScholarshipAdminStage ? 'Responsable' : 'Asesor'}</span>
             <strong>{displayName || 'Usuario actual'}</strong>
@@ -1772,13 +1772,13 @@ export function PreinscripcionView({
           </div>
 
           <div className="preinscripcion-form-intro">
-            <strong>Formulario de inscripcion</strong>
-            <span>Registre la inscripcion; al guardar continua con matricula, convenio de pago y documentacion.</span>
+            <strong>Formulario de inscripción</strong>
+            <span>Registre la inscripción; al guardar continua con matrícula, convenio de pago y documentación.</span>
           </div>
 
           <div className="matricula-acad-form preinscripcion-register-form">
             <label>
-              <span>Periodo</span>
+              <span>Período</span>
               <select value={createValues.codperiodo || ''} onChange={(event) => setCreateValues((current) => ({ ...current, codperiodo: event.target.value }))}>
                 <option value="">- Seleccione -</option>
                 {(catalog?.periodos || []).map((period) => (
@@ -1800,17 +1800,17 @@ export function PreinscripcionView({
               </select>
             </label>
             <label>
-              <span>Cedula</span>
+              <span>Cédula</span>
               <input
                 value={createValues.cedula}
                 maxLength={10}
-                placeholder="Cedula *"
+                placeholder="Cédula *"
                 onChange={(event) =>
                   setCreateValues((current) => ({ ...current, cedula: event.target.value.replace(/\D+/g, '').slice(0, 10) }))
                 }
               />
               {cedulaValidationLoading ? (
-                <small className="preinscripcion-field-hint">Validando cedula...</small>
+                <small className="preinscripcion-field-hint">Validando cédula...</small>
               ) : cedulaAlreadyRegistered ? (
                 <small className="preinscripcion-field-error">{cedulaValidation?.message || 'estudiante inscrito'}</small>
               ) : null}
@@ -1840,10 +1840,10 @@ export function PreinscripcionView({
               />
             </label>
             <label>
-              <span>Telefono</span>
+              <span>Teléfono</span>
               <input
                 value={createValues.telefono || ''}
-                placeholder="Telefono *"
+                placeholder="Teléfono *"
                 onChange={(event) => setCreateValues((current) => ({ ...current, telefono: event.target.value }))}
               />
             </label>
@@ -2134,7 +2134,7 @@ export function PreinscripcionView({
               <span>Buscar becado</span>
               <input
                 value={scholarshipBeneficiaryQuery}
-                placeholder="Nombre, cédula, carrera, periodo, beca o aprobador"
+                placeholder="Nombre, cédula, carrera, período, beca o aprobador"
                 onChange={(event) => setScholarshipBeneficiaryQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void loadScholarshipBeneficiaries()
@@ -2155,7 +2155,7 @@ export function PreinscripcionView({
                   <th>Estudiante</th>
                   <th>Cédula</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Beca</th>
                   <th>Porcentaje</th>
                   <th>Valor</th>
@@ -2205,7 +2205,7 @@ export function PreinscripcionView({
               <span>Buscar estudiante o solicitud</span>
               <input
                 value={pendingScholarshipQuery}
-                placeholder="Nombre, cédula, carrera, periodo o tipo de beca"
+                placeholder="Nombre, cédula, carrera, período o tipo de beca"
                 onChange={(event) => setPendingScholarshipQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
@@ -2234,7 +2234,7 @@ export function PreinscripcionView({
                 <tr>
                   <th>Estudiante</th>
                   <th>Cédula</th>
-                  <th>Carrera / periodo</th>
+                  <th>Carrera / período</th>
                   <th>Tipo de beca</th>
                   <th>Porcentaje</th>
                   <th>Valor</th>
@@ -2297,7 +2297,7 @@ export function PreinscripcionView({
               <span>Buscar</span>
               <input
                 value={query}
-                placeholder="Cedula, nombre, correo o codigo"
+                placeholder="Cédula, nombre, correo o código"
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
@@ -2308,7 +2308,7 @@ export function PreinscripcionView({
               />
             </label>
             <label>
-              <span>Periodo</span>
+              <span>Período</span>
               <select value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)}>
                 <option value="">Todos</option>
                 {(catalog?.periodos || []).map((period) => (
@@ -2340,7 +2340,7 @@ export function PreinscripcionView({
               </select>
             </label>
             <label>
-              <span>Periodo actual</span>
+              <span>Período actual</span>
               <input value={periodName || 'Todos'} disabled readOnly />
             </label>
             <label>
@@ -2385,7 +2385,7 @@ export function PreinscripcionView({
               <small>
                 {selectedItem
                   ? `${valueOrDash(selectedItem.cedula)} · ${valueOrDash(selectedItem.correo)} · ${valueOrDash(selectedItem.carrera)}`
-                  : 'Busca por nombre, cedula o correo para cargar el seguimiento.'}
+                  : 'Busque por nombre, cédula o correo para cargar el seguimiento.'}
               </small>
             </div>
             <div className="preinscripcion-followup-search__actions">
@@ -2400,7 +2400,7 @@ export function PreinscripcionView({
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un estudiante en Inscritos antes de registrar seguimiento.</p>
+            <p className="form-error">Seleccione un estudiante en Inscritos antes de registrar seguimiento.</p>
           ) : null}
           <div className="preinscripcion-detail preinscripcion-detail--wide">
             <div>
@@ -2408,11 +2408,11 @@ export function PreinscripcionView({
               <strong>{valueOrDash(selectedItem?.apellidos_nombre)}</strong>
             </div>
             <div>
-              <span>Cedula</span>
+              <span>Cédula</span>
               <strong>{valueOrDash(selectedItem?.cedula)}</strong>
             </div>
             <div>
-              <span>Telefono</span>
+              <span>Teléfono</span>
               <strong>{valueOrDash(selectedItem?.telefono)}</strong>
             </div>
             <div>
@@ -2425,7 +2425,7 @@ export function PreinscripcionView({
               <span>Contacto realizado</span>
               <input
                 value={followupValues.contacte}
-                placeholder="Telefono, WhatsApp, correo, presencial"
+                placeholder="Teléfono, WhatsApp, correo, presencial"
                 onChange={(event) => setFollowupValues((current) => ({ ...current, contacte: event.target.value }))}
               />
             </label>
@@ -2514,7 +2514,7 @@ export function PreinscripcionView({
               </select>
             </label>
             <label>
-              <span>Desc. deposito/transf.</span>
+              <span>Desc. depósito/transf.</span>
               <select
                 value={followupValues.coddescdeptransf}
                 onChange={(event) => setFollowupValues((current) => ({ ...current, coddescdeptransf: event.target.value }))}
@@ -2536,18 +2536,18 @@ export function PreinscripcionView({
               />
             </label>
             <label>
-              <span>Telefono representante</span>
+              <span>Teléfono representante</span>
               <input
                 value={followupValues.num_representante}
                 maxLength={10}
-                placeholder="Telefono"
+                placeholder="Teléfono"
                 onChange={(event) =>
                   setFollowupValues((current) => ({ ...current, num_representante: event.target.value.replace(/\D+/g, '').slice(0, 10) }))
                 }
               />
             </label>
             <label className="preinscripcion-followup-form__wide">
-              <span>Observacion de contacto</span>
+              <span>Observación de contacto</span>
               <textarea
                 value={followupValues.observacion_contacto}
                 placeholder="Resultado del contacto con el estudiante"
@@ -2555,7 +2555,7 @@ export function PreinscripcionView({
               />
             </label>
             <label className="preinscripcion-followup-form__wide">
-              <span>Observacion de ingreso</span>
+              <span>Observación de ingreso</span>
               <textarea
                 value={followupValues.observacion_ingreso}
                 placeholder="Notas internas del proceso de ingreso"
@@ -2565,7 +2565,7 @@ export function PreinscripcionView({
           </div>
           <div className="preinscripcion-followup-checks">
             {[
-              ['prematricula', 'Matricula inicial'],
+              ['prematricula', 'Matrícula inicial'],
               ['asignado', 'Asignado'],
               ['correo_enviado', 'Correo enviado'],
               ['control_ingreso', 'Control ingreso'],
@@ -2603,12 +2603,12 @@ export function PreinscripcionView({
         <article className="student-card matricula-panel preinscripcion-action-card">
           <div className="section-title">
             <div>
-              <span>Cabecera matricula</span>
-              <h2>{hasCabecera ? 'Cabecera vinculada' : 'Primer paso de matricula'}</h2>
+              <span>Cabecera matrícula</span>
+              <h2>{hasCabecera ? 'Cabecera vinculada' : 'Primer paso de matrícula'}</h2>
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona o registra un estudiante antes de guardar la cabecera de matricula.</p>
+            <p className="form-error">Seleccione o registre un estudiante antes de guardar la cabecera de matrícula.</p>
           ) : null}
           {scholarshipNeedsApproval ? (
             <div className="preinscripcion-beca-approval">
@@ -2627,19 +2627,19 @@ export function PreinscripcionView({
               <strong>{valueOrDash(selectedStudentName)}</strong>
             </div>
             <div>
-              <span>Cedula</span>
+              <span>Cédula</span>
               <strong>{valueOrDash(selectedStudentCedula)}</strong>
             </div>
             <div>
-              <span>Codigo estudiante</span>
+              <span>Código estudiante</span>
               <strong>{valueOrDash(selectedStudentCode)}</strong>
             </div>
             <div>
-              <span>Codigo doc.</span>
+              <span>Código doc.</span>
               <strong>{valueOrDash(codigoDocumentacion)}</strong>
             </div>
             <div>
-              <span>Periodo</span>
+              <span>Período</span>
               <strong>{valueOrDash(selectedItem?.cabecera?.codigo_periodo || selectedItem?.codperiodo)}</strong>
             </div>
             <div>
@@ -2675,7 +2675,7 @@ export function PreinscripcionView({
                   Descargar convenio PDF
                 </a>
               ) : (
-                <em>Guarda el pago para generar la carta automaticamente.</em>
+                <em>Guarde el pago para generar la carta automáticamente.</em>
               )}
             </div>
           </div>
@@ -2702,7 +2702,7 @@ export function PreinscripcionView({
               <span>Detalle del pago/convenio</span>
               <textarea
                 value={cabeceraValues.detalle_pago}
-                placeholder="Ej. Primer pago de inscripcion y convenio de cuotas"
+                placeholder="Ej. Primer pago de inscripción y convenio de cuotas"
                 onChange={(event) => setCabeceraValues((current) => ({ ...current, detalle_pago: event.target.value }))}
               />
             </label>
@@ -2737,7 +2737,7 @@ export function PreinscripcionView({
               />
             </label>
             <label>
-              <span>No. deposito/ref.</span>
+              <span>N.º depósito/ref.</span>
               <input
                 value={cabeceraValues.no_deposito}
                 onChange={(event) => setCabeceraValues((current) => ({ ...current, no_deposito: event.target.value }))}
@@ -2791,7 +2791,7 @@ export function PreinscripcionView({
             onClick={registerCabecera}
             disabled={cabeceraLoading || !selectedItem?.num || scholarshipNeedsApproval}
           >
-            {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar matricula/convenio' : 'Matricular y generar convenio'}
+            {cabeceraLoading ? 'Guardando...' : hasCabecera ? 'Actualizar matrícula/convenio' : 'Matricular y generar convenio'}
           </button>
         </article>
         ) : null}
@@ -2800,15 +2800,15 @@ export function PreinscripcionView({
         <article className="student-card matricula-panel preinscripcion-action-card">
           <div className="section-title">
             <div>
-              <span>Matriculacion</span>
-              <h2>Matricula inicial de primer nivel</h2>
+              <span>Matriculación</span>
+              <h2>Matrícula inicial de primer nivel</h2>
             </div>
             <button type="button" className="ghost-button" onClick={() => void loadEnrollmentData()} disabled={enrollmentLoading || !selectedItem?.num}>
               {enrollmentLoading ? 'Cargando...' : 'Actualizar primer nivel'}
             </button>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un estudiante en Inscritos antes de matricular el primer nivel.</p>
+            <p className="form-error">Seleccione un estudiante en Inscritos antes de matricular el primer nivel.</p>
           ) : null}
           <div className="preinscripcion-detail preinscripcion-detail--wide">
             <div>
@@ -2816,7 +2816,7 @@ export function PreinscripcionView({
               <strong>{valueOrDash(selectedItem?.apellidos_nombre)}</strong>
             </div>
             <div>
-              <span>Codigo estudiante</span>
+              <span>Código estudiante</span>
               <strong>{valueOrDash(selectedStudentCode)}</strong>
             </div>
             <div>
@@ -2824,12 +2824,12 @@ export function PreinscripcionView({
               <strong>{valueOrDash(selectedItem?.carrera || selectedEnrollmentCareer)}</strong>
             </div>
             <div>
-              <span>Periodo</span>
+              <span>Período</span>
               <strong>{valueOrDash(selectedItem?.periodo || selectedEnrollmentPeriod)}</strong>
             </div>
           </div>
           {hasCabecera ? null : (
-            <p className="form-error">Primero registra la matricula/cabecera y genera el convenio para conservar valores y codigo de documentacion.</p>
+            <p className="form-error">Primero registre la cabecera de matrícula y genere el convenio para conservar los valores y el código de documentación.</p>
           )}
           {enrollmentError ? <p className="form-error">{enrollmentError}</p> : null}
           {enrollmentMessage ? <p className="form-success">{enrollmentMessage}</p> : null}
@@ -2846,15 +2846,15 @@ export function PreinscripcionView({
               />
             </label>
             <label>
-              <span>Tipo matricula</span>
+              <span>Tipo matrícula</span>
               <select value={enrollmentType} onChange={(event) => setEnrollmentType(event.target.value as MatriculaTipo)}>
                 <option value="R">Regular</option>
-                <option value="H">Homologacion</option>
+                <option value="H">Homologación</option>
                 <option value="E">Especial</option>
               </select>
             </label>
             <label>
-              <span>Control matricula</span>
+              <span>Control matrícula</span>
               <input
                 type="number"
                 min="0"
@@ -2889,9 +2889,9 @@ export function PreinscripcionView({
                 <tr>
                   <th>Sel.</th>
                   <th>Nivel</th>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Materia</th>
-                  <th>Creditos</th>
+                  <th>Créditos</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -2942,7 +2942,7 @@ export function PreinscripcionView({
               checked={enrollmentFinalizeProcess}
               onChange={(event) => setEnrollmentFinalizeProcess(event.target.checked)}
             />
-            <span>Finalizar proceso al guardar la matricula inicial</span>
+            <span>Finalizar proceso al guardar la matrícula inicial</span>
           </label>
 
           <div className="matricula-acad-actions">
@@ -2960,7 +2960,7 @@ export function PreinscripcionView({
               onClick={() => void saveEnrollmentSubjects()}
               disabled={enrollmentSaveLoading || !selectedItem?.num || enrollmentSubjectCodes.length === 0}
             >
-              {enrollmentSaveLoading ? 'Guardando...' : 'Guardar matricula inicial'}
+              {enrollmentSaveLoading ? 'Guardando...' : 'Guardar matrícula inicial'}
             </button>
           </div>
 
@@ -3011,14 +3011,14 @@ export function PreinscripcionView({
               <input
                 value={tableFilter}
                 onChange={(event) => setTableFilter(event.target.value)}
-                placeholder="Nombre, cedula, correo, carrera o codigo"
+                placeholder="Nombre, cédula, correo, carrera o código"
               />
             </label>
             <div>
               <strong>{visibleRows.length}</strong>
               <span>estudiante(s) visibles</span>
             </div>
-            <small>Selecciona una fila y continua con Cabecera matricula, Documentos o Matricular primer nivel</small>
+            <small>Seleccione una fila y continua con Cabecera matrícula, Documentos o Matricular primer nivel</small>
           </div>
           <div className="matricula-table-wrap excel-table-wrap">
             <table className="matricula-table">
@@ -3028,12 +3028,12 @@ export function PreinscripcionView({
                   <th>Sel.</th>
                   <th>Estudiante</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Cabecera</th>
-                  <th>Codigo doc.</th>
+                  <th>Código doc.</th>
                   <th>Docs</th>
                   <th>Ingreso</th>
-                  <th>Accion</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -3064,7 +3064,7 @@ export function PreinscripcionView({
                         <span>{valueOrDash(item.periodo)}</span>
                         <small>{valueOrDash(item.codperiodo)}</small>
                       </td>
-                      <td>{item.en_cabecera_matricula ? 'Si' : 'No'}</td>
+                      <td>{item.en_cabecera_matricula ? 'Sí' : 'No'}</td>
                       <td>{valueOrDash(item.cabecera?.numcodigo || item.cabecera?.num_matricula)}</td>
                       <td>{documentStatus(item)}</td>
                       <td>{valueOrDash(item.fecha_ingreso)}</td>
@@ -3149,15 +3149,15 @@ export function PreinscripcionView({
           <div className="section-title">
             <div>
               <span>Paso 2</span>
-              <h2>{hasCabecera ? `Matricula y convenio ${codigoDocumentacion}` : 'Matricular y generar convenio de pago'}</h2>
+              <h2>{hasCabecera ? `Matrícula y convenio ${codigoDocumentacion}` : 'Matricular y generar convenio de pago'}</h2>
             </div>
           </div>
           {!selectedItem ? (
-            <p className="form-error">Selecciona un estudiante en Inscritos antes de cargar documentos.</p>
+            <p className="form-error">Seleccione un estudiante en Inscritos antes de cargar documentos.</p>
           ) : null}
           <div className="preinscripcion-detail">
             <div>
-              <span>Cedula</span>
+              <span>Cédula</span>
               <strong>{valueOrDash(selectedItem?.cedula)}</strong>
             </div>
             <div>
@@ -3170,7 +3170,7 @@ export function PreinscripcionView({
             </div>
           </div>
           {!hasCabecera ? (
-            <p className="form-error">Primero registra la matricula/cabecera para generar el convenio de pago y habilitar la documentacion.</p>
+            <p className="form-error">Primero registre la cabecera de matrícula para generar el convenio de pago y habilitar la documentación.</p>
           ) : null}
 
           <div className="preinscripcion-step-stack">
@@ -3237,7 +3237,7 @@ export function PreinscripcionView({
                 {renderScholarshipSelector()}
                 {renderScholarshipPercentageInput()}
                 <label>
-                  <span>Inscripcion</span>
+                  <span>Inscripción</span>
                   <input
                     type="number"
                     min="0"
@@ -3247,7 +3247,7 @@ export function PreinscripcionView({
                   />
                 </label>
                 <label>
-                  <span>Matricula</span>
+                  <span>Matrícula</span>
                   <input
                     type="number"
                     min="0"
@@ -3293,7 +3293,7 @@ export function PreinscripcionView({
                 onClick={registerCabecera}
                 disabled={cabeceraLoading || !selectedItem?.num || scholarshipNeedsApproval}
               >
-                {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio PDF' : 'Crear matricula y generar convenio PDF'}
+                {cabeceraLoading ? 'Generando...' : hasCabecera ? 'Actualizar convenio PDF' : 'Crear matrícula y generar convenio PDF'}
               </button>
             </section>
 
@@ -3306,7 +3306,7 @@ export function PreinscripcionView({
                 <em>{convenioUrl ? 'Listo para enviar' : 'Esperando PDF'}</em>
               </div>
               <p>
-                Descarga el convenio generado y envialo al estudiante para que lo firme y confirme el compromiso de pago
+                Descargue el convenio generado y envialo al estudiante para que lo firme y confirme el compromiso de pago
                 de las cuotas registradas.
               </p>
               {convenioUrl ? (
@@ -3314,17 +3314,17 @@ export function PreinscripcionView({
                   Descargar convenio PDF
                 </a>
               ) : (
-                <small>Genera primero la matricula/convenio para habilitar la descarga.</small>
+                <small>Genere primero la matrícula/convenio para habilitar la descarga.</small>
               )}
             </section>
           </div>
 
           <div className="preinscripcion-convenio-card">
             <div>
-              <span>Parte 2.3 · Documentacion y convenio firmado</span>
+              <span>Parte 2.3 · Documentación y convenio firmado</span>
               <strong>{paymentPlanPreview.cuotas} cuota(s) de {formatMoney(paymentPlanPreview.cuota)}</strong>
               <small>
-                Sube los respaldos del estudiante y el convenio firmado cuando lo devuelva.
+                Suba los respaldos del estudiante y el convenio firmado cuando lo devuelva.
               </small>
             </div>
             <button
@@ -3346,7 +3346,7 @@ export function PreinscripcionView({
             <div className="preinscripcion-photo__main">
               <div className="preinscripcion-photo__preview">
                 {photoStatus?.foto_url ? (
-                  <img src={photoStatus.foto_url} alt="Foto de carnet cargada" />
+                  <img src={photoStatus.foto_url} alt="Foto para el carné cargada" />
                 ) : (
                   <span>Sin imagen</span>
                 )}
@@ -3354,16 +3354,16 @@ export function PreinscripcionView({
               <div className="preinscripcion-photo__content">
                 <div className="preinscripcion-photo__title">
                   <div>
-                    <span>Foto de carnet</span>
-                    <strong>Requiere aprobacion previa</strong>
+                    <span>Foto para el carné</span>
+                    <strong>Requiere aprobación previa</strong>
                   </div>
                   <em className={`preinscripcion-photo__status ${photoStatusClass(photoStatus?.estado)}`}>
                     {photoLoading ? 'Procesando...' : photoStatusLabel(photoStatus?.estado)}
                   </em>
                 </div>
                 <p>
-                  La imagen subida queda como solicitud pendiente. Solo una foto aprobada podra usarse para emitir el
-                  carnet del estudiante.
+                  La imagen subida queda como solicitud pendiente. Solo una foto aprobada podrá usarse para emitir el
+                  carné del estudiante.
                 </p>
                 {photoStatus?.observacion_admin ? <small>{photoStatus.observacion_admin}</small> : null}
                 <div className="preinscripcion-photo__actions">
@@ -3395,7 +3395,7 @@ export function PreinscripcionView({
                     </>
                   ) : null}
                 </div>
-                {!hasCabecera ? <small>Primero registra la cabecera de matricula para habilitar la carga.</small> : null}
+                {!hasCabecera ? <small>Primero registra la cabecera de matrícula para habilitar la carga.</small> : null}
                 {photoError ? <p className="form-error">{photoError}</p> : null}
                 {photoMessage ? <p className="form-success">{photoMessage}</p> : null}
               </div>
@@ -3464,7 +3464,7 @@ export function PreinscripcionView({
                 <span>Buscar estudiante</span>
                 <input
                   value={followupSearch}
-                  placeholder="Cedula, correo o nombre"
+                  placeholder="Cédula, correo o nombre"
                   onChange={(event) => setFollowupSearch(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
@@ -3552,7 +3552,7 @@ export function PreinscripcionView({
                 <div className="section-title">
                   <div>
                     <span>Datos</span>
-                    <h2>Inscripcion</h2>
+                    <h2>Inscripción</h2>
                   </div>
                   <span className={hasCabecera ? 'preinscripcion-status preinscripcion-status--ok' : 'preinscripcion-status'}>
                     {hasCabecera ? 'Con cabecera' : 'Sin cabecera'}
@@ -3560,11 +3560,11 @@ export function PreinscripcionView({
                 </div>
                 <div className="preinscripcion-detail preinscripcion-detail--wide">
                   <div>
-                    <span>Cedula</span>
+                    <span>Cédula</span>
                     <strong>{valueOrDash(selectedItem.cedula)}</strong>
                   </div>
                   <div>
-                    <span>Codigo estudiante</span>
+                    <span>Código estudiante</span>
                     <strong>{valueOrDash(selectedItem.datos_codigo_estud || selectedItem.codestu)}</strong>
                   </div>
                   <div>
@@ -3572,7 +3572,7 @@ export function PreinscripcionView({
                     <strong>{valueOrDash(selectedItem.correo)}</strong>
                   </div>
                   <div>
-                    <span>Telefono</span>
+                    <span>Teléfono</span>
                     <strong>{valueOrDash(selectedItem.telefono)}</strong>
                   </div>
                   <div>
@@ -3580,7 +3580,7 @@ export function PreinscripcionView({
                     <strong>{valueOrDash(selectedItem.carrera || selectedItem.codcarrera)}</strong>
                   </div>
                   <div>
-                    <span>Periodo</span>
+                    <span>Período</span>
                     <strong>{valueOrDash(selectedItem.periodo || selectedItem.codperiodo)}</strong>
                   </div>
                   <div>
@@ -3594,7 +3594,7 @@ export function PreinscripcionView({
                 <div className="section-title">
                   <div>
                     <span>Paso 2</span>
-                    <h2>Matricula y convenio de pago</h2>
+                    <h2>Matrícula y convenio de pago</h2>
                   </div>
                   <strong>{valueOrDash(codigoDocumentacion)}</strong>
                 </div>
@@ -3647,7 +3647,7 @@ export function PreinscripcionView({
                     />
                   </label>
                   <label>
-                    <span>Inscripcion</span>
+                    <span>Inscripción</span>
                     <input
                       type="number"
                       min="0"
@@ -3657,7 +3657,7 @@ export function PreinscripcionView({
                     />
                   </label>
                   <label>
-                    <span>Matricula</span>
+                    <span>Matrícula</span>
                     <input
                       type="number"
                       min="0"
@@ -3677,7 +3677,7 @@ export function PreinscripcionView({
                     />
                   </label>
                   <label>
-                    <span>No. deposito/ref.</span>
+                    <span>N.º depósito/ref.</span>
                     <input
                       value={cabeceraValues.no_deposito}
                       onChange={(event) => setCabeceraValues((current) => ({ ...current, no_deposito: event.target.value }))}
@@ -3738,12 +3738,12 @@ export function PreinscripcionView({
               <section className="preinscripcion-student-panel preinscripcion-student-panel--wide">
                 <div className="section-title">
                   <div>
-                    <span>Documentacion</span>
-                    <h2>{hasCabecera ? `Codigo ${codigoDocumentacion}` : 'Pendiente de matricula/convenio'}</h2>
+                    <span>Documentación</span>
+                    <h2>{hasCabecera ? `Código ${codigoDocumentacion}` : 'Pendiente de matrícula/convenio'}</h2>
                   </div>
                 </div>
                 {!hasCabecera ? (
-                  <p className="form-error">Registra la cabecera de matricula antes de subir documentos.</p>
+                  <p className="form-error">Registre la cabecera de matrícula antes de subir documentos.</p>
                 ) : null}
                 <div className="preinscripcion-convenio-card">
                   <div>

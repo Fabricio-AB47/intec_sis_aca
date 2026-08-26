@@ -202,7 +202,7 @@ export function PracticasInstitucionalesView({
 
   async function searchTeachers() {
     if (!teacherSearch.trim()) {
-      setError('Ingresa nombre, cédula o código del docente.')
+      setError('Ingrese nombre, cédula o código del docente.')
       return
     }
     setLoading(true)
@@ -235,7 +235,7 @@ export function PracticasInstitucionalesView({
   function toggleStudent(code: number) {
     const student = adminElegibles.find((item) => Number(item.codigo_estud) === code)
     if (student && !student.PuedeMatricular) {
-      setError('El estudiante no cumple tercer semestre. Sube una autorización para habilitarlo.')
+      setError('El estudiante no cumple tercer semestre. Suba una autorización para habilitarlo.')
       return
     }
     setSelectedStudents((current) => (
@@ -301,7 +301,7 @@ export function PracticasInstitucionalesView({
   async function createExpediente() {
     const [codigoEstudValue, codigoCarrera, codigoPeriodo] = selectedEligibility.split('|')
     if (!codigoEstudValue || (!codigoCarrera && !codigoPeriodo)) {
-      setError('Selecciona un estudiante, carrera y periodo elegible.')
+      setError('Seleccione un estudiante, carrera y período elegible.')
       return
     }
     setSaving(true)
@@ -331,23 +331,23 @@ export function PracticasInstitucionalesView({
 
   async function saveResponsable() {
     if (!selectedSourcePeriod) {
-      setError('Selecciona el periodo académico del estudiante para cargar la lista.')
+      setError('Seleccione el período académico del estudiante para cargar la lista.')
       return
     }
     if (!selectedPeriod) {
-      setError('Selecciona el nuevo periodo de prácticas donde se va a matricular.')
+      setError('Seleccione el nuevo período de prácticas donde se va a matricular.')
       return
     }
     if (!responsableForm.codigo_docente.trim()) {
-      setError('Selecciona un docente del buscador para registrar la designación.')
+      setError('Seleccione un docente del buscador para registrar la designación.')
       return
     }
     if (!selectedStudents.length) {
-      setError('Selecciona los estudiantes que estarán a cargo del docente.')
+      setError('Seleccione los estudiantes que estarán a cargo del docente.')
       return
     }
     if (!responsableForm.nombre_responsable.trim()) {
-      setError('Ingresa el nombre del responsable.')
+      setError('Ingrese el nombre del responsable.')
       return
     }
     setSaving(true)
@@ -374,7 +374,7 @@ export function PracticasInstitucionalesView({
       })
       setTeacherSearch('')
       setSelectedStudents([])
-      setMessage(String(response.message || 'Matrícula por periodo registrada en prácticas correctamente.'))
+      setMessage(String(response.message || 'Matrícula por período registrada en prácticas correctamente.'))
       await loadCatalog()
       await loadAdmin()
       await loadStudent()
@@ -531,7 +531,7 @@ export function PracticasInstitucionalesView({
                   <th>Expediente</th>
                   <th>Estudiante</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Carta</th>
                   <th>Certificado</th>
                   <th>Avance</th>
@@ -578,16 +578,16 @@ export function PracticasInstitucionalesView({
                 <input
                   value={eligibilitySearch}
                   onChange={(event) => setEligibilitySearch(event.target.value)}
-                  placeholder="Nombre, cédula, carrera o periodo"
+                  placeholder="Nombre, cédula, carrera o período"
                 />
               </label>
               <button type="button" className="secondary-action" onClick={loadAdminEligibility} disabled={loading}>
                 Buscar elegibles
               </button>
               <label>
-                <span>Estudiante, carrera y periodo</span>
+                <span>Estudiante, carrera y período</span>
                 <select value={selectedEligibility} onChange={(event) => setSelectedEligibility(event.target.value)}>
-                  <option value="">Selecciona una opción</option>
+                  <option value="">Seleccione una opción</option>
                   {eligibilityOptions.map((item) => {
                     const key = `${item.codigo_estud || ''}|${item.CodigoCarrera || ''}|${item.CodigoPeriodo || ''}`
                     return (
@@ -616,7 +616,7 @@ export function PracticasInstitucionalesView({
                   <th>Expediente</th>
                   <th>Proceso</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Estado</th>
                   <th>Responsable</th>
                   <th>Carta compromiso</th>
@@ -694,16 +694,16 @@ export function PracticasInstitucionalesView({
         <section className="student-card student-card--wide matricula-panel practicas-admin-card">
           <div className="section-title">
             <span>Administrador</span>
-            <strong>Matricular estudiantes por periodo</strong>
+            <strong>Matricular estudiantes por período</strong>
           </div>
 
           <p className="portal-muted">
-            Selecciona primero el periodo académico donde está el estudiante, luego el nuevo periodo de prácticas donde quedará matriculado. Todo se guarda únicamente en la base de prácticas.
+            Seleccione primero el período académico donde está el estudiante, luego el nuevo período de prácticas donde quedará matriculado. Todo se guarda únicamente en la base de prácticas.
           </p>
 
           <div className="matricula-acad-form practicas-form practicas-responsable-form">
             <label>
-              <span>Periodo académico del estudiante ({periodos.length} periodo(s))</span>
+              <span>Período académico del estudiante ({periodos.length} período(s))</span>
               <select
                 value={selectedSourcePeriod}
                 onChange={(event) => {
@@ -712,7 +712,7 @@ export function PracticasInstitucionalesView({
                   setAdminElegibles([])
                 }}
               >
-                <option value="">Selecciona periodo origen</option>
+                <option value="">Seleccione período origen</option>
                 {periodos.map((periodo) => (
                   <option key={`source-${periodo.CodigoPeriodo}`} value={periodo.CodigoPeriodo}>
                     {periodLabel(periodo)} · {periodo.TotalEstudiantes || 0} estudiante(s)
@@ -721,7 +721,7 @@ export function PracticasInstitucionalesView({
               </select>
             </label>
             <label>
-              <span>Nuevo periodo de prácticas ({periodos.length} periodo(s))</span>
+              <span>Nuevo período de prácticas ({periodos.length} período(s))</span>
               <select
                 value={selectedPeriod}
                 onChange={(event) => {
@@ -729,7 +729,7 @@ export function PracticasInstitucionalesView({
                   setSelectedStudents([])
                 }}
               >
-                <option value="">Selecciona periodo destino</option>
+                <option value="">Seleccione período destino</option>
                 {periodos.map((periodo) => (
                   <option key={`target-${periodo.CodigoPeriodo}`} value={periodo.CodigoPeriodo}>
                     {periodLabel(periodo)}
@@ -738,8 +738,8 @@ export function PracticasInstitucionalesView({
               </select>
             </label>
             <div className="practicas-period-detail">
-              <strong>Periodo origen</strong>
-              <span>{sourcePeriodDetail ? periodLabel(sourcePeriodDetail) : 'Selecciona periodo origen'}</span>
+              <strong>Período origen</strong>
+              <span>{sourcePeriodDetail ? periodLabel(sourcePeriodDetail) : 'Seleccione período origen'}</span>
               <small>
                 Fechas: {valueOrDash(sourcePeriodDetail?.FechaInicio)} a {valueOrDash(sourcePeriodDetail?.FechaFin)} ·
                 Registro: {valueOrDash(sourcePeriodDetail?.DetalleRegistro)} ·
@@ -748,8 +748,8 @@ export function PracticasInstitucionalesView({
               </small>
             </div>
             <div className="practicas-period-detail">
-              <strong>Periodo destino</strong>
-              <span>{targetPeriodDetail ? periodLabel(targetPeriodDetail) : 'Selecciona periodo destino'}</span>
+              <strong>Período destino</strong>
+              <span>{targetPeriodDetail ? periodLabel(targetPeriodDetail) : 'Seleccione período destino'}</span>
               <small>
                 Fechas: {valueOrDash(targetPeriodDetail?.FechaInicio)} a {valueOrDash(targetPeriodDetail?.FechaFin)} ·
                 Registro: {valueOrDash(targetPeriodDetail?.DetalleRegistro)} ·
@@ -766,7 +766,7 @@ export function PracticasInstitucionalesView({
             </button>
             <label>
               <span>Docente seleccionado</span>
-              <input value={responsableForm.nombre_responsable} readOnly placeholder="Selecciona un docente del listado" />
+              <input value={responsableForm.nombre_responsable} readOnly placeholder="Seleccione un docente del listado" />
             </label>
             <label>
               <span>Cédula</span>
@@ -797,7 +797,7 @@ export function PracticasInstitucionalesView({
 
           <div className="practicas-student-picker">
             <div className="practicas-picker-head">
-              <strong>Estudiantes a matricular en el periodo</strong>
+              <strong>Estudiantes a matricular en el período</strong>
               <button type="button" className="secondary-action" onClick={loadAdminEligibility} disabled={loading || !selectedSourcePeriod}>
                 Cargar estudiantes
               </button>
@@ -805,7 +805,7 @@ export function PracticasInstitucionalesView({
                 {selectedStudents.length === adminElegibles.length && adminElegibles.length ? 'Quitar todos' : 'Seleccionar todos'}
               </button>
             </div>
-            <p>{selectedStudents.length} de {adminElegibles.length} estudiante(s) del periodo origen seleccionados para matricular en el periodo destino.</p>
+            <p>{selectedStudents.length} de {adminElegibles.length} estudiante(s) del período origen seleccionados para matricular en el período destino.</p>
             <div className="practicas-student-list">
               {adminElegibles.length ? adminElegibles.map((student) => {
                 const code = Number(student.codigo_estud)
@@ -823,7 +823,7 @@ export function PracticasInstitucionalesView({
                       <b>{valueOrDash(student.Apellidos_nombre)}</b>
                       <small>Cédula: {valueOrDash(student.Cedula_Est)}</small>
                       <small>Carrera: {valueOrDash(student.Carrera)}</small>
-                      <small>Periodo origen: {valueOrDash(student.NombrePeriodo || student.CodigoPeriodo)}</small>
+                      <small>Período origen: {valueOrDash(student.NombrePeriodo || student.CodigoPeriodo)}</small>
                       <small>Semestre detectado: {valueOrDash(student.SemestreMaximo)}</small>
                       <small>Estado: {canEnroll ? (student.EsElegible ? 'Cumple tercer semestre' : 'Habilitado con autorización') : valueOrDash(student.MotivoElegibilidad || 'No cumple tercer semestre')}</small>
                       {hasAuthorization ? (
@@ -847,13 +847,13 @@ export function PracticasInstitucionalesView({
                   </label>
                 )
               }) : (
-                <span className="portal-muted">Selecciona un periodo y carga los estudiantes elegibles.</span>
+                <span className="portal-muted">Seleccione un período y cargue los estudiantes elegibles.</span>
               )}
             </div>
           </div>
 
           <div className="practicas-period-designations">
-              <strong>Matrículas activas por periodo</strong>
+              <strong>Matrículas activas por período</strong>
             {periodDesignations.length ? periodDesignations.map((item) => (
               <div key={item.DesignacionId}>
                 <span>{valueOrDash(item.CodigoPeriodo)}</span>
@@ -876,7 +876,7 @@ export function PracticasInstitucionalesView({
                   <th>Expediente</th>
                   <th>Estudiante</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Estado</th>
                   <th>Responsable</th>
                 </tr>

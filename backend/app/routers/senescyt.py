@@ -622,7 +622,7 @@ def _build_report() -> dict[str, Any]:
 
     warnings: list[str] = []
     if total_report != total_active_dashboard:
-        warnings.append("El total exportable no coincide con los activos del tablero de matricula.")
+        warnings.append("El total exportable no coincide con los estudiantes activos del tablero de matrícula.")
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -644,9 +644,9 @@ def _build_report() -> dict[str, Any]:
         "warnings": warnings,
         "criteria": {
             "fuente": "DATOS_ESTUD directo para los datos del estudiante; CARRERAXESTUD/PENSUM solo definen carrera y estado del reporte",
-            "activos": "Mismo criterio del tablero de matricula; excluye estudiantes sin carrera registrada",
-            "matricula": "Matricula actual validada contra carrera, pensum y estado del tablero",
-            "export": "Un archivo Excel por carrera dentro de un ZIP",
+            "activos": "Mismo criterio del tablero de matrícula; excluye a los estudiantes sin carrera registrada.",
+            "matricula": "Matrícula actual validada contra la carrera, el pensum y el estado del tablero.",
+            "export": "Un archivo de Excel por carrera dentro de un ZIP.",
         },
     }
 
@@ -738,7 +738,7 @@ def update_senescyt_student_data(
         updates[column] = _normalize_payload_value(value)
 
     if not updates:
-        raise HTTPException(status_code=400, detail="No hay campos validos para actualizar.")
+        raise HTTPException(status_code=400, detail='No hay campos válidos para actualizar.')
 
     set_clause = ", ".join(f"{column} = ?" for column in updates)
     params = list(updates.values()) + [codigo_estud]
@@ -1048,7 +1048,7 @@ def _load_senescyt_audit_dataframe(target: str) -> tuple[pd.DataFrame, list[str]
         return _prepare_student_audit_dataframe(), _STUDENT_AUDIT_COLUMNS
     if target == "docentes":
         return _read_teacher_audit_dataframe(), _TEACHER_REPORT_COLUMNS
-    raise HTTPException(status_code=400, detail="Tipo de reporte SENESCYT no valido.")
+    raise HTTPException(status_code=400, detail='Tipo de reporte SENESCYT no válido.')
 
 
 def _normalize_career_filters(careers: list[str] | None) -> list[str]:
@@ -1263,7 +1263,7 @@ def _document_analysis(row: pd.Series) -> dict[str, Any]:
     format_label = ""
 
     if inferred_code == _DOCUMENT_TYPE_CEDULA:
-        format_label = "Cedula ecuatoriana: 10 digitos"
+        format_label = "Cédula ecuatoriana: 10 dígitos"
     elif inferred_code == _DOCUMENT_TYPE_PASSPORT:
         format_label = _document_country_format(number)
 
@@ -1271,12 +1271,12 @@ def _document_analysis(row: pd.Series) -> dict[str, Any]:
     suggested_code = expected_code if expected_code in _DOCUMENT_TYPE_LABELS else ""
     issues: list[str] = []
     if not is_type_selected:
-        issues.append("tipoDocumentoId debe ser 1 para cedula o 2 para pasaporte")
+        issues.append("tipoDocumentoId debe ser 1 para cédula o 2 para pasaporte.")
     if not number:
-        issues.append("numeroIdentificacion esta vacio")
+        issues.append("numeroIdentificacion está vacío.")
     elif not is_number_valid:
         issues.append(
-            "numeroIdentificacion no cumple 10 digitos de cedula ni formato de pasaporte permitido"
+            "numeroIdentificacion no cumple los 10 dígitos de cédula ni el formato de pasaporte permitido."
         )
     if is_type_selected and inferred_code and type_code != inferred_code:
         issues.append(
@@ -1541,8 +1541,8 @@ def _build_document_summary(dataframe: pd.DataFrame) -> dict[str, Any]:
         "reglas": [
             {
                 "codigo": 1,
-                "tipo": "Cedula",
-                "formato": "10 digitos numericos",
+                "tipo": "Cédula",
+                "formato": "10 dígitos numéricos",
             },
             {
                 "codigo": 2,

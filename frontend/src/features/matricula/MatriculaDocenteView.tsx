@@ -171,7 +171,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         setPeriods(payload.periodos || [])
       } catch (error) {
         if (!cancelled) {
-          setCatalogError(handleError(error, 'Error consultando catalogo academico'))
+          setCatalogError(handleError(error, 'Error consultando catálogo académico'))
         }
       } finally {
         if (!cancelled) {
@@ -316,7 +316,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   async function loadTeacherOptions(queryValue: string = teacherQuery, validarUsuario: boolean = validateTeacherUser) {
     const query = queryValue.trim()
     if (query.length === 1) {
-      setTeacherSearchError('Ingresa al menos 2 caracteres para filtrar docente.')
+      setTeacherSearchError('Ingrese al menos 2 caracteres para filtrar docente.')
       return
     }
     setTeacherSearchLoading(true)
@@ -328,7 +328,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       setTeacherOptions(items)
       setPendingTeacherCode((current) => (items.some((teacher) => teacher.codigo_doc === current) ? current : ''))
       if (items.length === 0) {
-        setTeacherSearchError(query ? 'No se encontraron docentes para la busqueda.' : 'No hay docentes para listar.')
+        setTeacherSearchError(query ? 'No se encontraron docentes para la búsqueda.' : 'No hay docentes para listar.')
       }
     } catch (error) {
       setTeacherSearchError(handleError(error, 'Error buscando docentes'))
@@ -345,7 +345,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
 
   const loadSubjectOptions = useCallback(async (queryValue: string = subjectQuery, periodCode: string = selectedPeriod) => {
     if (!periodCode) {
-      setSubjectError('Selecciona primero el periodo.')
+      setSubjectError('Seleccione primero el período.')
       return
     }
     setSubjectLoading(true)
@@ -359,11 +359,11 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       const items = payload.items || []
       setSubjectOptions(items)
       if (items.length === 0) {
-        setSubjectError(queryValue.trim() ? 'No hay materias para ese filtro.' : 'No hay materias matriculadas en el periodo seleccionado.')
+        setSubjectError(queryValue.trim() ? 'No hay materias para ese filtro.' : 'No hay materias matriculadas en el período seleccionado.')
       }
     } catch (error) {
       setSubjectOptions([])
-      setSubjectError(handleError(error, 'Error consultando materias unicas'))
+      setSubjectError(handleError(error, 'Error consultando materias únicas'))
     } finally {
       setSubjectLoading(false)
     }
@@ -419,7 +419,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const loadTeacherStudents = useCallback(async () => {
     if (!selectedPeriod || !selectedSubjectCode || !parallel) {
       setTeacherStudents([])
-      setTeacherStudentsError('Selecciona periodo, materia y paralelo para ver estudiantes.')
+      setTeacherStudentsError('Seleccione período, materia y paralelo para ver estudiantes.')
       return
     }
     setTeacherStudentsLoading(true)
@@ -497,15 +497,15 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
 
   async function saveTeacherEnrollment() {
     if (!selectedTeacherCode || !selectedPeriod || !selectedSubjectCode) {
-      setTeacherActionError('Selecciona docente, periodo y materia unica.')
+      setTeacherActionError('Seleccione docente, período y materia única.')
       return
     }
     if (!parallel.trim()) {
-      setTeacherActionError('Selecciona un paralelo con estudiantes matriculados.')
+      setTeacherActionError('Seleccione un paralelo con estudiantes matriculados.')
       return
     }
     if (teacherEnrollmentMode === 'INDIVIDUAL' && selectedStudentCodes.length === 0) {
-      setTeacherActionError('Selecciona al menos un estudiante para la matricula docente individual.')
+      setTeacherActionError('Seleccione al menos un estudiante para la matrícula docente individual.')
       return
     }
     const assignmentDescription =
@@ -513,8 +513,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         ? `${selectedStudentCodes.length} estudiante(s) seleccionado(s)`
         : `todos los ${uniqueTeacherStudents.length} estudiante(s) del paralelo`
     const confirmed = await requestConfirm(
-      teacherEnrollmentMode === 'INDIVIDUAL' ? 'Asignar estudiantes' : 'Matricula docente masiva',
-      `Asignar ${assignmentDescription} a ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubject?.nombre_materia || selectedSubjectCode}, periodo ${selectedPeriodName || selectedPeriod}, paralelo ${parallel}?`
+      teacherEnrollmentMode === 'INDIVIDUAL' ? 'Asignar estudiantes' : 'Matrícula docente masiva',
+      `¿Desea asignar ${assignmentDescription} a ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubject?.nombre_materia || selectedSubjectCode}, período ${selectedPeriodName || selectedPeriod}, paralelo ${parallel}?`
     )
     if (!confirmed) return
 
@@ -539,13 +539,13 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       const linked = response.students_linked ?? 0
       if (response.ok === false || response.already_exists || response.action === 'EXISTENTE') {
         setTeacherActionError(
-          `${response.message || 'La matricula docente ya existe.'} Estudiantes vinculados: ${linked}.`
+          `${response.message || 'La matrícula docente ya existe.'} Estudiantes vinculados: ${linked}.`
         )
       } else {
         setTeacherActionMessage(
           teacherEnrollmentMode === 'INDIVIDUAL'
             ? `Asignacion individual guardada. ${linked} estudiante(s) vinculado(s) al docente.`
-            : `Matricula docente masiva guardada. Insertadas ${inserted}, existentes ${existing}, estudiantes vinculados ${linked}.`
+            : `Matrícula docente masiva guardada. Insertadas: ${inserted}; existentes: ${existing}; estudiantes vinculados: ${linked}.`
         )
       }
       if (teacherEnrollmentMode === 'INDIVIDUAL' && response.ok !== false) {
@@ -554,7 +554,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       await loadTeacherEnrollments()
       await loadTeacherStudents()
     } catch (error) {
-      setTeacherActionError(handleError(error, 'Error guardando matricula docente'))
+      setTeacherActionError(handleError(error, 'Error guardando matrícula docente'))
     } finally {
       setTeacherSaveLoading(false)
     }
@@ -564,8 +564,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     <div className="student-dashboard">
       <header className="student-hero">
         <div>
-          <p className="eyebrow">Matricula Docente</p>
-          <h1>Matricula docente</h1>
+          <p className="eyebrow">Matrícula Docente</p>
+          <h1>Matrícula docente</h1>
           <p>{displayName}</p>
         </div>
         <div className="student-user-pill">
@@ -579,7 +579,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           <div className="section-title">
             <div>
               <span>Parametros</span>
-              <h2>{selectedSubject?.nombre_materia || 'Selecciona periodo, materia y paralelo'}</h2>
+              <h2>{selectedSubject?.nombre_materia || 'Seleccione período, materia y paralelo'}</h2>
             </div>
             <div className="matricula-acad-title-actions">
               <button
@@ -618,7 +618,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           {parallelOptionsError ? <p className="form-error">{parallelOptionsError}</p> : null}
           {teacherActionError ? <p className="form-error">{teacherActionError}</p> : null}
           {teacherActionMessage ? <p className="form-success">{teacherActionMessage}</p> : null}
-          {!selectedTeacherCode ? <p className="form-success">Selecciona primero el docente para habilitar la matriculacion.</p> : null}
+          {!selectedTeacherCode ? <p className="form-success">Seleccione primero el docente para habilitar la matriculación.</p> : null}
 
           <div className="matricula-docente-main-selector">
             <div className="matricula-docente-loaded">
@@ -650,14 +650,14 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
             {teacherSearchError ? <p className="form-error">{teacherSearchError}</p> : null}
           </div>
 
-          <div className="matricula-docente-mode" role="group" aria-label="Modalidad de matricula docente">
+          <div className="matricula-docente-mode" role="group" aria-label="Modalidad de matrícula docente">
             <button
               type="button"
               className={teacherEnrollmentMode === 'MASIVA' ? 'matricula-docente-mode__option is-active' : 'matricula-docente-mode__option'}
               aria-pressed={teacherEnrollmentMode === 'MASIVA'}
               onClick={() => changeTeacherEnrollmentMode('MASIVA')}
             >
-              <strong>Matricula masiva</strong>
+              <strong>Matrícula masiva</strong>
               <span>Asigna al docente todos los estudiantes del curso seleccionado.</span>
             </button>
             <button
@@ -666,14 +666,14 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               aria-pressed={teacherEnrollmentMode === 'INDIVIDUAL'}
               onClick={() => changeTeacherEnrollmentMode('INDIVIDUAL')}
             >
-              <strong>Matricula individual</strong>
+              <strong>Matrícula individual</strong>
               <span>Permite buscar y seleccionar uno o varios estudiantes.</span>
             </button>
           </div>
 
           <div className="matricula-acad-form">
             <label>
-              <span>Periodo</span>
+              <span>Período</span>
               <select
                 value={selectedPeriod}
                 disabled={catalogLoading}
@@ -718,7 +718,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   clearTeacherMessages()
                 }}
               >
-                <option value="">{selectedSubject ? 'Seleccionar' : 'Selecciona materia'}</option>
+                <option value="">{selectedSubject ? 'Seleccionar' : 'Seleccione materia'}</option>
                 {selectedSubjectLevels.map((level) => (
                   <option key={level} value={level}>
                     Nivel {level}
@@ -727,14 +727,14 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               </select>
             </label>
             <div className="matricula-acad-career-picker matricula-docente-subject-picker">
-              <span>Materia unica</span>
-              {!selectedPeriod ? <p>Selecciona primero el periodo para buscar materias matriculadas.</p> : null}
+              <span>Materia única</span>
+              {!selectedPeriod ? <p>Seleccione primero el período para buscar materias matriculadas.</p> : null}
               <div className="matricula-docente-selector-controls">
                 <label>
                   <span>Buscar materia</span>
                   <input
                     value={subjectQuery}
-                    placeholder="Codigo comun, codigo interno o nombre"
+                    placeholder="Código comun, código interno o nombre"
                     disabled={!selectedPeriod}
                     onChange={(event) => setSubjectQuery(event.target.value)}
                     onKeyDown={(event) => {
@@ -759,7 +759,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                     <strong>{selectedSubject.nombre_materia}</strong>
                   </div>
                   <div>
-                    <span>Codigo comun</span>
+                    <span>Código comun</span>
                     <strong>{selectedSubject.cod_materia}</strong>
                   </div>
                   <div>
@@ -771,7 +771,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                     <strong>{selectedCareerNames || '-'}</strong>
                   </div>
                   <div>
-                    <span>Estudiantes del periodo</span>
+                    <span>Estudiantes del período</span>
                     <strong>{selectedSubject.total_estudiantes ?? 0}</strong>
                   </div>
                 </div>
@@ -801,7 +801,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           </div>
 
           <div className="matricula-acad-context">
-            <span>{selectedPeriodName || 'Periodo pendiente'}</span>
+            <span>{selectedPeriodName || 'Período pendiente'}</span>
             <span>{selectedSubject?.nombre_materia || 'Materia pendiente'}</span>
             <span>Nivel {selectedSubjectLevel || 'pendiente'}</span>
             <span>{selectedCareerCodes.length} carrera(s) vinculada(s)</span>
@@ -822,7 +822,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           {selectedTeacher ? (
             <div className="matricula-acad-preview matricula-docente-teacher-detail">
               <div>
-                <span>Cedula</span>
+                <span>Cédula</span>
                 <strong>{selectedTeacher.cedula || '-'}</strong>
               </div>
               <div>
@@ -830,7 +830,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 <strong>{selectedTeacher.correo || selectedTeacher.correo_personal || '-'}</strong>
               </div>
               <div>
-                <span>Telefono</span>
+                <span>Teléfono</span>
                 <strong>{selectedTeacher.movil || selectedTeacher.telefono || '-'}</strong>
               </div>
               <div>
@@ -847,7 +847,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               </div>
             </div>
           ) : null}
-          {!selectedTeacher ? <p className="form-success">Usa el boton Seleccionar docente para buscar y marcar un unico docente.</p> : null}
+          {!selectedTeacher ? <p className="form-success">Use el botón «Seleccionar docente» para buscar y marcar un único docente.</p> : null}
         </aside>
       </section>
 
@@ -883,7 +883,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   <th>Tipo</th>
                   <th>Materia</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Paralelo</th>
                   <th>Jornada</th>
                 </tr>
@@ -927,11 +927,11 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         <article className="student-card student-card--wide matricula-panel">
           <div className="section-title">
             <div>
-              <span>{teacherEnrollmentMode === 'INDIVIDUAL' ? 'Seleccion individual' : 'Curso completo'}</span>
+              <span>{teacherEnrollmentMode === 'INDIVIDUAL' ? 'Selección individual' : 'Curso completo'}</span>
               <h2>
                 {teacherEnrollmentMode === 'INDIVIDUAL'
                   ? 'Seleccionar estudiantes para el docente'
-                  : 'Estudiantes incluidos en la matricula masiva'}
+                  : 'Estudiantes incluidos en la matrícula masiva'}
               </h2>
             </div>
             <div className="matricula-acad-title-actions">
@@ -952,7 +952,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               <span>Buscar estudiante</span>
               <input
                 value={teacherStudentQuery}
-                placeholder="Nombre, cedula, codigo, correo o carrera"
+                placeholder="Nombre, cédula, código, correo o carrera"
                 onChange={(event) => setTeacherStudentQuery(event.target.value)}
               />
             </label>
@@ -968,7 +968,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   onClick={allVisibleStudentsSelected ? clearStudentSelection : selectVisibleStudents}
                   disabled={filteredTeacherStudents.length === 0}
                 >
-                  {allVisibleStudentsSelected ? 'Limpiar seleccion' : 'Seleccionar visibles'}
+                  {allVisibleStudentsSelected ? 'Limpiar selección' : 'Seleccionar visibles'}
                 </button>
                 <button
                   type="button"
@@ -991,14 +991,14 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 <tr>
                   {teacherEnrollmentMode === 'INDIVIDUAL' ? <th className="matricula-docente-select-column">Seleccionar</th> : null}
                   <th>Estudiante</th>
-                  <th>Cedula</th>
+                  <th>Cédula</th>
                   <th>Carrera</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Materia</th>
                   <th>Paralelo</th>
-                  <th>Matricula</th>
+                  <th>Matrícula</th>
                   <th>Promedio</th>
-                  <th>Asignacion actual</th>
+                  <th>Asignación actual</th>
                 </tr>
               </thead>
               <tbody>
@@ -1011,8 +1011,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   <tr>
                     <td colSpan={teacherEnrollmentMode === 'INDIVIDUAL' ? 10 : 9}>
                       {teacherStudentQuery.trim()
-                        ? 'No hay estudiantes que coincidan con la busqueda.'
-                        : 'Sin estudiantes matriculados para ese periodo, materia y paralelo.'}
+                        ? 'No hay estudiantes que coincidan con la búsqueda.'
+                        : 'Sin estudiantes matriculados para ese período, materia y paralelo.'}
                     </td>
                   </tr>
                 ) : null}
@@ -1072,7 +1072,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 <span>Buscar docente</span>
                 <input
                   value={teacherQuery}
-                  placeholder="Cedula, correo o nombre"
+                  placeholder="Cédula, correo o nombre"
                   onChange={(event) => setTeacherQuery(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
@@ -1131,7 +1131,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                       />
                       <strong>{teacher.descripcion || teacher.login || teacher.codigo_doc}</strong>
                     </label>
-                    <span>{teacher.cedula || 'Sin cedula'} - {teacher.correo || teacher.login || 'Sin correo'}</span>
+                    <span>{teacher.cedula || 'Sin cédula'} - {teacher.correo || teacher.login || 'Sin correo'}</span>
                     <span>
                       {teacher.tipo_docente || teacher.tipo_usuario || 'Docente'} - {teacher.total_carreras_docente ?? 0} carrera(s) -{' '}
                       {teacher.total_materias_docente ?? 0} materia(s)
@@ -1158,7 +1158,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         <div className="matricula-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="matricula-docente-confirm-title">
           <div className="matricula-confirm-modal">
             <div>
-              <span>Confirmacion</span>
+              <span>Confirmación</span>
               <h2 id="matricula-docente-confirm-title">{confirmDialog.title}</h2>
               <p>{confirmDialog.message}</p>
             </div>

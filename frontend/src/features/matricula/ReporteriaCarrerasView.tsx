@@ -277,10 +277,10 @@ export function ReporteriaCarrerasView({
                 <thead>
                   <tr>
                     <th>Estudiante</th>
-                    <th>Cedula</th>
+                    <th>Cédula</th>
                     <th>Tipo</th>
                     <th>Estado</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Correo personal</th>
                     <th>Correo Intec</th>
                   </tr>

@@ -27,6 +27,7 @@ type GestionSisAcademicoViewProps = {
   initialSectionKey?: string
   allowedSectionKeys?: string[]
   onSectionChange?: (sectionKey: string) => void
+  onOpenMoodleUsers?: () => void
 }
 
 type FormValue = string | number | boolean | null | undefined
@@ -61,20 +62,20 @@ type OperationalFlowStep = {
 const processShortcuts: ProcessShortcut[] = [
   {
     key: 'admision',
-    title: 'Admision',
-    description: 'Preinscripcion, aspirantes, asesores, factura y documentos de ingreso.',
+    title: 'Admisión',
+    description: 'Preinscripción, aspirantes, asesores, factura y documentos de ingreso.',
     sections: ['preinscripciones', 'datos_factura'],
   },
   {
     key: 'matriculas',
-    title: 'Matriculas',
-    description: 'Cabecera, materias, pagos y control de matricula.',
+    title: 'Matrículas',
+    description: 'Cabecera, materias, pagos y control de matrícula.',
     sections: ['cabecera_matricula', 'matricula_materias', 'pagos_matricula'],
   },
   {
     key: 'notas',
     title: 'Notas',
-    description: 'Notas por estudiante, carrera, materia, periodo y paralelo.',
+    description: 'Notas por estudiante, carrera, materia, período y paralelo.',
     sections: ['matricula_materias', 'materias'],
   },
   {
@@ -86,7 +87,7 @@ const processShortcuts: ProcessShortcut[] = [
   {
     key: 'docencia',
     title: 'Docente',
-    description: 'Ingreso de docentes, asignacion de materias, cuestionarios, evaluacion y estado Moodle.',
+    description: 'Ingreso de docentes, asignación de materias, cuestionarios, evaluación y estado Moodle.',
     sections: [
       'docentes',
       'actualizacion_est',
@@ -103,13 +104,13 @@ const processShortcuts: ProcessShortcut[] = [
   {
     key: 'administrativos',
     title: 'Usuarios',
-    description: 'Registro de usuarios administrativos, perfiles y accesos del menu.',
+    description: 'Registro de usuarios administrativos, perfiles y accesos del menú.',
     sections: ['usuarios', 'menu_usuarios', 'menu_general'],
   },
   {
     key: 'academico',
-    title: 'Proceso academico',
-    description: 'Carreras, materias, mallas, textos HOMO, paralelos, periodos, asistencia y aperturas.',
+    title: 'Proceso académico',
+    description: 'Carreras, materias, mallas, textos HOMO, paralelos, períodos, asistencia y aperturas.',
     sections: [
       'carreras',
       'materias',
@@ -129,44 +130,44 @@ const processShortcuts: ProcessShortcut[] = [
   },
   {
     key: 'migracion',
-    title: 'Migracion',
-    description: 'Procesos controlados de cambio de modalidad y periodo academico.',
+    title: 'Migración',
+    description: 'Procesos controlados de cambio de modalidad y período académico.',
     sections: ['cambio_periodo_hr'],
   },
   {
     key: 'vinculacion',
-    title: 'Seguimiento y practicas',
+    title: 'Seguimiento y prácticas',
     description: 'Observaciones, prácticas laborales, Servicio Comunitario y empresas.',
     sections: ['seguimiento', 'practicas', 'practicas_vinculacion', 'empresas'],
   },
   {
     key: 'educacion_continua',
-    title: 'Educacion continua',
+    title: 'Educación continua',
     description: 'Cursos, cortes, participantes y control heredado de ofertas cortas.',
     sections: ['cursos_edu_continua', 'corte_curso', 'corte_curso_estudiante'],
   },
   {
     key: 'certificados',
     title: 'Certificados',
-    description: 'Certificados generados, credenciales de cursos y trazabilidad documental.',
-    sections: ['certificados_generados', 'credenciales_curso'],
+    description: 'Certificados generados y trazabilidad documental.',
+    sections: ['certificados_generados'],
   },
   {
     key: 'documentacion',
-    title: 'Documentacion',
+    title: 'Documentación',
     description: 'Repositorio digital y documentos anexados al estudiante.',
     sections: ['repositorio', 'registro_documentos_estudiante'],
   },
   {
     key: 'talento_humano',
     title: 'Talento humano',
-    description: 'Empleados, solicitudes y tareas RRHH conservadas desde SisAcademicoV1.',
+    description: 'Empleados, solicitudes y tareas de talento humano integradas en el sistema.',
     sections: ['talento_humano_empleados', 'talento_humano_solicitudes', 'talento_humano_tareas'],
   },
   {
     key: 'integraciones',
     title: 'Integraciones',
-    description: 'Notas Moodle, sincronizaciones y auditoria Microsoft 365.',
+    description: 'Notas de Moodle, sincronizaciones y auditoría de Microsoft 365.',
     sections: ['moodle_notas', 'moodle_sincronizacion', 'microsoft365_audit'],
   },
 ]
@@ -175,7 +176,7 @@ const operationalFlowSteps: OperationalFlowStep[] = [
   {
     key: 'inscripcion',
     number: '01',
-    title: 'Inscripcion y admision',
+    title: 'Inscripción y admisión',
     description: 'Aspirante, asesor, datos de factura y documentos iniciales.',
     sections: ['preinscripciones', 'datos_factura', 'registro_documentos_estudiante'],
   },
@@ -189,50 +190,50 @@ const operationalFlowSteps: OperationalFlowStep[] = [
   {
     key: 'matricula',
     number: '03',
-    title: 'Matricula academica',
+    title: 'Matrícula académica',
     description: 'Cabecera, materias matriculadas, pagos y convenio.',
     sections: ['cabecera_matricula', 'matricula_materias', 'pagos_matricula'],
   },
   {
     key: 'docencia',
     number: '04',
-    title: 'Docencia y periodos',
-    description: 'Docentes, asignaciones, paralelos, jornadas y periodos.',
+    title: 'Docencia y períodos',
+    description: 'Docentes, asignaciones, paralelos, jornadas y períodos.',
     sections: ['docentes', 'docente_materias', 'paralelos', 'periodos', 'jornadas'],
   },
   {
     key: 'cursado',
     number: '05',
     title: 'Cursado, asistencia y notas',
-    description: 'Notas, aperturas, asistencia y seguimiento academico.',
+    description: 'Notas, aperturas, asistencia y seguimiento académico.',
     sections: ['matricula_materias', 'fechas_notas', 'asistencia_estudiantes', 'moodle_notas'],
   },
   {
     key: 'practicas',
     number: '06',
-    title: 'Practicas y vinculacion',
-    description: 'Practicas preprofesionales, vinculacion con la sociedad y empresas.',
+    title: 'Prácticas y vinculación',
+    description: 'Prácticas preprofesionales, vinculación con la sociedad y empresas.',
     sections: ['practicas', 'practicas_vinculacion', 'empresas', 'seguimiento'],
   },
   {
     key: 'certificados',
     number: '07',
     title: 'Certificados y documentos',
-    description: 'Certificados, credenciales, repositorio y documentos historicos.',
-    sections: ['certificados_generados', 'credenciales_curso', 'repositorio', 'registro_documentos_estudiante'],
+    description: 'Certificados, repositorio y documentos históricos.',
+    sections: ['certificados_generados', 'repositorio', 'registro_documentos_estudiante'],
   },
   {
     key: 'titulacion',
     number: '08',
-    title: 'Titulacion y cierre',
-    description: 'Base documental para grado, SENESCYT, titulo INTEC y trazabilidad final.',
+    title: 'Titulación y cierre',
+    description: 'Base documental para grado, SENESCYT, título institucional y trazabilidad final.',
     sections: ['certificados_generados', 'repositorio', 'matricula_materias', 'practicas_vinculacion'],
   },
 ]
 
 function valueLabel(value: FormValue): string {
   if (value === null || value === undefined || value === '') return '-'
-  if (typeof value === 'boolean') return value ? 'Si' : 'No'
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No'
   return String(value)
 }
 
@@ -380,6 +381,7 @@ export function GestionSisAcademicoView({
   initialSectionKey = '',
   allowedSectionKeys,
   onSectionChange,
+  onOpenMoodleUsers,
 }: Readonly<GestionSisAcademicoViewProps>) {
   const allowedSectionSignature = [...(allowedSectionKeys || [])].sort().join('|')
   const [sections, setSections] = useState<SisAcademicoSection[]>([])
@@ -489,6 +491,7 @@ export function GestionSisAcademicoView({
   const hasIndexColumn = !isEstadoInlineSection
   const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isStudentEstadoSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
   const isStudentProfileSection = selectedSectionKey === 'estudiantes'
+  const isUserAdministrationSection = selectedSectionKey === 'usuarios'
   const academicHistory = studentAcademicHistory?.historial_academico || []
   const studentProfileName = valueOrDash(
     studentAcademicHistory?.student?.nombre_estudiante
@@ -613,18 +616,18 @@ export function GestionSisAcademicoView({
   )
   const workflowTitle = isOperationalMenuSection
     ? selectedSectionKey === 'menu_usuarios'
-      ? 'Accesos operativos SisAcademicoV1'
-      : 'Mapa operativo SisAcademicoV1'
-    : selectedSection?.title || 'Selecciona una opcion del menu'
+      ? 'Accesos operativos del sistema'
+      : 'Mapa operativo del sistema'
+    : selectedSection?.title || 'Seleccione una opción del menú'
   const workflowCategory = isOperationalMenuSection
-    ? 'Procesos clonados'
-    : selectedProcess?.title || selectedSection?.category || 'Gestion operativa'
+    ? 'Procesos integrados'
+    : selectedProcess?.title || selectedSection?.category || 'Gestión operativa'
   const workflowTable = isOperationalMenuSection
     ? 'Backend y frontend integrados'
     : selectedSection?.table || 'Sin tabla'
   const workflowRows = isOperationalMenuSection ? totalOperationalSections : rows.length
-  const workflowRowsLabel = isOperationalMenuSection ? `${workflowRows} modulo(s)` : `${workflowRows} registro(s)`
-  const workflowMode = isOperationalMenuSection ? 'Navegacion funcional' : canCreate ? 'Permite crear' : 'Solo edicion'
+  const workflowRowsLabel = isOperationalMenuSection ? `${workflowRows} módulo(s)` : `${workflowRows} registro(s)`
+  const workflowMode = isOperationalMenuSection ? 'Navegación funcional' : canCreate ? 'Permite crear' : 'Solo edición'
 
   function processKeyForSection(sectionKey: string) {
     return processShortcuts.find((process) => process.sections.includes(sectionKey))?.key || processShortcuts[0]?.key || ''
@@ -695,13 +698,13 @@ export function GestionSisAcademicoView({
             setStudentAcademicHistoryError(
               academicError instanceof Error
                 ? academicError.message
-                : 'No se pudo consultar la trayectoria academica del estudiante.',
+                : 'No se pudo consultar la trayectoria académica del estudiante.',
             )
           } finally {
             setStudentAcademicHistoryLoading(false)
           }
         } else {
-          setStudentAcademicHistoryError('El registro no contiene el codigo academico necesario para consultar la trayectoria.')
+          setStudentAcademicHistoryError('El registro no contiene el código académico necesario para consultar la trayectoria.')
         }
       }
     } catch (apiError) {
@@ -771,7 +774,7 @@ export function GestionSisAcademicoView({
     const informacion = inlineEstadoValue(row, 'Informacion').trim()
     const documento = inlineEstadoValues[key]?.Documento || null
     if (!estado) {
-      setError('Selecciona un estado antes de guardar.')
+      setError('Seleccione un estado antes de guardar.')
       return
     }
     if (isStudentEstadoSection && informacion.length < 5) {
@@ -779,7 +782,7 @@ export function GestionSisAcademicoView({
       return
     }
     if (isStudentEstadoSection && !documento) {
-      setError('Adjunta el documento que respalda el cambio de estado.')
+      setError('Adjunte el documento que respalda el cambio de estado.')
       return
     }
     setError('')
@@ -870,8 +873,8 @@ export function GestionSisAcademicoView({
     setError('')
     setMessage(
       allSelected
-        ? `${group.name}: materia retirada de la seleccion.`
-        : `${group.name}: ${group.codes.length} codigo(s) relacionados agregados.`,
+        ? `${group.name}: materia retirada de la selección.`
+        : `${group.name}: ${group.codes.length} código(s) relacionados agregados.`,
     )
   }
 
@@ -885,15 +888,15 @@ export function GestionSisAcademicoView({
     setMessage('')
 
     if (!homoBulkPeriodo) {
-      setError('Selecciona el periodo HOMO correspondiente.')
+      setError('Seleccione el período HOMO correspondiente.')
       return
     }
     if (!homoTextofecha) {
-      setError('Selecciona fecha de inicio y fecha de fin para generar el texto de fecha.')
+      setError('Seleccione fecha de inicio y fecha de fin para generar el texto de fecha.')
       return
     }
     if (homoBulkMateriaCodes.length === 0) {
-      setError('Selecciona al menos una materia para guardar.')
+      setError('Seleccione al menos una materia para guardar.')
       return
     }
 
@@ -921,7 +924,7 @@ export function GestionSisAcademicoView({
       await loadRows(selectedSection.key)
       setMessage(`Textos HOMO procesados: ${uniqueCodes.length}. Nuevos: ${created}. Actualizados: ${updated}.`)
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo guardar la seleccion HOMO')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo guardar la selección HOMO')
     } finally {
       setHomoBulkSaving(false)
     }
@@ -948,7 +951,7 @@ export function GestionSisAcademicoView({
 
   function periodChangePayload() {
     if (!periodChangeEstado) {
-      setError('Selecciona el estado de estudiantes que deseas revisar.')
+      setError('Seleccione el estado de estudiantes que deseas revisar.')
       return null
     }
     return {
@@ -967,7 +970,7 @@ export function GestionSisAcademicoView({
       const payload = await fetchAcademicPeriodChangeCatalog()
       setPeriodChangeCatalog(payload)
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catálogo de periodos H/R')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catálogo de períodos H/R')
     } finally {
       setPeriodChangeLoading(false)
     }
@@ -983,7 +986,7 @@ export function GestionSisAcademicoView({
       const preview = await previewAcademicPeriodChange(payload)
       setPeriodChangePreview(preview)
       setMessage(
-        `Analisis generado: ${preview.summary?.migrar || 0} registro(s) listos en ${preview.summary?.periodos_regulares || 0} periodo(s) regular(es).`,
+        `Análisis generado: ${preview.summary?.migrar || 0} registro(s) listos en ${preview.summary?.periodos_regulares || 0} período(s) regular(es).`,
       )
     } catch (apiError) {
       setPeriodChangePreview(null)
@@ -998,10 +1001,10 @@ export function GestionSisAcademicoView({
     if (!payload) return
     const pending = periodChangePreview?.summary?.migrar || 0
     if (!pending) {
-      setError('Genera una vista previa con registros listos antes de aplicar el cambio.')
+      setError('Genere una vista previa con registros listos antes de aplicar el cambio.')
       return
     }
-    if (!window.confirm(`Se cambiarán ${pending} registro(s) de matrícula HOMO a matrícula regular. ¿Deseas continuar?`)) {
+    if (!window.confirm(`Se cambiarán ${pending} registro(s) de matrícula HOMO a matrícula regular. ¿Desea continuar?`)) {
       return
     }
     setPeriodChangeSaving(true)
@@ -1047,7 +1050,7 @@ export function GestionSisAcademicoView({
         }
       } catch (apiError) {
         if (!cancelled) {
-          setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar Gestion SisAcademico')
+          setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar la gestión operativa.')
         }
       } finally {
         if (!cancelled) {
@@ -1114,12 +1117,12 @@ export function GestionSisAcademicoView({
         <div className="gestion-sis-flow-map">
           <div className="gestion-sis-flow-map__head">
             <div>
-              <span>Flujo academico completo</span>
-              <strong>De inscripcion a titulacion</strong>
+              <span>Flujo académico completo</span>
+              <strong>De inscripción a titulación</strong>
             </div>
             <p>
-              Esta ruta conserva el orden operativo de SisAcademicoV1 y abre los modulos modernos necesarios para cada
-              etapa. Use las acciones de cada paso para revisar datos historicos o continuar el proceso.
+              Esta ruta conserva el orden operativo institucional y abre los módulos necesarios para cada etapa. Use las
+              acciones de cada paso para revisar datos históricos o continuar el proceso.
             </p>
           </div>
           <div className="gestion-sis-flow-steps">
@@ -1149,8 +1152,8 @@ export function GestionSisAcademicoView({
         <div className="gestion-sis-process-overview">
           <div className="gestion-sis-process-overview__head">
             <div>
-              <span>{isAccessMode ? 'Accesos funcionales' : 'Clon funcional'}</span>
-              <strong>{isAccessMode ? 'Procesos habilitados por perfil operativo' : 'Procesos disponibles del SisAcademicoV1'}</strong>
+              <span>{isAccessMode ? 'Accesos funcionales' : 'Integración funcional'}</span>
+              <strong>{isAccessMode ? 'Procesos habilitados por perfil operativo' : 'Procesos disponibles del sistema académico'}</strong>
             </div>
             <p>
               {isAccessMode
@@ -1187,7 +1190,7 @@ export function GestionSisAcademicoView({
                 <span>{process.title}</span>
                 <strong>{process.description}</strong>
               </div>
-              <em>{process.availableSections.length} modulo(s)</em>
+              <em>{process.availableSections.length} módulo(s)</em>
             </div>
             <div className="gestion-sis-module-tabs gestion-sis-module-tabs--grid">
               {process.availableSections.map((section) => (
@@ -1198,7 +1201,7 @@ export function GestionSisAcademicoView({
                   onClick={() => openOperationalSection(section.key, process.key)}
                 >
                   <strong>{section.title}</strong>
-                  <span>{section.category || section.table || 'Modulo operativo'}</span>
+                  <span>{section.category || section.table || 'Módulo operativo'}</span>
                 </button>
               ))}
             </div>
@@ -1213,14 +1216,14 @@ export function GestionSisAcademicoView({
       <header className="student-topbar">
         <div>
           <p className="eyebrow">Operativo</p>
-          <h1>Gestion por procesos</h1>
+          <h1>Gestión por procesos</h1>
         </div>
 
         <div className="student-topbar__right">
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Modulos editables</span>
+              <span>Módulos editables</span>
             </div>
           </div>
         </div>
@@ -1228,7 +1231,7 @@ export function GestionSisAcademicoView({
 
       <section className="gestion-sis-workflow" aria-label="Ruta operativa actual">
         <div className="gestion-sis-workflow__route">
-          <span>Modulo actual</span>
+          <span>Módulo actual</span>
           <strong>{workflowTitle}</strong>
         </div>
         <div className="gestion-sis-workflow__meta">
@@ -1242,27 +1245,43 @@ export function GestionSisAcademicoView({
       <section className="student-grid student-grid--content gestion-sis-grid gestion-sis-grid--single">
         <article className="student-card student-card--wide gestion-sis-list">
           <div className="card-head">
-            <h3>{isOperationalMenuSection ? 'Procesos funcionales del sistema' : selectedSection?.title || 'Selecciona un modulo'}</h3>
-            <span>{catalogLoading ? 'Cargando...' : isOperationalMenuSection ? 'SisAcademicoV1 modernizado' : selectedSection?.category || 'Modulo'}</span>
+            <h3>{isOperationalMenuSection ? 'Procesos funcionales del sistema' : selectedSection?.title || 'Seleccione un módulo'}</h3>
+            <span>{catalogLoading ? 'Cargando...' : isOperationalMenuSection ? 'Sistema académico integrado' : selectedSection?.category || 'Módulo'}</span>
           </div>
 
           {isOperationalMenuSection ? renderOperationalMenu(processMenu) : null}
+
+          {isUserAdministrationSection && onOpenMoodleUsers ? (
+            <section className="gestion-sis-moodle-users" aria-label="Control de cuentas de Moodle">
+              <div>
+                <span>Control de acceso virtual</span>
+                <strong>Activar o inactivar una cuenta de Moodle</strong>
+                <p>
+                  Busque la cuenta por correo institucional. Antes de cambiar su estado, el sistema valida que el
+                  correo exista en CorreosEstudIntec y corresponda a un estudiante registrado.
+                </p>
+              </div>
+              <button type="button" className="primary-action" onClick={onOpenMoodleUsers}>
+                Administrar cuentas Moodle
+              </button>
+            </section>
+          ) : null}
 
           {isMateriaHomoTextSection ? (
             <div className="gestion-sis-homo-bulk">
               <div className="gestion-sis-homo-bulk__head">
                 <div>
                   <strong>Ingreso masivo de textos HOMO</strong>
-                  <span>Selecciona periodo, rango de fechas y todas las materias necesarias antes de guardar.</span>
+                  <span>Seleccione el período, el rango de fechas y todas las materias necesarias antes de guardar.</span>
                 </div>
                 <em>{homoBulkMateriaCodes.length} materia(s) seleccionada(s)</em>
               </div>
 
               <div className="matricula-acad-form gestion-sis-homo-bulk__form">
                 <label>
-                  <span>Periodo HOMO</span>
+                  <span>Período HOMO</span>
                   <select value={homoBulkPeriodo} onChange={(event) => setHomoBulkPeriodo(event.target.value)}>
-                    <option value="">Seleccione periodo</option>
+                    <option value="">Seleccione período</option>
                     {homoPeriodoOptions.map((option) => (
                       <option key={`homo-periodo-${option.value}`} value={option.value}>
                         {option.label}
@@ -1295,11 +1314,11 @@ export function GestionSisAcademicoView({
                   <input value={homoTextofecha || '20 de mayo del 2024 al 16 de junio del 2024'} readOnly />
                 </label>
                 <div className="gestion-sis-homo-picker gestion-sis-field--wide">
-                  <span>Codigo materia</span>
+                  <span>Código materia</span>
                   <div>
                     <strong>
                       {selectedHomoMateriaOptions.length > 0
-                        ? `${selectedHomoMateriaOptions.length} codigo(s) de materia seleccionados`
+                        ? `${selectedHomoMateriaOptions.length} código(s) de materia seleccionados`
                         : 'Sin materia seleccionada'}
                     </strong>
                     <button type="button" className="primary-action" onClick={() => setHomoMateriaSelectorOpen(true)}>
@@ -1307,22 +1326,22 @@ export function GestionSisAcademicoView({
                     </button>
                   </div>
                   <small>
-                    Busca por nombre de materia. Al seleccionar se agregan todos los codigos relacionados para las carreras donde exista.
+                    Busque por nombre de materia. Al seleccionar se agregan todos los códigos relacionados para las carreras donde exista.
                   </small>
                 </div>
                 <label className="gestion-sis-field--wide">
-                  <span>Busqueda manual por codigo unico</span>
+                  <span>Búsqueda manual por código único</span>
                   <input
                     value={homoBulkSearch}
                     onChange={(event) => setHomoBulkSearch(event.target.value)}
-                    placeholder="Opcional: buscar por codigo unico, codigo interno o nombre"
+                    placeholder="Opcional: buscar por código único, código interno o nombre"
                   />
                 </label>
               </div>
 
               <div className="gestion-sis-homo-bulk__finder">
                 <div className="gestion-sis-homo-bulk__finder-head">
-                  <strong>Resultados de busqueda</strong>
+                  <strong>Resultados de búsqueda</strong>
                   <span>{homoSearchResults.length} resultado(s) visibles</span>
                 </div>
                 {homoSearchResults.length > 0 ? (
@@ -1339,7 +1358,7 @@ export function GestionSisAcademicoView({
                         >
                           <span>
                             <strong>{materiaNameFromOption(option.label) || option.label}</strong>
-                            <small>Codigo unico: {code}</small>
+                            <small>Código único: {code}</small>
                           </span>
                           <em>{active ? 'Seleccionada' : 'Agregar'}</em>
                         </button>
@@ -1348,7 +1367,7 @@ export function GestionSisAcademicoView({
                   </div>
                 ) : (
                   <p className="gestion-sis-homo-bulk__empty">
-                    {homoBulkSearch.trim() ? 'No hay materias con ese criterio.' : 'Escribe un codigo o nombre para seleccionar materias.'}
+                    {homoBulkSearch.trim() ? 'No hay materias con ese criterio.' : 'Escriba un código o nombre para seleccionar materias.'}
                   </p>
                 )}
               </div>
@@ -1363,7 +1382,7 @@ export function GestionSisAcademicoView({
                   Seleccionar todo filtrado
                 </button>
                 <button type="button" className="ghost-button" onClick={clearHomoMaterias} disabled={homoBulkMateriaCodes.length === 0}>
-                  Limpiar seleccion
+                  Limpiar selección
                 </button>
                 <button
                   type="button"
@@ -1401,7 +1420,7 @@ export function GestionSisAcademicoView({
                     })}
                   </div>
                 ) : (
-                  <p className="gestion-sis-homo-bulk__empty">Todavia no hay materias seleccionadas.</p>
+                  <p className="gestion-sis-homo-bulk__empty">Todavía no hay materias seleccionadas.</p>
                 )}
               </div>
             </div>
@@ -1452,7 +1471,7 @@ export function GestionSisAcademicoView({
                         >
                           <span>
                             <strong>{group.name}</strong>
-                            <small>{group.codes.length} codigo(s) relacionados: {group.codes.join(', ')}</small>
+                            <small>{group.codes.length} código(s) relacionados: {group.codes.join(', ')}</small>
                           </span>
                           <em>
                             {allSelected
@@ -1471,11 +1490,11 @@ export function GestionSisAcademicoView({
 
                 <div className="gestion-sis-homo-selector-footer">
                   <span>
-                    {selectedHomoMateriaGroupCount} materia(s), {homoBulkMateriaCodes.length} codigo(s) seleccionados
+                    {selectedHomoMateriaGroupCount} materia(s), {homoBulkMateriaCodes.length} código(s) seleccionados
                   </span>
                   <div>
                     <button type="button" className="ghost-button" onClick={clearHomoMaterias} disabled={homoBulkMateriaCodes.length === 0}>
-                      Limpiar seleccion
+                      Limpiar selección
                     </button>
                     <button type="button" className="primary-action" onClick={() => setHomoMateriaSelectorOpen(false)}>
                       Listo
@@ -1495,8 +1514,8 @@ export function GestionSisAcademicoView({
                 <div>
                   <strong>Migración matrícula H a R</strong>
                   <span>
-                    Selecciona un estado, revisa el listado de estudiantes y ejecuta el analisis. El sistema calcula los
-                    periodos regulares segun las fechas HOMO, reparte las materias en bloques de 6 y conserva el promedio final.
+                    Seleccione un estado, revise el listado de estudiantes y ejecute el análisis. El sistema calcula los
+                    períodos regulares según las fechas HOMO, distribuye las materias en bloques de 6 y conserva el promedio final.
                   </span>
                 </div>
                 <em>{periodChangePreview?.summary?.migrar || 0} registro(s) listos</em>
@@ -1530,13 +1549,13 @@ export function GestionSisAcademicoView({
                       setPeriodChangeSelectedCedulas([])
                       setPeriodChangePreview(null)
                     }}
-                    placeholder="Cedula, codigo, nombre o carrera"
+                    placeholder="Cédula, código, nombre o carrera"
                   />
                 </label>
                 <div className="gestion-sis-period-change__hint">
-                  <strong>Flujo automatico por fechas</strong>
+                  <strong>Flujo automático por fechas</strong>
                   <span>
-                    El estado elegido carga estudiantes con matriculas HOMO. La vista previa calcula los periodos R
+                    El estado elegido carga estudiantes con matrículas HOMO. La vista previa calcula los períodos R
                     posibles y muestra duplicados, bloqueos y notas a migrar antes de guardar.
                   </span>
                 </div>
@@ -1547,8 +1566,8 @@ export function GestionSisAcademicoView({
                   <div>
                     <strong>Estudiantes encontrados</strong>
                     <span>
-                      Selecciona uno o varios estudiantes para analizar solo esos registros. Si no seleccionas ninguno,
-                      el analisis se ejecuta sobre todo el listado filtrado.
+                      Seleccione uno o varios estudiantes para analizar solo esos registros. Si no selecciona ninguno,
+                      el análisis se ejecuta sobre todo el listado filtrado.
                     </span>
                   </div>
                   <em>
@@ -1562,12 +1581,12 @@ export function GestionSisAcademicoView({
                     Seleccionar visibles
                   </button>
                   <button type="button" className="ghost-button" onClick={clearPeriodChangeStudentSelection} disabled={periodChangeSelectedCedulas.length === 0}>
-                    Limpiar seleccion
+                    Limpiar selección
                   </button>
                   <span>
                     {selectedPeriodChangeStudents.length > 0
                       ? `${selectedPeriodChangeStudents.length} estudiante(s) iran al analisis`
-                      : 'Sin seleccion manual'}
+                      : 'Sin selección manual'}
                   </span>
                 </div>
                 <div className="gestion-sis-period-change__student-grid">
@@ -1593,7 +1612,7 @@ export function GestionSisAcademicoView({
                           </label>
                           <span>{student.estado_nombre || student.estado_codigo || '-'}</span>
                           <small>
-                            {student.total_periodos_homo || 0} periodo(s) HOMO · {student.total_materias_homo || 0} materia(s)
+                            {student.total_periodos_homo || 0} período(s) HOMO · {student.total_materias_homo || 0} materia(s)
                           </small>
                           <small>
                             Fechas HOMO: {student.primera_fecha_homo || '-'} a {student.ultima_fecha_homo || '-'}
@@ -1602,7 +1621,7 @@ export function GestionSisAcademicoView({
                       )
                     })
                   ) : (
-                    <p className="gestion-sis-homo-bulk__empty">Selecciona un estado o ajusta la búsqueda para ver estudiantes.</p>
+                    <p className="gestion-sis-homo-bulk__empty">Seleccione un estado o ajuste la búsqueda para ver estudiantes.</p>
                   )}
                 </div>
               </div>
@@ -1612,7 +1631,7 @@ export function GestionSisAcademicoView({
                   {periodChangeLoading ? 'Actualizando...' : 'Actualizar estudiantes'}
                 </button>
                 <button type="button" className="ghost-button" onClick={() => void previewPeriodChange()} disabled={!periodChangeEstado || periodChangeLoading}>
-                  Analizar migracion
+                  Analizar migración
                 </button>
                 <button
                   type="button"
@@ -1634,27 +1653,27 @@ export function GestionSisAcademicoView({
                       </strong>
                       <small>
                         {periodChangeSelectedCedulas.length > 0
-                          ? `${periodChangeSelectedCedulas.length} cedula(s) seleccionada(s)`
+                          ? `${periodChangeSelectedCedulas.length} cédula(s) seleccionada(s)`
                           : periodChangePreview.summary?.student_filter
                             ? `Filtro: ${periodChangePreview.summary.student_filter}`
                             : 'Todo el estado seleccionado'}
                       </small>
                     </article>
                     <article>
-                      <span>Periodos HOMO</span>
+                      <span>Períodos HOMO</span>
                       <strong>{periodChangePreview.summary?.periodos_homo_origen || 0}</strong>
                       <small>Detectados por matrícula</small>
                     </article>
                     <article>
                       <span>Ruta regular</span>
-                      <strong>{periodChangePreview.summary?.periodos_regulares || periodChangePreview.target_periods?.length || 0} periodo(s)</strong>
+                      <strong>{periodChangePreview.summary?.periodos_regulares || periodChangePreview.target_periods?.length || 0} período(s)</strong>
                       <small>
                         {(periodChangePreview.target_periods || [periodChangePreview.target_period])
                           .filter(Boolean)
                           .map((period) => periodOptionLabel(period))
                           .join(' | ') || '-'}
                       </small>
-                      <small>Sugerida por fechas de homologacion</small>
+                      <small>Sugerida por fechas de homologación</small>
                     </article>
                     <article>
                       <span>Estudiantes</span>
@@ -1669,7 +1688,7 @@ export function GestionSisAcademicoView({
                       <strong>{periodChangePreview.summary?.duplicados_destino || 0}</strong>
                     </article>
                     <article>
-                      <span>Sin periodo</span>
+                      <span>Sin período</span>
                       <strong>{periodChangePreview.summary?.sin_periodo_destino || 0}</strong>
                     </article>
                   </div>
@@ -1702,7 +1721,7 @@ export function GestionSisAcademicoView({
                               </td>
                               <td>{item.source_periodo || item.source_codigo_periodo || '-'}</td>
                               <td>{item.target_periodo || item.target_codigo_periodo || '-'}</td>
-                              <td>{item.bloque_regular ? `Periodo ${item.bloque_regular}` : '-'}</td>
+                              <td>{item.bloque_regular ? `Período ${item.bloque_regular}` : '-'}</td>
                               <td>
                                 <strong>Final {gradeLabel(item.nota_migrada ?? item.promedio_final)}</strong>
                                 <small>
@@ -1721,7 +1740,7 @@ export function GestionSisAcademicoView({
                                       : item.accion === 'DUPLICADO_DESTINO'
                                         ? 'Ya existe'
                                         : item.accion === 'SIN_PERIODO_DESTINO'
-                                          ? 'Sin periodo'
+                                          ? 'Sin período'
                                         : item.accion || '-'}
                                 </span>
                               </td>
@@ -1751,7 +1770,7 @@ export function GestionSisAcademicoView({
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder={isEstadoInlineSection ? 'Nombre, correo, cedula o codigo' : 'Codigo, cedula, nombre o correo'}
+                    placeholder={isEstadoInlineSection ? 'Nombre, correo, cédula o código' : 'Código, cédula, nombre o correo'}
                   />
                 </label>
                 {isStudentEstadoSection ? (
@@ -1971,8 +1990,8 @@ export function GestionSisAcademicoView({
                     ? 'Cargando registro...'
                     : isStudentProfileSection && mode !== 'create'
                       ? studentProfileEditing
-                        ? 'Actualizacion de datos'
-                        : 'Consulta academica'
+                        ? 'Actualización de datos'
+                        : 'Consulta académica'
                       : selectedSection.table}
                 </span>
               </div>
@@ -2006,7 +2025,7 @@ export function GestionSisAcademicoView({
                 <div className="gestion-sis-observe-edit">
                   <div className="gestion-sis-form-helper">
                     <strong>Modificar estado del docente</strong>
-                    <span>Actualiza el estado y la descripción del usuario vinculado sin salir de esta subpantalla.</span>
+                    <span>Actualice el estado y la descripción del usuario vinculado sin salir de esta subpantalla.</span>
                   </div>
                   <div className="matricula-acad-form gestion-sis-edit-form">
                     <label>
@@ -2051,15 +2070,15 @@ export function GestionSisAcademicoView({
             ) : (
               <>
                 {isStudentProfileSection && mode !== 'create' && !studentProfileEditing ? (
-                  <section className="gestion-sis-student-summary" aria-label="Datos basicos del estudiante">
+                  <section className="gestion-sis-student-summary" aria-label="Datos básicos del estudiante">
                     <article>
                       <span>Nombre del estudiante</span>
                       <strong>{studentProfileName}</strong>
                     </article>
                     <article>
-                      <span>Numero de cedula</span>
+                      <span>Número de cédula</span>
                       <strong>{studentProfileDocument}</strong>
-                      <small>Documento protegido: se muestran solo los ultimos 4 digitos.</small>
+                      <small>Documento protegido: se muestran únicamente los últimos 4 dígitos.</small>
                     </article>
                   </section>
                 ) : (
@@ -2069,13 +2088,13 @@ export function GestionSisAcademicoView({
                         {mode === 'create'
                           ? 'Nuevo registro'
                           : isStudentProfileSection
-                            ? 'Actualizar informacion del estudiante'
+                            ? 'Actualizar información del estudiante'
                             : 'Edicion del registro'}
                       </strong>
                       <span>
                         {isStudentProfileSection && mode !== 'create'
                           ? 'Complete los campos necesarios y guarde para regresar a la ficha estudiantil.'
-                          : 'Completa los campos requeridos y guarda los cambios para actualizar la tabla.'}
+                          : 'Complete los campos requeridos y guarda los cambios para actualizar la tabla.'}
                       </span>
                     </div>
 
@@ -2139,7 +2158,7 @@ export function GestionSisAcademicoView({
                               }))
                             }
                           >
-                            <option value="true">Si</option>
+                            <option value="true">Sí</option>
                             <option value="false">No</option>
                           </select>
                         ) : (
@@ -2174,18 +2193,18 @@ export function GestionSisAcademicoView({
                   <section className="gestion-sis-student-history">
                     <div className="section-title">
                       <div>
-                        <span>Trayectoria academica</span>
-                        <h2>Periodos cursados y materias</h2>
+                        <span>Trayectoria académica</span>
+                        <h2>Períodos cursados y materias</h2>
                       </div>
-                      <span>{academicHistory.length} periodo(s)</span>
+                      <span>{academicHistory.length} período(s)</span>
                     </div>
 
                     {studentAcademicHistoryLoading ? (
-                      <p className="empty-block">Consultando matriculas y materias cursadas...</p>
+                      <p className="empty-block">Consultando matrículas y materias cursadas...</p>
                     ) : studentAcademicHistoryError ? (
                       <div className="status-message status-message--error">{studentAcademicHistoryError}</div>
                     ) : academicHistory.length === 0 ? (
-                      <p className="empty-block">No hay periodos ni materias registradas en CABECERA_MATRICULA y CARRERAXESTUD.</p>
+                      <p className="empty-block">No hay períodos ni materias registradas en CABECERA_MATRICULA y CARRERAXESTUD.</p>
                     ) : (
                       <div className="matricula-acad-history">
                         {academicHistory.map((period, index) => (
@@ -2206,7 +2225,7 @@ export function GestionSisAcademicoView({
                             </summary>
                             <div className="matricula-acad-history-meta">
                               <div>
-                                <span>Codigo de periodo</span>
+                                <span>Código de período</span>
                                 <strong>{period.codigo_periodo}</strong>
                               </div>
                               <div>
@@ -2214,7 +2233,7 @@ export function GestionSisAcademicoView({
                                 <strong>{valueOrDash(period.fecha_inicio)} a {valueOrDash(period.fecha_fin)}</strong>
                               </div>
                               <div>
-                                <span>Num. matricula</span>
+                                <span>Num. matrícula</span>
                                 <strong>{valueOrDash(period.num_matricula)}</strong>
                               </div>
                               <div>
@@ -2227,7 +2246,7 @@ export function GestionSisAcademicoView({
                                 <thead>
                                   <tr>
                                     <th>Nivel</th>
-                                    <th>Codigo</th>
+                                    <th>Código</th>
                                     <th>Materia cursada</th>
                                     <th>Paralelo</th>
                                     <th>Tipo</th>
@@ -2238,7 +2257,7 @@ export function GestionSisAcademicoView({
                                 <tbody>
                                   {(period.materias || []).length === 0 ? (
                                     <tr>
-                                      <td colSpan={7}>La matricula no tiene materias asociadas en CARRERAXESTUD.</td>
+                                      <td colSpan={7}>La matrícula no tiene materias asociadas en CARRERAXESTUD.</td>
                                     </tr>
                                   ) : (
                                     (period.materias || []).map((subject) => (

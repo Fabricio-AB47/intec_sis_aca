@@ -174,7 +174,7 @@ export function TeamsEnrollmentView({
   const toErrorMessage = useCallback((error: unknown): string => {
     if (error instanceof ApiError) return error.message
     if (error instanceof Error) return error.message
-    return 'No se pudo completar la operacion de matriculacion en Teams.'
+    return 'No se pudo completar la operación de matriculación en Teams.'
   }, [])
 
   const selectedTeamValue = useMemo(() => {
@@ -427,7 +427,7 @@ export function TeamsEnrollmentView({
   ) => {
     const activeTeamId = (options?.teamId ?? individualTeamId).trim()
     if (!activeTeamId) {
-      setIndividualError('Selecciona un curso antes de buscar el estudiante.')
+      setIndividualError('Seleccione un curso antes de buscar el estudiante.')
       setIndividualMessage('')
       setIndividualStudents([])
       return
@@ -438,7 +438,7 @@ export function TeamsEnrollmentView({
     const courseScope = options?.courseScope ?? individualCourseScope
 
     if (!codigoPeriodo) {
-      setIndividualError('Selecciona un periodo para buscar el estudiante.')
+      setIndividualError('Seleccione un período para buscar el estudiante.')
       setIndividualMessage('')
       setIndividualStudents([])
       return
@@ -465,7 +465,7 @@ export function TeamsEnrollmentView({
         payload.message ||
           (query
             ? `Se encontraron ${payload.total ?? 0} estudiante(s).`
-            : `Se cargaron ${payload.total ?? 0} estudiante(s) del periodo.`)
+            : `Se cargaron ${payload.total ?? 0} estudiante(s) del período.`)
       )
     } catch (error) {
       setIndividualStudents([])
@@ -535,14 +535,14 @@ export function TeamsEnrollmentView({
 
   const runIndividualEnrollmentAction = async (mode: 'preview' | 'execute') => {
     if (!individualTeamId.trim()) {
-      setIndividualError('Selecciona el equipo destino para validar la matricula.')
+      setIndividualError('Seleccione el equipo destino para validar la matrícula.')
       setIndividualMessage('')
       return
     }
 
     const payload = buildIndividualEnrollmentPayload()
     if (!payload) {
-      setIndividualError('Selecciona uno o mas estudiantes antes de validar.')
+      setIndividualError('Seleccione uno o mas estudiantes antes de validar.')
       setIndividualMessage('')
       return
     }
@@ -559,7 +559,7 @@ export function TeamsEnrollmentView({
       setIndividualResult(result)
       setIndividualMessage(
         result.message ||
-          (mode === 'preview' ? 'Validacion individual completada.' : 'Matriculacion individual ejecutada.')
+          (mode === 'preview' ? 'Validación individual completada.' : 'Matriculación individual ejecutada.')
       )
     } catch (error) {
       setIndividualResult(null)
@@ -578,7 +578,7 @@ export function TeamsEnrollmentView({
 
       const duplicateIndex = current.findIndex((item, index) => item === codigoPeriodo && index !== slotIndex)
       if (duplicateIndex >= 0) {
-        setFilterOptionsError('No puedes seleccionar el mismo periodo dos veces.')
+        setFilterOptionsError('No puedes seleccionar el mismo período dos veces.')
         return current
       }
 
@@ -614,7 +614,7 @@ export function TeamsEnrollmentView({
 
   const handleSearchGroups = async () => {
     if (selectedPeriods.length === 0) {
-      setGroupsError('Debes seleccionar al menos un periodo para buscar estudiantes y materias.')
+      setGroupsError('Debes seleccionar al menos un período para buscar estudiantes y materias.')
       setGroupsMessage('')
       setGroups([])
       setCheckedGroupKeys([])
@@ -794,9 +794,9 @@ export function TeamsEnrollmentView({
       <header className="student-topbar">
         <div>
           <p className="eyebrow">Microsoft Teams</p>
-          <h2>Matricula Teams</h2>
+          <h2>Matrícula Teams</h2>
           <p className="report-description">
-            Busca grupos, revisa estudiantes y ejecuta matriculaciones en Teams con la misma simetria visual del modulo academico.
+            Busque grupos, revise estudiantes y ejecute matriculaciones en Teams con la misma simetría visual del módulo académico.
           </p>
         </div>
 
@@ -804,7 +804,7 @@ export function TeamsEnrollmentView({
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Matricula Teams</span>
+              <span>Matrícula Teams</span>
             </div>
           </div>
         </div>
@@ -813,13 +813,13 @@ export function TeamsEnrollmentView({
       <section className="student-grid student-grid--content teams-page-grid">
         <article className="student-card student-card--wide teams-individual-entry-card">
           <div className="card-head">
-            <h3>Matricula individual</h3>
+            <h3>Matrícula individual</h3>
             <span>{catalogTeams.length} aulas</span>
           </div>
 
           <div className="teams-actions">
             <button type="button" onClick={openIndividualEnrollmentModal}>
-              Matricula individual
+              Matrícula individual
             </button>
           </div>
 
@@ -832,7 +832,7 @@ export function TeamsEnrollmentView({
         <div className="teams-modal-overlay">
           <article className="teams-modal teams-modal--individual">
             <div className="card-head">
-              <h3>Matricula individual</h3>
+              <h3>Matrícula individual</h3>
               <span>{individualSelectedTeamLabel}</span>
             </div>
 
@@ -854,7 +854,7 @@ export function TeamsEnrollmentView({
 
                 <div className="teams-selected-course">
                   <strong>{individualSelectedTeam?.displayName || 'Sin curso seleccionado'}</strong>
-                  <span>{individualSelectedTeam?.mail || individualSelectedTeam?.id || 'Selecciona un curso para continuar'}</span>
+                  <span>{individualSelectedTeam?.mail || individualSelectedTeam?.id || 'Seleccione un curso para continuar'}</span>
                   {individualCourseScope.materiaQuery || individualCourseScope.paralelo ? (
                     <small>
                       Materia: {individualCourseScope.materiaQuery || 'N/D'} | Paralelo: {individualCourseScope.paralelo || 'N/D'}
@@ -892,7 +892,7 @@ export function TeamsEnrollmentView({
                       )
                     })
                   ) : (
-                    <p className="empty-block">Carga el catalogo o ajusta el filtro para seleccionar el curso.</p>
+                    <p className="empty-block">Cargue el catálogo o ajuste el filtro para seleccionar el curso.</p>
                   )}
                 </div>
               </section>
@@ -900,17 +900,17 @@ export function TeamsEnrollmentView({
               <section className={individualTeamId ? 'teams-modal-info' : 'teams-modal-info teams-modal-info--disabled'}>
                 <div className="card-head">
                   <h3>Buscar estudiante</h3>
-                  <span>{individualTeamId ? `${individualStudents.length} resultado(s)` : 'Selecciona un curso'}</span>
+                  <span>{individualTeamId ? `${individualStudents.length} resultado(s)` : 'Seleccione un curso'}</span>
                 </div>
 
                 {!individualTeamId ? (
-                  <p className="empty-block">Selecciona un curso en la columna izquierda para activar la busqueda del estudiante.</p>
+                  <p className="empty-block">Seleccione un curso en la columna izquierda para activar la búsqueda del estudiante.</p>
                 ) : null}
 
                 <div className="teams-search-layout">
                   <div className="teams-search-row teams-search-row--double">
                     <label className="teams-field-card teams-field-card--limit">
-                      <span>Periodo</span>
+                      <span>Período</span>
                       <select
                         value={individualPeriod}
                         disabled={!individualTeamId}
@@ -929,10 +929,10 @@ export function TeamsEnrollmentView({
                           }
                         }}
                       >
-                        <option value="">Selecciona un periodo</option>
+                        <option value="">Seleccione un período</option>
                         {availablePeriods.map((periodo) => (
                           <option key={periodo.codigo_periodo} value={periodo.codigo_periodo}>
-                            {periodOptionLabel(periodo)} | Codigo {periodo.codigo_periodo}
+                            {periodOptionLabel(periodo)} | Código {periodo.codigo_periodo}
                           </option>
                         ))}
                       </select>
@@ -950,7 +950,7 @@ export function TeamsEnrollmentView({
                             void searchIndividualStudent()
                           }
                         }}
-                        placeholder="Filtra por codigo, nombre o correo"
+                        placeholder="Filtra por código, nombre o correo"
                       />
                     </label>
                   </div>
@@ -997,7 +997,7 @@ export function TeamsEnrollmentView({
                       onClick={clearSelectedIndividualStudents}
                       disabled={selectedIndividualStudentCodes.length === 0}
                     >
-                      Limpiar seleccion
+                      Limpiar selección
                     </button>
                   </div>
                 </div>
@@ -1015,7 +1015,7 @@ export function TeamsEnrollmentView({
                     <thead>
                       <tr>
                         <th>Seleccionar</th>
-                        <th>Codigo</th>
+                        <th>Código</th>
                         <th>Nombre</th>
                         <th>Correo INTEC</th>
                         <th>Materias</th>
@@ -1046,8 +1046,8 @@ export function TeamsEnrollmentView({
                         <tr>
                           <td colSpan={5}>
                             {individualPeriod
-                              ? 'No hay estudiantes cargados para el periodo seleccionado.'
-                              : 'Selecciona un periodo para cargar sus estudiantes.'}
+                              ? 'No hay estudiantes cargados para el período seleccionado.'
+                              : 'Seleccione un período para cargar sus estudiantes.'}
                           </td>
                         </tr>
                       )}
@@ -1100,45 +1100,45 @@ export function TeamsEnrollmentView({
       <section className="student-grid student-grid--content">
         <article className="student-card student-card--wide periodo-panel">
           <div className="card-head">
-            <h3>Buscar grupos academicos</h3>
-            <span>Periodo, carrera, paralelo y materia</span>
+            <h3>Buscar grupos académicos</h3>
+            <span>Período, carrera, paralelo y materia</span>
           </div>
 
           <p className="empty-block">
-            El agrupamiento usa paralelo, Carrera, Periodo Academico y materia
-            desde la malla academica por carrera para identificar materias equivalentes y sugerir el nombre del aula.
+            El agrupamiento usa paralelo, Carrera, Período Académico y materia
+            desde la malla académica por carrera para identificar materias equivalentes y sugerir el nombre del aula.
           </p>
 
           <div className="teams-search-layout">
             <div className="teams-search-row teams-search-row--single">
               <div className="teams-field teams-field-card">
-                <span>Periodos desde base de datos (max. {maxPeriods})</span>
+                <span>Períodos desde base de datos (max. {maxPeriods})</span>
                 {availablePeriods.length > 0 ? (
                   <div className="teams-period-combo-grid">
                     <label className="teams-period-select">
-                      <span>Periodo 1</span>
+                      <span>Período 1</span>
                       <select
                         value={selectedPeriods[0] ?? ''}
                         onChange={(event) => handleSelectedPeriodChange(0, event.target.value)}
                       >
-                        <option value="">Selecciona un periodo</option>
+                        <option value="">Seleccione un período</option>
                         {availablePeriods.map((periodo) => (
                           <option key={periodo.codigo_periodo} value={periodo.codigo_periodo}>
-                            {periodOptionLabel(periodo)} | Codigo {periodo.codigo_periodo}
+                            {periodOptionLabel(periodo)} | Código {periodo.codigo_periodo}
                           </option>
                         ))}
                       </select>
                     </label>
 
                     <label className="teams-period-select">
-                      <span>Periodo 2</span>
+                      <span>Período 2</span>
                       <select
                         value={selectedPeriods[1] ?? ''}
                         disabled={!selectedPeriods[0]}
                         onChange={(event) => handleSelectedPeriodChange(1, event.target.value)}
                       >
                         <option value="">
-                          {selectedPeriods[0] ? 'Selecciona un segundo periodo' : 'Selecciona el primer periodo'}
+                          {selectedPeriods[0] ? 'Seleccione un segundo período' : 'Seleccione el primer período'}
                         </option>
                         {availablePeriods
                           .filter(
@@ -1148,17 +1148,17 @@ export function TeamsEnrollmentView({
                           )
                           .map((periodo) => (
                             <option key={periodo.codigo_periodo} value={periodo.codigo_periodo}>
-                              {periodOptionLabel(periodo)} | Codigo {periodo.codigo_periodo}
+                              {periodOptionLabel(periodo)} | Código {periodo.codigo_periodo}
                             </option>
                           ))}
                       </select>
                     </label>
                   </div>
                 ) : (
-                  <p className="empty-block">No hay periodos disponibles en la base de datos.</p>
+                  <p className="empty-block">No hay períodos disponibles en la base de datos.</p>
                 )}
                 <small className="teams-field-note">
-                  Usa uno o dos periodos para cruzar materias y matriculas equivalentes en Teams.
+                  Use uno o dos períodos para cruzar materias y matrículas equivalentes en Teams.
                 </small>
                 {selectedPeriodSummary.length > 0 ? (
                   <div className="teams-inline-pills">
@@ -1177,7 +1177,7 @@ export function TeamsEnrollmentView({
                 <span>Paralelo desde base de datos</span>
                 <div className="teams-multi-select teams-multi-select--compact">
                   {selectedPeriods.length === 0 ? (
-                    <p className="empty-block">Selecciona uno o dos periodos para cargar los paralelos.</p>
+                    <p className="empty-block">Seleccione uno o dos períodos para cargar los paralelos.</p>
                   ) : availableParallels.length > 0 ? (
                     availableParallels.map((paralelo) => {
                       const checked = selectedParallelSet.has(paralelo.paralelo)
@@ -1203,7 +1203,7 @@ export function TeamsEnrollmentView({
                 <small className="teams-field-note">
                   {selectedPeriods.length > 0
                     ? `${availableParallels.length} paralelo(s) disponibles. Puedes seleccionar 1, 2 o mas paralelos.`
-                    : 'Selecciona uno o dos periodos para cargar los paralelos.'}
+                    : 'Seleccione uno o dos períodos para cargar los paralelos.'}
                 </small>
                 <div className="teams-actions">
                   <button type="button" onClick={clearSelectedParallels} disabled={selectedParallels.length === 0}>
@@ -1228,11 +1228,11 @@ export function TeamsEnrollmentView({
                 <input
                   value={materiaOptionQuery}
                   onChange={(event) => setMateriaOptionQuery(event.target.value)}
-                  placeholder="Filtra materias por nombre, codigo o cod_materia"
+                  placeholder="Filtra materias por nombre, código o cod_materia"
                 />
                 <div className="teams-multi-select">
                   {selectedPeriods.length === 0 ? (
-                    <p className="empty-block">Selecciona uno o dos periodos para cargar materias desde la base de datos.</p>
+                    <p className="empty-block">Seleccione uno o dos períodos para cargar materias desde la base de datos.</p>
                   ) : filteredMateriaOptions.length > 0 ? (
                     filteredMateriaOptions.map((materia) => {
                       const checked = selectedMateriaSet.has(materia.materia_base_key)
@@ -1277,20 +1277,20 @@ export function TeamsEnrollmentView({
 
             <div className="teams-search-row teams-search-row--double">
               <label className="teams-field-card teams-field-card--limit">
-                <span>Ano periodo</span>
+                <span>Ano período</span>
                 <input value={searchAnio} onChange={(event) => setSearchAnio(event.target.value)} placeholder="Ej: 2026" />
                 <small className="teams-field-note">Opcional. Restringe la consulta a un ano lectivo puntual.</small>
               </label>
 
               <label className="teams-field-card teams-field-card--limit">
-                <span>Limite</span>
+                <span>Límite</span>
                 <input
                   value={searchLimit}
                   onChange={(event) => setSearchLimit(event.target.value)}
                   placeholder="100"
                   inputMode="numeric"
                 />
-                <small className="teams-field-note">Define el maximo de grupos que se muestran en la tabla de resultados.</small>
+                <small className="teams-field-note">Defina el máximo de grupos que se muestran en la tabla de resultados.</small>
               </label>
             </div>
           </div>
@@ -1301,7 +1301,7 @@ export function TeamsEnrollmentView({
             </button>
           </div>
 
-          {filterOptionsLoading ? <p className="teams-message">Cargando periodos, paralelos y materias desde la base de datos...</p> : null}
+          {filterOptionsLoading ? <p className="teams-message">Cargando períodos, paralelos y materias desde la base de datos...</p> : null}
           {filterOptionsError ? <p className="teams-error">{filterOptionsError}</p> : null}
           {groupsMessage ? <p className="teams-message">{groupsMessage}</p> : null}
           {groupsError ? <p className="teams-error">{groupsError}</p> : null}
@@ -1334,7 +1334,7 @@ export function TeamsEnrollmentView({
                   <th>Materia</th>
                   <th>Carrera</th>
                   <th>Paralelo</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Estudiantes</th>
                   <th>Con correo</th>
                 </tr>
@@ -1371,7 +1371,7 @@ export function TeamsEnrollmentView({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={7}>No hay grupos cargados. Ejecuta la busqueda con tus filtros.</td>
+                    <td colSpan={7}>No hay grupos cargados. Ejecute la búsqueda con sus filtros.</td>
                   </tr>
                 )}
               </tbody>
@@ -1405,12 +1405,12 @@ export function TeamsEnrollmentView({
                   Seleccionar todos
                 </button>
                 <button type="button" onClick={clearSelectedStudents} disabled={selectedStudentCodes.length === 0}>
-                  Limpiar seleccion
+                  Limpiar selección
                 </button>
               </div>
             </>
           ) : (
-            <p className="empty-block">Selecciona un grupo para ver y marcar estudiantes.</p>
+            <p className="empty-block">Seleccione un grupo para ver y marcar estudiantes.</p>
           )}
 
           {studentsLoading ? <p className="teams-message">Cargando estudiantes del grupo...</p> : null}
@@ -1421,11 +1421,11 @@ export function TeamsEnrollmentView({
               <thead>
                 <tr>
                   <th>Sel.</th>
-                  <th>Codigo</th>
+                  <th>Código</th>
                   <th>Nombre</th>
                   <th>Correo INTEC</th>
                   <th>Tipo</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Materia</th>
                 </tr>
               </thead>
@@ -1462,21 +1462,21 @@ export function TeamsEnrollmentView({
       <section className="student-grid student-grid--content">
         <article className="student-card student-card--wide periodo-panel">
           <div className="card-head">
-            <h3>Configuracion final</h3>
-            <span>Creacion de aula y matriculacion manual</span>
+            <h3>Configuración final</h3>
+            <span>Creación de aula y matriculación manual</span>
           </div>
 
           <div className="teams-final-grid">
             <section className="teams-final-panel">
               <div className="card-head card-head--inner">
                 <h3>Crear aula y asignar docentes</h3>
-                <span>Operacion compuesta</span>
+                <span>Operación compuesta</span>
               </div>
 
               <p className="empty-block">
                 El nombre del aula puede completarse desde la sugerencia generada por materia, carrera,
-                paralelo y periodo. El equipo se crea como clase y, si ya marcaste estudiantes, se
-                matriculan automaticamente al terminar la creacion.
+                paralelo y período. El equipo se crea como clase y, si ya marcaste estudiantes, se
+                matriculan automáticamente al terminar la creación.
               </p>
 
               <div className="teams-controls">
@@ -1506,7 +1506,7 @@ export function TeamsEnrollmentView({
                     placeholder="Ej: nombre.apellido@intec.edu.ec, nombre1.apellido1@intec.edu.ec"
                   />
                   <small className="teams-field-note">
-                    Ingresa correo(s) con una separacion por coma. Los docentes se crean como propietarios del Team, aplica tambien para seguimiento
+                    Ingrese los correos separados por comas. Los docentes se crean como propietarios del equipo; esto también aplica para el seguimiento
                     con rol de propietarios.
                   </small>
                 </label>

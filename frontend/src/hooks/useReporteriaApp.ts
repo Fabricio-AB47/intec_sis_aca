@@ -41,6 +41,7 @@ import type {
   MatriculaTipo,
   TeamCreateAndEnrollPayload,
   MatriculaYearSummaryItem,
+  MoodleSection,
   Page,
   PreinscriptionStage,
   PortalStudentSection,
@@ -215,6 +216,12 @@ function enrollmentMode(value: string | null): AcademicEnrollmentMode {
     : 'individual'
 }
 
+function moodleSection(value: string | null): MoodleSection {
+  return ['alerts', 'status', 'users', 'courses', 'resources', 'grades'].includes(value || '')
+    ? value as MoodleSection
+    : 'status'
+}
+
 function requestedPermissionFromUrl(
   url: URL,
   permissions: readonly ScreenPermissionCode[],
@@ -227,6 +234,8 @@ function requestedPermissionFromUrl(
     requestedPermission = `${requestedPage}/${preinscriptionStage(url.searchParams.get('preinscripcion_stage'))}`
   } else if (requestedPage === 'matricula-acad') {
     requestedPermission = `${requestedPage}/${enrollmentMode(url.searchParams.get('matricula_mode'))}`
+  } else if (requestedPage === 'moodle') {
+    requestedPermission = `${requestedPage}/${moodleSection(url.searchParams.get('moodle_section'))}`
   } else if (requestedPage === 'gestion-sisacademico') {
     const section = url.searchParams.get('sis_section') || ''
     if (section === 'correos') {
@@ -269,6 +278,7 @@ export function useReporteriaApp() {
   const [legacyReportKey, setLegacyReportKey] = useState('')
   const [portalStudentSection, setPortalStudentSection] = useState<PortalStudentSection>('dashboard')
   const [preinscriptionActiveStage, setPreinscriptionActiveStage] = useState<PreinscriptionStage>('registro')
+  const [activeMoodleSection, setActiveMoodleSection] = useState<MoodleSection>('status')
   const [titulosRegistradosTipo, setTitulosRegistradosTipo] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [dashboardMatriculaLoading, setDashboardMatriculaLoading] = useState(false)
@@ -331,6 +341,9 @@ export function useReporteriaApp() {
     if (page === 'matricula-acad' && child) {
       setMatriculaAcadMode(enrollmentMode(child))
     }
+    if (page === 'moodle') {
+      setActiveMoodleSection(moodleSection(child))
+    }
     if (page === 'titulos-registrados' && child) {
       setTitulosRegistradosTipo(child === 'institucional' ? 'intec' : child)
     }
@@ -348,7 +361,7 @@ export function useReporteriaApp() {
         ? null
         : firstPermissionForPage(screenAccessPages, root)
     if (!resolvedPermission) {
-      setScreenAccessError('La pantalla solicitada no esta asignada al perfil autenticado.')
+      setScreenAccessError('La pantalla solicitada no está asignada al perfil autenticado.')
       return false
     }
     setScreenAccessError('')
@@ -363,6 +376,7 @@ export function useReporteriaApp() {
     setLegacyReportKey('')
     setPortalStudentSection('dashboard')
     setPreinscriptionActiveStage('registro')
+    setActiveMoodleSection('status')
     setTitulosRegistradosTipo('')
     setCatalogLoading(false)
     setDashboardMatriculaLoading(false)
@@ -429,11 +443,11 @@ export function useReporteriaApp() {
     (apiError: unknown, fallbackMessage: string, options: ApiErrorOptions = {}) => {
       if (apiError instanceof ApiError && apiError.status === 401) {
         if (options.expireOnUnauthorized === false) {
-          return apiError.message || 'Credenciales invalidas. Verifica usuario y contrasena.'
+          return apiError.message || 'Credenciales inválidas. Verifique el usuario y la contraseña.'
         }
 
-        resetAfterLogout('Sesion expirada. Vuelve a iniciar sesion.')
-        return 'Sesion expirada. Vuelve a iniciar sesion.'
+        resetAfterLogout('Sesión expirada. Vuelva a iniciar sesión.')
+        return 'Sesión expirada. Vuelva a iniciar sesión.'
       }
 
       return apiError instanceof Error ? apiError.message : fallbackMessage
@@ -447,7 +461,7 @@ export function useReporteriaApp() {
         await logoutRequest()
       } catch (apiError) {
         if (!(apiError instanceof ApiError && apiError.status === 401)) {
-          setError(handleApiError(apiError, 'No se pudo cerrar la sesion actual'))
+          setError(handleApiError(apiError, 'No se pudo cerrar la sesión actual.'))
         }
       } finally {
         resetAfterLogout(logoutMessage)
@@ -476,7 +490,7 @@ export function useReporteriaApp() {
         }
       } catch (apiError) {
         if (cancelled) return
-        setError(handleApiError(apiError, 'No se pudo validar la sesion actual'))
+        setError(handleApiError(apiError, 'No se pudo validar la sesión actual.'))
       } finally {
         if (!cancelled) {
           setBootstrapping(false)
@@ -523,7 +537,7 @@ export function useReporteriaApp() {
               ? apiError.message
               : apiError instanceof Error
                 ? apiError.message
-                : 'No se pudo cargar la navegacion asignada al tipo de usuario.',
+                : 'No se pudo cargar la navegación asignada al tipo de usuario.',
           )
         }
       } finally {
@@ -563,7 +577,7 @@ export function useReporteriaApp() {
     if (url.searchParams.has('open_page')) {
       for (const parameter of [
         'open_page', 'sis_section', 'preinscripcion_stage', 'matricula_mode',
-        'report_key', 'title_type',
+        'moodle_section', 'report_key', 'title_type',
       ]) {
         url.searchParams.delete(parameter)
       }
@@ -572,6 +586,7 @@ export function useReporteriaApp() {
 
     const currentPermission = screenPermissionForView(activePage, {
       matriculaAcadMode,
+      moodleSection: activeMoodleSection,
       preinscriptionStage: preinscriptionActiveStage,
       sisAcademicoSection: sisAcademicoSectionKey,
       reportKey: legacyReportKey,
@@ -592,6 +607,7 @@ export function useReporteriaApp() {
     }
   }, [
     activePage,
+    activeMoodleSection,
     applyScreenPermission,
     legacyReportKey,
     matriculaAcadMode,
@@ -616,7 +632,7 @@ export function useReporteriaApp() {
   }, [activePage, session])
 
   useInactivityLogout(Boolean(session), INACTIVITY_TIMEOUT_MS, () => {
-    void performLogout('Sesion cerrada por inactividad. Vuelve a iniciar sesion.')
+    void performLogout('Sesión cerrada por inactividad. Vuelva a iniciar sesión.')
   })
 
   const onSubmit = async (event: SyntheticEvent<HTMLFormElement>) => {
@@ -624,7 +640,7 @@ export function useReporteriaApp() {
 
     const normalizedLogin = login.trim()
     if (!normalizedLogin || !password) {
-      setError('Ingresa tu usuario o correo y contrasena.')
+      setError('Ingrese su usuario o correo y contraseña.')
       return
     }
 
@@ -728,7 +744,7 @@ export function useReporteriaApp() {
       setMatriculaEstado('')
       setMatriculaStudents([])
     } catch (apiError) {
-      setMatriculaPeriodSummaryError(handleApiError(apiError, 'Error inesperado consultando resumen por periodo'))
+      setMatriculaPeriodSummaryError(handleApiError(apiError, 'Error inesperado al consultar el resumen por período.'))
       setMatriculaPeriodSummary([])
       setMatriculaYearSummary([])
     } finally {
@@ -757,7 +773,7 @@ export function useReporteriaApp() {
       setMatriculaMovementSummary(movementPayload.items || [])
       setMatriculaMovementYearSummary(movementPayload.years || [])
     } catch (apiError) {
-      setMatriculaMovementSummaryError(handleApiError(apiError, 'Error inesperado consultando movimiento de matricula'))
+      setMatriculaMovementSummaryError(handleApiError(apiError, 'Error inesperado al consultar el movimiento de matrícula.'))
       setMatriculaMovementSummary([])
       setMatriculaMovementYearSummary([])
     } finally {
@@ -848,7 +864,7 @@ export function useReporteriaApp() {
       const payload = await fetchMatriculaList('ALL', '', 10000, anio, 'PRIMERA')
       setMatriculaStudents(payload.items || [])
     } catch (apiError) {
-      setMatriculaListError(handleApiError(apiError, 'Error inesperado consultando estudiantes por periodo academico'))
+      setMatriculaListError(handleApiError(apiError, 'Error inesperado al consultar estudiantes por período académico.'))
       setMatriculaStudents([])
     } finally {
       setMatriculaListLoading(false)
@@ -864,7 +880,7 @@ export function useReporteriaApp() {
       const payload = await fetchMatriculaList('ALL', '', 10000, anio, 'PRIMERA')
       setMatriculaStudents(payload.items || [])
     } catch (apiError) {
-      setMatriculaListError(handleApiError(apiError, 'Error inesperado consultando estudiantes por periodo matriculados'))
+      setMatriculaListError(handleApiError(apiError, 'Error inesperado al consultar estudiantes matriculados por período.'))
       setMatriculaStudents([])
     } finally {
       setMatriculaListLoading(false)
@@ -1015,7 +1031,7 @@ export function useReporteriaApp() {
       setCatalogTeams(teams)
       setSelectedTeamIndex(teams.length > 0 ? 0 : null)
       setTeamsTeamId(teams[0]?.id || '')
-      setCatalogMessage('Catalogo de aulas obtenido correctamente.')
+      setCatalogMessage('Catálogo de aulas obtenido correctamente.')
     } catch (apiError) {
       setCatalogError(handleApiError(apiError, 'Error inesperado consultando Teams'))
       setCatalogTeams([])
@@ -1127,6 +1143,17 @@ export function useReporteriaApp() {
     activateAssignedScreen('formato-informe-docente')
   }
   const openTeamsPage = () => activateAssignedScreen('teams')
+  const openHistoricoIntegracionesPage = () => activateAssignedScreen('historico-integraciones')
+  const openInformeCumplimientoPage = () => activateAssignedScreen('informe-cumplimiento')
+  const openMoodlePage = (section: MoodleSection = 'status') => {
+    const permission = `moodle/${section}` as ScreenPermissionCode
+    if (normalizedRoleKey(session?.rol) === 'ADMINISTRADOR') {
+      setScreenAccessError('')
+      applyScreenPermission(permission)
+      return
+    }
+    activateAssignedScreen(permission)
+  }
   const openTeamsMatriculaPage = () => {
     if (!activateAssignedScreen('teams-matricula')) return
     if (catalogTeams.length === 0 && !catalogLoading) {
@@ -1275,6 +1302,7 @@ export function useReporteriaApp() {
     legacyReportKey,
     portalStudentSection,
     preinscriptionActiveStage,
+    activeMoodleSection,
     titulosRegistradosTipo,
     displayName,
     dashboardMatriculaLoading,
@@ -1346,6 +1374,9 @@ export function useReporteriaApp() {
     openTeacherEvaluationReportsPage,
     openTeacherComplianceFormatPage,
     openTeamsPage,
+    openHistoricoIntegracionesPage,
+    openInformeCumplimientoPage,
+    openMoodlePage,
     openTeamsMatriculaPage,
     openMatriculaPage,
     openMatriculaAcadPage,

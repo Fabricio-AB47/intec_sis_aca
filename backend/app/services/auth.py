@@ -167,7 +167,7 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
 
     active_rows = [row for row in authenticated_rows if _is_active(row.estado)]
     if not active_rows:
-        raise PermissionError("El usuario no esta activo")
+        raise PermissionError('El usuario no está activo')
 
     typed_rows = [candidate for candidate in active_rows if _clean(candidate.tp_us)]
     if not typed_rows:
@@ -178,11 +178,11 @@ def _authenticate_administrative_user(login_or_email: str, password: str | None)
         None,
     )
     if row is None:
-        raise PermissionError("Tipo de usuario administrativo no valido")
+        raise PermissionError('Tipo de usuario administrativo no válido')
 
     role = _normalize_role(row.tp_us)
     if not role:
-        raise PermissionError("Tipo de usuario administrativo no valido")
+        raise PermissionError('Tipo de usuario administrativo no válido')
 
     if role not in _ALLOWED_ROLES:
         raise PermissionError("Usuario sin acceso a este portal")
@@ -255,7 +255,7 @@ def _authenticate_student(login_or_email: str, password: str | None) -> SessionU
     ]
     if not active_rows:
         raise PermissionError(
-            "El acceso estudiantil no esta habilitado para educacion continua, estado D o estados sin clasificar"
+            'El acceso estudiantil no está habilitado para educación continua, estado D o estados sin clasificar'
         )
     row = active_rows[0]
 
@@ -331,7 +331,7 @@ def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionU
 
     active_rows = [row for row in authenticated_rows if _is_active(row.Estado)]
     if not active_rows:
-        raise PermissionError("El usuario docente no esta activo")
+        raise PermissionError('El usuario docente no está activo')
     row = active_rows[0]
 
     return SessionUser(
@@ -349,7 +349,7 @@ def _authenticate_teacher(login_or_email: str, password: str | None) -> SessionU
 def authenticate_user(login: str, password: str) -> dict[str, Any]:
     login_or_email = str(login or "").strip()
     if not login_or_email:
-        raise ValueError("Credenciales invalidas")
+        raise ValueError('Credenciales inválidas')
 
     profiles: list[SessionProfile] = []
     permission_errors: list[PermissionError] = []
@@ -410,4 +410,4 @@ def authenticate_user(login: str, password: str) -> dict[str, Any]:
     if permission_errors:
         raise permission_errors[0]
 
-    raise ValueError("Credenciales invalidas")
+    raise ValueError('Credenciales inválidas')

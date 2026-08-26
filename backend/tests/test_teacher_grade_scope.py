@@ -119,6 +119,38 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
                 b"contenido invalido",
             )
 
+    @patch("app.routers.portal_academico._assert_pdf_signature_field")
+    def test_archive_includes_invoice_xml_and_ride(self, _assert_signature: MagicMock):
+        xml_content = b'<?xml version="1.0" encoding="UTF-8"?><factura />'
+        ride_content = b"%PDF-1.4\nride"
+
+        archive_bytes = _signed_teacher_documents_archive(
+            b"%PDF-1.4\ninforme",
+            b"%PDF-1.4\nnotas",
+            b"%PDF-1.4\ncontrato",
+            [
+                {
+                    "filename": "factura-electronica.xml",
+                    "original_name": "factura-001.xml",
+                    "content": xml_content,
+                    "content_type": "application/xml",
+                    "document_type": "FACTURA_XML",
+                },
+                {
+                    "filename": "ride-factura.pdf",
+                    "original_name": "ride-001.pdf",
+                    "content": ride_content,
+                    "content_type": "application/pdf",
+                    "document_type": "RIDE",
+                },
+            ],
+        )
+
+        with ZipFile(BytesIO(archive_bytes)) as archive:
+            self.assertEqual(archive.read("factura-electronica.xml"), xml_content)
+            self.assertEqual(archive.read("ride-factura.pdf"), ride_content)
+            self.assertEqual(len(archive.namelist()), 5)
+
     def test_onedrive_folder_is_scoped_under_docentes(self):
         path = _teacher_signed_documents_folder(
             {
@@ -147,30 +179,29 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
     @patch("app.routers.portal_academico.delete_graph_document_item")
     @patch("app.routers.portal_academico.upload_graph_document_bytes")
     @patch("app.routers.portal_academico.ensure_graph_document_folder")
-    def test_onedrive_storage_uploads_all_four_documents(
+    def test_onedrive_storage_uploads_three_signed_documents(
         self,
         ensure_folder: MagicMock,
         upload: MagicMock,
         delete_item: MagicMock,
     ) -> None:
         ensure_folder.return_value = {"id": "folder-1"}
-        upload.side_effect = [{"id": f"item-{index}"} for index in range(1, 5)]
+        upload.side_effect = [{"id": f"item-{index}"} for index in range(1, 4)]
 
         stored = _store_signed_teacher_documents_onedrive(
             identity={"codigo_doc": "31", "cedula": "1724036536", "nombre": "DOCENTE"},
             compliance_pdf=b"informe",
             grades_pdf=b"notas",
             contract_pdf=b"contrato",
-            archive_bytes=b"zip",
             subject_code="VGA-90",
             subject_name="Materia",
             period_codes=["1060"],
         )
 
-        self.assertEqual(len(stored["items"]), 4)
-        self.assertEqual(upload.call_count, 4)
+        self.assertEqual(len(stored["items"]), 3)
+        self.assertEqual(upload.call_count, 3)
         self.assertTrue(upload.call_args_list[0].args[0].endswith("/informe-cumplimiento-firmado.pdf"))
-        self.assertTrue(upload.call_args_list[3].args[0].endswith("/documentos-docente-firmados.zip"))
+        self.assertTrue(upload.call_args_list[2].args[0].endswith("/contrato-docente-firmado.pdf"))
         delete_item.assert_not_called()
 
     @patch("app.routers.portal_academico.delete_graph_document_item")
@@ -191,13 +222,87 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
                 compliance_pdf=b"informe",
                 grades_pdf=b"notas",
                 contract_pdf=b"contrato",
-                archive_bytes=b"zip",
             )
 
         self.assertEqual(
             delete_item.call_args_list,
             [unittest.mock.call("item-1"), unittest.mock.call("folder-1")],
         )
+
+    @patch("app.routers.portal_academico.delete_graph_document_item")
+    @patch("app.routers.portal_academico.upload_graph_document_bytes")
+    @patch("app.routers.portal_academico.ensure_graph_document_folder")
+    def test_onedrive_storage_uploads_invoice_backups_with_signed_documents(
+        self,
+        ensure_folder: MagicMock,
+        upload: MagicMock,
+        delete_item: MagicMock,
+    ) -> None:
+        ensure_folder.return_value = {"id": "folder-1"}
+        upload.side_effect = [{"id": f"item-{index}"} for index in range(1, 6)]
+
+        stored = _store_signed_teacher_documents_onedrive(
+            identity={"codigo_doc": "31", "cedula": "1724036536", "nombre": "DOCENTE"},
+            compliance_pdf=b"informe",
+            grades_pdf=b"notas",
+            contract_pdf=b"contrato",
+            invoice_documents=[
+                {
+                    "filename": "factura-electronica.xml",
+                    "original_name": "factura-001.xml",
+                    "content": b"<factura />",
+                    "content_type": "application/xml",
+                    "document_type": "FACTURA_XML",
+                },
+                {
+                    "filename": "ride-factura.pdf",
+                    "original_name": "ride-001.pdf",
+                    "content": b"%PDF-1.4\nride",
+                    "content_type": "application/pdf",
+                    "document_type": "RIDE",
+                },
+            ],
+        )
+
+        self.assertEqual(len(stored["items"]), 5)
+        self.assertEqual(upload.call_count, 5)
+        self.assertTrue(upload.call_args_list[3].args[0].endswith("/factura-electronica.xml"))
+        self.assertTrue(upload.call_args_list[4].args[0].endswith("/ride-factura.pdf"))
+        self.assertEqual(stored["items"][3]["tipo_documento"], "FACTURA_XML")
+        self.assertEqual(stored["items"][4]["tipo_documento"], "RIDE")
+        self.assertTrue(stored["same_folder"])
+        uploaded_folders = {
+            str(call.args[0]).rsplit("/", 1)[0]
+            for call in upload.call_args_list
+        }
+        self.assertEqual(uploaded_folders, {stored["folder_path"]})
+        self.assertTrue(
+            all(item["folder_path"] == stored["folder_path"] for item in stored["items"])
+        )
+        delete_item.assert_not_called()
+
+    @patch("app.routers.portal_academico.ensure_graph_document_folder")
+    def test_onedrive_storage_rejects_incomplete_invoice_backups_before_creating_folder(
+        self,
+        ensure_folder: MagicMock,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "exactamente una factura XML y un RIDE PDF"):
+            _store_signed_teacher_documents_onedrive(
+                identity={"codigo_doc": "31", "cedula": "1724036536", "nombre": "DOCENTE"},
+                compliance_pdf=b"informe",
+                grades_pdf=b"notas",
+                contract_pdf=b"contrato",
+                invoice_documents=[
+                    {
+                        "filename": "factura-electronica.xml",
+                        "content": b"<factura />",
+                        "content_type": "application/xml",
+                        "document_type": "FACTURA_XML",
+                    }
+                ],
+            )
+
+        ensure_folder.assert_not_called()
 
 
 class TeacherContractAnalysisTests(unittest.TestCase):
@@ -312,7 +417,7 @@ class TeacherGradeScopeTests(unittest.TestCase):
             )
 
         self.assertEqual(context.exception.status_code, 400)
-        self.assertIn("periodo diferente", context.exception.detail)
+        self.assertIn("período diferente", context.exception.detail)
 
     def test_admin_cannot_mix_regular_and_homologation_periods(self):
         regular = _course("10", "1029", 9)
@@ -645,7 +750,7 @@ class TeacherGradeScopeTests(unittest.TestCase):
             )
 
         self.assertEqual(context.exception.status_code, 400)
-        self.assertIn("un solo periodo", context.exception.detail)
+        self.assertIn("un único período", context.exception.detail)
         teacher_courses_mock.assert_not_called()
 
     @patch("app.routers.portal_academico.teacher_course_students")

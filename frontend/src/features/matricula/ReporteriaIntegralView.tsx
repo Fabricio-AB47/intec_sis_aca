@@ -79,7 +79,7 @@ const defaultReports: LegacyReportDefinition[] = [
   {
     key: 'notas_carrera_materia',
     title: 'Calificaciones de estudiantes',
-    category: 'Academico',
+    category: 'Académico',
     description: 'El padrón activo se carga completo; filtre por nombre y revise materias, calificaciones y docente responsable.',
     source_tables: ['CARRERAXESTUD', 'DATOS_ESTUD', 'CARRERAS', 'PENSUM', 'PERIODO', 'CARRERAXDOCENTE', 'DATOSDOCENTE'],
     filters: ['buscar'],
@@ -178,7 +178,7 @@ function defaultEstadoForReport(reportKey: LegacyReportKey): string {
   return reportKey === 'graduados_2025' ? 'G' : ''
 }
 
-const ageRangeOrder = ['Menor de 18', '18 a 29', '30 a 40', '41 a 50', '51 a 60', '61 o mas', 'Sin fecha']
+const ageRangeOrder = ['Menor de 18', '18 a 29', '30 a 40', '41 a 50', '51 a 60', '61 o más', 'Sin fecha']
 
 type AgeRangeSummary = {
   range: string
@@ -194,7 +194,7 @@ function formatNumber(value?: number): string {
 
 function formatCell(value: LegacyReportRow[string]): string {
   if (value === null || value === undefined || value === '') return '-'
-  if (typeof value === 'boolean') return value ? 'Si' : 'No'
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No'
   if (typeof value === 'number') return new Intl.NumberFormat('es-EC', { maximumFractionDigits: 2 }).format(value)
   return String(value)
 }
@@ -612,7 +612,7 @@ export function ReporteriaIntegralView({
 
   function validateFiltersForReport(nextReportKey: LegacyReportKey) {
     if (nextReportKey === 'estud_per_c_m' && periodos.length === 0) {
-      return 'Selecciona un periodo para consultar estudiantes, carreras y materias matriculadas.'
+      return 'Seleccione un período para consultar estudiantes, carreras y materias matriculadas.'
     }
     return ''
   }
@@ -833,7 +833,7 @@ export function ReporteriaIntegralView({
         setYearOptions(catalogYears.length ? [{ value: '', label: 'Todos' }, ...catalogYears] : fallbackYearOptions)
       } catch (apiError) {
         if (!cancelled) {
-          setError(apiError instanceof Error ? apiError.message : 'Error cargando catalogo integral')
+          setError(apiError instanceof Error ? apiError.message : 'Error cargando catálogo integral')
         }
       } finally {
         if (!cancelled) {
@@ -959,7 +959,7 @@ export function ReporteriaIntegralView({
         <article className="student-card student-card--wide reporteria-integral-panel">
           <div className="card-head">
             <h3>Consulta y exportacion</h3>
-            <span>{catalogLoading ? 'Cargando catalogo...' : selectedReport?.category || 'Reporte'}</span>
+            <span>{catalogLoading ? 'Cargando catálogo...' : selectedReport?.category || 'Reporte'}</span>
           </div>
 
           {individualMode && !directReportMode ? (
@@ -1036,7 +1036,7 @@ export function ReporteriaIntegralView({
             ) : null}
             {enabledFilters.has('periodo') ? (
               <label>
-                <span>Periodo</span>
+                <span>Período</span>
                 {isGradesReport && periodOptions.length > 0 ? (
                   <select
                     value={periodos[0] || ''}
@@ -1047,7 +1047,7 @@ export function ReporteriaIntegralView({
                       setGradeSubjectModalOpen(false)
                     }}
                   >
-                    <option value="">Selecciona un período</option>
+                    <option value="">Seleccione un período</option>
                     {periodOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
@@ -1055,7 +1055,7 @@ export function ReporteriaIntegralView({
                 ) : periodOptions.length > 0 ? (
                   <div className="report-period-picker">
                     <div className="report-period-toolbar">
-                      <strong>{periodos.length ? `${periodos.length} seleccionado(s)` : isGradesReport ? 'Selecciona un período' : 'Todos los períodos'}</strong>
+                      <strong>{periodos.length ? `${periodos.length} seleccionado(s)` : isGradesReport ? 'Seleccione un período' : 'Todos los períodos'}</strong>
                       {!isGradesReport ? (
                         <button type="button" onClick={selectAllPeriods}>
                           Seleccionar todos
@@ -1102,7 +1102,7 @@ export function ReporteriaIntegralView({
                     ))}
                   </select>
                 ) : (
-                  <input value={carrera} onChange={(event) => setCarrera(event.target.value)} placeholder="Codigo carrera" />
+                  <input value={carrera} onChange={(event) => setCarrera(event.target.value)} placeholder="Código carrera" />
                 )}
               </label>
             ) : null}
@@ -1364,7 +1364,7 @@ export function ReporteriaIntegralView({
                 ) : (
                   <tr>
                     <td colSpan={Math.max(columns.length + 1, 2)}>
-                      {loading ? 'Consultando informacion...' : 'Sin datos para los filtros seleccionados.'}
+                      {loading ? 'Consultando información...' : 'Sin datos para los filtros seleccionados.'}
                     </td>
                   </tr>
                 )}
@@ -1595,7 +1595,7 @@ export function ReporteriaIntegralView({
                     ) : null}
                   </>
                 ) : (
-                  <p>Selecciona una materia para ver sus calificaciones.</p>
+                  <p>Seleccione una materia para ver sus calificaciones.</p>
                 )}
               </section>
             </div>

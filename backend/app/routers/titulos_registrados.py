@@ -490,7 +490,7 @@ def create_title_folder(
     title_type = _model_key(payload.tipo)
     folder_name = _safe_folder_name(payload.nombre)
     if not folder_name:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ingresa el nombre de la carpeta")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese el nombre de la carpeta')
     folder_path = f"{_ONEDRIVE_ROOT_FOLDER}/{_ONEDRIVE_TYPE_FOLDERS[title_type]}/{folder_name}"
     try:
         folder = _ensure_onedrive_folder(folder_path)
@@ -577,9 +577,9 @@ async def upload_registered_title(
     title_type = _model_key(tipo)
     clean_model = _clean(modelo)
     if not clean_model:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ingresa el modelo del título")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese el modelo del título')
     if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona un archivo")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione un archivo')
     extension = Path(file.filename).suffix.lower()
     if extension not in _ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato no permitido para el título")
@@ -660,9 +660,9 @@ async def upload_senescyt_titles_bulk(
 ) -> dict[str, Any]:
     clean_model = _clean(modelo)
     if not clean_model:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona o crea la carpeta destino SENESCYT")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione o crea la carpeta destino SENESCYT')
     if not files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecciona al menos un PDF SENESCYT")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione al menos un PDF SENESCYT')
 
     one_drive_folder = "/".join(
         [

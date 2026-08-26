@@ -148,7 +148,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
 
   async function saveTeacherState() {
     if (!selectedTeacher) {
-      setError('Selecciona un docente antes de actualizar el estado.')
+      setError('Seleccione un docente antes de actualizar el estado.')
       return
     }
     if (!selectedTeacher.usuario_validado) {
@@ -156,7 +156,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
       return
     }
     if (!targetState) {
-      setError('Selecciona el estado que se aplicara al docente.')
+      setError('Seleccione el estado que se aplicara al docente.')
       return
     }
     if (!VALID_TEACHER_STATES.has(targetState)) {
@@ -166,12 +166,12 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
 
     const teacherCode = Number(selectedTeacher.codigo_doc)
     if (!Number.isFinite(teacherCode)) {
-      setError('El codigo del docente no es valido.')
+      setError('El código del docente no es válido.')
       return
     }
 
     const confirmed = globalThis.confirm(
-      `Actualizar estado de ${teacherLabel(selectedTeacher)} a ${selectedStateName || targetState}?`,
+      `¿Desea actualizar el estado de ${teacherLabel(selectedTeacher)} a ${selectedStateName || targetState}?`,
     )
     if (!confirmed) return
 
@@ -215,14 +215,14 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
           <p className="eyebrow">Estado docente</p>
           <h2>{displayName}</h2>
           <p className="report-description">
-            Consulta docentes desde DATOSDOCENTE, valida el usuario vinculado y actualiza solo entre Activo e Inactivo.
+            Consulte docentes desde DATOSDOCENTE, valide el usuario vinculado y actualice únicamente entre Activo e Inactivo.
           </p>
         </div>
         <div className="student-topbar__right">
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Actualizacion de estado</span>
+              <span>Actualización de estado</span>
             </div>
           </div>
         </div>
@@ -242,7 +242,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
         <article className="student-card student-card--stat">
           <p>Sin usuario</p>
             <h2>{summary.sinUsuario}</h2>
-          <small>Fuera de actualizacion</small>
+          <small>Fuera de actualización</small>
         </article>
         <article className="student-card student-card--stat">
           <p>Estado filtrado</p>
@@ -263,7 +263,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
               <span>Buscar docente</span>
               <input
                 value={query}
-                placeholder="Cedula, login, correo o nombre"
+                placeholder="Cédula, login, correo o nombre"
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
@@ -312,10 +312,10 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
                 <tr>
                   <th>Sel.</th>
                   <th>Docente</th>
-                  <th>Cedula</th>
+                  <th>Cédula</th>
                   <th>Usuario</th>
                   <th>Estado</th>
-                  <th>Info academica</th>
+                  <th>Info académica</th>
                 </tr>
               </thead>
               <tbody>
@@ -364,7 +364,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
 
         <aside className="student-card estado-docente-detail-card">
           <div className="card-head">
-            <h3>Analisis</h3>
+            <h3>Análisis</h3>
             <span>{selectedTeacher ? selectedTeacher.codigo_doc : 'Sin docente'}</span>
           </div>
 
@@ -377,18 +377,18 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
               </div>
 
               <div className="estado-docente-detail-list">
-                <p><span>Cedula</span><strong>{valueOrDash(selectedTeacher.cedula)}</strong></p>
+                <p><span>Cédula</span><strong>{valueOrDash(selectedTeacher.cedula)}</strong></p>
                 <p><span>Login</span><strong>{valueOrDash(selectedTeacher.login)}</strong></p>
                 <p><span>Correo</span><strong>{valueOrDash(selectedTeacher.correo || selectedTeacher.correo_personal)}</strong></p>
-                <p><span>Telefono</span><strong>{valueOrDash(selectedTeacher.telefono || selectedTeacher.movil)}</strong></p>
+                <p><span>Teléfono</span><strong>{valueOrDash(selectedTeacher.telefono || selectedTeacher.movil)}</strong></p>
                 <p><span>Tipo docente</span><strong>{valueOrDash(selectedTeacher.tipo_docente)}</strong></p>
-                <p><span>Unidad academica</span><strong>{valueOrDash(selectedTeacher.unidad_academica)}</strong></p>
-                <p><span>Nivel formacion</span><strong>{valueOrDash(selectedTeacher.nivel_formacion)}</strong></p>
+                <p><span>Unidad académica</span><strong>{valueOrDash(selectedTeacher.unidad_academica)}</strong></p>
+                <p><span>Nivel formación</span><strong>{valueOrDash(selectedTeacher.nivel_formacion)}</strong></p>
                 <p><span>Tercer nivel</span><strong>{valueOrDash(selectedTeacher.tercer_nivel)}</strong></p>
                 <p><span>Cuarto nivel</span><strong>{valueOrDash(selectedTeacher.cuarto_nivel)}</strong></p>
                 <p><span>Fecha ingreso IES</span><strong>{valueOrDash(selectedTeacher.fecha_ingreso_ies)}</strong></p>
-                <p><span>Matriculas docente</span><strong>{selectedTeacher.total_matriculas_docente ?? 0}</strong></p>
-                <p><span>Ultimo periodo</span><strong>{valueOrDash(selectedTeacher.ultimo_periodo_docente)}</strong></p>
+                <p><span>Matrículas docente</span><strong>{selectedTeacher.total_matriculas_docente ?? 0}</strong></p>
+                <p><span>Último período</span><strong>{valueOrDash(selectedTeacher.ultimo_periodo_docente)}</strong></p>
               </div>
 
               <label className="estado-docente-update-field">
@@ -416,7 +416,7 @@ export function EstadoDocenteView({ displayName }: Readonly<EstadoDocenteViewPro
               ) : null}
             </>
           ) : (
-            <p className="form-success">Selecciona un docente de la lista para ver sus datos y aplicar el cambio de estado.</p>
+            <p className="form-success">Seleccione un docente de la lista para ver sus datos y aplicar el cambio de estado.</p>
           )}
         </aside>
       </section>

@@ -1,6 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import type { AcademicEnrollmentMode, Page, PortalStudentSection, PreinscriptionStage, ScreenPermissionCode } from '../types/app'
+import type {
+  AcademicEnrollmentMode,
+  MoodleSection,
+  Page,
+  PortalStudentSection,
+  PreinscriptionStage,
+  ScreenPermissionCode,
+} from '../types/app'
+import { MoodleGradeAlertIndicator } from '../features/moodle/MoodleGradeAlertIndicator'
 
 type StudentLayoutProps = {
   activePage: Page
@@ -9,6 +17,7 @@ type StudentLayoutProps = {
   activePortalStudentSection?: PortalStudentSection
   activePreinscriptionStage?: PreinscriptionStage
   activeMatriculaAcadMode?: AcademicEnrollmentMode
+  activeMoodleSection?: MoodleSection
   role?: string
   screenAccessPages?: ScreenPermissionCode[] | null
   displayName?: string
@@ -24,6 +33,9 @@ type StudentLayoutProps = {
   onOpenPortalDocenteContratos: () => void
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
+  onOpenHistoricoIntegraciones: () => void
+  onOpenInformeCumplimiento: () => void
+  onOpenMoodle: (section?: MoodleSection) => void
   onOpenMatricula: () => void
   onOpenMatriculaAcad: (mode?: AcademicEnrollmentMode) => void
   onOpenMatriculaDocente: () => void
@@ -74,6 +86,7 @@ type NavItem = {
   reportKey?: string
   portalSection?: PortalStudentSection
   preinscriptionStage?: PreinscriptionStage
+  moodleSection?: MoodleSection
   category?: string
   action: () => void
 }
@@ -86,20 +99,20 @@ type NavGroup = {
 }
 
 const roleBrandMap: Record<string, { initials: string; title: string }> = {
-  '1': { initials: 'AD', title: 'Administracion' },
-  ADMINISTRADOR: { initials: 'AD', title: 'Administracion' },
-  ADMINISTRACION: { initials: 'AD', title: 'Administracion' },
-  ADMINISTRACIÓN: { initials: 'AD', title: 'Administracion' },
-  ADMIN: { initials: 'AD', title: 'Administracion' },
+  '1': { initials: 'AD', title: 'Administración' },
+  ADMINISTRADOR: { initials: 'AD', title: 'Administración' },
+  ADMINISTRACION: { initials: 'AD', title: 'Administración' },
+  ADMINISTRACIÓN: { initials: 'AD', title: 'Administración' },
+  ADMIN: { initials: 'AD', title: 'Administración' },
   FINANCIERO: { initials: 'FI', title: 'Financiero' },
   BIENESTAR: { initials: 'BI', title: 'Bienestar' },
   ACADEMICO: { initials: 'AC', title: 'Académico' },
   ADMISIONES: { initials: 'AM', title: 'Admisiones' },
   RECTOR: { initials: 'RC', title: 'Rectoria' },
   VICERRECTOR: { initials: 'VR', title: 'Vicerrectoria' },
-  SOPORTE: { initials: 'TI', title: 'Tecnologia' },
+  SOPORTE: { initials: 'TI', title: 'Tecnología' },
   INVITADO_SOP: { initials: 'IS', title: 'Invitado soporte' },
-  SECRETARIA: { initials: 'SE', title: 'Secretaria' },
+  SECRETARIA: { initials: 'SE', title: 'Secretaría' },
   DOCENTE: { initials: 'DC', title: 'Docente' },
   ESTUDIANTE: { initials: 'ES', title: 'Estudiante' },
   TECNOLOGIA: { initials: 'TI', title: 'Tecnologia' },
@@ -145,6 +158,7 @@ const academicPages = new Set<Page>([
   'evaluacion-docente-avance',
   'evaluacion-docente-reportes',
   'formato-informe-docente',
+  'informe-cumplimiento',
   'practicas-institucionales',
   'ingles',
   'expedientes-documentales',
@@ -175,13 +189,14 @@ const academicSisSections = new Set([
   'practicas',
   'practicas_vinculacion',
   'empresas',
+  'certificados_generados',
 ])
 const financialSisSections = new Set(['cabecera_matricula', 'pagos_matricula', 'datos_factura'])
 const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente', 'genero_docentes'])
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
 const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales'])
+const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -200,10 +215,10 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   const isAdministrator = isAdministratorRole(normalizedRole)
 
   if (item.page && administratorOnlyPages.has(item.page) && !isAdministrator) return false
-  if (item.page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'].includes(normalizedRole)) return false
+  if (item.page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA', 'FINANCIERO'].includes(normalizedRole)) return false
 
   if (normalizedRole === 'ESTUDIANTE') return Boolean(item.page && studentPortalPages.has(item.page)) || item.page === 'ingles' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
-  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional' || item.moodleSection === 'alerts'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
     if (item.page === 'gestion-sisacademico' && item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
@@ -214,6 +229,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   }
   if (dashboardOnlyRoles.has(normalizedRole)) return item.page === 'dashboard'
   if (academicRoles.has(normalizedRole)) {
+    if (item.moodleSection === 'alerts') return true
     if (!item.page || !academicPages.has(item.page)) return false
     if (item.page === 'gestion-sisacademico' && item.sectionKey && !academicSisSections.has(item.sectionKey)) return false
     if (item.reportKey && !academicReportKeys.has(item.reportKey)) return false
@@ -232,6 +248,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
 function navItemAccessCode(item: NavItem): ScreenPermissionCode {
   if (item.accessCode) return item.accessCode
   if (!item.page) return ''
+  if (item.moodleSection) return `${item.page}/${item.moodleSection}`
   if (item.sectionKey) return `${item.page}/${item.sectionKey}`
   if (item.reportKey) return `${item.page}/${item.reportKey}`
   if (item.preinscriptionStage) return `${item.page}/${item.preinscriptionStage}`
@@ -317,46 +334,23 @@ function initialsFromTitle(title: string) {
   return initials || 'IN'
 }
 
+function compareNavigationLabels(left: string, right: string) {
+  return left.localeCompare(right, 'es-EC', {
+    sensitivity: 'base',
+    numeric: true,
+  })
+}
+
 function sortNavItems(items: NavItem[]) {
   return [...items].sort((left, right) => {
-    const categoryCompare = (left.category || '').localeCompare(right.category || '', 'es', { sensitivity: 'base' })
+    const categoryCompare = compareNavigationLabels(left.category || '', right.category || '')
     if (categoryCompare !== 0) return categoryCompare
-    return left.label.localeCompare(right.label, 'es', { sensitivity: 'base' })
+    return compareNavigationLabels(left.label, right.label)
   })
 }
 
 function sortNavGroups(groups: NavGroup[]) {
-  const order: Record<string, number> = {
-    inicio: 0,
-    'flujo-academico': 5,
-    'actualizacion-estados': 10,
-    administracion: 20,
-    desempeno: 25,
-    'admision-matriculas': 30,
-    matriculacion: 31,
-    becas: 32,
-    migracion: 35,
-    carnetizacion: 50,
-    certificados: 60,
-    'datos-senecyt': 70,
-    'portal-estudiante': 80,
-    idiomas: 85,
-    'expedientes-documentales': 87,
-    'portal-docente': 90,
-    integraciones: 100,
-    'herramientas-asignables': 105,
-    catalogos: 110,
-    reporteria: 120,
-    'reportes-rh': 121,
-    vinculacion: 130,
-  }
-
-  return [...groups].sort((left, right) => {
-    const leftOrder = order[left.key] ?? 999
-    const rightOrder = order[right.key] ?? 999
-    if (leftOrder !== rightOrder) return leftOrder - rightOrder
-    return left.title.localeCompare(right.title, 'es', { sensitivity: 'base' })
-  })
+  return [...groups].sort((left, right) => compareNavigationLabels(left.title, right.title))
 }
 
 type GroupIconName =
@@ -397,7 +391,9 @@ function groupIconName(groupKey: string): GroupIconName {
     reporteria: 'report',
     calificaciones: 'academic',
     'datos-senecyt': 'report',
+    auditoria: 'report',
     integraciones: 'integration',
+    moodle: 'integration',
     'admision-integraciones': 'integration',
     'admision-control': 'matricula',
   }
@@ -543,6 +539,7 @@ export function StudentLayout({
   activePortalStudentSection = 'dashboard',
   activePreinscriptionStage = 'registro',
   activeMatriculaAcadMode = 'individual',
+  activeMoodleSection = 'status',
   role = '',
   screenAccessPages = null,
   displayName = '',
@@ -558,6 +555,9 @@ export function StudentLayout({
   onOpenPortalDocenteContratos,
   onOpenTeams,
   onOpenTeamsMatricula,
+  onOpenHistoricoIntegraciones,
+  onOpenInformeCumplimiento,
+  onOpenMoodle,
   onOpenMatricula,
   onOpenMatriculaAcad,
   onOpenMatriculaDocente,
@@ -628,7 +628,7 @@ export function StudentLayout({
 
   const preinscriptionFlowItems: NavItem[] = [
     {
-      label: 'Inscripcion',
+      label: 'Inscripción',
       description: 'Registrar nuevo aspirante.',
       page: 'preinscripcion',
       preinscriptionStage: 'registro',
@@ -676,10 +676,23 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('seguimiento'),
     },
   ]
+  const auditMenuGroup: NavGroup = {
+    key: 'auditoria',
+    title: 'Auditoría',
+    summary: 'Trazabilidad de cambios y documentos',
+    items: [
+      {
+        label: 'Movimientos',
+        description: 'Consultar inserciones, actualizaciones, eliminaciones e informes docentes.',
+        page: 'historico-integraciones',
+        action: onOpenHistoricoIntegraciones,
+      },
+    ],
+  }
   const updatesMenuGroup: NavGroup = {
     key: 'actualizacion-estados',
     title: 'Actualización',
-    summary: 'Datos, correo y estados',
+    summary: 'Datos, correo, estados y grado',
     items: [
       {
         label: 'Actualización de datos',
@@ -706,6 +719,12 @@ export function StudentLayout({
         page: 'gestion-sisacademico',
         sectionKey: 'actualizacion_estudiantes',
         action: () => onOpenGestionSisAcademico('actualizacion_estudiantes'),
+      },
+      {
+        label: 'Fecha de grado',
+        description: 'Actualizar fecha de grado, emisión SENESCYT y código de refrendación.',
+        page: 'fecha-grado',
+        action: onOpenFechaGrado,
       },
     ],
   }
@@ -762,6 +781,38 @@ export function StudentLayout({
         page: 'preinscripcion',
         preinscriptionStage: 'becados',
         action: () => onOpenPreinscripcion('becados'),
+      },
+    ],
+  }
+  const certificateMenuGroup: NavGroup = {
+    key: 'certificados',
+    title: 'Certificados',
+    summary: 'Generación, historial y archivos',
+    items: [
+      {
+        label: 'Matrícula y promoción por período',
+        description: 'Seleccionar un período y generar ambos tipos de certificado desde las matrículas registradas.',
+        page: 'certificados',
+        action: onOpenCertificados,
+      },
+      {
+        label: 'Historial de certificados',
+        description: 'Consultar los certificados generados automáticamente y su estado.',
+        page: 'gestion-sisacademico',
+        sectionKey: 'certificados_generados',
+        action: () => onOpenGestionSisAcademico('certificados_generados'),
+      },
+      {
+        label: 'Certificados desde Excel',
+        description: 'Generar certificados de matrícula desde una plantilla Excel.',
+        page: 'matricula-excel-certificados',
+        action: onOpenMatriculaExcelCertificados,
+      },
+      {
+        label: 'Renombrar certificados',
+        description: 'Leer la cédula en cada PDF y renombrarlo con los datos del estudiante.',
+        page: 'renombrar-certificados',
+        action: onOpenCertificateRenamer,
       },
     ],
   }
@@ -838,14 +889,7 @@ export function StudentLayout({
       action: onOpenPracticasInstitucionales,
     },
     {
-      label: '7. Certificados y grado',
-      description: 'Emitir certificados, revisar fecha de grado y respaldos documentales.',
-      page: 'certificados',
-      category: 'Flujo académico',
-      action: onOpenCertificados,
-    },
-    {
-      label: '8. Titulación',
+      label: '7. Titulación',
       description: 'Verificar requisitos, definir modalidad, responsables, acta y registro final.',
       page: 'titulacion',
       category: 'Flujo académico',
@@ -870,13 +914,13 @@ export function StudentLayout({
     },
     {
       key: 'admision-matriculas',
-      title: 'Admision y matriculas',
-      summary: 'Aspirantes, matricula y pagos',
+      title: 'Admisión y matrículas',
+      summary: 'Aspirantes, matrícula y pagos',
       items: [
         ...preinscriptionFlowItems,
         {
           label: 'Aspirantes y asesores',
-          description: 'Gestion directa de inscripciones.',
+          description: 'Gestión directa de inscripciones.',
           category: 'Consulta directa',
           page: 'gestion-sisacademico',
           sectionKey: 'preinscripciones',
@@ -884,7 +928,7 @@ export function StudentLayout({
         },
         {
           label: 'Datos de factura',
-          description: 'Datos tributarios vinculados a la inscripcion y matricula.',
+          description: 'Datos tributarios vinculados a la inscripción y matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'datos_factura',
           action: () => onOpenGestionSisAcademico('datos_factura'),
@@ -897,8 +941,8 @@ export function StudentLayout({
           action: () => onOpenMatriculaAcad('individual'),
         },
         {
-          label: 'Cabecera matricula y pagos',
-          description: 'Valores, documentos, jornada y control de matricula.',
+          label: 'Cabecera de matrícula y pagos',
+          description: 'Valores, documentos, jornada y control de matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'cabecera_matricula',
           action: () => onOpenGestionSisAcademico('cabecera_matricula'),
@@ -948,71 +992,27 @@ export function StudentLayout({
     ...(isAdministratorRole(normalizedRole) ? [scholarshipMenuGroup] : []),
     {
       key: 'migracion',
-      title: 'Migracion',
-      summary: 'Cambio de periodo H a R',
+      title: 'Migración',
+      summary: 'Cambio de período H a R',
       items: [
         {
-          label: 'Migracion H a R',
-          description: 'Migrar matriculas de homologacion hacia periodo regular.',
+          label: 'Migración H a R',
+          description: 'Migrar matrículas de homologación hacia un período regular.',
           page: 'gestion-sisacademico',
           sectionKey: 'cambio_periodo_hr',
           action: () => onOpenGestionSisAcademico('cambio_periodo_hr'),
         },
       ],
     },
-    {
-      key: 'certificados',
-      title: 'Certificados',
-      summary: 'Promocion y matricula',
-      items: [
-        {
-          label: 'Certificados',
-          description: 'Generar y revisar certificados institucionales.',
-          page: 'certificados',
-          action: onOpenCertificados,
-        },
-        {
-          label: 'Fecha de grado',
-          description: 'Registrar fecha de grado por periodo y carrera.',
-          page: 'fecha-grado',
-          action: onOpenFechaGrado,
-        },
-        {
-          label: 'Matrícula en Excel',
-          description: 'Generar certificados de matrícula desde plantilla Excel.',
-          page: 'matricula-excel-certificados',
-          action: onOpenMatriculaExcelCertificados,
-        },
-        {
-          label: 'Renombrar certificados',
-          description: 'Leer cedula en PDF y renombrar por estudiante.',
-          page: 'renombrar-certificados',
-          action: onOpenCertificateRenamer,
-        },
-        {
-          label: 'Historial de certificados',
-          description: 'Certificados generados en SisAcademicoV1 y su estado.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'certificados_generados',
-          action: () => onOpenGestionSisAcademico('certificados_generados'),
-        },
-        {
-          label: 'Credenciales de curso',
-          description: 'Credenciales temporales, Graph y envio por correo.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'credenciales_curso',
-          action: () => onOpenGestionSisAcademico('credenciales_curso'),
-        },
-      ],
-    },
+    certificateMenuGroup,
     {
       key: 'educacion-continua',
-      title: 'Educacion continua',
+      title: 'Educación continua',
       summary: 'Cursos, cortes y participantes',
       items: [
         {
           label: 'Cursos',
-          description: 'Cursos de educacion continua conservados del sistema anterior.',
+          description: 'Cursos de educación continua conservados del sistema anterior.',
           page: 'gestion-sisacademico',
           sectionKey: 'cursos_edu_continua',
           action: () => onOpenGestionSisAcademico('cursos_edu_continua'),
@@ -1079,7 +1079,7 @@ export function StudentLayout({
       items: [
         {
           label: 'Reportes SENECYT',
-          description: 'Genera Excel por carrera y faltantes para estudiantes y docentes.',
+          description: 'Genere Excel por carrera y faltantes para estudiantes y docentes.',
           page: 'senescyt-estudiantes',
           action: onOpenSenescytEstudiantes,
         },
@@ -1088,11 +1088,11 @@ export function StudentLayout({
     {
       key: 'portal-estudiante',
       title: 'Estudiante',
-      summary: 'Ficha, matricula, notas, correos y seguimiento',
+      summary: 'Ficha, matrícula, notas, correos y seguimiento',
       items: [
         {
           label: 'Ficha del estudiante',
-          description: 'Listado y ficha academica del estudiante.',
+          description: 'Listado y ficha académica del estudiante.',
           page: 'gestion-sisacademico',
           sectionKey: 'estudiantes',
           action: () => onOpenGestionSisAcademico('estudiantes'),
@@ -1112,29 +1112,29 @@ export function StudentLayout({
           action: () => onOpenGestionSisAcademico('matricula_materias'),
         },
         {
-          label: 'Notas por carrera y periodo',
-          description: 'Reporte filtrado por carrera y periodo.',
+          label: 'Notas por carrera y período',
+          description: 'Reporte filtrado por carrera y período.',
           page: 'reportes-individuales',
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
         },
         {
-          label: 'Evaluacion docente',
-          description: 'Cuestionario por materia, periodo y docente asignado.',
+          label: 'Evaluación docente',
+          description: 'Cuestionario por materia, período y docente asignado.',
           page: 'evaluacion-docente',
           action: onOpenTeacherEvaluation,
         },
         {
-          label: 'Seguimiento academico',
-          description: 'Observaciones y acompanamiento por materia.',
+          label: 'Seguimiento académico',
+          description: 'Observaciones y acompañamiento por materia.',
           page: 'gestion-sisacademico',
           sectionKey: 'seguimiento',
           action: () => onOpenGestionSisAcademico('seguimiento'),
         },
-        { label: 'Actualizar datos', description: 'Actualizacion de datos personales de estudiantes y docentes.', page: 'actualizar-datos-estudiante', action: onOpenActualizarDatosEstudiante },
+        { label: 'Actualizar datos', description: 'Actualización de datos personales de estudiantes y docentes.', page: 'actualizar-datos-estudiante', action: onOpenActualizarDatosEstudiante },
         {
-          label: 'Actualizacion estado estudiante',
-          description: 'Actualiza el estado academico usando el catalogo ESTADO.',
+          label: 'Actualización del estado del estudiante',
+          description: 'Actualice el estado académico mediante el catálogo ESTADO.',
           page: 'gestion-sisacademico',
           sectionKey: 'actualizacion_estudiantes',
           action: () => onOpenGestionSisAcademico('actualizacion_estudiantes'),
@@ -1153,24 +1153,24 @@ export function StudentLayout({
           sectionKey: 'docentes',
           action: () => onOpenGestionSisAcademico('docentes'),
         },
-        { label: 'Matriculacion docente', description: 'Proceso de matriculacion/asignacion docente.', page: 'matricula-docente', action: onOpenMatriculaDocente },
+        { label: 'Matriculación docente', description: 'Proceso de matriculación/asignación docente.', page: 'matricula-docente', action: onOpenMatriculaDocente },
         {
           label: 'Materias asignadas',
-          description: 'Relacion docente, materia, periodo, paralelo y jornada.',
+          description: 'Relación entre docente, materia, período, paralelo y jornada.',
           page: 'gestion-sisacademico',
           sectionKey: 'docente_materias',
           action: () => onOpenGestionSisAcademico('docente_materias'),
         },
         {
-          label: 'Actualizacion estado docente',
-          description: 'Valida DATOSDOCENTE y USUARIOS para activar o inactivar docentes.',
+          label: 'Actualización del estado del docente',
+          description: 'Valide DATOSDOCENTE y USUARIOS para activar o inactivar docentes.',
           page: 'gestion-sisacademico',
           sectionKey: 'actualizacion_est',
           action: () => onOpenGestionSisAcademico('actualizacion_est'),
         },
         {
           label: 'Control de cuestionarios',
-          description: 'Numero de preguntas, intentos y tiempo por materia.',
+          description: 'Número de preguntas, intentos y tiempo por materia.',
           page: 'gestion-sisacademico',
           sectionKey: 'numero_preguntas',
           action: () => onOpenGestionSisAcademico('numero_preguntas'),
@@ -1183,44 +1183,44 @@ export function StudentLayout({
           action: () => onOpenGestionSisAcademico('cuestionarios'),
         },
         {
-          label: 'Preguntas de evaluacion',
-          description: 'Banco de preguntas para evaluacion, pares y autoevaluacion.',
+          label: 'Preguntas de evaluación',
+          description: 'Banco de preguntas para evaluación, pares y autoevaluación.',
           page: 'gestion-sisacademico',
           sectionKey: 'preguntas_evaluacion',
           action: () => onOpenGestionSisAcademico('preguntas_evaluacion'),
         },
         {
           label: 'Planes, cuestionarios y foros',
-          description: 'Recursos, enlaces y fechas por materia y periodo.',
+          description: 'Recursos, enlaces y fechas por materia y período.',
           page: 'gestion-sisacademico',
           sectionKey: 'planes_foros',
           action: () => onOpenGestionSisAcademico('planes_foros'),
         },
-        { label: 'Estado docente', description: 'Revision y control del estado docente.', page: 'estado-docente', action: onOpenEstadoDocente },
+        { label: 'Estado docente', description: 'Revisión y control del estado docente.', page: 'estado-docente', action: onOpenEstadoDocente },
         {
-          label: 'Evaluacion docente',
-          description: 'Resultados y reportes de evaluacion docente.',
+          label: 'Evaluación docente',
+          description: 'Resultados y reportes de evaluación docente.',
           page: 'reportes-individuales',
           reportKey: 'evaluacion_docente',
           action: () => onOpenReportesIndividuales('evaluacion_docente'),
         },
         {
-          label: 'Resultados de evaluacion',
-          description: 'Registro directo de respuestas y puntajes por periodo.',
+          label: 'Resultados de evaluación',
+          description: 'Registro directo de respuestas y puntajes por período.',
           page: 'gestion-sisacademico',
           sectionKey: 'evaluacion_resultados',
           action: () => onOpenGestionSisAcademico('evaluacion_resultados'),
         },
         {
-          label: 'Resultados de autoevaluacion',
-          description: 'Puntajes y comentarios de autoevaluacion docente.',
+          label: 'Resultados de autoevaluación',
+          description: 'Puntajes y comentarios de autoevaluación docente.',
           page: 'gestion-sisacademico',
           sectionKey: 'autoevaluacion_resultados',
           action: () => onOpenGestionSisAcademico('autoevaluacion_resultados'),
         },
         {
-          label: 'Apertura de autoevaluacion',
-          description: 'Fechas de habilitacion para autoevaluacion docente.',
+          label: 'Apertura de autoevaluación',
+          description: 'Fechas de habilitación para autoevaluación docente.',
           page: 'gestion-sisacademico',
           sectionKey: 'fechas_autoevaluacion',
           action: () => onOpenGestionSisAcademico('fechas_autoevaluacion'),
@@ -1230,6 +1230,12 @@ export function StudentLayout({
           description: 'Textos, recursos y anexos del reporte de cumplimiento.',
           page: 'formato-informe-docente',
           action: onOpenTeacherComplianceFormat,
+        },
+        {
+          label: 'Informe de cumplimiento',
+          description: 'Revisar informes, notas, contratos y paquetes firmados archivados.',
+          page: 'informe-cumplimiento',
+          action: onOpenInformeCumplimiento,
         },
       ],
     },
@@ -1246,7 +1252,7 @@ export function StudentLayout({
         },
         {
           label: 'Generar documento de evaluación',
-          description: 'Pendientes por periodo y PDF de calificación docente.',
+          description: 'Pendientes por período y PDF de calificación docente.',
           page: 'evaluacion-docente-reportes',
           action: onOpenTeacherEvaluationReports,
         },
@@ -1254,7 +1260,7 @@ export function StudentLayout({
     },
     {
       key: 'administracion',
-      title: 'Administracion y accesos',
+      title: 'Administración y accesos',
       summary: 'Administrativos, usuarios, permisos y menu',
       items: [
         {
@@ -1279,7 +1285,7 @@ export function StudentLayout({
         },
         {
           label: 'Mapa operativo',
-          description: 'Acceso funcional a los procesos clonados desde SisAcademicoV1.',
+          description: 'Acceso funcional a los procesos integrados del sistema.',
           page: 'gestion-sisacademico',
           sectionKey: 'menu_general',
           action: () => onOpenGestionSisAcademico('menu_general'),
@@ -1293,7 +1299,7 @@ export function StudentLayout({
       items: [
         {
           label: 'Empleados',
-          description: 'Ficha base de empleados del modulo RRHH.',
+          description: 'Ficha base de empleados del módulo de RR. HH.',
           page: 'gestion-sisacademico',
           sectionKey: 'talento_humano_empleados',
           action: () => onOpenGestionSisAcademico('talento_humano_empleados'),
@@ -1315,7 +1321,7 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'integraciones-v1',
+      key: 'grupo-integraciones-v1',
       title: 'Integraciones V1',
       summary: 'Moodle y Microsoft 365',
       items: [
@@ -1327,14 +1333,14 @@ export function StudentLayout({
           action: () => onOpenGestionSisAcademico('moodle_notas'),
         },
         {
-          label: 'Sincronizacion Moodle',
-          description: 'Historial de procesos de sincronizacion de calificaciones.',
+          label: 'Sincronización Moodle',
+          description: 'Historial de procesos de sincronización de calificaciones.',
           page: 'gestion-sisacademico',
           sectionKey: 'moodle_sincronizacion',
           action: () => onOpenGestionSisAcademico('moodle_sincronizacion'),
         },
         {
-          label: 'Auditoria Microsoft 365',
+          label: 'Auditoría de Microsoft 365',
           description: 'Acciones, estados y errores de servicios Microsoft 365.',
           page: 'gestion-sisacademico',
           sectionKey: 'microsoft365_audit',
@@ -1344,11 +1350,11 @@ export function StudentLayout({
     },
     {
       key: 'carnetizacion',
-      title: 'Carnetizacion',
-      summary: 'Aprobacion, renovacion y emision de carnets',
+      title: 'Carnetización',
+      summary: 'Aprobación, renovación y emisión de carnés',
       items: [
         {
-          label: 'Aprobacion de carnet',
+          label: 'Aprobación de carnet',
           description: 'Revisar fotos pendientes, aprobar, rechazar y generar carnets.',
           page: 'carnet-institucional',
           action: onOpenCarnetInstitucional,
@@ -1367,8 +1373,8 @@ export function StudentLayout({
           action: onOpenPracticasInstitucionales,
         },
         {
-          label: 'Practicas profesionales',
-          description: 'Registro de practicas, horas, docente y empresa.',
+          label: 'Prácticas profesionales',
+          description: 'Registro de prácticas, horas, docente y empresa.',
           page: 'gestion-sisacademico',
           sectionKey: 'practicas',
           action: () => onOpenGestionSisAcademico('practicas'),
@@ -1382,7 +1388,7 @@ export function StudentLayout({
         },
         {
           label: 'Empresas',
-          description: 'Empresas usadas en practicas profesionales.',
+          description: 'Empresas usadas en prácticas profesionales.',
           page: 'gestion-sisacademico',
           sectionKey: 'empresas',
           action: () => onOpenGestionSisAcademico('empresas'),
@@ -1391,19 +1397,19 @@ export function StudentLayout({
     },
     {
       key: 'catalogos',
-      title: 'Proceso academico',
-      summary: 'Carreras, materias, periodos, paralelos y mallas',
+      title: 'Proceso académico',
+      summary: 'Carreras, materias, períodos, paralelos y mallas',
       items: [
         {
           label: 'Carreras',
-          description: 'Oferta academica y estado de carrera.',
+          description: 'Oferta académica y estado de la carrera.',
           page: 'gestion-sisacademico',
           sectionKey: 'carreras',
           action: () => onOpenGestionSisAcademico('carreras'),
         },
         {
           label: 'Materias y pensum',
-          description: 'Materias, creditos, niveles y malla.',
+          description: 'Materias, créditos, niveles y malla.',
           page: 'gestion-sisacademico',
           sectionKey: 'materias',
           action: () => onOpenGestionSisAcademico('materias'),
@@ -1417,78 +1423,78 @@ export function StudentLayout({
         },
         {
           label: 'Textos materias HOMO',
-          description: 'Texto, URL y periodo por codigo de materia homologada.',
+          description: 'Texto, URL y período por código de materia homologada.',
           page: 'gestion-sisacademico',
           sectionKey: 'materia_homo_textof',
           action: () => onOpenGestionSisAcademico('materia_homo_textof'),
         },
         {
           label: 'Paralelos',
-          description: 'Catalogo y mantenimiento academico de paralelos.',
+          description: 'Catálogo y mantenimiento académico de paralelos.',
           page: 'gestion-sisacademico',
           sectionKey: 'paralelos',
           action: () => onOpenGestionSisAcademico('paralelos'),
         },
-        { label: 'Periodos academicos', description: 'Resumen de periodos y estudiantes.', page: 'periodo-academico', action: onOpenPeriodoAcademico },
+        { label: 'Períodos académicos', description: 'Resumen de períodos y estudiantes.', page: 'periodo-academico', action: onOpenPeriodoAcademico },
         {
-          label: 'Periodos del sistema',
-          description: 'Mantenimiento directo de PERIODO.',
+          label: 'Períodos del sistema',
+          description: 'Mantenimiento directo de períodos académicos.',
           page: 'gestion-sisacademico',
           sectionKey: 'periodos',
           action: () => onOpenGestionSisAcademico('periodos'),
         },
         {
           label: 'Provincias',
-          description: 'Catalogo territorial para inscripciones y estudiantes.',
+          description: 'Catálogo territorial para inscripciones y estudiantes.',
           page: 'gestion-sisacademico',
           sectionKey: 'provincias',
           action: () => onOpenGestionSisAcademico('provincias'),
         },
         {
           label: 'Apertura de notas',
-          description: 'Fechas para ingreso de notas por parcial y periodo.',
+          description: 'Fechas para el ingreso de notas por parcial y período.',
           page: 'gestion-sisacademico',
           sectionKey: 'fechas_notas',
           action: () => onOpenGestionSisAcademico('fechas_notas'),
         },
         {
-          label: 'Apertura de autoevaluacion',
-          description: 'Fechas vigentes para autoevaluacion por periodo.',
+          label: 'Apertura de autoevaluación',
+          description: 'Fechas vigentes para la autoevaluación por período.',
           page: 'gestion-sisacademico',
           sectionKey: 'fechas_autoevaluacion',
           action: () => onOpenGestionSisAcademico('fechas_autoevaluacion'),
         },
         {
           label: 'Asistencia estudiantes',
-          description: 'Registro por estudiante, materia, periodo y paralelo.',
+          description: 'Registro por estudiante, materia, período y paralelo.',
           page: 'gestion-sisacademico',
           sectionKey: 'asistencia_estudiantes',
           action: () => onOpenGestionSisAcademico('asistencia_estudiantes'),
         },
         {
           label: 'Jornadas',
-          description: 'Jornadas y relacion con modalidad.',
+          description: 'Jornadas y relación con modalidad.',
           page: 'gestion-sisacademico',
           sectionKey: 'jornadas',
           action: () => onOpenGestionSisAcademico('jornadas'),
         },
         {
-          label: 'Dias de matricula',
-          description: 'Catalogo legacy de dias para el proceso de matricula.',
+          label: 'Días de matrícula',
+          description: 'Catálogo heredado de días para el proceso de matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'dias_matricula',
           action: () => onOpenGestionSisAcademico('dias_matricula'),
         },
         {
-          label: 'Horarios de matricula',
-          description: 'Catalogo legacy de horarios para matricula.',
+          label: 'Horarios de matrícula',
+          description: 'Catálogo heredado de horarios para matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'horarios_matricula',
           action: () => onOpenGestionSisAcademico('horarios_matricula'),
         },
         {
           label: 'Modalidades',
-          description: 'Modalidades de matricula.',
+          description: 'Modalidades de matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'modalidades',
           action: () => onOpenGestionSisAcademico('modalidades'),
@@ -1570,15 +1576,65 @@ export function StudentLayout({
         },
         {
           label: 'Correos masivos',
-          description: 'Enviar mensajes con adjuntos por cedula mediante Microsoft Graph.',
+          description: 'Enviar mensajes con adjuntos por cédula mediante Microsoft Graph.',
           page: 'correos-masivos' as Page,
           action: onOpenMassEmail,
         },
-        { label: 'Movimientos Teams', description: 'Gestion de equipos y movimientos.', page: 'teams', action: onOpenTeams },
-        { label: 'Matricula Teams', description: 'Creacion y matricula de equipos.', page: 'teams-matricula', action: onOpenTeamsMatricula },
+        { label: 'Movimientos Teams', description: 'Gestión de equipos y movimientos.', page: 'teams', action: onOpenTeams },
+        { label: 'Matrícula en Teams', description: 'Creación y matrícula de equipos.', page: 'teams-matricula', action: onOpenTeamsMatricula },
       ],
     },
   ]
+
+  const moodleMenuGroup: NavGroup = {
+    key: 'moodle',
+    title: 'Moodle',
+    summary: 'Cursos, recursos, notas, estado y usuarios',
+    items: [
+      {
+        label: 'Alertas de calificación',
+        description: 'Pendientes de Moodle según el alcance del perfil.',
+        page: 'moodle',
+        moodleSection: 'alerts',
+        action: () => onOpenMoodle('alerts'),
+      },
+      {
+        label: 'Cursos',
+        description: 'Consultar los cursos publicados en Moodle.',
+        page: 'moodle',
+        moodleSection: 'courses',
+        action: () => onOpenMoodle('courses'),
+      },
+      {
+        label: 'Estado de la integración',
+        description: 'Validar la conectividad y configuración autorizada.',
+        page: 'moodle',
+        moodleSection: 'status',
+        action: () => onOpenMoodle('status'),
+      },
+      {
+        label: 'Recursos por curso',
+        description: 'Consultar secciones, actividades, enlaces y archivos de cada curso.',
+        page: 'moodle',
+        moodleSection: 'resources',
+        action: () => onOpenMoodle('resources'),
+      },
+      {
+        label: 'Sincronización de notas',
+        description: 'Previsualizar y migrar exámenes prácticos desde Moodle.',
+        page: 'moodle',
+        moodleSection: 'grades',
+        action: () => onOpenMoodle('grades'),
+      },
+      {
+        label: 'Usuarios',
+        description: 'Consultar, activar o inactivar cuentas validadas.',
+        page: 'moodle',
+        moodleSection: 'users',
+        action: () => onOpenMoodle('users'),
+      },
+    ],
+  }
 
   const admissionsMenuGroups: NavGroup[] = [
     {
@@ -1594,7 +1650,7 @@ export function StudentLayout({
         },
         {
           label: 'Dashboard',
-          description: 'Inscripciones y estados de tus ventas.',
+          description: 'Inscripciones y estados de sus ventas.',
           page: 'dashboard',
           action: onOpenDashboard,
         },
@@ -1603,7 +1659,7 @@ export function StudentLayout({
     {
       key: 'admision-proceso',
       title: 'Admisiones',
-      summary: 'Inscripcion, matricula y estudiantes',
+      summary: 'Inscripción, matrícula y estudiantes',
       items: [
         ...salesPreinscriptionFlowItems,
         {
@@ -1616,7 +1672,7 @@ export function StudentLayout({
         },
         {
           label: 'Datos de factura',
-          description: 'Datos tributarios registrados durante la inscripcion.',
+          description: 'Datos tributarios registrados durante la inscripción.',
           page: 'gestion-sisacademico',
           sectionKey: 'datos_factura',
           action: () => onOpenGestionSisAcademico('datos_factura'),
@@ -1630,37 +1686,7 @@ export function StudentLayout({
         },
       ],
     },
-    {
-      key: 'certificados',
-      title: 'Certificados',
-      summary: 'Promocion y matricula',
-      items: [
-        {
-          label: 'Certificados',
-          description: 'Generar y revisar certificados institucionales.',
-          page: 'certificados',
-          action: onOpenCertificados,
-        },
-        {
-          label: 'Fecha de grado',
-          description: 'Registrar fecha de grado por periodo y carrera.',
-          page: 'fecha-grado',
-          action: onOpenFechaGrado,
-        },
-        {
-          label: 'Matrícula en Excel',
-          description: 'Generar certificados de matrícula desde plantilla Excel.',
-          page: 'matricula-excel-certificados',
-          action: onOpenMatriculaExcelCertificados,
-        },
-        {
-          label: 'Renombrar certificados',
-          description: 'Leer cedula en PDF y renombrar por estudiante.',
-          page: 'renombrar-certificados',
-          action: onOpenCertificateRenamer,
-        },
-      ],
-    },
+    certificateMenuGroup,
     {
       key: 'admision-integraciones',
       title: 'Integraciones',
@@ -1668,7 +1694,7 @@ export function StudentLayout({
       items: [
         {
           label: 'Correos masivos',
-          description: 'Enviar mensajes con adjuntos por cedula.',
+          description: 'Enviar mensajes con adjuntos por cédula.',
           page: 'correos-masivos' as Page,
           action: onOpenMassEmail,
         },
@@ -1682,12 +1708,12 @@ export function StudentLayout({
     },
     {
       key: 'admision-control',
-      title: 'Control de matricula',
+      title: 'Control de matrícula',
       summary: 'Pago, convenio y valores',
       items: [
         {
           label: 'Pago y convenio',
-          description: 'Validar cabecera, valores y convenio de matricula.',
+          description: 'Validar la cabecera, los valores y el convenio de matrícula.',
           page: 'gestion-sisacademico',
           sectionKey: 'cabecera_matricula',
           action: () => onOpenGestionSisAcademico('cabecera_matricula'),
@@ -1774,7 +1800,7 @@ export function StudentLayout({
           sectionKey: 'fechas_notas',
           action: () => onOpenGestionSisAcademico('fechas_notas'),
         },
-        { label: 'Periodos académicos', description: 'Periodos, estudiantes y estado académico.', page: 'periodo-academico', action: onOpenPeriodoAcademico },
+        { label: 'Períodos académicos', description: 'Períodos, estudiantes y estado académico.', page: 'periodo-academico', action: onOpenPeriodoAcademico },
       ],
     },
     {
@@ -1830,10 +1856,10 @@ export function StudentLayout({
           sectionKey: 'docentes',
           action: () => onOpenGestionSisAcademico('docentes'),
         },
-        { label: 'Matriculación docente', description: 'Asignación docente por materia, periodo y paralelo.', page: 'matricula-docente', action: onOpenMatriculaDocente },
+        { label: 'Matriculación docente', description: 'Asignación docente por materia, período y paralelo.', page: 'matricula-docente', action: onOpenMatriculaDocente },
         {
           label: 'Materias asignadas',
-          description: 'Relación docente, materia, periodo, paralelo y jornada.',
+          description: 'Relación docente, materia, período, paralelo y jornada.',
           page: 'gestion-sisacademico',
           sectionKey: 'docente_materias',
           action: () => onOpenGestionSisAcademico('docente_materias'),
@@ -1854,7 +1880,7 @@ export function StudentLayout({
       items: [
         {
           label: 'Calificaciones de estudiantes',
-          description: 'Notas por estudiante, materia, periodo y docente responsable.',
+          description: 'Notas por estudiante, materia, período y docente responsable.',
           page: 'reportes-individuales',
           reportKey: 'notas_carrera_materia',
           action: () => onOpenReportesIndividuales('notas_carrera_materia'),
@@ -1868,7 +1894,7 @@ export function StudentLayout({
         },
         {
           label: 'Avance y ponderación',
-          description: 'Avance por periodo y ponderación de evaluación docente.',
+          description: 'Avance por período y ponderación de la evaluación docente.',
           page: 'evaluacion-docente-avance',
           action: onOpenTeacherEvaluationProgress,
         },
@@ -1883,7 +1909,7 @@ export function StudentLayout({
     {
       key: 'catalogos',
       title: 'Catálogos académicos',
-      summary: 'Carreras, materias y periodos',
+      summary: 'Carreras, materias y períodos',
       items: [
         {
           label: 'Carreras',
@@ -1914,8 +1940,8 @@ export function StudentLayout({
           action: () => onOpenGestionSisAcademico('paralelos'),
         },
         {
-          label: 'Periodos del sistema',
-          description: 'Mantenimiento directo de periodos académicos.',
+          label: 'Períodos del sistema',
+          description: 'Mantenimiento directo de períodos académicos.',
           page: 'gestion-sisacademico',
           sectionKey: 'periodos',
           action: () => onOpenGestionSisAcademico('periodos'),
@@ -1953,7 +1979,7 @@ export function StudentLayout({
     {
       key: 'documentacion-academica',
       title: 'Documentación',
-      summary: 'Repositorio y certificados',
+      summary: 'Repositorio digital',
       items: [
         {
           label: 'Repositorio digital',
@@ -1961,13 +1987,6 @@ export function StudentLayout({
           page: 'gestion-sisacademico',
           sectionKey: 'repositorio',
           action: () => onOpenGestionSisAcademico('repositorio'),
-        },
-        {
-          label: 'Historial de certificados',
-          description: 'Certificados generados y códigos de verificación.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'certificados_generados',
-          action: () => onOpenGestionSisAcademico('certificados_generados'),
         },
       ],
     },
@@ -2115,19 +2134,6 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'certificados',
-      title: 'Graduados',
-      summary: 'Fechas y registro académico',
-      items: [
-        {
-          label: 'Fechas de graduados',
-          description: 'Actualizar fecha de grado, emisión SENESCYT y código de refrendación.',
-          page: 'fecha-grado',
-          action: onOpenFechaGrado,
-        },
-      ],
-    },
-    {
       key: 'datos-senecyt',
       title: 'Datos SENESCYT',
       summary: 'Consulta académica',
@@ -2188,7 +2194,7 @@ export function StudentLayout({
       summary: 'Dashboard, mallas y calificaciones',
       items: [
         {
-          label: 'Dashboard academico',
+          label: 'Panel académico',
           description: 'Inicio con avance, cumplimiento y accesos rapidos.',
           page: 'portal-estudiante',
           portalSection: 'dashboard',
@@ -2196,28 +2202,28 @@ export function StudentLayout({
         },
         {
           label: 'Malla curricular',
-          description: 'Materias a cursar, codigos, niveles y creditos.',
+          description: 'Materias por cursar, códigos, niveles y créditos.',
           page: 'portal-estudiante-malla-curricular',
           portalSection: 'curricular',
           action: () => onOpenPortalEstudiante('curricular'),
         },
         {
-          label: 'Malla academica',
+          label: 'Malla académica',
           description: 'Materias aprobadas, pendientes y avance por promedio.',
           page: 'portal-estudiante-malla-academica',
           portalSection: 'academica',
           action: () => onOpenPortalEstudiante('academica'),
         },
         {
-          label: 'Calificaciones por periodo',
-          description: 'Revision de notas filtrada por periodo academico.',
+          label: 'Calificaciones por período',
+          description: 'Revisión de notas filtrada por período académico.',
           page: 'portal-estudiante-calificaciones',
           portalSection: 'notas',
           action: () => onOpenPortalEstudiante('notas'),
         },
         {
-          label: 'Evaluacion docente',
-          description: 'Evalua al docente segun tus materias matriculadas.',
+          label: 'Evaluación docente',
+          description: 'Evalúe al docente según sus materias matriculadas.',
           page: 'evaluacion-docente',
           action: onOpenTeacherEvaluation,
         },
@@ -2229,7 +2235,7 @@ export function StudentLayout({
         },
         {
           label: 'Carnet institucional',
-          description: 'Subir foto y revisar estado de aprobacion.',
+          description: 'Subir foto y revisar estado de aprobación.',
           page: 'carnet-institucional',
           action: onOpenCarnetInstitucional,
         },
@@ -2269,7 +2275,7 @@ export function StudentLayout({
         },
         {
           label: 'Carnet institucional',
-          description: 'Subir foto y revisar estado de aprobacion.',
+          description: 'Subir foto y revisar estado de aprobación.',
           page: 'carnet-institucional',
           action: onOpenCarnetInstitucional,
         },
@@ -2296,13 +2302,13 @@ export function StudentLayout({
   const documentExpedientsMenuGroup: NavGroup = {
     key: 'expedientes-documentales',
     title: 'Expedientes',
-    summary: 'Documentos académicos por proceso',
+    summary: 'Documentos académicos y facturación',
     items: [
       {
         label: 'Expedientes documentales',
         description: normalizedRole === 'ESTUDIANTE'
           ? 'Consultar documentos y cargar evidencias habilitadas de sus procesos.'
-          : 'Buscar estudiantes y gestionar documentos de titulación, prácticas y vinculación.',
+          : 'Buscar estudiantes y gestionar documentos, facturas XML y RIDE en Microsoft 365.',
         page: 'expedientes-documentales',
         action: onOpenExpedientesDocumentales,
       },
@@ -2356,23 +2362,25 @@ export function StudentLayout({
   const roleMenuGroups = normalizedRole === 'ESTUDIANTE'
     ? [...studentMenuGroups, englishMenuGroup]
     : normalizedRole === 'DOCENTE'
-      ? [englishMenuGroup, ...teacherMenuGroups]
+      ? [englishMenuGroup, ...teacherMenuGroups, moodleMenuGroup]
       : normalizedRole === 'ADMISIONES'
         ? admissionsMenuGroups
           : normalizedRole === 'SECRETARIA'
-          ? [...secretaryMenuGroups, documentExpedientsMenuGroup]
+          ? [updatesMenuGroup, ...secretaryMenuGroups, documentExpedientsMenuGroup]
           : academicRoles.has(normalizedRole)
-            ? [updatesMenuGroup, enrollmentMenuGroup, ...academicMenuGroups, documentExpedientsMenuGroup]
+            ? [updatesMenuGroup, enrollmentMenuGroup, certificateMenuGroup, ...academicMenuGroups, moodleMenuGroup, documentExpedientsMenuGroup]
             : dashboardOnlyRoles.has(normalizedRole)
               ? executiveMenuGroups
               : normalizedRole === 'FINANCIERO'
                 ? financialMenuGroups
-                : [updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
+                : [auditMenuGroup, updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, moodleMenuGroup, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
 
   const roleScopedMenuGroups = roleMenuGroups
     .filter((group) => isAdministrator || group.key !== 'flujo-academico')
 
   const navigationCatalogGroups = [
+    auditMenuGroup,
+    certificateMenuGroup,
     ...roleScopedMenuGroups,
     ...adminMenuGroups,
     ...admissionsMenuGroups,
@@ -2382,6 +2390,7 @@ export function StudentLayout({
     ...secretaryMenuGroups,
     ...studentMenuGroups,
     ...teacherMenuGroups,
+    moodleMenuGroup,
     updatesMenuGroup,
     enrollmentMenuGroup,
     scholarshipMenuGroup,
@@ -2408,7 +2417,7 @@ export function StudentLayout({
     title: fallbackBrandTitle,
   }
   const brandTitle = normalizedRole === 'ESTUDIANTE' && displayName.trim() ? displayName.trim() : brand.title
-  const brandSubtitle = normalizedRole === 'ESTUDIANTE' && cedula.trim() ? `Cedula ${cedula.trim()}` : ''
+  const brandSubtitle = normalizedRole === 'ESTUDIANTE' && cedula.trim() ? `Cédula ${cedula.trim()}` : ''
 
   function openPage(action: () => void) {
     action()
@@ -2433,6 +2442,9 @@ export function StudentLayout({
 
   function itemIsActive(item: NavItem) {
     if (item.page !== activePage) return false
+    if (item.moodleSection) {
+      return item.moodleSection === activeMoodleSection
+    }
     if (item.sectionKey) {
       if (item.page === 'matricula-acad') {
         return item.sectionKey === activeMatriculaAcadMode
@@ -2586,6 +2598,14 @@ export function StudentLayout({
       ) : null}
 
       <section className="student-main">
+        {['ADMINISTRADOR', 'ACADEMICO', 'DOCENTE'].includes(normalizedRole)
+          && screenAccessPages?.includes('moodle/alerts')
+          && !(activePage === 'moodle' && activeMoodleSection === 'alerts') ? (
+            <MoodleGradeAlertIndicator
+              role={normalizedRole}
+              onOpen={() => onOpenMoodle('alerts')}
+            />
+          ) : null}
         {children}
       </section>
     </div>

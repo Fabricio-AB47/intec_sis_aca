@@ -77,7 +77,7 @@ def _sync_expedient_preinscription(data: dict[str, Any]) -> int:
         )
         origin_row = cursor.fetchone()
         if not origin_row:
-            raise RuntimeError("No existe el origen PREINSCRIPCION en Expediente Estudiantil")
+            raise RuntimeError('No existe el origen PREINSCRIPCION en Expediente Estudiantil')
         origin_id = int(origin_row[0])
         metadata = json.dumps(
             {
@@ -361,12 +361,12 @@ def sync_preinscription_complements(
     results = [
         ComplementStepResult(
             "FINANZAS",
-            "Sincronizar preinscripcion y beca",
+            "Sincronizar preinscripción y beca",
             bool(finance_result.get("ok")),
             1 if finance_result.get("ok") else 0,
             str(finance_result.get("detail") or "Sincronizado"),
         ),
-        _run_step("EXPEDIENTE", "Anexar expediente de preinscripcion", lambda: _sync_expedient_preinscription(data)),
+        _run_step("EXPEDIENTE", "Anexar expediente de preinscripción", lambda: _sync_expedient_preinscription(data)),
         _run_step("GRAPH", "Anexar referencia del estudiante", lambda: _sync_graph_student(data)),
     ]
     trace = _record_execution(event_type, str(data.get("usuario") or "api"), results)

@@ -132,7 +132,7 @@ export function FechaGradoView({ displayName, role = '' }: Readonly<FechaGradoVi
   async function analyzeDocuments() {
     const hasSelection = importMode === 'pdf' ? pdfFiles.length > 0 : Boolean(excelFile)
     if (!hasSelection) {
-      setError(importMode === 'pdf' ? 'Selecciona uno o más documentos PDF de SENESCYT.' : 'Selecciona el archivo Excel de SENESCYT.')
+      setError(importMode === 'pdf' ? 'Seleccione uno o más documentos PDF de SENESCYT.' : 'Seleccione el archivo Excel de SENESCYT.')
       return
     }
     setAnalyzing(true)
@@ -266,7 +266,7 @@ export function FechaGradoView({ displayName, role = '' }: Readonly<FechaGradoVi
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Matricula</p>
+          <p className="eyebrow">Matrícula</p>
           <h1>Fecha de grado</h1>
           <span>Valide el documento SENESCYT por identificación antes de actualizar DATOS_ESTUD.</span>
         </div>

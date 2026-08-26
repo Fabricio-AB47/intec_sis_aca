@@ -514,7 +514,7 @@ export function PortalDocenteContratosView({ displayName }: Readonly<Props>) {
         <section className="contract-empty">
           <span>Sin contrato registrado</span>
           <h2>Adjunte el contrato regular o de homologación</h2>
-          <p>Seleccione primero uno de sus cursos. El sistema validará docente, materia, carrera, periodo, paralelo y modalidad antes de guardar el PDF.</p>
+          <p>Seleccione primero uno de sus cursos. El sistema validará docente, materia, carrera, período, paralelo y modalidad antes de guardar el PDF.</p>
           <button type="button" className="primary-action" onClick={openUpload} disabled={courseOptions.length === 0}>
             Adjuntar primer contrato
           </button>
@@ -598,9 +598,9 @@ export function PortalDocenteContratosView({ displayName }: Readonly<Props>) {
           </section>
 
           <section className="contract-point">
-            <header><span>2</span><div><small>Vigencia</small><h2>Periodo y fechas</h2></div></header>
+            <header><span>2</span><div><small>Vigencia</small><h2>Período y fechas</h2></div></header>
             <dl className="contract-data-grid contract-data-grid--three">
-              <div><dt>Periodo académico</dt><dd>{textOrPending(selected.codigo_periodo)}</dd></div>
+              <div><dt>Período académico</dt><dd>{textOrPending(selected.codigo_periodo)}</dd></div>
               <div><dt>Fecha de inicio</dt><dd>{formatDate(selected.fecha_inicio)}</dd></div>
               <div><dt>Fecha de finalización</dt><dd>{formatDate(selected.fecha_fin)}</dd></div>
             </dl>
@@ -628,7 +628,7 @@ export function PortalDocenteContratosView({ displayName }: Readonly<Props>) {
             <header><span>5</span><div><small>Carga académica</small><h2>Materias incluidas en el contrato</h2></div></header>
             <div className="contract-table-wrap">
               <table className="contract-table">
-                <thead><tr><th>Materia</th><th>Carrera</th><th>Periodo</th><th>Paralelo</th><th>Jornada</th><th>Horas</th><th>Ejecutadas</th><th>Valor hora</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Materia</th><th>Carrera</th><th>Período</th><th>Paralelo</th><th>Jornada</th><th>Horas</th><th>Ejecutadas</th><th>Valor hora</th><th>Estado</th></tr></thead>
                 <tbody>
                   {selected.clases.length ? selected.clases.map((item) => (
                     <tr key={item.clase_id}>

@@ -165,7 +165,7 @@ def get_evaluation_connection() -> pyodbc.Connection:
         if not value
     ]
     if missing:
-        raise RuntimeError(f"Faltan variables de entorno para evaluacion 360: {', '.join(missing)}")
+        raise RuntimeError(f"Faltan variables de entorno para la evaluación 360: {', '.join(missing)}")
 
     return _connect_with_fallback(
         database=settings.eval_db_name or "",
@@ -219,7 +219,7 @@ def get_titulation_connection() -> pyodbc.Connection:
         if not value
     ]
     if missing:
-        raise RuntimeError(f"Faltan variables de entorno para titulacion: {', '.join(missing)}")
+        raise RuntimeError(f"Faltan variables de entorno para titulación: {', '.join(missing)}")
 
     return _connect_with_fallback(
         database=settings.titulation_db_name or "",

@@ -23,8 +23,8 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 function periodLabel(period?: CertificadosPeriodOption | null): string {
-  if (!period) return 'Seleccione periodo'
-  return period.detalle_periodo || period.cod_periodo || 'Seleccione periodo'
+  if (!period) return 'Seleccione período'
+  return period.detalle_periodo || period.cod_periodo || 'Seleccione período'
 }
 
 function dateRangeLabel(period?: CertificadosPeriodOption | null): string {
@@ -57,7 +57,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
     try {
       setCatalog(await fetchCertificadosCatalog())
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catalogo de periodos')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el catálogo de períodos')
     } finally {
       setCatalogLoading(false)
     }
@@ -82,11 +82,11 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
     setError('')
     setMessage('')
     if (!periodo) {
-      setError('Selecciona el periodo antes de subir el documento.')
+      setError('Seleccione el período antes de subir el documento.')
       return
     }
     if (!file) {
-      setError('Selecciona un archivo Excel con estudiantes.')
+      setError('Seleccione un archivo Excel con estudiantes.')
       return
     }
 
@@ -94,7 +94,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
     try {
       const blob = await generateMatriculaPdfFromExcel(periodo, file)
       downloadBlob(blob, `certificados-matricula-${periodo}-${new Date().toISOString().slice(0, 10)}.pdf`)
-      setMessage('PDF de certificados de matricula generado.')
+      setMessage('PDF de certificados de matrícula generado.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo generar el PDF')
     } finally {
@@ -110,8 +110,8 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Academico</p>
-          <h1>Matrícula en Excel</h1>
+          <p className="eyebrow">Académico</p>
+          <h1>Certificados desde Excel</h1>
         </div>
         <div className="student-topbar__right">
           <div className="student-user-pill">
@@ -125,7 +125,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
 
       <section className="certificados-overview">
         <article>
-          <span>Periodo seleccionado</span>
+          <span>Período seleccionado</span>
           <strong>{periodLabel(selectedPeriod)}</strong>
           <small>{dateRangeLabel(selectedPeriod)}</small>
         </article>
@@ -145,7 +145,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
         <article className="student-card student-card--wide">
           <div className="card-head">
             <h3>Generar certificados</h3>
-            <span>{catalogLoading ? 'Cargando periodos...' : `${periodos.length} periodo(s)`}</span>
+            <span>{catalogLoading ? 'Cargando períodos...' : `${periodos.length} período(s)`}</span>
           </div>
 
           <div className="certificados-format-note">
@@ -159,7 +159,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
 
           <div className="matricula-acad-form certificados-form">
             <label>
-              <span>Periodo académico</span>
+              <span>Período académico</span>
               <select
                 value={periodo}
                 onChange={(event) => {
@@ -168,7 +168,7 @@ export function MatriculaExcelCertificadosView({ displayName }: Readonly<Matricu
                 }}
                 disabled={catalogLoading}
               >
-                <option value="">Seleccione periodo</option>
+                <option value="">Seleccione período</option>
                 {periodos.map((item) => (
                   <option key={`periodo-excel-${item.cod_periodo}`} value={item.cod_periodo}>
                     {item.detalle_periodo}

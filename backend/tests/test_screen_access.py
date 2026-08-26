@@ -16,6 +16,7 @@ from app.services.screen_access import (
     ROLE_CATALOG,
     ROLE_DENIED_PAGES,
     SCREEN_CATALOG,
+    _deactivate_non_admin_automatic_moodle_assignments,
     _deactivate_container_assignments,
     _ensure_screen_catalog_ready,
     _initialize_role_assignments,
@@ -62,8 +63,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
 
     def test_student_enrollment_is_an_assignable_screen(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "matricula-acad")
-        self.assertEqual(screen["label"], "Matriculacion academica")
-        self.assertIn("cabecera de matricula", screen["description"].lower())
+        self.assertEqual(screen["label"], "Matriculación académica")
+        self.assertIn("cabecera de matrícula", screen["description"].lower())
         self.assertIn("matricula-acad", CONTAINER_PAGES)
         self.assertNotIn("matricula-acad", ALL_PAGES)
         self.assertIn("matricula-acad/individual", ALL_PAGES)
@@ -92,8 +93,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
 
     def test_registration_is_an_explicit_assignable_screen(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "preinscripcion")
-        self.assertEqual(screen["label"], "Inscripcion de estudiantes")
-        self.assertEqual(screen["group"], "Inscripcion")
+        self.assertEqual(screen["label"], "Inscripción de estudiantes")
+        self.assertEqual(screen["group"], "Inscripción")
         self.assertIn("registro previo", screen["description"].lower())
         self.assertIn("preinscripcion", CONTAINER_PAGES)
         self.assertNotIn("preinscripcion", ALL_PAGES)
@@ -292,7 +293,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         student_migrations = [
             (statement, params)
             for statement, params in cursor.executions
-            if params[0] == "ESTUDIANTE"
+            if params[0] == "ESTUDIANTE" and params[3] == "portal-estudiante"
         ]
         self.assertEqual(
             {str(params[1]) for _, params in student_migrations},
@@ -306,6 +307,66 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             self.assertIn("WHEN NOT MATCHED THEN INSERT", statement)
             self.assertNotIn("WHEN MATCHED THEN", statement)
             self.assertEqual(params[2:], ("ESTUDIANTE", "portal-estudiante"))
+
+    def test_moodle_is_exposed_as_six_assignable_subscreens(self) -> None:
+        expected = {
+            "moodle/alerts",
+            "moodle/courses",
+            "moodle/grades",
+            "moodle/resources",
+            "moodle/status",
+            "moodle/users",
+        }
+
+        self.assertIn("moodle", CONTAINER_PAGES)
+        self.assertNotIn("moodle", ALL_PAGES)
+        self.assertEqual(
+            {
+                page
+                for page, parent in FLOW_PARENT_BY_PAGE.items()
+                if parent == "moodle"
+            },
+            expected,
+        )
+        self.assertTrue(expected.issubset(set(DEFAULT_ACCESS["ADMINISTRADOR"])))
+        self.assertTrue(expected.issubset(set(ALL_PAGES)))
+        self.assertTrue(expected.isdisjoint(ADMIN_ONLY_PAGES))
+        self.assertIn("moodle/alerts", DEFAULT_ACCESS["ACADEMICO"])
+        self.assertIn("moodle/alerts", DEFAULT_ACCESS["DOCENTE"])
+        optional_pages = expected - {"moodle/alerts"}
+        for role, pages in DEFAULT_ACCESS.items():
+            if role == "ADMINISTRADOR":
+                continue
+            with self.subTest(role=role):
+                self.assertTrue(optional_pages.isdisjoint(pages))
+
+    def test_automatic_moodle_grants_are_removed_only_outside_administration(self) -> None:
+        optional_pages = {
+            "moodle/courses",
+            "moodle/grades",
+            "moodle/resources",
+            "moodle/status",
+            "moodle/users",
+        }
+
+        class RecordingCursor:
+            def __init__(self) -> None:
+                self.executions: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, statement: str, *params: object) -> None:
+                self.executions.append((" ".join(statement.split()).upper(), params))
+
+        cursor = RecordingCursor()
+        _deactivate_non_admin_automatic_moodle_assignments(cursor)
+
+        self.assertEqual(len(cursor.executions), 1)
+        statement, params = cursor.executions[0]
+        self.assertIn("ROLCODIGO <> N'ADMINISTRADOR'", statement)
+        self.assertIn("SISTEMA_PREDETERMINADO_ADMIN", statement)
+        self.assertIn("USUARIOACTUALIZACION", statement)
+        self.assertEqual(set(map(str, params[: len(optional_pages)])), optional_pages)
+        self.assertNotIn("moodle/alerts", set(map(str, params)))
+        self.assertNotIn("PRUEBA", set(map(str, params[4:])))
 
     def test_flow_permissions_are_created_without_overwriting_existing_choices(self) -> None:
         class RecordingCursor:

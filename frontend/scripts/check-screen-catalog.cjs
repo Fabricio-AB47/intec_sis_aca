@@ -69,6 +69,7 @@ function visit(node) {
       const childProperty = property(node, 'sectionKey')
         || property(node, 'reportKey')
         || property(node, 'preinscriptionStage')
+        || property(node, 'moodleSection')
       const child = childProperty ? stringValue(childProperty.initializer) : ''
       navigationScreens.add(child ? `${page}/${child}` : page)
     }
@@ -142,7 +143,7 @@ if (
   || missingRootScreensFromTypes.length
   || missingRenderedPages.length
 ) {
-  const messages = ['El catalogo, los tipos, las vistas y la navegacion no coinciden.']
+  const messages = ['El catálogo, los tipos, las vistas y la navegación no coinciden.']
   if (missingFromNavigation.length) {
     messages.push(`Faltan en StudentLayout: ${missingFromNavigation.join(', ')}`)
   }
@@ -161,4 +162,4 @@ if (
   throw new Error(messages.join('\n'))
 }
 
-console.log(`Catalogo de pantallas verificado: ${backendScreens.size} accesos navegables y ${pageTypes.size} vistas raiz.`)
+console.log(`Catálogo de pantallas verificado: ${backendScreens.size} accesos navegables y ${pageTypes.size} vistas raíz.`)

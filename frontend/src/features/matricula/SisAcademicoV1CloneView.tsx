@@ -113,7 +113,7 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
       setArtifactData(artifactsPayload)
       setModernReportsData(reportsPayload)
     } catch (apiError) {
-      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo cargar el mapa de SisAcademicoV1.')
+      setError(apiError instanceof ApiError ? apiError.message : 'No se pudo cargar el mapa del sistema académico heredado.')
       setData(null)
       setArtifactData(null)
       setModernReportsData(null)
@@ -196,7 +196,7 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
   return (
     <section className="content-section content-section--wide">
       <div className="section-heading">
-        <span>SisAcademicoV1</span>
+        <span>Sistema académico</span>
         <h1>Clonación funcional</h1>
         <p>
           {displayName} · Mapa de módulos heredados integrado al backend y frontend moderno sin modificar la
@@ -219,7 +219,7 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
           </div>
         </div>
 
-        <div className="sisv1-hub-nav" role="tablist" aria-label="Navegación de clonación SisAcademicoV1">
+        <div className="sisv1-hub-nav" role="tablist" aria-label="Navegación del sistema académico heredado">
           <button className={activeTab === 'modulos' ? 'is-active' : ''} type="button" onClick={() => setActiveTab('modulos')}>
             Módulos clonados
           </button>
@@ -363,10 +363,10 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
             <div className="panel-card__header sisv1-inner-header">
               <div>
                 <span className="eyebrow">Clon total</span>
-                <h2>Inventario completo de SisAcademicoV1</h2>
+                <h2>Inventario funcional del sistema académico</h2>
                 <p className="muted-text">
                   {artifactData?.strategy ||
-                    'Cada archivo funcional del proyecto anterior se clasifica contra el modulo moderno correspondiente.'}
+                    'Cada archivo funcional del proyecto anterior se clasifica según el módulo moderno correspondiente.'}
                 </p>
               </div>
               <div className="summary-pills">
@@ -383,7 +383,7 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
                 <input
                   value={artifactQuery}
                   onChange={(event) => setArtifactQuery(event.target.value)}
-                  placeholder="Archivo, carpeta, modulo o estado"
+                  placeholder="Archivo, carpeta, módulo o estado"
                 />
               </label>
               <label>
@@ -567,7 +567,7 @@ export function SisAcademicoV1CloneView({ displayName, onOpenSection }: Readonly
                 <tbody>
                   <tr>
                     <td>Académico</td>
-                    <td>Carreras, mallas, materias, periodos, notas y matrícula.</td>
+                    <td>Carreras, mallas, materias, períodos, notas y matrícula.</td>
                     <td>Menús separados por catálogo, matrícula y calificaciones.</td>
                     <td>Menos pantallas mezcladas y consulta directa por estudiante/carrera.</td>
                   </tr>

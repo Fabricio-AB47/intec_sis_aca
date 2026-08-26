@@ -81,14 +81,14 @@ def _photo_mime_type(filename: str, upload_mime: str | None = None) -> str:
     if not mime:
         raise HTTPException(status_code=400, detail="Solo se permiten imagenes JPG, PNG o WEBP")
     if upload_mime and upload_mime not in {"application/octet-stream", mime} and not upload_mime.startswith("image/"):
-        raise HTTPException(status_code=400, detail="El archivo no parece ser una imagen valida")
+        raise HTTPException(status_code=400, detail='El archivo no parece ser una imagen válida')
     return mime
 
 
 def _normalize_person_type(value: str) -> str:
     normalized = _clean(value).upper()
     if normalized not in _PERSON_TYPES:
-        raise HTTPException(status_code=400, detail="Tipo de persona no valido")
+        raise HTTPException(status_code=400, detail='Tipo de persona no válido')
     return normalized
 
 
@@ -239,7 +239,7 @@ def _person_status_payload(cursor: pyodbc.Cursor, person: dict[str, Any]) -> dic
         return {
             "persona": person,
             "estado": "SIN_FOTO",
-            "mensaje": "No existe una foto de carnet cargada para aprobacion.",
+            "mensaje": "No existe una foto para el carné cargada para aprobación.",
             "puede_subir": True,
             "meses_vigencia": _validity_months(person["tipo_persona"]),
         }
@@ -272,9 +272,9 @@ def _person_status_payload(cursor: pyodbc.Cursor, person: dict[str, Any]) -> dic
         "puede_subir": can_upload,
         "puede_descargar_carnet": can_download,
         "mensaje_vigencia": (
-            f"Foto vigente hasta {_date_payload(valid_until)}. Podra solicitar actualizacion al vencer."
+            f"Foto vigente hasta {_date_payload(valid_until)}. Podrá solicitar una actualización cuando venza."
             if is_active
-            else "La vigencia expiro. Puede cargar una nueva foto para revision."
+            else "La vigencia expiró. Puede cargar una nueva foto para revisión."
             if status == "VENCIDA"
             else ""
         ),
@@ -285,7 +285,7 @@ def _fetch_person(cursor: pyodbc.Cursor, person_type: str, code: str) -> dict[st
     person_type = _normalize_person_type(person_type)
     code = _clean(code)
     if not code:
-        raise HTTPException(status_code=400, detail="Codigo de persona requerido")
+        raise HTTPException(status_code=400, detail='Código de persona requerido')
 
     if person_type == "ESTUDIANTE":
         cursor.execute(
@@ -341,7 +341,7 @@ def _fetch_person(cursor: pyodbc.Cursor, person_type: str, code: str) -> dict[st
         )
     row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="No se encontro la persona para carnet")
+        raise HTTPException(status_code=404, detail='No se encontró la persona para el carné.')
     return _person_from_row(row)
 
 
@@ -352,7 +352,7 @@ def _current_person(cursor: pyodbc.Cursor, current_user: SessionUser) -> dict[st
         return _fetch_person(cursor, "DOCENTE", str(current_user.codigo_doc))
     if current_user.id_usuario is not None:
         return _fetch_person(cursor, "ADMINISTRATIVO", str(current_user.id_usuario))
-    raise HTTPException(status_code=404, detail="La sesion no tiene una persona vinculada para carnet")
+    raise HTTPException(status_code=404, detail='La sesión no tiene una persona vinculada para el carné.')
 
 
 def _search_people(cursor: pyodbc.Cursor, query: str, person_type: str, limit: int) -> list[dict[str, Any]]:
@@ -496,7 +496,7 @@ def _assert_can_upload_photo(cursor: pyodbc.Cursor, person: dict[str, Any]) -> N
             detail=(
                 "Ya existe una foto aprobada vigente hasta "
                 f"{_date_payload(active.fecha_vigencia_hasta)}. "
-                "Debe esperar al vencimiento para solicitar una nueva actualizacion."
+                "Debe esperar al vencimiento para solicitar una nueva actualización."
             ),
         )
 
@@ -578,7 +578,7 @@ def _save_uploaded_photo(
         INSERT INTO dbo.CARNET_USUARIO_FOTO_SOLICITUD (
             id_imagen, tipo_persona, codigo_persona, cedula, nombre, correo, estado, observacion, usuario_solicitud
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'PENDIENTE', N'Foto de carnet pendiente de aprobacion', ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'PENDIENTE', N'Foto para el carné pendiente de aprobación', ?)
         """,
         image_id,
         person["tipo_persona"],
@@ -596,7 +596,7 @@ async def _read_photo_file(file: UploadFile) -> tuple[bytes, str, str]:
     mime_type = _photo_mime_type(original_name, file.content_type)
     data = await file.read()
     if not data:
-        raise HTTPException(status_code=400, detail="La imagen esta vacia")
+        raise HTTPException(status_code=400, detail='La imagen esta vacía')
     if len(data) > _PHOTO_MAX_BYTES:
         raise HTTPException(status_code=400, detail="La imagen no debe superar 8 MB")
     return data, original_name, mime_type
@@ -739,11 +739,11 @@ def _build_carnet_pdf(status: dict[str, Any]) -> bytes:
 
     qr_payload = "\n".join(
         [
-            "INTEC CARNET INSTITUCIONAL",
+            "CARNÉ INSTITUCIONAL",
             f"TIPO: {tipo}",
             f"NOMBRE: {name}",
-            f"CEDULA: {cedula or '-'}",
-            f"CODIGO: {codigo or '-'}",
+            f"CÉDULA: {cedula or '-'}",
+            f"CÓDIGO: {codigo or '-'}",
         ]
     )
     qr_size = 3.7 * cm
@@ -774,14 +774,14 @@ def _build_carnet_pdf(status: dict[str, Any]) -> bytes:
 def _carnet_pdf_response(cursor: pyodbc.Cursor, person: dict[str, Any], login: str) -> StreamingResponse:
     status = _person_status_payload(cursor, person)
     if not status.get("puede_descargar_carnet"):
-        raise HTTPException(status_code=400, detail="El carnet solo se puede generar con una foto aprobada y vigente.")
+        raise HTTPException(status_code=400, detail="El carné solo se puede generar con una foto aprobada y vigente.")
     pdf_bytes = _build_carnet_pdf(status)
     cursor.execute(
         """
         UPDATE dbo.CARNET_USUARIO_FOTO_SOLICITUD
         SET carnet_emitido = 1,
             fecha_emision = COALESCE(fecha_emision, SYSDATETIME()),
-            observacion = COALESCE(NULLIF(observacion, N''), N'Foto aprobada para carnet')
+            observacion = COALESCE(NULLIF(observacion, N''), N'Foto aprobada para el carné')
         WHERE id_solicitud = ?
         """,
         status.get("id_solicitud"),
@@ -802,7 +802,7 @@ def get_my_carnet_status(current_user: Annotated[SessionUser, Depends(_CARNET_AC
             person = _current_person(cursor, current_user)
             return _person_status_payload(cursor, person)
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el carné: {exc}") from exc
 
 
 @router.post("/me/foto")
@@ -817,9 +817,9 @@ async def upload_my_carnet_photo(
             person = _current_person(cursor, current_user)
             status = _save_uploaded_photo(cursor, person, data, original_name, mime_type, current_user.login)
             conn.commit()
-            return {"ok": True, "message": "Foto cargada. Queda pendiente de aprobacion.", "foto": status}
+            return {"ok": True, "message": "Foto cargada. Queda pendiente de aprobación.", "foto": status}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error subiendo foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al subir la foto para el carné: {exc}") from exc
 
 
 @router.get("/me/pdf")
@@ -832,13 +832,13 @@ def download_my_carnet_pdf(current_user: Annotated[SessionUser, Depends(_CARNET_
             conn.commit()
             return response
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error generando carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al generar el carné: {exc}") from exc
 
 
 @router.get("/personas")
 def search_carnet_people(
     current_user: Annotated[SessionUser, Depends(_CARNET_MANAGE_ACCESS)],
-    q: Annotated[str, Query(description="Cedula, codigo, nombre o correo")] = "",
+    q: Annotated[str, Query(description='Cédula, código, nombre o correo')] = "",
     tipo: Annotated[str, Query(description="TODOS, ESTUDIANTE, DOCENTE o ADMINISTRATIVO")] = "TODOS",
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
 ) -> dict[str, Any]:
@@ -853,7 +853,7 @@ def search_carnet_people(
                 items.append({**person, "foto": status})
             return {"total": len(items), "items": items}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error buscando personas para carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al buscar personas para el carné: {exc}") from exc
 
 
 @router.get("/personas/{tipo_persona}/{codigo_persona}/foto")
@@ -869,7 +869,7 @@ def get_person_carnet_photo(
             person = _fetch_person(cursor, tipo_persona, codigo_persona)
             return _person_status_payload(cursor, person)
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar la foto para el carné: {exc}") from exc
 
 
 @router.post("/personas/{tipo_persona}/{codigo_persona}/foto")
@@ -886,9 +886,9 @@ async def upload_person_carnet_photo(
             person = _fetch_person(cursor, tipo_persona, codigo_persona)
             status = _save_uploaded_photo(cursor, person, data, original_name, mime_type, current_user.login)
             conn.commit()
-            return {"ok": True, "message": "Foto cargada. Queda pendiente de aprobacion.", "foto": status}
+            return {"ok": True, "message": "Foto cargada. Queda pendiente de aprobación.", "foto": status}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error subiendo foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al subir la foto para el carné: {exc}") from exc
 
 
 @router.get("/personas/{tipo_persona}/{codigo_persona}/pdf")
@@ -905,7 +905,7 @@ def download_person_carnet_pdf(
             conn.commit()
             return response
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error generando carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al generar el carné: {exc}") from exc
 
 
 @router.post("/solicitudes/{request_id}/aprobar")
@@ -927,7 +927,7 @@ def approve_carnet_photo(
             )
             row = cursor.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="No se encontro la solicitud de foto")
+                raise HTTPException(status_code=404, detail='No se encontró la solicitud de foto')
             person = _fetch_person(cursor, _clean(row.tipo_persona), _clean(row.codigo_persona))
             months = _validity_months(person["tipo_persona"])
             cursor.execute(
@@ -954,7 +954,7 @@ def approve_carnet_photo(
                 """
                 UPDATE dbo.CARNET_USUARIO_FOTO_SOLICITUD
                 SET estado = 'APROBADA',
-                    observacion = N'Foto aprobada para carnet',
+                    observacion = N'Foto aprobada para el carné',
                     meses_vigencia = ?,
                     fecha_vigencia_hasta = DATEADD(month, ?, SYSDATETIME()),
                     usuario_revision = ?,
@@ -967,9 +967,9 @@ def approve_carnet_photo(
                 request_id,
             )
             conn.commit()
-            return {"ok": True, "message": "Foto aprobada para carnet.", "foto": _person_status_payload(cursor, person)}
+            return {"ok": True, "message": "Foto aprobada para el carné.", "foto": _person_status_payload(cursor, person)}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error aprobando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al aprobar la foto para el carné: {exc}") from exc
 
 
 @router.post("/solicitudes/{request_id}/rechazar")
@@ -992,7 +992,7 @@ def reject_carnet_photo(
             )
             row = cursor.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="No se encontro la solicitud de foto")
+                raise HTTPException(status_code=404, detail='No se encontró la solicitud de foto')
             person = _fetch_person(cursor, _clean(row.tipo_persona), _clean(row.codigo_persona))
             cursor.execute(
                 """
@@ -1019,4 +1019,4 @@ def reject_carnet_photo(
             conn.commit()
             return {"ok": True, "message": "Foto rechazada.", "foto": _person_status_payload(cursor, person)}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error rechazando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al rechazar la foto para el carné: {exc}") from exc

@@ -24,6 +24,29 @@ GRAPH_MODULE_FOLDERS = {
     "TITULACION": "TITULACION",
     "PRACTICAS": "PRACTICAS PREPROFESIONALES",
     "VINCULACION": "VINCULACION CON LA SOCIEDAD",
+    "FACTURACION": "FACTURAS",
+}
+GRAPH_EXPEDIENT_TYPES = {
+    "INGLES": (
+        "Inglés",
+        "Archivos y evidencias de evaluación del idioma Inglés.",
+    ),
+    "TITULACION": (
+        "Titulación",
+        "Documentos habilitantes, actas y títulos.",
+    ),
+    "PRACTICAS": (
+        "Prácticas preprofesionales",
+        "Documentos del expediente de prácticas preprofesionales.",
+    ),
+    "VINCULACION": (
+        "Vinculación con la sociedad",
+        "Documentos del expediente de vinculación con la sociedad.",
+    ),
+    "FACTURACION": (
+        "Facturación",
+        "Facturas electrónicas XML y representaciones impresas RIDE del estudiante.",
+    ),
 }
 
 
@@ -36,10 +59,10 @@ def safe_filename(value: str, allowed_extensions: set[str] | None = None) -> str
     filename = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", filename)
     filename = re.sub(r"\s+", " ", filename).strip(" .")
     if not filename:
-        raise ValueError("El archivo no tiene un nombre valido.")
+        raise ValueError('El archivo no tiene un nombre válido.')
     extension = Path(filename).suffix.lower()
     if allowed_extensions is not None and extension not in allowed_extensions:
-        raise ValueError(f"El formato {extension or 'sin extension'} no esta permitido.")
+        raise ValueError(f"El formato {extension or 'sin extensión'} no está permitido.")
     return filename[:255]
 
 
@@ -66,9 +89,9 @@ def build_expedient_folder_path(
     module = clean(module_code).upper()
     document = re.sub(r"\D+", "", identification)
     if module not in GRAPH_MODULE_FOLDERS:
-        raise ValueError("Modulo documental no permitido.")
+        raise ValueError('Módulo documental no permitido.')
     if not document:
-        raise ValueError("La identificacion del estudiante es obligatoria.")
+        raise ValueError('La identificación del estudiante es obligatoria.')
 
     fallback_name = f"ESTUDIANTE {student_code or document}"
     available_name_length = max(20, 100 - len(document) - 3)
@@ -276,6 +299,28 @@ def _assert_schema(cursor: Any) -> None:
         )
 
 
+def _ensure_expedient_type(cursor: Any, module_code: str) -> None:
+    module = clean(module_code).upper()
+    expedient_type = GRAPH_EXPEDIENT_TYPES.get(module)
+    if not expedient_type:
+        raise ValueError("Módulo documental no permitido.")
+    cursor.execute(
+        """
+        MERGE cat.TipoExpedienteGraph AS target
+        USING (SELECT ? AS Codigo, ? AS Nombre, ? AS Descripcion) AS source
+           ON target.TipoExpedienteGraphCodigo = source.Codigo
+        WHEN MATCHED THEN UPDATE SET
+            Nombre = source.Nombre, Descripcion = source.Descripcion, Activo = 1
+        WHEN NOT MATCHED THEN
+            INSERT(TipoExpedienteGraphCodigo, Nombre, Descripcion)
+            VALUES(source.Codigo, source.Nombre, source.Descripcion);
+        """,
+        module,
+        expedient_type[0],
+        expedient_type[1],
+    )
+
+
 def _ensure_person(
     cursor: Any,
     *,
@@ -350,6 +395,7 @@ def prepare_expedient(
     with get_graph_database_connection() as conn:
         cursor = conn.cursor()
         _assert_schema(cursor)
+        _ensure_expedient_type(cursor, module)
         person_id = _ensure_person(
             cursor,
             identification=document,
@@ -483,7 +529,7 @@ def register_upload_session(
     max_expected_size: int = MAX_DOCUMENT_BYTES,
 ) -> None:
     if max_expected_size <= 0:
-        raise ValueError("El limite documental configurado no es valido.")
+        raise ValueError('El límite documental configurado no es válido.')
     if expected_size <= 0 or expected_size > max_expected_size:
         max_gb = max_expected_size / (1024 * 1024 * 1024)
         limit_label = f"{max_gb:g} GB"
@@ -518,7 +564,7 @@ def register_upload_session(
             VALUES('EXPEDIENTE_DOCUMENTAL', ?, 'INICIAR_CARGA', ?, ?)
             """,
             expedient_graph_id,
-            f"Sesion {session_id}; archivo {original_filename}; {expected_size} bytes",
+            f"Sesión {session_id}; archivo {original_filename}; {expected_size} bytes",
             audit_user,
         )
         conn.commit()
@@ -555,6 +601,7 @@ def complete_upload_session(
     graph_item: dict[str, Any],
     edit_deadline: datetime | None,
     audit_user: str,
+    append_document: bool = False,
 ) -> dict[str, Any]:
     graph_item_id = clean(graph_item.get("id"))
     graph_web_url = clean(graph_item.get("webUrl"))
@@ -563,7 +610,7 @@ def complete_upload_session(
     graph_size = int(graph_item.get("size") or 0)
     mime_type = clean((graph_item.get("file") or {}).get("mimeType"))
     if not graph_item_id:
-        raise ValueError("Microsoft Graph no devolvio el identificador del archivo.")
+        raise ValueError("Microsoft Graph no devolvió el identificador del archivo.")
 
     with get_graph_database_connection() as conn:
         cursor = conn.cursor()
@@ -580,7 +627,7 @@ def complete_upload_session(
         )
         session = cursor.fetchone()
         if not session:
-            raise ValueError("No existe la sesion documental.")
+            raise ValueError('No existe la sesión documental.')
         if session.DocumentoGraphId is not None:
             cursor.execute(
                 """
@@ -638,19 +685,21 @@ def complete_upload_session(
                     "content_type": clean(completed.ContentType) or "application/octet-stream",
                 }
         if graph_size != int(session.TamanoEsperado):
-            raise ValueError("El tamano confirmado por Microsoft Graph no coincide con la carga solicitada.")
+            raise ValueError('El tamaño confirmado por Microsoft Graph no coincide con la carga solicitada.')
 
-        cursor.execute(
-            """
-            SELECT TOP (1) DocumentoGraphId, VersionActual
-            FROM doc.DocumentoGraph WITH (UPDLOCK, HOLDLOCK)
-            WHERE ExpedienteGraphId = ? AND TipoDocumentoCodigo = ? AND Activo = 1
-            ORDER BY DocumentoGraphId DESC
-            """,
-            int(session.ExpedienteGraphId),
-            clean(session.TipoDocumentoCodigo),
-        )
-        current = cursor.fetchone()
+        current = None
+        if not append_document:
+            cursor.execute(
+                """
+                SELECT TOP (1) DocumentoGraphId, VersionActual
+                FROM doc.DocumentoGraph WITH (UPDLOCK, HOLDLOCK)
+                WHERE ExpedienteGraphId = ? AND TipoDocumentoCodigo = ? AND Activo = 1
+                ORDER BY DocumentoGraphId DESC
+                """,
+                int(session.ExpedienteGraphId),
+                clean(session.TipoDocumentoCodigo),
+            )
+            current = cursor.fetchone()
         version = int(current.VersionActual or 0) + 1 if current else 1
         final_content_type = mime_type or clean(session.ContentType) or "application/octet-stream"
         if current:

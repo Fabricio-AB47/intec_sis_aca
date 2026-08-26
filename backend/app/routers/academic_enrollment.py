@@ -323,15 +323,15 @@ def _select_target_regular_periods(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
     source = next((item for item in periods if _int_value(item.get("codigo_periodo")) == source_codigo_periodo), None)
     if not source:
-        raise HTTPException(status_code=404, detail="No se encontro el periodo HOMO de origen")
+        raise HTTPException(status_code=404, detail='No se encontró el período HOMO de origen')
     if not _period_is_homo(source):
-        raise HTTPException(status_code=400, detail="El periodo de origen debe ser HOMO o tipo H")
+        raise HTTPException(status_code=400, detail='El período de origen debe ser HOMO o tipo H')
 
     regular_periods = sorted([item for item in periods if _period_is_regular(item)], key=_period_sort_key)
     if target_codigo_periodo:
         target = next((item for item in regular_periods if _int_value(item.get("codigo_periodo")) == target_codigo_periodo), None)
         if not target:
-            raise HTTPException(status_code=404, detail="No se encontro un periodo regular destino valido")
+            raise HTTPException(status_code=404, detail='No se encontró un período regular destino válido')
         start_key = _period_sort_key(target)
         selected = [item for item in regular_periods if _period_sort_key(item) >= start_key][:max_periods]
         if len(selected) < max_periods:
@@ -344,7 +344,7 @@ def _select_target_regular_periods(
         return source, selected[:max_periods], False
 
     if not regular_periods:
-        raise HTTPException(status_code=404, detail="No existen periodos regulares para usar como referencia")
+        raise HTTPException(status_code=404, detail='No existen períodos regulares para usar como referencia')
     ranked = sorted(regular_periods, key=lambda item: _period_rank_for_source(source, item))
     first = ranked[0]
     first_key = _period_sort_key(first)
@@ -496,9 +496,9 @@ def _period_change_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicP
     if source_period_id:
         global_source_period = period_map.get(source_period_id)
         if not global_source_period:
-            raise HTTPException(status_code=404, detail="No se encontro el periodo HOMO de origen")
+            raise HTTPException(status_code=404, detail='No se encontró el período HOMO de origen')
         if not _period_is_homo(global_source_period):
-            raise HTTPException(status_code=400, detail="El periodo de origen debe ser HOMO o tipo H")
+            raise HTTPException(status_code=400, detail='El período de origen debe ser HOMO o tipo H')
     exceptions = _exception_cedulas(payload.exception_cedulas)
 
     base_where = ["UPPER(LTRIM(RTRIM(ISNULL(cxe.TipoMatricula, '')))) = 'H'"]
@@ -726,13 +726,13 @@ def _period_change_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicP
         )
         if is_exception:
             action = "EXCEPCION"
-            reason = "Cedula marcada para editar manualmente; no se migrara."
+            reason = "Cédula marcada para edición manual; no se migrará."
         elif not target_period_id or not target_period:
             action = "SIN_PERIODO_DESTINO"
-            reason = "No existe un periodo regular disponible dentro de los 4 periodos de migracion."
+            reason = "No existe un período regular disponible dentro de los cuatro períodos de migración."
         elif is_duplicate:
             action = "DUPLICADO_DESTINO"
-            reason = "La materia ya existe en el periodo regular destino."
+            reason = "La materia ya existe en el período regular de destino."
         else:
             action = "MIGRAR"
             reason = "Lista para cambiar de HOMO a regular; se asigno por bloque de 6 materias."
@@ -1316,7 +1316,7 @@ def _validate_payload(payload: AcademicEnrollmentPayload) -> None:
     if payload.cod_jornada < 0:
         raise HTTPException(status_code=400, detail="cod_jornada no puede ser negativo")
     if not payload.materia_codes:
-        raise HTTPException(status_code=400, detail="Selecciona al menos una materia del pensum")
+        raise HTTPException(status_code=400, detail='Seleccione al menos una materia del pensum')
     payload.materia_codes = sorted({int(code) for code in payload.materia_codes})
     payload.prerequisite_exception_codes = sorted(
         {int(code) for code in payload.prerequisite_exception_codes}
@@ -1333,7 +1333,7 @@ def _validate_payload(payload: AcademicEnrollmentPayload) -> None:
     if payload.prerequisite_exception_codes and len(payload.prerequisite_exception_reason or "") < 10:
         raise HTTPException(
             status_code=400,
-            detail="Ingrese un motivo de al menos 10 caracteres para autorizar la excepcion de prerrequisito",
+            detail='Ingrese un motivo de al menos 10 caracteres para autorizar la excepción de prerrequisito',
         )
 
 
@@ -1414,17 +1414,17 @@ def _ensure_entity_exists(
     if int(cursor.fetchone()[0] or 0) == 0 and not (
         allow_preinscription_student and _resolve_or_create_student_from_preinscription(cursor, payload, False)
     ):
-        raise HTTPException(status_code=404, detail="No se encontro el estudiante seleccionado")
+        raise HTTPException(status_code=404, detail='No se encontró el estudiante seleccionado')
     cursor.execute("SELECT COUNT(*) FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?", payload.cod_anio_basica)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro la carrera seleccionada")
+        raise HTTPException(status_code=404, detail='No se encontró la carrera seleccionada')
     cursor.execute("SELECT COUNT(*) FROM dbo.PERIODO WHERE cod_periodo = ?", payload.codigo_periodo)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro el periodo seleccionado")
+        raise HTTPException(status_code=404, detail='No se encontró el período seleccionado')
     if payload.cod_jornada:
         cursor.execute("SELECT COUNT(*) FROM dbo.JORNADA WHERE NumJ = ?", payload.cod_jornada)
         if int(cursor.fetchone()[0] or 0) == 0:
-            raise HTTPException(status_code=404, detail="No se encontro la jornada seleccionada")
+            raise HTTPException(status_code=404, detail='No se encontró la jornada seleccionada')
 
 
 def _fetch_jornada_name(cursor: pyodbc.Cursor, cod_jornada: int) -> str:
@@ -1461,7 +1461,7 @@ def _normalize_teacher_student_selection(
     normalized = sorted({int(code) for code in student_codes if int(code) > 0})
     if mode == "INDIVIDUAL":
         if not normalized:
-            raise HTTPException(status_code=400, detail="Selecciona al menos un estudiante para la matricula individual")
+            raise HTTPException(status_code=400, detail='Seleccione al menos un estudiante para la matrícula individual')
         return normalized
     return None
 
@@ -1528,17 +1528,17 @@ def _ensure_teacher_entities_exist(cursor: pyodbc.Cursor, payload: AcademicTeach
         )
         teacher = cursor.fetchone()
     if not teacher:
-        raise HTTPException(status_code=404, detail="No se encontro el docente seleccionado")
+        raise HTTPException(status_code=404, detail='No se encontró el docente seleccionado')
     if _clean(getattr(teacher, "Estado", "")) and _is_inactive_teacher_status(teacher.Estado):
         raise HTTPException(status_code=400, detail="El docente seleccionado esta inactivo")
 
     cursor.execute("SELECT COUNT(*) FROM dbo.PERIODO WHERE cod_periodo = ?", payload.codigo_periodo)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro el periodo seleccionado")
+        raise HTTPException(status_code=404, detail='No se encontró el período seleccionado')
     if hasattr(payload, "cod_anio_basica") and hasattr(payload, "codigo_materia"):
         cursor.execute("SELECT COUNT(*) FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?", payload.cod_anio_basica)
         if int(cursor.fetchone()[0] or 0) == 0:
-            raise HTTPException(status_code=404, detail="No se encontro la carrera seleccionada")
+            raise HTTPException(status_code=404, detail='No se encontró la carrera seleccionada')
         cursor.execute(
             """
             SELECT COUNT(*)
@@ -1624,17 +1624,17 @@ def _fetch_teacher_target_student_codes(
 def _ensure_bulk_entities_exist(cursor: pyodbc.Cursor, payload: AcademicBulkEnrollmentPayload) -> None:
     cursor.execute("SELECT COUNT(*) FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?", payload.cod_anio_basica)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro la carrera seleccionada")
+        raise HTTPException(status_code=404, detail='No se encontró la carrera seleccionada')
     cursor.execute("SELECT COUNT(*) FROM dbo.PERIODO WHERE cod_periodo = ?", payload.source_codigo_periodo)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro el periodo inscrito")
+        raise HTTPException(status_code=404, detail='No se encontró el período inscrito')
     cursor.execute("SELECT COUNT(*) FROM dbo.PERIODO WHERE cod_periodo = ?", payload.target_codigo_periodo)
     if int(cursor.fetchone()[0] or 0) == 0:
-        raise HTTPException(status_code=404, detail="No se encontro el periodo de matricula")
+        raise HTTPException(status_code=404, detail='No se encontró el período de matrícula')
     if payload.cod_jornada:
         cursor.execute("SELECT COUNT(*) FROM dbo.JORNADA WHERE NumJ = ?", payload.cod_jornada)
         if int(cursor.fetchone()[0] or 0) == 0:
-            raise HTTPException(status_code=404, detail="No se encontro la jornada seleccionada")
+            raise HTTPException(status_code=404, detail='No se encontró la jornada seleccionada')
 
 
 def _fetch_pensum_by_code(cursor: pyodbc.Cursor, cod_anio_basica: int) -> dict[int, dict[str, Any]]:
@@ -2249,7 +2249,7 @@ def _create_academic_audit_header(
         payload.source_codigo_periodo,
         payload.target_codigo_periodo,
         str(payload.cod_anio_basica),
-        "Matricula academica masiva",
+        "Matrícula académica masiva",
         int(summary.get("estudiantes_origen", 0) or 0),
         int(summary.get("estudiantes_origen", 0) or 0) * len(payload.materia_codes),
         total_listos,
@@ -2286,7 +2286,7 @@ def _update_academic_audit_header(
         """,
         total_matriculados,
         total_omitidos,
-        "Matricula academica masiva procesada",
+        "Matrícula académica masiva procesada",
         audit_id,
     )
 
@@ -2444,7 +2444,7 @@ def _validate_bulk_payload(payload: AcademicBulkEnrollmentPayload) -> None:
     if payload.cod_jornada < 0:
         raise HTTPException(status_code=400, detail="cod_jornada no puede ser negativo")
     if not payload.materia_codes:
-        raise HTTPException(status_code=400, detail="Selecciona al menos una materia del pensum")
+        raise HTTPException(status_code=400, detail='Seleccione al menos una materia del pensum')
     payload.materia_codes = sorted({int(code) for code in payload.materia_codes})
     payload.student_codes = sorted({int(code) for code in payload.student_codes})
 
@@ -2526,7 +2526,7 @@ def _fetch_bulk_source_students(cursor: pyodbc.Cursor, payload: AcademicBulkEnro
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Los estudiantes seleccionados no tienen matricula en el periodo/carrera origen: "
+                    "Los estudiantes seleccionados no tienen matrícula en el período o carrera de origen: "
                     + ", ".join(str(code) for code in missing_codes[:20])
                 ),
             )
@@ -2712,7 +2712,7 @@ def _bulk_allowed_subjects(
     if not target_level_codes:
         return block_all("No hay materias configuradas en el nivel destino")
     if selected_codes != target_level_codes:
-        return block_all("La matriculacion masiva debe contener todas las materias del nivel destino")
+        return block_all("La matriculación masiva debe contener todas las materias del nivel de destino")
 
     progress = _fetch_bulk_student_progress(cursor, payload, source_student)
     current_level = progress["nivel_actual"]
@@ -2825,7 +2825,7 @@ def _bulk_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicBulkEnroll
 
     source_students = _fetch_bulk_source_students(cursor, payload)
     if not source_students:
-        raise HTTPException(status_code=404, detail="No hay estudiantes en el periodo inscrito para la carrera seleccionada")
+        raise HTTPException(status_code=404, detail='No hay estudiantes en el período inscrito para la carrera seleccionada')
 
     career_name = _fetch_career_name(cursor, payload.cod_anio_basica)
     target_levels = {pensum_by_code.get(code, {}).get("semestre") for code in payload.materia_codes}
@@ -2879,7 +2879,7 @@ def _bulk_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicBulkEnroll
                     0,
                     0,
                     "YA_MATRICULADO",
-                    "El estudiante ya tiene matricula en la carrera y periodo destino",
+                    "El estudiante ya tiene matrícula en la carrera y el período de destino.",
                 )
             )
             continue
@@ -2923,11 +2923,11 @@ def _bulk_preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicBulkEnroll
             if blocked_subjects:
                 block_reason = blocked_subjects[0].get("motivo") or "Materia bloqueada"
             elif blocked_by_attempt:
-                block_reason = "La materia supera el tercer numero de matricula permitido"
+                block_reason = "La materia supera el tercer número de matrícula permitido."
             elif already_audited:
                 block_reason = "La materia ya fue procesada en una auditoria previa"
             elif existing_in_target:
-                block_reason = "Las materias ya existen en el periodo destino"
+                block_reason = "Las materias ya existen en el período de destino."
             else:
                 block_reason = "No hay materias pendientes para insertar"
             items.append(
@@ -3017,13 +3017,13 @@ def _save_enrollment_with_cursor(
                 "num_matricula": None,
                 "accion": "BLOQUEADA_PERIODO",
                 "fue_matriculado": False,
-                "observacion": "El estudiante ya tiene matricula registrada en la carrera y periodo destino; no se realizo ningun cambio",
+                "observacion": 'El estudiante ya tiene matrícula registrada en la carrera y período destino; no se realizó ningún cambio',
             }
             for item in preview.get("items", [])
         ]
         return {
             "ok": True,
-            "message": "El estudiante ya tiene matricula en la carrera y periodo destino; no se generaron registros duplicados.",
+            "message": 'El estudiante ya tiene matrícula en la carrera y período destino; no se generaron registros duplicados.',
             "num_matricula": "",
             "inserted": 0,
             "updated": 0,
@@ -3116,7 +3116,7 @@ def _save_enrollment_with_cursor(
                     "num_matricula": subject_num_matricula,
                     "accion": "EXISTENTE",
                     "fue_matriculado": False,
-                    "observacion": "Materia ya existe en el periodo destino; no se realizo ningun cambio",
+                    "observacion": 'Materia ya existe en el período destino; no se realizó ningún cambio',
                 }
             )
         else:
@@ -3135,7 +3135,7 @@ def _save_enrollment_with_cursor(
                         "num_matricula": subject_num_matricula,
                         "accion": "BLOQUEADA_NUM_MATRICULA",
                         "fue_matriculado": False,
-                        "observacion": "La materia supera el tercer numero de matricula permitido",
+                        "observacion": 'La materia supera el tercer número de matrícula permitido',
                     }
                 )
                 continue
@@ -3224,7 +3224,7 @@ def _save_enrollment_with_cursor(
 
     return {
         "ok": True,
-        "message": "Matricula academica guardada correctamente.",
+        "message": 'Matrícula académica guardada correctamente.',
         "num_matricula": str(num_matricula),
         "inserted": inserted,
         "updated": updated,
@@ -3313,18 +3313,18 @@ def matricula_acad_catalog(
             "jornadas": jornadas,
             "tipos_matricula": [
                 {"value": "R", "label": "Regular"},
-                {"value": "H", "label": "Homologacion"},
+                {"value": "H", "label": 'Homologación'},
                 {"value": "E", "label": "Especial"},
             ],
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando catalogo academico: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el catálogo académico: {exc}") from exc
 
 
 @router.get("/careers")
 def matricula_acad_careers(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int | None, Query(description="Periodo inscrito para filtrar carreras")] = None,
+    codigo_periodo: Annotated[int | None, Query(description='Período inscrito para filtrar carreras')] = None,
 ) -> dict[str, Any]:
     del current_user
     try:
@@ -3370,7 +3370,7 @@ def matricula_acad_careers(
             items = [_career_item(row) for row in cursor.fetchall()]
         return {"total": len(items), "items": items}
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando carreras del periodo: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar las carreras del período: {exc}") from exc
 
 
 @router.get("/students")
@@ -3449,7 +3449,7 @@ def matricula_acad_pensum(
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?", cod_anio_basica)
             if int(cursor.fetchone()[0] or 0) == 0:
-                raise HTTPException(status_code=404, detail="No se encontro la carrera seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la carrera seleccionada')
             items = list(_fetch_pensum_by_code(cursor, cod_anio_basica).values())
         return {"total": len(items), "items": items}
     except HTTPException:
@@ -3664,8 +3664,8 @@ def matricula_acad_docentes(
 @router.get("/docentes/materias-unicas")
 def matricula_acad_teacher_unique_subjects(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int, Query(description="Periodo a consultar")],
-    buscar: Annotated[str | None, Query(description="Codigo o nombre de materia")] = None,
+    codigo_periodo: Annotated[int, Query(description='Período a consultar')],
+    buscar: Annotated[str | None, Query(description='Código o nombre de materia')] = None,
     limite: Annotated[int, Query(ge=1, le=500)] = 120,
 ) -> dict[str, Any]:
     del current_user
@@ -3941,7 +3941,7 @@ def matricula_acad_update_teacher_state(
         raise HTTPException(status_code=400, detail="Solo se permite Activo (A) o Inactivo (P) para docentes.")
     codigo_usuario = payload.codigo_usuario or payload.codigo_doc
     if not codigo_usuario:
-        raise HTTPException(status_code=400, detail="Selecciona un usuario docente para actualizar el estado.")
+        raise HTTPException(status_code=400, detail='Seleccione un usuario docente para actualizar el estado.')
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -4004,7 +4004,7 @@ def matricula_acad_update_teacher_state(
 @router.get("/docentes/matriculas")
 def matricula_acad_teacher_enrollments(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int, Query(description="Periodo a consultar")],
+    codigo_periodo: Annotated[int, Query(description='Período a consultar')],
     cod_anio_basica: Annotated[list[int] | None, Query(description="Carrera(s) a consultar")] = None,
     codigo_materia: Annotated[str | None, Query(description="Materia opcional")] = None,
     paralelo: Annotated[str | None, Query(description="Paralelo opcional")] = None,
@@ -4104,7 +4104,7 @@ def matricula_acad_teacher_enrollments(
 @router.get("/docentes/paralelos")
 def matricula_acad_teacher_parallel_options(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int, Query(description="Periodo a consultar")],
+    codigo_periodo: Annotated[int, Query(description='Período a consultar')],
     cod_anio_basica: Annotated[list[int] | None, Query(description="Carrera(s) a consultar")] = None,
     codigo_materia: Annotated[str | None, Query(description="Materia opcional")] = None,
     semestre: Annotated[int | None, Query(description="Nivel/Semestre opcional")] = None,
@@ -4226,7 +4226,7 @@ def matricula_acad_teacher_parallel_options(
 @router.get("/docentes/estudiantes-paralelo")
 def matricula_acad_teacher_parallel_students(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int, Query(description="Periodo a consultar")],
+    codigo_periodo: Annotated[int, Query(description='Período a consultar')],
     codigo_materia: Annotated[str, Query(description="Materia a consultar")],
     paralelo: Annotated[str, Query(description="Paralelo a consultar")],
     cod_anio_basica: Annotated[list[int] | None, Query(description="Carrera(s) opcionales")] = None,
@@ -4236,9 +4236,9 @@ def matricula_acad_teacher_parallel_students(
     subject_filter = _clean(codigo_materia).upper()
     parallel = _clean(paralelo).upper()
     if not subject_filter:
-        raise HTTPException(status_code=400, detail="Selecciona una materia")
+        raise HTTPException(status_code=400, detail='Seleccione una materia')
     if not parallel:
-        raise HTTPException(status_code=400, detail="Selecciona un paralelo")
+        raise HTTPException(status_code=400, detail='Seleccione un paralelo')
 
     career_codes = sorted({int(code) for code in (cod_anio_basica or []) if int(code) > 0})
     career_condition = ""
@@ -4362,7 +4362,7 @@ def matricula_acad_teacher_parallel_students(
 def matricula_acad_teacher_students(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
     codigo_doc: Annotated[int, Query(description="Docente a consultar")],
-    codigo_periodo: Annotated[list[int] | None, Query(description="Periodo(s) opcionales")] = None,
+    codigo_periodo: Annotated[list[int] | None, Query(description='Período(s) opcionales')] = None,
     cod_anio_basica: Annotated[list[int] | None, Query(description="Carrera(s) opcionales")] = None,
     codigo_materia: Annotated[str | None, Query(description="Materia opcional")] = None,
     paralelo: Annotated[str | None, Query(description="Paralelo opcional")] = None,
@@ -4582,9 +4582,9 @@ def matricula_acad_save_teacher_enrollment(
             "ok": not already_exists,
             "already_exists": already_exists,
             "message": (
-                "La matricula docente ya existe para la materia, periodo, paralelo y jornada seleccionados."
+                "La matrícula docente ya existe para la materia, el período, el paralelo y la jornada seleccionados."
                 if already_exists
-                else "Matricula docente guardada correctamente."
+                else "Matrícula docente guardada correctamente."
             ),
             "action": action,
             "inserted_count": 0 if already_exists else 1,
@@ -4601,7 +4601,7 @@ def matricula_acad_save_teacher_enrollment(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error guardando matricula docente: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al guardar la matrícula docente: {exc}") from exc
 
 
 @router.post("/docentes/matricula/materia-unica")
@@ -4617,7 +4617,7 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
             teacher = _ensure_teacher_entities_exist(cursor, payload)  # type: ignore[arg-type]
             subject_key = _clean(payload.cod_materia).upper()
             if not subject_key:
-                raise HTTPException(status_code=400, detail="Selecciona una materia valida")
+                raise HTTPException(status_code=400, detail='Seleccione una materia válida')
             selected_student_codes = _normalize_teacher_student_selection(
                 payload.modo_asignacion,
                 payload.codigos_estudiantes,
@@ -4665,7 +4665,7 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
             if not targets:
                 raise HTTPException(
                     status_code=404,
-                    detail="No se encontraron estudiantes matriculados para esa materia, periodo y paralelo.",
+                    detail='No se encontraron estudiantes matriculados para esa materia, período y paralelo.',
                 )
 
             requested_student_codes = set(selected_student_codes or [])
@@ -4702,14 +4702,14 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
                     raise HTTPException(
                         status_code=400,
                         detail=(
-                            "Los estudiantes seleccionados no pertenecen a la materia, periodo y paralelo indicados: "
+                            "Los estudiantes seleccionados no pertenecen a la materia, el período y el paralelo indicados: "
                             f"{missing_text}"
                         ),
                     )
             if not prepared_targets:
                 raise HTTPException(
                     status_code=404,
-                    detail="No hay estudiantes elegibles para la matricula docente solicitada.",
+                    detail='No hay estudiantes elegibles para la matrícula docente solicitada.',
                 )
 
             inserted = 0
@@ -4790,9 +4790,9 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
         else:
             action = "EXISTENTE" if course_already_exists else "INSERTADA" if inserted and not existing else "MIXTA"
             message = (
-                "La matricula docente ya existe para la materia, periodo, paralelo y jornada seleccionados."
+                "La matrícula docente ya existe para la materia, el período, el paralelo y la jornada seleccionados."
                 if course_already_exists
-                else "Matricula docente masiva guardada por materia unica."
+                else "Matrícula docente masiva guardada por materia única."
             )
         return {
             "ok": individual_assignment or not already_exists,
@@ -4817,13 +4817,13 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error guardando matricula docente por materia unica: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al guardar la matrícula docente por materia única: {exc}") from exc
 
 
 @router.get("/cohort")
 def matricula_acad_cohort(
     current_user: Annotated[SessionUser, Depends(_ACADEMIC_ACCESS)],
-    codigo_periodo: Annotated[int, Query(description="Periodo academico a consultar")],
+    codigo_periodo: Annotated[int, Query(description='Período académico a consultar')],
     cod_anio_basica: Annotated[int | None, Query(description="Carrera opcional")] = None,
     paralelo: Annotated[str | None, Query(description="Paralelo opcional")] = None,
 ) -> dict[str, Any]:
@@ -4924,7 +4924,7 @@ def matricula_acad_cohort(
         }
         return response
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando cohorte academica: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar la cohorte académica: {exc}") from exc
 
 
 @router.get("/students/{codigo_estud}")
@@ -4983,7 +4983,7 @@ def matricula_acad_student_detail(
                 )
                 student_row = cursor.fetchone()
                 if not student_row:
-                    raise HTTPException(status_code=404, detail="No se encontro el estudiante")
+                    raise HTTPException(status_code=404, detail='No se encontró el estudiante')
 
             cursor.execute(
                 """
@@ -5179,7 +5179,7 @@ def matricula_acad_student_detail(
     except HTTPException:
         raise
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando detalle de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el detalle de la matrícula: {exc}") from exc
 
 
 @router.post("/preview")
@@ -5275,7 +5275,7 @@ def matricula_acad_bulk_save(
                             target_level,
                             None,
                             "YA_MATRICULADO",
-                            "El estudiante ya tiene matricula en la carrera y periodo destino; no se generaron registros duplicados",
+                            "El estudiante ya tiene matrícula en la carrera y el período de destino; no se generaron registros duplicados.",
                             False,
                             None,
                         )
@@ -5361,7 +5361,7 @@ def matricula_acad_bulk_save(
                         target_level,
                         4,
                         "BLOQUEADA_NUM_MAT",
-                        "La materia supera el tercer numero de matricula permitido",
+                        "La materia supera el tercer número de matrícula permitido.",
                         False,
                         None,
                     )
@@ -5379,7 +5379,7 @@ def matricula_acad_bulk_save(
                         target_level,
                         existing_target.get(int(code)),
                         "EXISTENTE",
-                        "Materia ya existe en el periodo destino; no se realizo ningun cambio",
+                        "La materia ya existe en el período de destino; no se realizó ningún cambio",
                         False,
                         None,
                     )
@@ -5448,7 +5448,7 @@ def matricula_acad_bulk_save(
             conn.commit()
             return {
                 "ok": True,
-                "message": "Matriculacion masiva guardada correctamente.",
+                "message": 'Matriculación masiva guardada correctamente.',
                 "audit_id": audit_id,
                 "summary": summary,
                 "items": detail_items,
@@ -5461,7 +5461,7 @@ def matricula_acad_bulk_save(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error guardando matricula masiva: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al guardar la matrícula masiva: {exc}") from exc
 
 
 @router.get("/period-change/catalog")
@@ -5490,7 +5490,7 @@ def matricula_acad_period_change_catalog(
             "students": students,
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando periodos para cambio H/R: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar los períodos para el cambio H/R: {exc}") from exc
 
 
 @router.post("/period-change/preview")
@@ -5691,10 +5691,10 @@ def matricula_acad_balance_paralelos(
             )
             career_row = cursor.fetchone()
             if not career_row:
-                raise HTTPException(status_code=404, detail="No se encontro la carrera seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la carrera seleccionada')
             career_name = _clean(career_row.Nombre_Basica)
             if "INGL" not in career_name.upper():
-                raise HTTPException(status_code=400, detail="El balance de paralelos solo esta habilitado para Ingles")
+                raise HTTPException(status_code=400, detail='El balance de paralelos solo está habilitado para Inglés')
 
             cursor.execute(
                 """
@@ -5806,7 +5806,7 @@ def matricula_acad_balance_paralelos(
             if not target_parallels:
                 raise HTTPException(
                     status_code=400,
-                    detail="No existen paralelos PBS en las otras carreras del periodo para llevarlos hacia Ingles",
+                    detail='No existen paralelos PBS en las otras carreras del período para llevarlos hacia Inglés',
                 )
 
             ordered_students = sorted(
@@ -5945,4 +5945,4 @@ def matricula_acad_save(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error guardando matricula academica: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al guardar la matrícula académica: {exc}") from exc

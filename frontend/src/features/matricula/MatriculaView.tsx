@@ -100,7 +100,7 @@ export function MatriculaView({
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Validacion de matricula</p>
+          <p className="eyebrow">Validación de matrícula</p>
           <h1>Estados por tipo R y H</h1>
         </div>
 
@@ -108,7 +108,7 @@ export function MatriculaView({
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Matricula</span>
+              <span>Matrícula</span>
             </div>
           </div>
         </div>
@@ -119,7 +119,7 @@ export function MatriculaView({
           <article key={tipo} className="student-card student-card--stat matricula-stat-card">
             <p>Tipo {tipo}</p>
             <h2>{totals[tipo]}</h2>
-            <small>Estudiantes unicos por tipo</small>
+            <small>Estudiantes únicos por tipo</small>
           </article>
         ))}
       </section>
@@ -131,14 +131,14 @@ export function MatriculaView({
             type="button"
             className="student-card student-card--stat matricula-stat-card"
             onClick={() => {
-              setListScopeLabel('Cruce unico global')
+              setListScopeLabel('Cruce único global')
               setIsListModalOpen(true)
               void onSelectEstadoGlobal(codigo)
             }}
           >
             <p>{estado}</p>
             <h2>{getEstadoTotal(codigo)}</h2>
-            <small>Primera matricula historica</small>
+            <small>Primera matrícula histórica</small>
           </button>
         ))}
       </section>
@@ -260,7 +260,7 @@ export function MatriculaView({
                     <th>Estudiante</th>
                     <th>Tipo</th>
                     <th>Estado</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Correo personal</th>
                     <th>Nombre Carrera</th>
                   </tr>

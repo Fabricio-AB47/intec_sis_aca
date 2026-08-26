@@ -449,7 +449,7 @@ def _rows(cursor: pyodbc.Cursor, sql: str, params: list[str]) -> list[Any]:
 def _search_recipients(query: str, limit: int) -> dict[str, Any]:
     normalized_query = _clean(query)
     if len(normalized_query) < 2:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ingresa al menos 2 caracteres para buscar.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese al menos 2 caracteres para buscar.')
 
     safe_limit = max(1, min(limit, 200))
     pattern = f"%{normalized_query}%"
@@ -1355,9 +1355,9 @@ async def send_mass_email(
     if normalized_send_mode not in {"individual", "single"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Modo de envío inválido.")
     if not normalized_subject:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ingresa el asunto del correo.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese el asunto del correo.')
     if not normalized_body:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ingresa el cuerpo del correo.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese el cuerpo del correo.')
 
     try:
         raw_recipients = json.loads(recipients_json or "[]")

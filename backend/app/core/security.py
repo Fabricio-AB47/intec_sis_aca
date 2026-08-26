@@ -88,7 +88,7 @@ def verify_password(candidate: str, stored_value: str | None) -> bool:
 def hash_password(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
-        raise ValueError("La contrasena no puede estar vacia")
+        raise ValueError('La contraseña no puede estar vacía')
     if _HASHER is None:
         return normalized
     return _HASHER.hash(normalized)
@@ -126,7 +126,7 @@ def decode_session_token(token: str) -> SessionUser:
     except jwt.PyJWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Sesion invalida o expirada",
+            detail='Sesión inválida o expirada',
         ) from exc
 
     return SessionUser.model_validate(payload)
@@ -159,7 +159,7 @@ def get_current_user(request: Request) -> SessionUser:
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No hay una sesion activa",
+            detail='No hay una sesión activa',
         )
 
     user = decode_session_token(token)
@@ -184,7 +184,7 @@ def require_roles(*roles: str) -> Callable[[SessionUser], SessionUser]:
         if current_user.rol not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permisos para esta operacion",
+                detail='No tiene permisos para esta operación',
             )
         return current_user
 
@@ -210,13 +210,13 @@ def require_screen_access(page: str) -> Callable[[SessionUser], SessionUser]:
         except ScreenAccessUnavailableError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No se pudo validar la asignacion institucional de pantallas",
+                detail='No se pudo validar la asignación institucional de pantallas',
             ) from exc
 
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes asignada la pantalla requerida para esta operacion",
+                detail='No tiene asignada la pantalla requerida para esta operación',
             )
         return current_user
 

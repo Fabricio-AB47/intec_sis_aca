@@ -87,18 +87,18 @@ export function CruceDatosView({
     ['Registro + DATOS_ESTUD', summary?.balance_tablas],
     ['Moodle + DATOS_ESTUD', summary?.moodle_tablas],
     ['Solo DATOS_ESTUD', summary?.solo_tablas],
-    ['Con ultima matricula', summary?.total_con_carreraxestud],
-    ['Sin matricula', summary?.total_sin_carreraxestud],
+    ['Con última matrícula', summary?.total_con_carreraxestud],
+    ['Sin matrícula', summary?.total_sin_carreraxestud],
     ['Con nivel PENSUM', summary?.total_con_pensum],
     ['Sin nivel PENSUM', summary?.total_sin_pensum],
-    ['Duplicados cedula', summary?.duplicados_cedula_sql],
+    ['Duplicados cédula', summary?.duplicados_cedula_sql],
   ] as const
 
   return (
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Cruce de informacion</p>
+          <p className="eyebrow">Cruce de información</p>
           <h1>Excel, Moodle y tablas SQL</h1>
         </div>
 
@@ -167,9 +167,9 @@ export function CruceDatosView({
                   <th>Estudiante</th>
                   <th>ESTADO</th>
                   <th>Nivel</th>
-                  <th>Ultima matricula</th>
+                  <th>Última matrícula</th>
                   <th>Resultado</th>
-                  <th>Codigo / Cedula</th>
+                  <th>Código / Cédula</th>
                   <th>Correo Intec</th>
                   <th>Moodle</th>
                   <th>Registro</th>
@@ -245,7 +245,7 @@ export function CruceDatosView({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10}>Sin informacion procesada.</td>
+                    <td colSpan={10}>Sin información procesada.</td>
                   </tr>
                 )}
               </tbody>
@@ -255,12 +255,12 @@ export function CruceDatosView({
 
         <article className="student-card cruce-criteria-card">
           <div className="card-head">
-            <h3>Validacion</h3>
+            <h3>Validación</h3>
             <span>{summary?.total_tablas ? `Base ${formatNumber(summary.total_tablas)}` : 'Base SQL'}</span>
           </div>
           <p className="empty-block">
             {data?.criteria?.validacion ||
-              'DATOS_ESTUD es la unica fuente SQL para el total antes de cruzar contra Registro y Moodle.'}
+              'DATOS_ESTUD es la única fuente SQL para el total antes de cruzar contra Registro y Moodle.'}
           </p>
         </article>
       </section>

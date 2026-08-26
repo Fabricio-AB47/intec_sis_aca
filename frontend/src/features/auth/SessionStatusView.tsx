@@ -11,12 +11,12 @@ export function SessionStatusView({ message, detail, onRetry, onLogout }: Readon
   return (
     <AuthShell title="REPORTERIA" subtitle={message}>
       <p className="empty-block auth-status-copy">
-        {detail || 'Espera un momento mientras validamos la sesion y configuramos el acceso.'}
+        {detail || 'Espera un momento mientras validamos la sesión y configuramos el acceso.'}
       </p>
       {onRetry || onLogout ? (
         <div className="auth-status-actions">
           {onRetry ? <button type="button" className="profile-logout" onClick={onRetry}>Reintentar</button> : null}
-          {onLogout ? <button type="button" className="profile-logout" onClick={onLogout}>Cerrar sesion</button> : null}
+          {onLogout ? <button type="button" className="profile-logout" onClick={onLogout}>Cerrar sesión</button> : null}
         </div>
       ) : null}
     </AuthShell>

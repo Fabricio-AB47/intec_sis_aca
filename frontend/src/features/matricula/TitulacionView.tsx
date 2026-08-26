@@ -101,7 +101,7 @@ function gradeDetailGroups(grade: TitulacionMallaCalificacionesResponse['items']
         ['Matrícula', textValue(grade.num_matricula)],
         ['Paralelo', textValue(grade.paralelo)],
         ['Grupo', textValue(grade.num_grupo)],
-        ['Periodo', textValue(grade.nombre_periodo || grade.codigo_periodo)],
+        ['Período', textValue(grade.nombre_periodo || grade.codigo_periodo)],
       ],
     },
   ]
@@ -842,7 +842,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function programMechanism() {
     if (!expediente || !programacion.fecha_programada) {
-      setError('Ingresa la fecha de programación.')
+      setError('Ingrese la fecha de programación.')
       return
     }
     const payload = {
@@ -864,7 +864,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function saveTribunal() {
     if (!expediente || !tribunal.nombre_miembro.trim()) {
-      setError('Ingresa el nombre del miembro del tribunal.')
+      setError('Ingrese el nombre del miembro del tribunal.')
       return
     }
     const rolBase = tribunal.rol_tribunal || (mechanismCode === 'EXAMEN_COMPLEXIVO' ? 'RESPONSABLE' : 'JURADO')
@@ -889,7 +889,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function gradeExam() {
     if (!expediente || !examen.nota_examen) {
-      setError('Ingresa la nota del examen complexivo.')
+      setError('Ingrese la nota del examen complexivo.')
       return
     }
     await runAction(
@@ -907,7 +907,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function saveDefenseTopic() {
     if (!expediente || !defensa.tema_trabajo.trim()) {
-      setError('Ingresa el tema del trabajo de defensa.')
+      setError('Ingrese el tema del trabajo de defensa.')
       return
     }
     await runAction(
@@ -925,7 +925,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function gradeDefense() {
     if (!expediente || !defensa.nota_trabajo_escrito || !defensa.nota_defensa_oral) {
-      setError('Ingresa las dos notas de defensa.')
+      setError('Ingrese las dos notas de defensa.')
       return
     }
     await runAction(
@@ -942,7 +942,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function uploadDocument() {
     if (!expediente || !documentFile) {
-      setError('Selecciona un expediente y un archivo.')
+      setError('Seleccione un expediente y un archivo.')
       return
     }
     await runAction(
@@ -966,7 +966,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   async function generateActa() {
     if (!expediente || !acta.fecha_acta) {
-      setError('Ingresa la fecha del acta de grado.')
+      setError('Ingrese la fecha del acta de grado.')
       return
     }
     await runAction(
@@ -990,7 +990,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
   async function registerSenescyt() {
     const numeroActa = acta.numero_acta_grado || expediente?.NumeroActaGrado || ''
     if (!numeroActa || !senescyt.codigo_registro_senescyt || !senescyt.fecha_registro) {
-      setError('Ingresa número de acta, código SENESCYT y fecha de registro.')
+      setError('Ingrese número de acta, código SENESCYT y fecha de registro.')
       return
     }
     await runAction(
@@ -1007,7 +1007,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
   async function registerIntec() {
     const numeroActa = acta.numero_acta_grado || expediente?.NumeroActaGrado || ''
     if (!numeroActa || !intec.numero_titulo || !intec.fecha_emision) {
-      setError('Ingresa número de acta, número de título INTEC y fecha de emisión.')
+      setError('Ingrese número de acta, número de título INTEC y fecha de emisión.')
       return
     }
     await runAction(
@@ -2147,7 +2147,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
             <div className="titulacion-review-summary">
               <div><span>Cédula</span><strong>{textValue(reviewItem.NumeroIdentificacion)}</strong></div>
               <div><span>Carrera</span><strong>{textValue(reviewItem.NombreCarrera)}</strong></div>
-              <div><span>Periodo</span><strong>{textValue(reviewItem.CodigoPeriodo)}</strong></div>
+              <div><span>Período</span><strong>{textValue(reviewItem.CodigoPeriodo)}</strong></div>
               <div><span>Estado</span><strong>{reviewItem.AptoTitulacion ? 'Apto' : 'Pendiente'}</strong></div>
             </div>
             <div className="matricula-table-wrap titulacion-progress-table">
@@ -2262,7 +2262,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
                     <tr>
                       <th>Materia</th>
                       <th>Nivel</th>
-                      <th>Periodo</th>
+                      <th>Período</th>
                       <th>Tipo</th>
                       <th>Parciales</th>
                       {showHomologationGrades ? (

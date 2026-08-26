@@ -1,5 +1,7 @@
+import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from difflib import SequenceMatcher
 from html import escape
 from hashlib import sha256
 from io import BytesIO
@@ -17,6 +19,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from openpyxl import Workbook
 from PIL import Image as PILImage
@@ -45,12 +49,22 @@ from reportlab.platypus import Flowable, Image as PdfImage, Indenter, KeepTogeth
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
+from app.integrations.moodle.exceptions import MoodleError
+from app.routers.moodle import get_moodle_read_service
 from app.services.db import get_connection, get_finance_connection
 from app.services.graph_documents import (
     delete_item as delete_graph_document_item,
     ensure_folder as ensure_graph_document_folder,
     safe_folder_part as graph_safe_folder_part,
     upload_bytes as upload_graph_document_bytes,
+)
+from app.services.integration_history import record_teacher_report_event
+from app.services.invoice_documents import (
+    MAX_INVOICE_XML_BYTES,
+    MAX_RIDE_PDF_BYTES,
+    read_upload as read_invoice_upload,
+    validate_invoice_xml,
+    validate_ride_pdf,
 )
 from app.services.grade_calculation import (
     calculate_homologation_grade_with_recovery,
@@ -80,6 +94,9 @@ _TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE = 2 * 1024 * 1024
 _TEACHER_CONTRACT_MAX_PAGES = 60
 _SIGNED_TEACHER_DOCUMENT_MAX_FILE_SIZE = 100 * 1024 * 1024
 _TEACHER_DOCUMENT_ONEDRIVE_ROOT = "DOCENTES"
+_TEACHER_COMPLIANCE_FAILED_THRESHOLD_PERCENT = 10.0
+_TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH = 20
+_TEACHER_COMPLIANCE_GRADE_TOLERANCE = 0.05
 
 _CONTRACT_SPANISH_MONTHS = {
     "ENE": 1,
@@ -270,6 +287,22 @@ class TeacherTeamsRecordingEvidence(BaseModel):
     source: Literal["Microsoft Graph"] = "Microsoft Graph"
 
 
+class TeacherMoodleResourceEvidence(BaseModel):
+    course_id: int = Field(ge=1)
+    course_name: str = Field(min_length=1, max_length=300)
+    section_id: int = Field(ge=0)
+    section_name: str = Field(default="General", max_length=300)
+    module_id: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=300)
+    module_type: str = Field(default="Recurso", max_length=80)
+    visible: bool = True
+    file_count: int = Field(default=0, ge=0, le=100)
+    file_names: list[str] = Field(default_factory=list, max_length=30)
+    planning_document_types: list[Literal["pea", "silabo"]] = Field(default_factory=list, max_length=2)
+    web_url: str = Field(default="", max_length=2000)
+    source: Literal["Moodle"] = "Moodle"
+
+
 def _parse_teacher_teams_recordings(raw_payload: str) -> list[dict[str, Any]]:
     if not raw_payload.strip():
         return []
@@ -291,6 +324,35 @@ def _parse_teacher_teams_recordings(raw_payload: str) -> list[dict[str, Any]]:
             parsed.append(recording)
     except (ValidationError, TypeError) as exc:
         raise HTTPException(status_code=400, detail="La evidencia de Teams contiene campos inválidos") from exc
+    return parsed
+
+
+def _parse_teacher_moodle_resources(raw_payload: str) -> list[dict[str, Any]]:
+    if not raw_payload.strip():
+        return []
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="La selección de Moodle no contiene JSON válido") from exc
+    if not isinstance(decoded, list):
+        raise HTTPException(status_code=400, detail="La selección de Moodle debe ser una lista")
+    if len(decoded) > 250:
+        raise HTTPException(status_code=400, detail="Solo se pueden anexar hasta 250 recursos de Moodle")
+
+    parsed: list[dict[str, Any]] = []
+    try:
+        for item in decoded:
+            resource = TeacherMoodleResourceEvidence.model_validate(item).model_dump()
+            web_url = str(resource.get("web_url") or "").strip()
+            resource["web_url"] = web_url if web_url.lower().startswith("https://") else ""
+            resource["file_names"] = [
+                _clean(file_name)[:255]
+                for file_name in resource.get("file_names") or []
+                if _clean(file_name)
+            ][:30]
+            parsed.append(resource)
+    except (ValidationError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="La selección de Moodle contiene campos inválidos") from exc
     return parsed
 
 
@@ -595,8 +657,8 @@ def _student_meta_table(profile: dict[str, Any], career: str, styles: dict[str, 
     data = [
         [
             Paragraph(f"<b>Estudiante:</b> {_pdf_text(profile.get('nombre_estudiante'))}", styles["Meta"]),
-            Paragraph(f"<b>Cedula:</b> {_pdf_text(profile.get('cedula'))}", styles["Meta"]),
-            Paragraph(f"<b>Codigo:</b> {_pdf_text(profile.get('codigo_estud'))}", styles["Meta"]),
+            Paragraph(f"<b>Cédula:</b> {_pdf_text(profile.get('cedula'))}", styles["Meta"]),
+            Paragraph(f"<b>Código:</b> {_pdf_text(profile.get('codigo_estud'))}", styles["Meta"]),
         ],
         [
             Paragraph(f"<b>Correo INTEC:</b> {_pdf_text(profile.get('correo_intec'))}", styles["Meta"]),
@@ -640,7 +702,7 @@ def _build_student_report_pdf(
     col_widths: list[float],
 ) -> bytes:
     if not _REPORT_TEMPLATE_PATH.exists():
-        raise HTTPException(status_code=500, detail="No se encontro la plantilla Word para generar el PDF")
+        raise HTTPException(status_code=500, detail='No se encontró la plantilla Word para generar el PDF')
 
     styles = _report_styles()
     template_reader = ImageReader(BytesIO(_template_page_image()))
@@ -654,7 +716,7 @@ def _build_student_report_pdf(
     table_data: list[list[Any]] = [[Paragraph(f"<b>{escape(header)}</b>", styles["CellBold"]) for header in headers]]
     table_data.extend(rows)
     if len(table_data) == 1:
-        table_data.append([Paragraph("No hay informacion para mostrar.", styles["Cell"]) for _ in headers])
+        table_data.append([Paragraph("No hay información para mostrar.", styles["Cell"]) for _ in headers])
 
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(
@@ -880,7 +942,7 @@ def _fetch_student_profile(cursor: pyodbc.Cursor, codigo_estud: int) -> dict[str
     )
     row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="No se encontro el estudiante vinculado a la sesion")
+        raise HTTPException(status_code=404, detail='No se encontró el estudiante vinculado a la sesión')
     return _student_profile_from_row(row)
 
 
@@ -1145,7 +1207,7 @@ def _curriculum_from_record_items(record_items: list[dict[str, Any]]) -> list[di
             "orden": _int(item.get("orden")),
             "num_malla": _int(item.get("num_malla")),
             "unidad_organiza": "",
-            "estado_materia": "Desde record academico",
+            "estado_materia": "Desde el récord académico",
         }
     return sorted(
         by_subject.values(),
@@ -1555,7 +1617,7 @@ def student_profile(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
 ) -> dict[str, Any]:
     if current_user.codigo_estud is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene estudiante vinculado')
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -1571,7 +1633,7 @@ def student_record(
     approved_only: Annotated[bool, Query(description="Mostrar solo materias aprobadas")] = False,
 ) -> dict[str, Any]:
     if current_user.codigo_estud is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene estudiante vinculado')
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -1595,27 +1657,27 @@ def student_record(
             "total": len(visible_items),
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando record academico: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el récord académico: {exc}") from exc
 
 
 @router.get("/student/record/export")
 def student_record_export(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
     approved_only: Annotated[bool, Query(description="Parametro heredado; la exportacion incluye aprobadas y reprobadas")] = False,
-    codigo_periodo: Annotated[str | None, Query(description="Periodo seleccionado para exportar calificaciones")] = None,
+    codigo_periodo: Annotated[str | None, Query(description='Período seleccionado para exportar calificaciones')] = None,
 ) -> StreamingResponse:
     _ = approved_only
     if current_user.codigo_estud is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene estudiante vinculado')
     selected_period = _clean(codigo_periodo)
     if not selected_period:
-        raise HTTPException(status_code=400, detail="Seleccione un periodo para exportar calificaciones")
+        raise HTTPException(status_code=400, detail='Seleccione un período para exportar calificaciones')
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             profile, items = _fetch_student_record(cursor, current_user.codigo_estud)
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error exportando record academico: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al exportar el récord académico: {exc}") from exc
 
     period_items = []
     for item in items:
@@ -1640,10 +1702,10 @@ def student_record_export(
     sheet = workbook.active
     sheet.title = "Calificaciones"
     sheet.append(["Estudiante", profile["nombre_estudiante"]])
-    sheet.append(["Cedula", profile["cedula"]])
-    sheet.append(["Codigo", profile["codigo_estud"]])
+    sheet.append(["Cédula", profile["cedula"]])
+    sheet.append(["Código", profile["codigo_estud"]])
     sheet.append(["Correo INTEC", profile["correo_intec"]])
-    sheet.append(["Periodo", selected_period_label])
+    sheet.append(["Período", selected_period_label])
     sheet.append(["Carrera", next((item["nombre_carrera"] for item in period_items if item["nombre_carrera"]), "")])
     sheet.append([])
     homologation_only = bool(visible_items) and all(
@@ -1655,14 +1717,14 @@ def student_record_export(
         for item in visible_items
     )
     if homologation_only:
-        sheet.append(["#", "Periodo", "Nivel", "Materia", "Codigo materia", "Esquema", "Nota final", "Estado"])
+        sheet.append(["#", "Período", "Nivel", "Materia", "Código de materia", "Esquema", "Nota final", "Estado"])
     else:
         sheet.append([
             "#",
-            "Periodo",
+            "Período",
             "Nivel",
             "Materia",
-            "Codigo materia",
+            "Código de materia",
             "Esquema",
             "Prom. 1",
             "Prom. 2",
@@ -1712,19 +1774,19 @@ def student_record_export(
 @router.get("/student/record/export-pdf")
 def student_record_pdf_export(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
-    tipo: Annotated[str, Query(description="academica o calificaciones")] = "calificaciones",
-    codigo_periodo: Annotated[str | None, Query(description="Periodo seleccionado para calificaciones")] = None,
+    tipo: Annotated[str, Query(description='académica o calificaciones')] = "calificaciones",
+    codigo_periodo: Annotated[str | None, Query(description='Período seleccionado para calificaciones')] = None,
 ) -> StreamingResponse:
     if current_user.codigo_estud is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene estudiante vinculado')
 
     report_type = _clean(tipo).lower()
     if report_type not in {"academica", "calificaciones"}:
-        raise HTTPException(status_code=400, detail="Tipo de reporte no valido")
+        raise HTTPException(status_code=400, detail='Tipo de reporte no válido')
 
     selected_period = _clean(codigo_periodo)
     if report_type == "calificaciones" and not selected_period:
-        raise HTTPException(status_code=400, detail="Seleccione un periodo para exportar calificaciones")
+        raise HTTPException(status_code=400, detail='Seleccione un período para exportar calificaciones')
 
     try:
         with get_connection() as conn:
@@ -1736,7 +1798,7 @@ def student_record_pdf_export(
                 items,
             )
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error generando PDF academico: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al generar el PDF académico: {exc}") from exc
 
     career = (
         next((_clean(item.get("nombre_carrera")) for item in academic_grid if _clean(item.get("nombre_carrera"))), "")
@@ -1755,11 +1817,11 @@ def student_record_pdf_export(
             )
         )
         pdf_bytes = _build_student_report_pdf(
-            "Malla academica",
+            "Malla académica",
             f"Malla y calificaciones consolidadas | Avance {curriculum_resume.get('porcentaje_avance', 0)}%",
             profile,
             career,
-            ["Nivel", "Codigo materia", "Materia", "Creditos", "Esquema", "HOMO", "Prom. 1", "Prom. 2", "Prom. 3", "Final", "Estado"],
+            ["Nivel", "Código de materia", "Materia", "Créditos", "Esquema", "HOMO", "Prom. 1", "Prom. 2", "Prom. 3", "Final", "Estado"],
             _academic_pdf_rows(academic_grid),
             [0.8 * cm, 2.2 * cm, 5.4 * cm, 1.2 * cm, 1.6 * cm, 1.7 * cm, 1.1 * cm, 1.1 * cm, 1.1 * cm, 1.1 * cm, 1.5 * cm],
         )
@@ -1791,9 +1853,9 @@ def student_record_pdf_export(
             for item in period_items
         )
         headers = (
-            ["Nivel", "Periodo", "Codigo", "Materia", "Esquema", "Final", "Estado"]
+            ["Nivel", "Período", "Código", "Materia", "Esquema", "Final", "Estado"]
             if homologation_only
-            else ["Nivel", "Periodo", "Codigo", "Materia", "Esquema", "Prom. 1", "Prom. 2", "Prom. 3", "Final", "Estado"]
+            else ["Nivel", "Período", "Código", "Materia", "Esquema", "Prom. 1", "Prom. 2", "Prom. 3", "Final", "Estado"]
         )
         col_widths = (
             [0.8 * cm, 3.2 * cm, 2.0 * cm, 6.4 * cm, 1.9 * cm, 1.3 * cm, 1.7 * cm]
@@ -1802,7 +1864,7 @@ def student_record_pdf_export(
         )
         pdf_bytes = _build_student_report_pdf(
             "Calificaciones",
-            f"Periodo: {selected_period_label}",
+            f"Período: {selected_period_label}",
             profile,
             career,
             headers,
@@ -1821,18 +1883,18 @@ def student_record_pdf_export(
 @router.get("/student/record/export-secretaria-pdf")
 def student_record_secretary_pdf_export(
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
-    codigo_periodo: Annotated[str | None, Query(description="Periodo seleccionado para reporte de notas formato Secretaria")] = None,
+    codigo_periodo: Annotated[str | None, Query(description='Período seleccionado para reporte de notas formato Secretaría')] = None,
     tipo: Annotated[str, Query(description="calificaciones o malla")] = "calificaciones",
 ) -> StreamingResponse:
     if current_user.codigo_estud is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene estudiante vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene estudiante vinculado')
 
     selected_period = _clean(codigo_periodo)
     report_type = _clean(tipo).lower()
     if report_type not in {"calificaciones", "malla"}:
-        raise HTTPException(status_code=400, detail="Tipo de reporte no valido")
+        raise HTTPException(status_code=400, detail='Tipo de reporte no válido')
     if report_type == "calificaciones" and not selected_period:
-        raise HTTPException(status_code=400, detail="Seleccione un periodo para exportar el reporte de notas")
+        raise HTTPException(status_code=400, detail='Seleccione un período para exportar el reporte de notas')
 
     try:
         with get_connection() as conn:
@@ -1844,7 +1906,7 @@ def student_record_secretary_pdf_export(
                 items,
             )
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error generando reporte de notas formato Secretaria: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al generar el reporte de notas en formato de Secretaría: {exc}") from exc
 
     if report_type == "malla":
         career = (
@@ -1854,7 +1916,7 @@ def student_record_secretary_pdf_export(
         )
         report_items = list(academic_grid)
         report_items = _academic_grid_with_practice_requirements(report_items, career)
-        selected_period_label = "Malla academica general"
+        selected_period_label = "Malla académica general"
         for item in report_items:
             item["detalle_periodo"] = item.get("ultimo_periodo") or selected_period_label
             item["codigo_periodo"] = item.get("codigo_periodo") or "MALLA"
@@ -1895,7 +1957,7 @@ def student_record_secretary_pdf_export(
 
 def _teacher_code(current_user: SessionUser) -> int:
     if current_user.codigo_doc is None:
-        raise HTTPException(status_code=403, detail="La sesion no tiene docente vinculado")
+        raise HTTPException(status_code=403, detail='La sesión no tiene docente vinculado')
     return current_user.codigo_doc
 
 
@@ -2162,7 +2224,7 @@ def teacher_profile(
             )
             row = cursor.fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="No se encontro el docente vinculado a la sesion")
+            raise HTTPException(status_code=404, detail='No se encontró el docente vinculado a la sesión')
         return {
             "teacher": {
                 "codigo_doc": _clean(row.codigo_doc),
@@ -2443,10 +2505,59 @@ def _validate_signed_teacher_document_pdf(content: bytes, label: str) -> None:
         raise HTTPException(status_code=400, detail=f"El archivo de {label} no contiene un PDF válido")
 
 
+async def _teacher_invoice_backup_documents(
+    factura_xml: UploadFile | None,
+    ride_pdf: UploadFile | None,
+) -> list[dict[str, Any]]:
+    if factura_xml is None and ride_pdf is None:
+        return []
+    if factura_xml is None or ride_pdf is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Para archivar la factura debe seleccionar juntos el XML y el RIDE en PDF.",
+        )
+
+    xml_content = await read_invoice_upload(
+        factura_xml,
+        maximum=MAX_INVOICE_XML_BYTES,
+        label="La factura XML",
+    )
+    ride_content = await read_invoice_upload(
+        ride_pdf,
+        maximum=MAX_RIDE_PDF_BYTES,
+        label="El RIDE",
+    )
+    xml_original_name = validate_invoice_xml(
+        factura_xml.filename or "factura.xml",
+        xml_content,
+    )
+    ride_original_name = validate_ride_pdf(
+        ride_pdf.filename or "ride.pdf",
+        ride_content,
+    )
+    return [
+        {
+            "filename": "factura-electronica.xml",
+            "original_name": xml_original_name,
+            "content": xml_content,
+            "content_type": "application/xml",
+            "document_type": "FACTURA_XML",
+        },
+        {
+            "filename": "ride-factura.pdf",
+            "original_name": ride_original_name,
+            "content": ride_content,
+            "content_type": "application/pdf",
+            "document_type": "RIDE",
+        },
+    ]
+
+
 def _signed_teacher_documents_archive(
     compliance_pdf: bytes,
     grades_pdf: bytes,
     contract_pdf: bytes,
+    invoice_documents: list[dict[str, Any]] | None = None,
 ) -> bytes:
     documents = (
         ("informe-cumplimiento-firmado.pdf", compliance_pdf, "informe de cumplimiento", "FirmaDocente"),
@@ -2468,6 +2579,19 @@ def _signed_teacher_documents_archive(
         for filename, content, label, signature_field in documents:
             _validate_signed_teacher_document_pdf(content, label)
             _assert_pdf_signature_field(content, signature_field)
+            archive.writestr(filename, content)
+        for document in invoice_documents or []:
+            document_type = _clean(document.get("document_type")).upper()
+            filename = Path(_clean(document.get("filename"))).name
+            content = document.get("content")
+            if not isinstance(content, bytes):
+                raise HTTPException(status_code=400, detail="El respaldo de factura no contiene datos válidos.")
+            if document_type == "FACTURA_XML":
+                validate_invoice_xml(filename, content)
+            elif document_type == "RIDE":
+                validate_ride_pdf(filename, content)
+            else:
+                raise HTTPException(status_code=400, detail="El tipo de respaldo de factura no es válido.")
             archive.writestr(filename, content)
     return output.getvalue()
 
@@ -2534,11 +2658,17 @@ def _store_signed_teacher_documents_onedrive(
     compliance_pdf: bytes,
     grades_pdf: bytes,
     contract_pdf: bytes,
-    archive_bytes: bytes,
     subject_code: str = "",
     subject_name: str = "",
     period_codes: list[str] | None = None,
+    invoice_documents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    invoice_backups = invoice_documents or []
+    if invoice_backups:
+        backup_types = {_clean(document.get("document_type")).upper() for document in invoice_backups}
+        if len(invoice_backups) != 2 or backup_types != {"FACTURA_XML", "RIDE"}:
+            raise ValueError("Los respaldos deben incluir exactamente una factura XML y un RIDE PDF.")
+
     folder_path = _teacher_signed_documents_folder(
         identity,
         subject_code=subject_code,
@@ -2546,23 +2676,57 @@ def _store_signed_teacher_documents_onedrive(
         period_codes=period_codes,
     )
     folder = ensure_graph_document_folder(folder_path)
-    documents = (
-        ("informe-cumplimiento-firmado.pdf", compliance_pdf, "application/pdf"),
-        ("reporte-notas-secretaria-firmado.pdf", grades_pdf, "application/pdf"),
-        ("contrato-docente-firmado.pdf", contract_pdf, "application/pdf"),
-        ("documentos-docente-firmados.zip", archive_bytes, "application/zip"),
-    )
+    documents: list[dict[str, Any]] = [
+        {
+            "filename": "informe-cumplimiento-firmado.pdf",
+            "content": compliance_pdf,
+            "content_type": "application/pdf",
+            "document_type": "INFORME",
+        },
+        {
+            "filename": "reporte-notas-secretaria-firmado.pdf",
+            "content": grades_pdf,
+            "content_type": "application/pdf",
+            "document_type": "NOTAS",
+        },
+        {
+            "filename": "contrato-docente-firmado.pdf",
+            "content": contract_pdf,
+            "content_type": "application/pdf",
+            "document_type": "CONTRATO",
+        },
+    ]
+    documents.extend(invoice_backups)
     uploaded_items: list[dict[str, Any]] = []
     try:
-        for filename, content, content_type in documents:
+        for document in documents:
+            filename = _clean(document.get("filename"))
+            document_path = f"{folder_path}/{filename}"
             item = upload_graph_document_bytes(
-                f"{folder_path}/{filename}",
-                content,
-                content_type,
+                document_path,
+                document.get("content") or b"",
+                _clean(document.get("content_type")) or "application/octet-stream",
             )
             if not _clean(item.get("id")):
                 raise RuntimeError(f"Microsoft Graph no confirmó el archivo {filename}.")
-            uploaded_items.append(item)
+            stored_item = dict(item)
+            stored_item["tipo_documento"] = _clean(document.get("document_type")) or "OTRO"
+            stored_item["nombre_original"] = _clean(document.get("original_name")) or filename
+            stored_item["content_type"] = _clean(document.get("content_type"))
+            stored_item["tamano_bytes"] = len(document.get("content") or b"")
+            stored_item["folder_path"] = folder_path
+            stored_item["document_path"] = document_path
+            uploaded_items.append(stored_item)
+
+        uploaded_folders = {
+            _clean(item.get("document_path")).rsplit("/", 1)[0]
+            for item in uploaded_items
+            if "/" in _clean(item.get("document_path"))
+        }
+        if len(uploaded_items) != len(documents) or uploaded_folders != {folder_path}:
+            raise RuntimeError(
+                "Microsoft Graph no confirmó el conjunto completo de documentos en una misma carpeta."
+            )
     except Exception:
         for item in reversed(uploaded_items):
             try:
@@ -2587,6 +2751,7 @@ def _store_signed_teacher_documents_onedrive(
         "folder_path": folder_path,
         "folder": folder,
         "items": uploaded_items,
+        "same_folder": True,
     }
 
 
@@ -2777,7 +2942,7 @@ def _validate_teacher_contract_analysis(
     if analysis.get("modalidad_academica") != assignment.get("modalidad_academica"):
         raise HTTPException(
             status_code=400,
-            detail="La modalidad reconocida en el contrato no corresponde al periodo seleccionado",
+            detail='La modalidad reconocida en el contrato no corresponde al período seleccionado',
         )
 
 
@@ -3148,7 +3313,7 @@ async def teacher_upload_contract_document(
         expected = "homologación" if assignment["modalidad_academica"] == "HOMOLOGACION" else "regular"
         raise HTTPException(
             status_code=400,
-            detail=f"La modalidad del contrato debe ser {expected} según el periodo seleccionado",
+            detail=f"La modalidad del contrato debe ser {expected}, según el período seleccionado.",
         )
 
     pdf_bytes = await contrato.read()
@@ -3622,12 +3787,15 @@ def teacher_courses(
 
 def _teacher_student_item(row: Any) -> dict[str, Any]:
     item = _record_item(row)
+    registry_email = _clean(getattr(row, "correo_intec_registro", ""))
     item.update(
         {
             "cedula": _clean(row.cedula),
             "nombre_estudiante": _clean(row.nombre_estudiante),
             "correo_personal": _clean(row.correo_personal),
             "correo_intec": _clean(row.correo_intec),
+            "correo_intec_registro": registry_email,
+            "correo_intec_validado": bool(_normalized_institutional_email(registry_email)),
         }
     )
     return item
@@ -3743,13 +3911,13 @@ def teacher_course_students(
     search_like = f"%{search_term}%"
     period_codes = list(dict.fromkeys(codigo_periodo))
     if not period_codes:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período')
     if not subject_filter:
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
     if cod_anio_basica is None:
         raise HTTPException(status_code=400, detail="Debe seleccionar la carrera del curso")
     if len(period_codes) > 2:
-        raise HTTPException(status_code=400, detail="Solo se pueden consultar hasta 2 periodos regulares unidos")
+        raise HTTPException(status_code=400, detail='Solo se pueden consultar hasta 2 períodos regulares unidos')
     period_placeholders = ", ".join("?" for _ in period_codes)
     try:
         with get_connection() as conn:
@@ -3790,8 +3958,12 @@ def teacher_course_students(
                     TRY_CONVERT(nvarchar(100), de.Cedula_Est) AS cedula,
                     TRY_CONVERT(nvarchar(4000), de.Apellidos_nombre) AS nombre_estudiante,
                     TRY_CONVERT(nvarchar(255), de.correo) AS correo_personal,
+                    NULLIF(
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ce.CorreoIntec))),
+                        N''
+                    ) AS correo_intec_registro,
                     COALESCE(
-                        NULLIF(TRY_CONVERT(nvarchar(255), ce.CorreoIntec), N''),
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), ce.CorreoIntec))), N''),
                         TRY_CONVERT(nvarchar(255), de.correointec)
                     ) AS correo_intec,
                     TRY_CONVERT(varchar(50), cxe.cod_anio_Basica) AS cod_anio_basica,
@@ -3952,13 +4124,13 @@ def teacher_subject_students(
     """Return every exact enrolment assigned to a teacher for one common subject code."""
     selected_periods = list(dict.fromkeys(codigo_periodo))
     if not selected_periods:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo academico.")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período académico.')
     period_limit = 2 if tipo_periodo == "R" else 1
     if len(selected_periods) > period_limit:
         detail = (
             "Solo se pueden unir hasta dos periodos regulares."
             if tipo_periodo == "R"
-            else "La homologacion debe consultarse en un solo periodo independiente."
+            else "La homologación debe consultarse en un único período independiente."
         )
         raise HTTPException(status_code=400, detail=detail)
 
@@ -3981,7 +4153,7 @@ def teacher_subject_students(
         None,
     )
     if not subject:
-        raise HTTPException(status_code=404, detail="La materia no esta asignada al docente autenticado")
+        raise HTTPException(status_code=404, detail='La materia no está asignada al docente autenticado')
 
     scopes = [
         scope
@@ -4011,7 +4183,7 @@ def teacher_subject_students(
     if missing_periods:
         raise HTTPException(
             status_code=404,
-            detail="Uno o mas periodos no pertenecen a la materia y tipo seleccionados.",
+            detail='Uno o más períodos no pertenecen a la materia y tipo seleccionados.',
         )
 
     students_by_key: dict[str, dict[str, Any]] = {}
@@ -4119,20 +4291,20 @@ def _resolve_admin_grade_course_selections(
     selections: list[AdminGradeCourseSelectionPayload],
 ) -> list[dict[str, Any]]:
     if not selections:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período')
     if len(selections) > 3:
-        raise HTTPException(status_code=400, detail="Solo se pueden seleccionar hasta 3 periodos")
+        raise HTTPException(status_code=400, detail='Solo se pueden seleccionar hasta 3 períodos')
 
     requested_period_codes = [_clean(selection.codigo_periodo) for selection in selections]
     if len(set(requested_period_codes)) != len(requested_period_codes):
         raise HTTPException(
             status_code=400,
-            detail="Cada selección debe corresponder a un periodo diferente",
+            detail='Cada selección debe corresponder a un período diferente',
         )
 
     requested_keys = [_admin_grade_course_key(selection) for selection in selections]
     if len(set(requested_keys)) != len(requested_keys):
-        raise HTTPException(status_code=400, detail="No se puede seleccionar el mismo periodo y curso más de una vez")
+        raise HTTPException(status_code=400, detail='No se puede seleccionar el mismo período y curso más de una vez')
 
     available_by_key = {_admin_grade_course_key(course): course for course in available_courses}
     requested_courses: list[dict[str, Any]] = []
@@ -4141,7 +4313,7 @@ def _resolve_admin_grade_course_selections(
         if course is None:
             raise HTTPException(
                 status_code=400,
-                detail="Uno de los periodos no corresponde a una asignación activa del docente con estudiantes",
+                detail='Uno de los períodos no corresponde a una asignación activa del docente con estudiantes',
             )
         requested_courses.append(course)
 
@@ -4150,13 +4322,13 @@ def _resolve_admin_grade_course_selections(
         for course in requested_courses
     }
     if len(subject_codes) != 1:
-        raise HTTPException(status_code=400, detail="Los periodos deben pertenecer a una sola asignatura")
+        raise HTTPException(status_code=400, detail='Los períodos deben pertenecer a una sola asignatura')
 
     period_types = {_admin_grade_period_type(course) for course in requested_courses}
     if len(period_types) != 1:
         raise HTTPException(
             status_code=400,
-            detail="No se pueden mezclar periodos regulares y de homologación en la misma consulta",
+            detail='No se pueden mezclar períodos regulares y de homologación en la misma consulta',
         )
 
     selected_subject = next(iter(subject_codes))
@@ -4178,7 +4350,7 @@ def _resolve_admin_grade_course_selections(
             selected_courses.append(course)
 
     if not selected_courses:
-        raise HTTPException(status_code=400, detail="Los periodos seleccionados no tienen cursos disponibles")
+        raise HTTPException(status_code=400, detail='Los períodos seleccionados no tienen cursos disponibles')
     return selected_courses
 
 
@@ -4460,7 +4632,7 @@ def admin_grade_teacher_students_batch(
         period_code = _int(course.get("codigo_periodo"))
         career_code = _int(course.get("cod_anio_basica"))
         if period_code is None or career_code is None:
-            raise HTTPException(status_code=400, detail="La asignación seleccionada no tiene periodo o carrera válidos")
+            raise HTTPException(status_code=400, detail='La asignación seleccionada no tiene período o carrera válidos')
         course_payload = teacher_course_students(
             current_user=teacher_session,
             codigo_periodo=[period_code],
@@ -4596,6 +4768,1020 @@ def _teacher_course_report_meta(
         "horas": _number(first.horas),
         "es_homologacion": _is_homologation_type(first.tipo_periodo, first.detalle_periodo),
     }
+
+
+_MOODLE_MATCH_STOPWORDS = {
+    "A",
+    "AL",
+    "CON",
+    "DE",
+    "DEL",
+    "EN",
+    "I",
+    "II",
+    "III",
+    "IV",
+    "LA",
+    "LAS",
+    "LOS",
+    "PARA",
+    "POR",
+    "Y",
+}
+
+
+def _moodle_match_text(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", _clean(value))
+    without_marks = "".join(character for character in normalized if not unicodedata.combining(character))
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", without_marks.upper()).split())
+
+
+def _moodle_subject_code_similarity(
+    course: dict[str, Any],
+    expected_code: Any,
+) -> tuple[float, bool]:
+    """Compare a subject code without allowing a different numeric suffix."""
+    expected = _moodle_match_text(expected_code)
+    expected_tokens = expected.split()
+    expected_compact = "".join(expected_tokens)
+    if len(expected_compact) < 4:
+        return 0.0, False
+
+    best_similarity = 0.0
+    conflicting_suffix = False
+    for field in ("fullname", "displayname", "shortname", "idnumber"):
+        source = _moodle_match_text(course.get(field))
+        if not source:
+            continue
+        source_tokens = source.split()
+        source_compact = "".join(source_tokens)
+        if expected in source or expected_compact in source_compact:
+            return 1.0, False
+
+        expected_namespace = "".join(expected_tokens[:-1])
+        expected_suffix = expected_tokens[-1]
+        if expected_namespace:
+            for source_token in source_tokens:
+                if not source_token.startswith(expected_namespace):
+                    continue
+                candidate_suffix = source_token[len(expected_namespace):]
+                if (
+                    expected_suffix.isdigit()
+                    and candidate_suffix.isdigit()
+                    and expected_suffix != candidate_suffix
+                ):
+                    conflicting_suffix = True
+                    continue
+                best_similarity = max(
+                    best_similarity,
+                    SequenceMatcher(None, expected_compact, source_token).ratio(),
+                )
+
+        window_size = len(expected_tokens)
+        if window_size <= 1:
+            candidates = source_tokens
+        else:
+            candidates = [
+                " ".join(source_tokens[index:index + window_size])
+                for index in range(max(0, len(source_tokens) - window_size + 1))
+            ]
+
+        for candidate in candidates:
+            candidate_tokens = candidate.split()
+            if not candidate_tokens:
+                continue
+            if len(expected_tokens) > 1 and candidate_tokens[0] != expected_tokens[0]:
+                continue
+
+            shared_prefix = 0
+            for expected_token, candidate_token in zip(expected_tokens[:-1], candidate_tokens[:-1], strict=False):
+                if expected_token != candidate_token:
+                    break
+                shared_prefix += 1
+            expected_suffix = expected_tokens[-1]
+            candidate_suffix = candidate_tokens[-1]
+            if (
+                len(expected_tokens) > 1
+                and shared_prefix == len(expected_tokens) - 1
+                and expected_suffix.isdigit()
+                and candidate_suffix.isdigit()
+                and expected_suffix != candidate_suffix
+            ):
+                conflicting_suffix = True
+                continue
+
+            candidate_compact = "".join(candidate_tokens)
+            similarity = SequenceMatcher(None, expected_compact, candidate_compact).ratio()
+            best_similarity = max(best_similarity, similarity)
+
+    return round(best_similarity, 4), conflicting_suffix
+
+
+def _moodle_planning_document_types(*values: Any) -> list[str]:
+    searchable = _moodle_match_text(" ".join(_clean(value) for value in values if _clean(value)))
+    tokens = set(searchable.split())
+    document_types: list[str] = []
+    if (
+        "PEA" in tokens
+        or "PROGRAMA DE ESTUDIOS DE ASIGNATURA" in searchable
+        or "PLAN DE ESTUDIO DE ASIGNATURA" in searchable
+        or "PLAN DE ESTUDIOS DE ASIGNATURA" in searchable
+    ):
+        document_types.append("pea")
+    if "SILABO" in tokens or "SYLLABUS" in tokens:
+        document_types.append("silabo")
+    return document_types
+
+
+def _teacher_planning_moodle_resources(params: dict[str, Any]) -> list[dict[str, Any]]:
+    resources: list[dict[str, Any]] = []
+    for item in params.get("moodle_resources") or []:
+        if not isinstance(item, dict) or not _clean(item.get("name")):
+            continue
+        document_types = [
+            document_type
+            for document_type in (item.get("planning_document_types") or [])
+            if document_type in {"pea", "silabo"}
+        ]
+        if not document_types:
+            document_types = _moodle_planning_document_types(
+                item.get("section_name"),
+                item.get("name"),
+                *(item.get("file_names") or []),
+            )
+        if document_types:
+            resource = dict(item)
+            resource["planning_document_types"] = list(dict.fromkeys(document_types))
+            resources.append(resource)
+    return resources
+
+
+def _teacher_planning_moodle_summary(resources: list[dict[str, Any]], limit: int = 3) -> str:
+    labels: list[str] = []
+    for item in resources[:limit]:
+        document_types = item.get("planning_document_types") or []
+        type_label = " y ".join("PEA" if value == "pea" else "Sílabo" for value in document_types)
+        resource_label = f"{type_label}: {_clean(item.get('name'))}"
+        file_names = [_clean(value) for value in (item.get("file_names") or []) if _clean(value)]
+        if file_names:
+            resource_label += f" ({', '.join(file_names[:3])})"
+        labels.append(resource_label)
+    if len(resources) > limit:
+        labels.append(f"y {len(resources) - limit} documento(s) adicional(es)")
+    return "; ".join(labels)
+
+
+def _teacher_planning_moodle_document_rows(
+    resources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expande los recursos de planificación en documentos verificables."""
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+
+    for item in resources:
+        resource_name = _clean(item.get("name")) or "Recurso sin nombre"
+        resource_types = [
+            value
+            for value in (item.get("planning_document_types") or [])
+            if value in {"pea", "silabo"}
+        ]
+        if not resource_types:
+            resource_types = _moodle_planning_document_types(
+                item.get("section_name"),
+                resource_name,
+                *(item.get("file_names") or []),
+            )
+
+        file_names = [
+            _clean(value)
+            for value in (item.get("file_names") or [])
+            if _clean(value)
+        ] or [""]
+        for file_name in file_names:
+            document_types = _moodle_planning_document_types(file_name) or resource_types
+            for document_type in document_types:
+                signature_text = _moodle_match_text(f"{resource_name} {file_name}")
+                signed = any(
+                    marker in signature_text
+                    for marker in (
+                        "FIRMADO",
+                        "FIRMADA",
+                        "SIGNED",
+                        "FIRMA DIGITAL",
+                        "FIRMA ELECTRONICA",
+                    )
+                )
+                key = (
+                    document_type,
+                    _clean(item.get("course_name")),
+                    _clean(item.get("section_name")),
+                    resource_name,
+                    file_name,
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                web_url = _clean(item.get("web_url"))
+                rows.append(
+                    {
+                        "document_type": document_type,
+                        "type_label": "PEA" if document_type == "pea" else "Sílabo",
+                        "course_name": _clean(item.get("course_name")) or "Curso no informado",
+                        "section_name": _clean(item.get("section_name")) or "Sección no informada",
+                        "resource_name": resource_name,
+                        "file_name": file_name or "Archivo no informado por Moodle",
+                        "publication_status": "Publicado" if item.get("visible") else "Oculto",
+                        "signature_status": "Firmado" if signed else "Firma por validar",
+                        "web_url": web_url if web_url.lower().startswith("https://") else "",
+                    }
+                )
+    return rows
+
+
+def _teacher_moodle_course_match(
+    course: dict[str, Any],
+    meta: dict[str, Any],
+    period_codes: list[int],
+) -> tuple[int, list[str]] | None:
+    course_text = _moodle_match_text(
+        " ".join(
+            _clean(course.get(field))
+            for field in ("fullname", "displayname", "shortname", "idnumber", "categoryname")
+        )
+    )
+    course_tokens = set(course_text.split())
+    if not course_text:
+        return None
+
+    score = 0
+    reasons: list[str] = []
+    subject_matched = False
+    internal_subject_code = _moodle_match_text(meta.get("codigo_materia"))
+    subject_name = _moodle_match_text(meta.get("nombre_materia"))
+
+    subject_code_similarity, subject_code_conflict = _moodle_subject_code_similarity(
+        course,
+        meta.get("cod_materia"),
+    )
+    if subject_code_similarity >= 0.999:
+        score += 90
+        subject_matched = True
+        reasons.append("Código de asignatura")
+    elif subject_code_similarity >= 0.90:
+        score += 80
+        subject_matched = True
+        reasons.append(f"Código de asignatura similar ({subject_code_similarity * 100:.0f} %)")
+    elif subject_code_similarity >= 0.82:
+        score += 70
+        subject_matched = True
+        reasons.append(f"Código de asignatura similar ({subject_code_similarity * 100:.0f} %)")
+    elif subject_code_conflict:
+        return None
+
+    if internal_subject_code and len(internal_subject_code) >= 3 and internal_subject_code in course_tokens:
+        score += 55
+        subject_matched = True
+        reasons.append("Código interno")
+
+    subject_tokens = [
+        token
+        for token in subject_name.split()
+        if len(token) >= 3 and token not in _MOODLE_MATCH_STOPWORDS
+    ]
+    matching_subject_tokens = [token for token in subject_tokens if token in course_tokens]
+    if subject_tokens:
+        required_matches = 1 if len(subject_tokens) == 1 else max(2, (len(subject_tokens) + 1) // 2)
+        if len(matching_subject_tokens) >= required_matches:
+            score += 60 + min(20, len(matching_subject_tokens) * 4)
+            subject_matched = True
+            reasons.append("Nombre de asignatura")
+        elif len(matching_subject_tokens) == 1 and len(matching_subject_tokens[0]) >= 8:
+            score += 45
+            subject_matched = True
+            reasons.append("Término distintivo de asignatura")
+
+    if not subject_matched:
+        return None
+
+    period_matches = [str(code) for code in period_codes if str(code) in course_tokens]
+    if period_matches:
+        score += 35
+        reasons.append("Período académico")
+    else:
+        period_text = _moodle_match_text(meta.get("detalle_periodo"))
+        period_tokens = [token for token in period_text.split() if len(token) >= 4]
+        if period_tokens and sum(token in course_tokens for token in period_tokens) >= min(2, len(period_tokens)):
+            score += 20
+            reasons.append("Detalle del período")
+
+    career_tokens = [
+        token
+        for token in _moodle_match_text(meta.get("nombre_carrera")).split()
+        if len(token) >= 4 and token not in _MOODLE_MATCH_STOPWORDS
+    ]
+    if career_tokens and sum(token in course_tokens for token in career_tokens) >= min(2, len(career_tokens)):
+        score += 15
+        reasons.append("Carrera")
+
+    parallel = _moodle_match_text(meta.get("paralelo"))
+    if parallel and parallel not in {"VARIOS", "TODOS"} and parallel in course_tokens:
+        score += 5
+        reasons.append("Paralelo")
+    return score, reasons
+
+
+def _normalized_institutional_email(value: Any) -> str:
+    email = _clean(value).casefold()
+    if not re.fullmatch(r"[^@\s]+@intec\.edu\.ec", email):
+        return ""
+    return email
+
+
+def _teacher_moodle_email_match(
+    expected_emails: set[str],
+    enrolled_emails: set[str],
+) -> tuple[int, float]:
+    expected = {
+        email
+        for value in expected_emails
+        if (email := _normalized_institutional_email(value))
+    }
+    enrolled = {
+        email
+        for value in enrolled_emails
+        if (email := _normalized_institutional_email(value))
+    }
+    matched = len(expected & enrolled)
+    coverage = round((matched / len(expected)) * 100, 2) if expected else 0.0
+    return matched, coverage
+
+
+def _safe_moodle_module_payload(
+    course: dict[str, Any],
+    section: dict[str, Any],
+    module: dict[str, Any],
+) -> dict[str, Any]:
+    contents = module.get("contents") if isinstance(module.get("contents"), list) else []
+    file_names = [
+        _clean(content.get("filename"))[:255]
+        for content in contents
+        if isinstance(content, dict) and _clean(content.get("filename"))
+    ][:30]
+    web_url = _clean(module.get("url"))
+    if not web_url.lower().startswith("https://"):
+        web_url = ""
+    return {
+        "course_id": _int(course.get("id")),
+        "course_name": _clean(course.get("displayname") or course.get("fullname") or course.get("shortname")),
+        "section_id": _int(section.get("id")) or 0,
+        "section_name": _clean(section.get("name")) or "General",
+        "module_id": _int(module.get("id")),
+        "name": _clean(module.get("name")) or "Recurso sin nombre",
+        "module_type": _clean(module.get("modplural") or module.get("modname")) or "Recurso",
+        "visible": bool(module.get("visible") and module.get("uservisible", module.get("visible"))),
+        "file_count": len(contents),
+        "file_names": file_names,
+        "planning_document_types": _moodle_planning_document_types(
+            section.get("name"),
+            module.get("name"),
+            *file_names,
+        ),
+        "web_url": web_url,
+        "source": "Moodle",
+    }
+
+
+def _teacher_compliance_student_summary(student: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "codigo_estud": _int(student.get("codigo_estud")),
+        "cedula": _clean(student.get("cedula")),
+        "nombre_estudiante": _clean(student.get("nombre_estudiante")),
+        "correo_intec": _normalized_institutional_email(
+            student.get("correo_intec_registro") or student.get("correo_intec")
+        ),
+        "nombre_carrera": _clean(student.get("nombre_carrera")),
+        "detalle_periodo": _clean(student.get("detalle_periodo")),
+        "promedio_final": _number(student.get("promedio_final")),
+    }
+
+
+def _moodle_grade_to_ten(user_grade: dict[str, Any]) -> float | None:
+    grade_items = user_grade.get("gradeitems")
+    if not isinstance(grade_items, list):
+        return None
+
+    candidates = [
+        item
+        for item in grade_items
+        if isinstance(item, dict)
+        and _clean(item.get("itemtype")).casefold() == "course"
+    ]
+    candidates.sort(
+        key=lambda item: (
+            0 if "total" in _clean(item.get("itemname")).casefold() else 1,
+        )
+    )
+    for item in candidates:
+        raw_grade = _number(item.get("graderaw"))
+        minimum = _number(item.get("grademin"))
+        maximum = _number(item.get("grademax"))
+        if raw_grade is not None:
+            if minimum is not None and maximum is not None and maximum > minimum:
+                normalized = ((raw_grade - minimum) / (maximum - minimum)) * 10
+            elif maximum is not None and maximum > 0:
+                normalized = (raw_grade / maximum) * 10
+            else:
+                normalized = raw_grade
+            return round(max(0.0, min(10.0, normalized)), 2)
+
+        percentage_text = _clean(item.get("percentageformatted"))
+        match = re.search(r"-?\d+(?:[.,]\d+)?", percentage_text)
+        if match:
+            percentage = _number(match.group(0).replace(",", "."))
+            if percentage is not None:
+                return round(max(0.0, min(10.0, percentage / 10)), 2)
+    return None
+
+
+def _teacher_compliance_grade_validation(
+    academic_records: list[dict[str, Any]],
+    selected_students: list[dict[str, Any]],
+    selected_course: dict[str, Any] | None,
+    moodle_users: list[dict[str, Any]] | None = None,
+    moodle_user_grades: list[dict[str, Any]] | None = None,
+    moodle_error: str = "",
+) -> dict[str, Any]:
+    academic_summaries = [_teacher_compliance_student_summary(item) for item in academic_records]
+    missing_academic = [
+        item for item in academic_summaries if item.get("promedio_final") is None
+    ]
+    graded_academic = [
+        item for item in academic_summaries if item.get("promedio_final") is not None
+    ]
+    failed_students = [
+        item
+        for item in graded_academic
+        if (_number(item.get("promedio_final")) or 0) < _PASSING_GRADE
+    ]
+    total_records = len(academic_summaries)
+    failed_percentage = round(
+        (len(failed_students) / total_records) * 100,
+        2,
+    ) if total_records else 0.0
+
+    students_by_email: dict[str, dict[str, Any]] = {}
+    students_without_email: list[dict[str, Any]] = []
+    for student in selected_students:
+        summary = _teacher_compliance_student_summary(student)
+        email = _normalized_institutional_email(summary.get("correo_intec"))
+        if not email:
+            students_without_email.append(summary)
+            continue
+        students_by_email[email] = summary
+
+    moodle_users_by_email = {
+        email: item
+        for item in (moodle_users or [])
+        if isinstance(item, dict)
+        and (email := _normalized_institutional_email(item.get("email")))
+    }
+    grades_by_user_id = {
+        user_id: item
+        for item in (moodle_user_grades or [])
+        if isinstance(item, dict)
+        and (user_id := _int(item.get("userid"))) is not None
+    }
+    academic_by_student: dict[int, list[float]] = {}
+    for item in graded_academic:
+        student_code = _int(item.get("codigo_estud"))
+        final_grade = _number(item.get("promedio_final"))
+        if student_code is not None and final_grade is not None:
+            academic_by_student.setdefault(student_code, []).append(final_grade)
+
+    not_enrolled: list[dict[str, Any]] = []
+    missing_moodle_grade: list[dict[str, Any]] = []
+    discrepancies: list[dict[str, Any]] = []
+    verified_students = 0
+    if selected_course and not moodle_error:
+        for email, student in students_by_email.items():
+            moodle_user = moodle_users_by_email.get(email)
+            if moodle_user is None:
+                not_enrolled.append(student)
+                continue
+            moodle_grade = _moodle_grade_to_ten(
+                grades_by_user_id.get(_int(moodle_user.get("id")) or -1, {})
+            )
+            if moodle_grade is None:
+                missing_moodle_grade.append(student)
+                continue
+
+            student_code = _int(student.get("codigo_estud"))
+            official_grades = academic_by_student.get(student_code or -1, [])
+            if official_grades and not any(
+                abs(official_grade - moodle_grade) <= _TEACHER_COMPLIANCE_GRADE_TOLERANCE
+                for official_grade in official_grades
+            ):
+                discrepancies.append(
+                    {
+                        **student,
+                        "nota_moodle": moodle_grade,
+                        "notas_intec": [round(value, 2) for value in official_grades],
+                    }
+                )
+                continue
+            verified_students += 1
+
+    blockers: list[str] = []
+    if not total_records:
+        blockers.append("No existen estudiantes matriculados en la selección académica.")
+    if missing_academic:
+        blockers.append(
+            f"{len(missing_academic)} estudiante(s) no tienen calificación final en INTECBDD."
+        )
+    if selected_course is None:
+        blockers.append("No se encontró un curso Moodle validado para la selección académica.")
+    if moodle_error:
+        blockers.append(moodle_error)
+    if students_without_email:
+        blockers.append(
+            f"{len(students_without_email)} estudiante(s) no tienen correo institucional validado."
+        )
+    if not_enrolled:
+        blockers.append(
+            f"{len(not_enrolled)} estudiante(s) no constan matriculados en el curso Moodle."
+        )
+    if missing_moodle_grade:
+        blockers.append(
+            f"{len(missing_moodle_grade)} estudiante(s) no tienen calificación en Moodle."
+        )
+    if discrepancies:
+        blockers.append(
+            f"{len(discrepancies)} estudiante(s) presentan diferencias entre Moodle e INTECBDD."
+        )
+
+    requires_justification = (
+        total_records > 0
+        and failed_percentage >= _TEACHER_COMPLIANCE_FAILED_THRESHOLD_PERCENT
+    )
+    return {
+        "passing_grade": _PASSING_GRADE,
+        "failed_threshold_percent": _TEACHER_COMPLIANCE_FAILED_THRESHOLD_PERCENT,
+        "justification_min_length": _TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH,
+        "total_records": total_records,
+        "graded_records": len(graded_academic),
+        "missing_academic_count": len(missing_academic),
+        "failed_count": len(failed_students),
+        "failed_percentage": failed_percentage,
+        "requires_justification": requires_justification,
+        "can_generate": not blockers,
+        "blockers": blockers,
+        "missing_academic_students": missing_academic,
+        "failed_students": failed_students,
+        "students_without_email": students_without_email,
+        "moodle": {
+            "checked": bool(selected_course) and not moodle_error,
+            "course_id": _int((selected_course or {}).get("id")),
+            "course_name": _clean(
+                (selected_course or {}).get("displayname")
+                or (selected_course or {}).get("fullname")
+                or (selected_course or {}).get("shortname")
+            ),
+            "error": moodle_error,
+            "verified_students": verified_students,
+            "not_enrolled_students": not_enrolled,
+            "missing_grade_students": missing_moodle_grade,
+            "discrepancies": discrepancies,
+        },
+    }
+
+
+def _assert_teacher_compliance_generation_allowed(
+    grade_validation: dict[str, Any],
+    failure_justification: str,
+) -> None:
+    blockers = [
+        _clean(item)
+        for item in grade_validation.get("blockers") or []
+        if _clean(item)
+    ]
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No se puede generar el informe de cumplimiento hasta completar y verificar "
+                "las calificaciones. " + " ".join(blockers[:5])
+            ),
+        )
+
+    justification = _clean(failure_justification)
+    if (
+        grade_validation.get("requires_justification")
+        and len(justification) < _TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Los estudiantes reprobados representan el "
+                f"{grade_validation.get('failed_percentage', 0):g} %. Ingrese una justificación "
+                f"de al menos {_TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH} caracteres antes de generar el informe."
+            ),
+        )
+
+
+async def _teacher_compliance_moodle_context(
+    current_user: SessionUser,
+    period_codes: list[int],
+    subject_filter: str,
+    parallel: str,
+    cod_anio_basica: int | None,
+    moodle_course_id: int | None = None,
+    refresh: bool = False,
+    student_codes: list[int] | None = None,
+) -> dict[str, Any]:
+    normalized_period_codes = list(dict.fromkeys(period_codes))
+    normalized_subject = _clean(subject_filter).upper()
+    normalized_parallel = _clean(parallel).upper()
+    if not normalized_period_codes:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un período")
+    if len(normalized_period_codes) > 4:
+        raise HTTPException(status_code=400, detail="Solo se pueden consultar hasta cuatro períodos")
+    if not normalized_subject:
+        raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
+
+    codigo_doc = _teacher_code(current_user)
+    meta = _teacher_course_report_meta(
+        codigo_doc,
+        normalized_period_codes,
+        normalized_subject,
+        normalized_parallel,
+        cod_anio_basica,
+    )
+    if not meta:
+        raise HTTPException(status_code=403, detail="La materia seleccionada no pertenece al docente autenticado")
+
+    scoped_students = await run_in_threadpool(
+        _teacher_course_students_for_report,
+        current_user,
+        normalized_period_codes,
+        normalized_subject,
+        normalized_parallel,
+        cod_anio_basica,
+    )
+    students_by_code: dict[int, dict[str, Any]] = {}
+    for student in scoped_students:
+        student_code = _int(student.get("codigo_estud"))
+        if student_code is None:
+            continue
+        current = students_by_code.get(student_code)
+        if current is None or (
+            not _normalized_institutional_email(current.get("correo_intec_registro"))
+            and _normalized_institutional_email(student.get("correo_intec_registro"))
+        ):
+            students_by_code[student_code] = student
+
+    requested_codes = {
+        student_code
+        for value in (student_codes or [])
+        if (student_code := _int(value)) is not None
+    }
+    missing_codes = requested_codes - set(students_by_code)
+    if missing_codes:
+        raise HTTPException(
+            status_code=403,
+            detail="Uno o más estudiantes no pertenecen a la materia y los períodos seleccionados",
+        )
+    selected_students = [
+        students_by_code[student_code]
+        for student_code in sorted(requested_codes or set(students_by_code))
+    ]
+    selected_academic_records = [
+        student
+        for student in scoped_students
+        if not requested_codes or _int(student.get("codigo_estud")) in requested_codes
+    ]
+    student_registry_emails = [
+        email
+        for student in selected_students
+        if (email := _normalized_institutional_email(student.get("correo_intec_registro")))
+    ]
+    student_emails = set(student_registry_emails)
+
+    moodle_users: list[dict[str, Any]] = []
+    moodle_user_grades: list[dict[str, Any]] = []
+    moodle_grade_error = ""
+    try:
+        service = get_moodle_read_service()
+        courses_payload = await service.list_courses(page=1, page_size=5000, refresh=refresh)
+        academic_candidates: list[dict[str, Any]] = []
+        for course in courses_payload.get("items") or []:
+            if not isinstance(course, dict):
+                continue
+            match = _teacher_moodle_course_match(course, meta, normalized_period_codes)
+            if match is None:
+                continue
+            score, reasons = match
+            code_similarity, _ = _moodle_subject_code_similarity(course, meta.get("cod_materia"))
+            academic_candidates.append(
+                {
+                    **course,
+                    "match_score": score,
+                    "match_reasons": reasons,
+                    "subject_code_similarity": round(code_similarity * 100, 2),
+                }
+            )
+        academic_candidates.sort(
+            key=lambda item: (-int(item.get("match_score") or 0), _moodle_match_text(item.get("fullname")), int(item.get("id") or 0))
+        )
+        academic_candidates = academic_candidates[:12]
+
+        validation_mode = (
+            "moodle_enrollment"
+            if selected_students and student_emails
+            else "institutional_email_missing"
+        )
+        ranked_courses: list[dict[str, Any]] = []
+        if selected_students and student_emails and academic_candidates:
+            enrollment_results = await asyncio.gather(
+                *(
+                    service.get_course_enrolled_emails(_int(course.get("id")) or 0, refresh=refresh)
+                    for course in academic_candidates
+                ),
+                return_exceptions=True,
+            )
+            successful_queries = 0
+            for course, enrolled_emails in zip(academic_candidates, enrollment_results, strict=True):
+                if isinstance(enrolled_emails, BaseException):
+                    continue
+                successful_queries += 1
+                matches, coverage = _teacher_moodle_email_match(student_emails, enrolled_emails)
+                if matches <= 0:
+                    continue
+                ranked_courses.append(
+                    {
+                        **course,
+                        "student_email_matches": matches,
+                        "student_email_total": len(student_emails),
+                        "student_email_coverage": coverage,
+                        "validated_by_email": True,
+                    }
+                )
+            if successful_queries == 0:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No se pudo validar la matrícula de los cursos en Moodle en este momento",
+                )
+            ranked_courses.sort(
+                key=lambda item: (
+                    -int(item.get("student_email_matches") or 0),
+                    -float(item.get("student_email_coverage") or 0),
+                    -int(item.get("match_score") or 0),
+                    _moodle_match_text(item.get("fullname")),
+                    int(item.get("id") or 0),
+                )
+            )
+        if moodle_course_id is not None:
+            selected_course = next(
+                (course for course in ranked_courses if _int(course.get("id")) == moodle_course_id),
+                None,
+            )
+            if selected_course is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "El curso Moodle seleccionado no corresponde a la materia, el período y "
+                        "los estudiantes validados por correo institucional"
+                    ),
+                )
+        else:
+            selected_course = ranked_courses[0] if ranked_courses else None
+
+        resources_payload = None
+        if selected_course:
+            raw_resources = await service.get_course_resources(_int(selected_course.get("id")) or 0, refresh=refresh)
+            sections: list[dict[str, Any]] = []
+            for section in raw_resources.get("sections") or []:
+                if not isinstance(section, dict):
+                    continue
+                safe_modules: list[dict[str, Any]] = []
+                for module in section.get("modules") or []:
+                    if not isinstance(module, dict):
+                        continue
+                    safe_module = dict(module)
+                    safe_payload = _safe_moodle_module_payload(selected_course, section, module)
+                    safe_module["url"] = safe_payload["web_url"]
+                    safe_module["planning_document_types"] = safe_payload["planning_document_types"]
+                    safe_module["contents"] = [
+                        {
+                            "type": _clean(content.get("type")),
+                            "filename": _clean(content.get("filename")),
+                            "filesize": max(0, _int(content.get("filesize")) or 0),
+                            "mimetype": _clean(content.get("mimetype")),
+                        }
+                        for content in (module.get("contents") or [])
+                        if isinstance(content, dict)
+                    ]
+                    safe_modules.append(safe_module)
+                sections.append({**section, "modules": safe_modules})
+            resources_payload = {
+                "course": raw_resources.get("course"),
+                "sections": sections,
+                "totals": raw_resources.get("totals") or {},
+                "source": raw_resources.get("source") or {},
+            }
+            try:
+                moodle_users, moodle_user_grades = await asyncio.gather(
+                    service.get_course_enrolled_users(
+                        _int(selected_course.get("id")) or 0,
+                        refresh=refresh,
+                    ),
+                    service.get_course_grade_items(
+                        _int(selected_course.get("id")) or 0,
+                        refresh=refresh,
+                    ),
+                )
+            except MoodleError as exc:
+                logger.warning(
+                    "No se pudieron verificar las calificaciones Moodle del informe docente: %s",
+                    exc.__class__.__name__,
+                )
+                moodle_grade_error = (
+                    "Moodle no permitió verificar las calificaciones del curso. "
+                    "Revise que el servicio de reporte de notas esté habilitado."
+                )
+    except HTTPException:
+        raise
+    except MoodleError as exc:
+        logger.warning("No se pudo consultar Moodle para el informe docente: %s", exc.__class__.__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo consultar Moodle en este momento. Intente actualizar los recursos nuevamente.",
+        ) from exc
+
+    selected_email_matches = (
+        (_int(selected_course.get("student_email_matches")) or 0)
+        if selected_course
+        else 0
+    )
+    grade_validation = _teacher_compliance_grade_validation(
+        selected_academic_records,
+        selected_students,
+        selected_course,
+        moodle_users=moodle_users,
+        moodle_user_grades=moodle_user_grades,
+        moodle_error=moodle_grade_error,
+    )
+    return {
+        "matched": bool(ranked_courses),
+        "academic": {
+            "nombre_materia": _clean(meta.get("nombre_materia")),
+            "cod_materia": _clean(meta.get("cod_materia")),
+            "codigo_materia": _clean(meta.get("codigo_materia")),
+            "nombre_carrera": _clean(meta.get("nombre_carrera")),
+            "detalle_periodo": _clean(meta.get("detalle_periodo")),
+            "paralelo": _clean(meta.get("paralelo")),
+        },
+        "candidates": ranked_courses,
+        "selected_course_id": _int(selected_course.get("id")) if selected_course else None,
+        "resources": resources_payload,
+        "student_email_validation": {
+            "mode": validation_mode,
+            "email_source": "dbo.CorreosEstudIntec",
+            "requested_students": len(selected_students),
+            "students_with_email": len(student_registry_emails),
+            "students_without_registry_email": max(
+                0,
+                len(selected_students) - len(student_registry_emails),
+            ),
+            "matched_students": selected_email_matches,
+            "unmatched_students": max(
+                0,
+                len(student_emails) - selected_email_matches,
+            ),
+        },
+        "grade_validation": grade_validation,
+    }
+
+
+async def _canonicalize_teacher_moodle_resources(
+    current_user: SessionUser,
+    period_codes: list[int],
+    subject_filter: str,
+    parallel: str,
+    cod_anio_basica: int | None,
+    resources: list[dict[str, Any]],
+    student_codes: list[int] | None = None,
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not resources:
+        return []
+    course_ids = {_int(item.get("course_id")) for item in resources}
+    if None in course_ids or len(course_ids) != 1:
+        raise HTTPException(status_code=400, detail="Los recursos de Moodle deben pertenecer a un solo curso")
+    course_id = next(iter(course_ids))
+    if context is None:
+        context = await _teacher_compliance_moodle_context(
+            current_user,
+            period_codes,
+            subject_filter,
+            parallel,
+            cod_anio_basica,
+            moodle_course_id=course_id,
+            student_codes=student_codes,
+        )
+    elif _int(context.get("selected_course_id")) != course_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Los recursos seleccionados no pertenecen al curso Moodle validado.",
+        )
+    course = (context.get("resources") or {}).get("course") or {}
+    canonical_modules: dict[int, dict[str, Any]] = {}
+    for section in (context.get("resources") or {}).get("sections") or []:
+        for module in section.get("modules") or []:
+            module_id = _int(module.get("id"))
+            if module_id is not None:
+                canonical_modules[module_id] = _safe_moodle_module_payload(course, section, module)
+
+    selected: list[dict[str, Any]] = []
+    seen_module_ids: set[int] = set()
+    for item in resources:
+        module_id = _int(item.get("module_id"))
+        if module_id is None or module_id not in canonical_modules:
+            raise HTTPException(
+                status_code=400,
+                detail="Uno de los recursos seleccionados ya no existe en el curso Moodle",
+            )
+        if module_id in seen_module_ids:
+            continue
+        seen_module_ids.add(module_id)
+        selected.append(canonical_modules[module_id])
+    return selected
+
+
+async def _prepare_teacher_compliance_generation(
+    current_user: SessionUser,
+    period_codes: list[int],
+    subject_filter: str,
+    parallel: str,
+    cod_anio_basica: int | None,
+    resources: list[dict[str, Any]],
+    student_codes: list[int] | None,
+    failure_justification: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    course_ids = {_int(item.get("course_id")) for item in resources}
+    if None in course_ids or len(course_ids) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Los recursos de Moodle deben pertenecer a un solo curso.",
+        )
+    selected_course_id = next(iter(course_ids), None)
+    context = await _teacher_compliance_moodle_context(
+        current_user,
+        period_codes,
+        subject_filter,
+        parallel,
+        cod_anio_basica,
+        moodle_course_id=selected_course_id,
+        student_codes=student_codes,
+    )
+    grade_validation = context.get("grade_validation") or {}
+    _assert_teacher_compliance_generation_allowed(
+        grade_validation,
+        failure_justification,
+    )
+    canonical_resources = await _canonicalize_teacher_moodle_resources(
+        current_user,
+        period_codes,
+        subject_filter,
+        parallel,
+        cod_anio_basica,
+        resources,
+        student_codes=student_codes,
+        context=context,
+    )
+    return canonical_resources, grade_validation
+
+
+@router.get("/teacher/compliance-moodle-resources")
+async def teacher_compliance_moodle_resources(
+    current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
+    codigo_periodo: Annotated[list[int], Query()],
+    codigo_materia: Annotated[str, Query(min_length=1)],
+    paralelo: Annotated[str, Query(min_length=1)],
+    cod_anio_basica: Annotated[int | None, Query()] = None,
+    moodle_course_id: Annotated[int | None, Query(ge=1)] = None,
+    refresh: Annotated[bool, Query()] = False,
+    codigo_estudiante: Annotated[list[int] | None, Query()] = None,
+) -> dict[str, Any]:
+    return await _teacher_compliance_moodle_context(
+        current_user,
+        codigo_periodo,
+        codigo_materia,
+        paralelo,
+        cod_anio_basica,
+        moodle_course_id=moodle_course_id,
+        refresh=refresh,
+        student_codes=codigo_estudiante,
+    )
 
 
 def _teacher_report_paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
@@ -4980,9 +6166,9 @@ def _teacher_notes_report_pdf(
         [
             ["____________________________", "____________________________", "____________________________"],
             [
-                Paragraph("Secretaria Academica INTEC", signature_style),
+                Paragraph("Secretaría Académica INTEC", signature_style),
                 Paragraph("Firma del docente", signature_style),
-                Paragraph("Coordinacion Academica", signature_style),
+                Paragraph("Coordinación Académica", signature_style),
             ],
             [
                 "",
@@ -5014,8 +6200,8 @@ def _teacher_notes_report_pdf(
         canvas.line(0.55 * cm, page_height - 0.45 * cm, page_width - 0.55 * cm, page_height - 0.45 * cm)
         canvas.setFont("Helvetica", 6.3)
         canvas.setFillColor(gray)
-        canvas.drawString(0.6 * cm, 0.42 * cm, "Reporte academico INTEC")
-        canvas.drawRightString(page_width - 0.6 * cm, 0.42 * cm, f"Pagina {canvas.getPageNumber()}")
+        canvas.drawString(0.6 * cm, 0.42 * cm, "Reporte académico INTEC")
+        canvas.drawRightString(page_width - 0.6 * cm, 0.42 * cm, f"Página {canvas.getPageNumber()}")
         canvas.restoreState()
 
     output = BytesIO()
@@ -5218,7 +6404,7 @@ def _student_secretaria_notes_pdf(
 
     def period_key(item: dict[str, Any]) -> tuple[int, str]:
         code = _int(item.get("codigo_periodo"))
-        label = clean(item.get("detalle_periodo") or item.get("ultimo_periodo") or period_label or "Malla academica general")
+        label = clean(item.get("detalle_periodo") or item.get("ultimo_periodo") or period_label or "Malla académica general")
         return (code or 999999, label)
 
     groups: list[tuple[str, list[dict[str, Any]]]] = []
@@ -5228,7 +6414,7 @@ def _student_secretaria_notes_pdf(
     for (_code, label), group_items in sorted(grouped.items(), key=lambda pair: pair[0]):
         groups.append((label, group_items))
     if not groups:
-        groups = [(period_label or "Malla academica general", [])]
+        groups = [(period_label or "Malla académica general", [])]
 
     def draw_logo() -> None:
         if not _LOGO_PATH.exists():
@@ -5365,7 +6551,7 @@ def _student_secretaria_notes_pdf(
         canvas.drawString(36, y, fit_text(label, 78))
         y -= row_height
         if not group_items:
-            draw_row({"nombre_materia": "No hay informacion para mostrar.", "estado_academico": "PENDIENTE"}, y)
+            draw_row({"nombre_materia": "No hay información para mostrar.", "estado_academico": "PENDIENTE"}, y)
             y -= row_height
         for item in group_items:
             if y < bottom_y:
@@ -5544,7 +6730,7 @@ def _student_grade_report_pdf(
             styles["SecretaryLegacyInstitution"],
         ),
         Paragraph("Reporte de notas", styles["SecretaryLegacyTitle"]),
-        Paragraph(f"<b>Periodo:</b>&nbsp;&nbsp;{_pdf_text(period_label)}", styles["SecretaryLegacyTitle"]),
+        Paragraph(f"<b>Período:</b>&nbsp;&nbsp;{_pdf_text(period_label)}", styles["SecretaryLegacyTitle"]),
         Paragraph(
             f"<b>Paralelo:</b>&nbsp;&nbsp;{_pdf_text(meta.get('paralelo'))}"
             f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Jornada:</b>&nbsp;&nbsp;{_pdf_text(jornada_label)}",
@@ -6026,14 +7212,183 @@ def _teacher_compliance_model_pdf(
         canvas.restoreState()
         return y - table_h - 8
 
+    def draw_moodle_resources_table(resources: list[dict[str, Any]], x: float, y: float, max_w: float) -> float:
+        row_h = 18
+        headers = ["Sección", "Recurso", "Tipo", "Archivos", "Estado"]
+        col_widths = [112, 220, 66, 44, 48]
+        scale = min(1.0, max_w / sum(col_widths))
+        col_widths = [value * scale for value in col_widths]
+        table_w = sum(col_widths)
+        table_h = (len(resources) + 1) * row_h
+
+        def fitted_text(value: Any, width_value: float, bold: bool = False) -> str:
+            text = _clean(value) or "-"
+            font_name = "Times-Bold" if bold else "Times-Roman"
+            while canvas.stringWidth(text, font_name, 6.4) > width_value - 6 and len(text) > 4:
+                text = text[:-4].rstrip() + "..."
+            return text
+
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+        canvas.setLineWidth(0.45)
+        canvas.setFillColor(colors.HexColor("#eaf2f5"))
+        canvas.rect(x, y - row_h, table_w, row_h, stroke=1, fill=1)
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 6.4)
+        cursor_x = x
+        for header, col_w in zip(headers, col_widths):
+            canvas.drawString(cursor_x + 3, y - 11.5, fitted_text(header, col_w, True))
+            canvas.line(cursor_x, y, cursor_x, y - table_h)
+            cursor_x += col_w
+        canvas.line(x + table_w, y, x + table_w, y - table_h)
+        canvas.line(x, y, x + table_w, y)
+        canvas.line(x, y - row_h, x + table_w, y - row_h)
+
+        current_y = y - row_h
+        for index, item in enumerate(resources):
+            next_y = current_y - row_h
+            if index % 2:
+                canvas.setFillColor(colors.HexColor("#f8fbfc"))
+                canvas.rect(x, next_y, table_w, row_h, stroke=0, fill=1)
+            canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+            canvas.line(x, next_y, x + table_w, next_y)
+            file_names = [
+                _clean(file_name)
+                for file_name in item.get("file_names") or []
+                if _clean(file_name)
+            ]
+            resource_label = _clean(item.get("name")) or "Recurso sin nombre"
+            if file_names:
+                resource_label = f"{resource_label} · {', '.join(file_names)}"
+            values = [
+                item.get("section_name"),
+                resource_label,
+                item.get("module_type"),
+                str(_int(item.get("file_count")) or 0),
+                "Visible" if item.get("visible") else "Oculto",
+            ]
+            cursor_x = x
+            canvas.setFillColor(dark)
+            canvas.setFont("Times-Roman", 6.4)
+            for column_index, (value, col_w) in enumerate(zip(values, col_widths)):
+                text = fitted_text(value, col_w)
+                if column_index == 1 and _clean(item.get("web_url")).lower().startswith("https://"):
+                    canvas.setFillColor(colors.HexColor("#145da0"))
+                    canvas.drawString(cursor_x + 3, current_y - 11.5, text)
+                    canvas.linkURL(
+                        _clean(item.get("web_url")),
+                        (cursor_x + 2, next_y + 2, cursor_x + col_w - 2, current_y - 2),
+                        relative=0,
+                    )
+                    canvas.setFillColor(dark)
+                else:
+                    canvas.drawString(cursor_x + 3, current_y - 11.5, text)
+                canvas.line(cursor_x, current_y, cursor_x, next_y)
+                cursor_x += col_w
+            canvas.line(x + table_w, current_y, x + table_w, next_y)
+            current_y = next_y
+        canvas.restoreState()
+        return y - table_h - 8
+
+    def draw_planning_documents_table(
+        rows: list[dict[str, Any]],
+        x: float,
+        y: float,
+        max_w: float,
+        max_rows: int = 3,
+    ) -> float:
+        header_h = 16
+        row_h = 26
+        visible_rows = rows[:max_rows]
+        headers = ["Tipo", "Curso / sección", "Archivo / recurso", "Publicación", "Firma"]
+        col_widths = [38, 116, 205, 61, 70]
+        scale = min(1.0, max_w / sum(col_widths))
+        col_widths = [value * scale for value in col_widths]
+        table_w = sum(col_widths)
+        table_h = header_h + len(visible_rows) * row_h
+
+        def fitted_text(value: Any, width_value: float, bold: bool = False) -> str:
+            text = _clean(value) or "-"
+            font_name = "Times-Bold" if bold else "Times-Roman"
+            while canvas.stringWidth(text, font_name, 6.1) > width_value - 6 and len(text) > 4:
+                text = text[:-4].rstrip() + "..."
+            return text
+
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+        canvas.setLineWidth(0.45)
+        canvas.setFillColor(colors.HexColor("#eaf2f5"))
+        canvas.rect(x, y - header_h, table_w, header_h, stroke=1, fill=1)
+        canvas.setFillColor(dark)
+        canvas.setFont("Times-Bold", 6.1)
+        cursor_x = x
+        for header, col_w in zip(headers, col_widths):
+            canvas.drawString(cursor_x + 3, y - 10.5, fitted_text(header, col_w, True))
+            canvas.line(cursor_x, y, cursor_x, y - table_h)
+            cursor_x += col_w
+        canvas.line(x + table_w, y, x + table_w, y - table_h)
+        canvas.line(x, y, x + table_w, y)
+        canvas.line(x, y - header_h, x + table_w, y - header_h)
+
+        current_y = y - header_h
+        for index, item in enumerate(visible_rows):
+            next_y = current_y - row_h
+            if index % 2:
+                canvas.setFillColor(colors.HexColor("#f8fbfc"))
+                canvas.rect(x, next_y, table_w, row_h, stroke=0, fill=1)
+            canvas.setStrokeColor(colors.HexColor("#b9c6cc"))
+            canvas.line(x, next_y, x + table_w, next_y)
+            cursor_x = x
+            cells = [
+                (item.get("type_label"), "", False),
+                (item.get("course_name"), f"Sección: {_clean(item.get('section_name'))}", False),
+                (item.get("file_name"), f"Recurso: {_clean(item.get('resource_name'))}", True),
+                (item.get("publication_status"), "", False),
+                (item.get("signature_status"), "", False),
+            ]
+            for column_index, ((primary, secondary, linked), col_w) in enumerate(zip(cells, col_widths)):
+                canvas.setFillColor(dark)
+                canvas.setFont("Times-Bold" if column_index == 0 else "Times-Roman", 6.1)
+                primary_text = fitted_text(primary, col_w, column_index == 0)
+                if linked and _clean(item.get("web_url")):
+                    canvas.setFillColor(colors.HexColor("#145da0"))
+                    canvas.linkURL(
+                        _clean(item.get("web_url")),
+                        (cursor_x + 2, next_y + 2, cursor_x + col_w - 2, current_y - 2),
+                        relative=0,
+                    )
+                canvas.drawString(cursor_x + 3, current_y - 10, primary_text)
+                if secondary:
+                    canvas.setFont("Times-Roman", 5.6)
+                    canvas.drawString(cursor_x + 3, current_y - 20, fitted_text(secondary, col_w))
+                canvas.setFillColor(dark)
+                canvas.line(cursor_x, current_y, cursor_x, next_y)
+                cursor_x += col_w
+            canvas.line(x + table_w, current_y, x + table_w, next_y)
+            current_y = next_y
+        canvas.restoreState()
+
+        y_after = y - table_h - 6
+        if len(rows) > len(visible_rows):
+            canvas.setFillColor(dark)
+            canvas.setFont("Times-Italic", 6.8)
+            canvas.drawString(
+                x,
+                y_after,
+                f"{len(rows) - len(visible_rows)} documento(s) adicional(es) constan en el anexo de Moodle.",
+            )
+            y_after -= 10
+        return y_after
+
     def draw_grade_summary_table(x: float, y: float) -> float:
-        headers = ["Nota máxima", "Nota mínima", "Estudiantes reprobados"]
+        headers = ["Nota máxima", "Nota mínima", "Estudiantes reprobados", "% reprobación"]
         values = [
             _grade_text(max(grade_values) if grade_values else None),
             _grade_text(min(grade_values) if grade_values else None),
             str(failed),
+            f"{failed_percentage:g} %",
         ]
-        col_w = 118
+        col_w = 88.5
         row_h = 16
         table_w = col_w * len(headers)
         canvas.saveState()
@@ -6065,11 +7420,28 @@ def _teacher_compliance_model_pdf(
     course_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("cod_materia"))
     grade_values = [_number(item.get("promedio_final")) for item in students]
     grade_values = [value for value in grade_values if value is not None]
-    failed = sum(1 for value in grade_values if value < 7)
+    grade_validation = params.get("grade_validation") or {}
+    failed = _int(grade_validation.get("failed_count"))
+    if failed is None:
+        failed = sum(1 for value in grade_values if value < _PASSING_GRADE)
+    failed_percentage = _number(grade_validation.get("failed_percentage"))
+    if failed_percentage is None:
+        failed_percentage = round((failed / len(students)) * 100, 2) if students else 0.0
     teams_recordings = [
         item
         for item in (params.get("teams_recordings") or [])
         if isinstance(item, dict) and _clean(item.get("name"))
+    ]
+    moodle_resources = [
+        item
+        for item in (params.get("moodle_resources") or [])
+        if isinstance(item, dict) and _clean(item.get("name"))
+    ]
+    planning_moodle_resources = _teacher_planning_moodle_resources(params)
+    moodle_resources_per_page = 18
+    moodle_chunks = [
+        moodle_resources[index : index + moodle_resources_per_page]
+        for index in range(0, len(moodle_resources), moodle_resources_per_page)
     ]
     recordings_per_page = 18
     recording_chunks = [
@@ -6077,7 +7449,11 @@ def _teacher_compliance_model_pdf(
         for index in range(0, len(teams_recordings), recordings_per_page)
     ]
     grade_report_images = evidence_group("reporte de notas firmado")
-    total_pages = 4 + len(recording_chunks) + len(grade_report_images)
+    planning_moodle_document_rows = _teacher_planning_moodle_document_rows(
+        planning_moodle_resources
+    )
+    teams_start_page = 3 + len(moodle_chunks)
+    total_pages = 4 + len(moodle_chunks) + len(recording_chunks) + len(grade_report_images)
 
     start_page(1)
     y = 662
@@ -6089,7 +7465,7 @@ def _teacher_compliance_model_pdf(
     y = line(f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}", body_x + 38, y, 11)
     y -= 14
     canvas.setFont("Times-Bold", 12)
-    canvas.drawString(body_x, y, "2.   DATOS DE LA ASIGNATRURA:")
+    canvas.drawString(body_x, y, "2.   DATOS DE LA ASIGNATURA:")
     canvas.setFont("Times-Roman", 11)
     canvas.drawString(body_x + 205, y, f"Asignatura: {course_name}")
     y -= 16
@@ -6102,12 +7478,43 @@ def _teacher_compliance_model_pdf(
     y -= 14
     canvas.setFont("Times-Bold", 11)
     canvas.drawString(body_x + 18, y, "3.1.")
-    canvas.drawString(body_x + 56, y, "Cumplimiento del PEA Y silabo")
+    canvas.drawString(body_x + 56, y, "Cumplimiento del PEA y sílabo")
     highlight("(debidamente firmado)", body_x + 228, y, 11)
     y -= 24
-    y = wrapped("Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.", body_x, y, content_width, 11)
-    y = line("Ejemplo:", body_x, y - 4, 11)
-    y = draw_group(("pea", "sílabo", "silabo"), body_x + 26, y, 468, 68, 1)
+    y = wrapped(
+        "El sistema valida el PEA y el sílabo publicados en el aula virtual y permite anexar una captura manual como respaldo.",
+        body_x,
+        y,
+        content_width,
+        11,
+    )
+    if planning_moodle_document_rows:
+        y = wrapped(
+            "Documentos PEA/sílabo identificados automáticamente en Moodle: "
+            f"{len(planning_moodle_resources)} recurso(s) y "
+            f"{len(planning_moodle_document_rows)} documento(s) verificable(s).",
+            body_x,
+            y - 4,
+            content_width,
+            9,
+        )
+        y = draw_planning_documents_table(
+            planning_moodle_document_rows,
+            body_x,
+            y - 2,
+            content_width,
+        )
+    else:
+        y = wrapped(
+            "Moodle no devolvió un PEA o sílabo identificable para la asignatura y los períodos seleccionados.",
+            body_x,
+            y - 4,
+            content_width,
+            9,
+        )
+    if evidence_group("pea", "sílabo", "silabo"):
+        y = line("Captura manual de respaldo:", body_x, y - 4, 10)
+        y = draw_group(("pea", "sílabo", "silabo"), body_x + 26, y, 468, 68, 1)
     y -= 4
     canvas.setFont("Times-Bold", 11)
     canvas.drawString(body_x + 18, y, "3.2.")
@@ -6117,10 +7524,18 @@ def _teacher_compliance_model_pdf(
     highlight("y su justificativo)", body_x + 56, y, 11)
     y -= 28
     y = line(_clean(params.get("actualizaciones")) or "Sin cambios realizados.", body_x, y, 11, True)
-    y -= 22
+
+    new_page(2)
+    y = continuation_content_y
     y = line("3.3.     Reporte del aula virtual.", body_x + 18, y, 11, True)
     y -= 16
-    y = wrapped("En el reporte consolidado evidencia en el sistema de aulas virtuales que se cargaron los siguientes recursos en material académico a través de capturas de pantalla:", body_x, y, content_width, 11)
+    y = wrapped(
+        "El reporte consulta directamente el aula Moodle vinculada con la asignatura y deja constancia de los recursos seleccionados:",
+        body_x,
+        y,
+        content_width,
+        11,
+    )
     for item in [
         "Bibliografía del material académico",
         "Presentación PPT cargado como PDF por cada clase.",
@@ -6128,16 +7543,56 @@ def _teacher_compliance_model_pdf(
         "Simulador de examen (para los casos que aplique) y su banco de preguntas.",
     ]:
         y = line(f"•    {item}", body_x + 18, y - 1, 11)
-
-    new_page(2)
-    y = continuation_content_y
     for item in ["Evaluación(es) teórica(s)", "Componente(s) práctico(s)", "Evidencia de clases grabadas en TEAMS:"]:
         y = line(f"•    {item}", body_x + 18, y, 11)
-    y = draw_group(("aula", "virtual", "recursos"), body_x + 18, y - 6, 494, 150, 3)
+    y = wrapped(
+        (
+            f"Se anexan automáticamente {len(moodle_resources)} recurso(s) obtenidos y validados desde Moodle."
+            if moodle_resources
+            else "Moodle no devolvió recursos para la asignatura y los períodos seleccionados."
+        ),
+        body_x + 18,
+        y - 6,
+        content_width,
+        10,
+        False,
+        12,
+    )
 
+    for chunk_index, moodle_chunk in enumerate(moodle_chunks):
+        new_page(3 + chunk_index)
+        y = continuation_content_y
+        y = line(
+            f"Recursos del aula virtual verificados en Moodle ({len(moodle_resources)} recurso(s))",
+            body_x + 18,
+            y,
+            10,
+            True,
+        )
+        if moodle_resources:
+            course_name_moodle = _clean(moodle_resources[0].get("course_name"))
+            if course_name_moodle:
+                y = wrapped(f"Curso: {course_name_moodle}", body_x + 18, y, content_width, 9, False, 11)
+            y = wrapped(
+                "La relación fue validada con la materia, el período y la asignación del docente autenticado.",
+                body_x + 18,
+                y,
+                content_width,
+                8,
+                False,
+                10,
+            )
+            y = draw_moodle_resources_table(moodle_chunk, body_x + 18, y - 4, content_width)
+            canvas.setFont("Times-Italic", 7)
+            canvas.setFillColor(dark)
+            canvas.drawString(
+                body_x + 18,
+                y,
+                f"Bloque {chunk_index + 1} de {len(moodle_chunks)}. Los nombres azules enlazan al recurso en Moodle.",
+            )
     if recording_chunks:
         for chunk_index, recording_chunk in enumerate(recording_chunks):
-            new_page(3 + chunk_index)
+            new_page(teams_start_page + chunk_index)
             y = continuation_content_y
             team_name = _clean(recording_chunk[0].get("team_name")) if recording_chunk else ""
             y = line(
@@ -6165,10 +7620,10 @@ def _teacher_compliance_model_pdf(
                 y,
                 f"Bloque {chunk_index + 1} de {len(recording_chunks)}. Los nombres azules enlazan al archivo en Microsoft 365.",
             )
-        new_page(3 + len(recording_chunks))
+        new_page(teams_start_page + len(recording_chunks))
         y = continuation_content_y
     else:
-        new_page(3)
+        new_page(teams_start_page)
         y = continuation_content_y
         y = line("Clases grabadas en TEAMS", body_x + 18, y, 10, True)
         y = wrapped(
@@ -6198,9 +7653,20 @@ def _teacher_compliance_model_pdf(
     )
     y -= 8
     y = draw_grade_summary_table(body_x + 24, y)
+    if grade_validation.get("requires_justification"):
+        y = wrapped(
+            "Justificación académica por porcentaje de reprobación: "
+            + (_clean(params.get("failure_justification")) or "No registrada."),
+            body_x + 24,
+            y,
+            content_width - 24,
+            8.5,
+            False,
+            10,
+        )
 
     for image_index, item in enumerate(grade_report_images):
-        new_page(4 + len(recording_chunks) + image_index)
+        new_page(teams_start_page + len(recording_chunks) + 1 + image_index)
         y = continuation_content_y
         y = line(
             f"3.4.1.   Reporte de notas firmado - página {image_index + 1} de {len(grade_report_images)}",
@@ -6222,7 +7688,7 @@ def _teacher_compliance_model_pdf(
         if content:
             y = draw_image(content, body_x + 8, y - 6, content_width - 16, 520)
 
-    new_page(4 + len(recording_chunks) + len(grade_report_images))
+    new_page(teams_start_page + len(recording_chunks) + 1 + len(grade_report_images))
     y = 662
     y = line("3.5.     Anexos:", body_x + 18, y, 12, True)
     y -= 16
@@ -6339,7 +7805,7 @@ def _teacher_compliance_report_pdf_legacy(
         story.append(
             p(
                 (
-                    f"Periodo: {_clean(meta.get('detalle_periodo')) or '-'} | "
+                    f"Período: {_clean(meta.get('detalle_periodo')) or '-'} | "
                     f"Paralelo: {_clean(meta.get('paralelo')) or '-'} | "
                     f"Jornada: {_clean(meta.get('jornada')) or '-'} | "
                     f"Semestre: {_clean(meta.get('semestre')) or '-'} | "
@@ -6422,6 +7888,10 @@ def _teacher_compliance_report_pdf_legacy(
     first_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else teacher_name
     last_names = " ".join(name_parts[:2]) if len(name_parts) > 2 else "-"
     course_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("cod_materia"))
+    planning_moodle_resources = _teacher_planning_moodle_resources(params)
+    planning_moodle_document_rows = _teacher_planning_moodle_document_rows(
+        planning_moodle_resources
+    )
 
     story: list[Any] = []
     story.append(bp("DATOS DEL DOCENTE:", "ComplianceBody"))
@@ -6430,7 +7900,7 @@ def _teacher_compliance_report_pdf_legacy(
     story.append(p(f"Correo institucional: {_clean(teacher.get('correo')) or _clean(teacher.get('correo_personal'))}", "ComplianceBody"))
     story.append(p(f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}", "ComplianceBody"))
     story.append(Spacer(1, 0.28 * cm))
-    story.append(Paragraph(f"<b>DATOS DE LA ASIGNATRURA:</b> Asignatura: {_pdf_text(course_name)}", styles["ComplianceBody"]))
+    story.append(Paragraph(f"<b>DATOS DE LA ASIGNATURA:</b> Asignatura: {_pdf_text(course_name)}", styles["ComplianceBody"]))
     story.append(p(f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}", "ComplianceBody"))
     story.append(p(f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}", "ComplianceBody"))
     story.append(p(f"Número de estudiantes matriculados: {len(students)}", "ComplianceBody"))
@@ -6442,9 +7912,78 @@ def _teacher_compliance_report_pdf_legacy(
     story.append(bp("REPORTE ACADÉMICO", "ComplianceBody"))
     story.append(Spacer(1, 0.2 * cm))
 
-    story.append(bp("Cumplimiento del PEA Y silabo (debidamente firmado)", "ComplianceBody"))
-    story.append(p("Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.", "ComplianceBody"))
-    add_evidence("pea", "sílabo", "silabo", always_example=True)
+    story.append(bp("Cumplimiento del PEA y sílabo (debidamente firmado)", "ComplianceBody"))
+    story.append(
+        p(
+            "El sistema valida el PEA y el sílabo publicados en el aula virtual y permite anexar una captura manual como respaldo.",
+            "ComplianceBody",
+        )
+    )
+    if planning_moodle_document_rows:
+        story.append(
+            p(
+                "Documentos PEA/sílabo identificados automáticamente en Moodle: "
+                f"{len(planning_moodle_resources)} recurso(s) y "
+                f"{len(planning_moodle_document_rows)} documento(s) verificable(s).",
+                "ComplianceBody",
+            )
+        )
+        planning_table_rows: list[list[Any]] = [[
+            grade_cell("Tipo"),
+            grade_cell("Curso / sección"),
+            grade_cell("Archivo / recurso"),
+            grade_cell("Publicación"),
+            grade_cell("Firma"),
+        ]]
+        for item in planning_moodle_document_rows:
+            document_label = (
+                f"{_pdf_text(item.get('file_name'))}<br/>"
+                f"<font size='6'>Recurso: {_pdf_text(item.get('resource_name'))}</font>"
+            )
+            if _clean(item.get("web_url")):
+                document_label = (
+                    f"<link href='{_pdf_text(item.get('web_url'))}' color='#145da0'>"
+                    f"{document_label}</link>"
+                )
+            planning_table_rows.append([
+                grade_cell(item.get("type_label")),
+                Paragraph(
+                    f"{_pdf_text(item.get('course_name'))}<br/>"
+                    f"<font size='6'>Sección: {_pdf_text(item.get('section_name'))}</font>",
+                    styles["ComplianceSmall"],
+                ),
+                Paragraph(document_label, styles["ComplianceSmall"]),
+                grade_cell(item.get("publication_status")),
+                grade_cell(item.get("signature_status")),
+            ])
+        planning_table = Table(
+            planning_table_rows,
+            repeatRows=1,
+            colWidths=[1.2 * cm, 4.1 * cm, 6.2 * cm, 2.0 * cm, 2.3 * cm],
+        )
+        planning_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), light_gray),
+                    ("BOX", (0, 0), (-1, -1), 0.45, border),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.3, border),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(planning_table)
+    else:
+        story.append(
+            p(
+                "Moodle no devolvió un PEA o sílabo identificable para la asignatura y los períodos seleccionados.",
+                "ComplianceBody",
+            )
+        )
+    add_evidence("pea", "sílabo", "silabo")
 
     story.append(Spacer(1, 0.16 * cm))
     story.append(bp("Reporte de actualización del silabo (Describir actualizaciones realizadas al sílabo y su justificativo)", "ComplianceBody"))
@@ -6544,6 +8083,35 @@ def _docx_add_picture(document: Any, image_bytes: bytes, width_cm: float = 16.6)
     run.add_picture(BytesIO(image_bytes), width=Cm(width_cm))
 
 
+def _docx_apply_table_grid(table: Any) -> None:
+    """Aplica bordes incluso cuando la plantilla no incluye Table Grid."""
+    try:
+        table.style = "Table Grid"
+        return
+    except KeyError:
+        pass
+
+    table_element = table._tbl
+    table_properties = table_element.tblPr
+    if table_properties is None:
+        table_properties = OxmlElement("w:tblPr")
+        table_element.insert(0, table_properties)
+    borders = table_properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        table_properties.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        tag = qn(f"w:{edge}")
+        border = borders.find(tag)
+        if border is None:
+            border = OxmlElement(f"w:{edge}")
+            borders.append(border)
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), "4")
+        border.set(qn("w:space"), "0")
+        border.set(qn("w:color"), "B7C3CB")
+
+
 def _teacher_compliance_report_docx(
     teacher: dict[str, Any],
     meta: dict[str, Any],
@@ -6584,6 +8152,10 @@ def _teacher_compliance_report_docx(
     failed = sum(1 for value in grade_values if value < 7)
     max_grade = max(grade_values) if grade_values else None
     min_grade = min(grade_values) if grade_values else None
+    planning_moodle_resources = _teacher_planning_moodle_resources(params)
+    planning_moodle_document_rows = _teacher_planning_moodle_document_rows(
+        planning_moodle_resources
+    )
 
     _docx_paragraph(document, "DATOS DEL DOCENTE:", bold=True)
     _docx_paragraph(document, f"Nombres del Docente: {first_names}")
@@ -6592,7 +8164,7 @@ def _teacher_compliance_report_docx(
     _docx_paragraph(document, f"Correo institucional: {_clean(teacher.get('correo')) or _clean(teacher.get('correo_personal'))}")
     _docx_paragraph(document, f"Teléfono de contacto: {_clean(params.get('telefono')) or '-'}")
     _docx_paragraph(document)
-    _docx_paragraph(document, f"DATOS DE LA ASIGNATRURA:  Asignatura: {course_name}", bold=True)
+    _docx_paragraph(document, f"DATOS DE LA ASIGNATURA:  Asignatura: {course_name}", bold=True)
     _docx_paragraph(document, f"Fecha de inicio: {_clean(params.get('fecha_inicio')) or '-'}")
     _docx_paragraph(document, f"Fecha fin: {_clean(params.get('fecha_fin')) or '-'}")
     _docx_paragraph(document, f"Número de estudiantes matriculados: {len(students)}")
@@ -6603,12 +8175,53 @@ def _teacher_compliance_report_docx(
     _docx_paragraph(document)
     _docx_paragraph(document, "REPORTE ACADÉMICO", bold=True)
     _docx_paragraph(document)
-    _docx_paragraph(document, "Cumplimiento del PEA Y silabo (debidamente firmado)", bold=True)
+    _docx_paragraph(document, "Cumplimiento del PEA y sílabo (debidamente firmado)", bold=True)
     _docx_paragraph(
         document,
-        "Evidenciar (captura de pantalla) silabo y PEA cargado en el sistema de Aula virtuales, debidamente firmado electrónicamente.",
+        "El sistema valida el PEA y el sílabo publicados en el aula virtual y permite anexar una captura manual como respaldo.",
     )
-    add_evidence("pea", "sílabo", "silabo", width_cm=16.6, always_example=True)
+    if planning_moodle_document_rows:
+        _docx_paragraph(
+            document,
+            "Documentos PEA/sílabo identificados automáticamente en Moodle: "
+            f"{len(planning_moodle_resources)} recurso(s) y "
+            f"{len(planning_moodle_document_rows)} documento(s) verificable(s).",
+        )
+        planning_table = document.add_table(rows=1, cols=5)
+        _docx_apply_table_grid(planning_table)
+        headers = ["Tipo", "Curso / sección", "Archivo / recurso", "Publicación", "Firma"]
+        for cell, label in zip(planning_table.rows[0].cells, headers):
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(label)
+            run.bold = True
+            run.font.name = "Calibri"
+            run.font.size = Pt(8)
+        for item in planning_moodle_document_rows:
+            cells = planning_table.add_row().cells
+            document_detail = (
+                f"{_clean(item.get('file_name'))}\n"
+                f"Recurso: {_clean(item.get('resource_name'))}"
+            )
+            if _clean(item.get("web_url")):
+                document_detail += f"\nEnlace: {_clean(item.get('web_url'))}"
+            values = [
+                item.get("type_label"),
+                f"{_clean(item.get('course_name'))}\nSección: {_clean(item.get('section_name'))}",
+                document_detail,
+                item.get("publication_status"),
+                item.get("signature_status"),
+            ]
+            for cell, value in zip(cells, values):
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(_clean(value) or "-")
+                run.font.name = "Calibri"
+                run.font.size = Pt(8)
+    else:
+        _docx_paragraph(
+            document,
+            "Moodle no devolvió un PEA o sílabo identificable para la asignatura y los períodos seleccionados.",
+        )
+    add_evidence("pea", "sílabo", "silabo", width_cm=16.6)
 
     _docx_paragraph(document)
     _docx_paragraph(document, "Reporte de actualización del silabo (Describir actualizaciones realizadas al sílabo y su justificativo)", bold=True)
@@ -6659,10 +8272,7 @@ def _teacher_compliance_report_docx(
     if students:
         _docx_paragraph(document, "Cuadro de notas", bold=True)
         table = document.add_table(rows=1, cols=7)
-        try:
-            table.style = "Table Grid"
-        except KeyError:
-            pass
+        _docx_apply_table_grid(table)
         headers = ["No.", "Carrera", "Cédula", "Apellidos y nombres", "P1", "P2", "Final"]
         for index, header in enumerate(headers):
             table.rows[0].cells[index].text = header
@@ -6772,16 +8382,19 @@ def _build_teacher_compliance_pdf(
     actualizaciones: str = "",
     observaciones: str = "",
     teams_recordings: list[dict[str, Any]] | None = None,
+    moodle_resources: list[dict[str, Any]] | None = None,
     evidence_images: list[dict[str, Any]] | None = None,
+    grade_validation: dict[str, Any] | None = None,
+    failure_justification: str = "",
 ) -> tuple[bytes, str]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
     subject_filter = _clean(codigo_materia).upper()
     period_codes = list(dict.fromkeys(codigo_periodo))
     if not period_codes:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período')
     if len(period_codes) > 4:
-        raise HTTPException(status_code=400, detail="Solo se pueden seleccionar hasta 4 periodos para el informe")
+        raise HTTPException(status_code=400, detail='Solo se pueden seleccionar hasta 4 períodos para el informe')
     if not subject_filter:
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
 
@@ -6833,6 +8446,9 @@ def _build_teacher_compliance_pdf(
         "actualizaciones": actualizaciones,
         "observaciones": observaciones,
         "teams_recordings": teams_recordings or [],
+        "moodle_resources": moodle_resources or [],
+        "grade_validation": grade_validation or {},
+        "failure_justification": _clean(failure_justification),
     }
     pdf_bytes = _teacher_compliance_report_pdf(
         teacher,
@@ -6859,7 +8475,10 @@ def _teacher_compliance_response(
     actualizaciones: str = "",
     observaciones: str = "",
     teams_recordings: list[dict[str, Any]] | None = None,
+    moodle_resources: list[dict[str, Any]] | None = None,
     evidence_images: list[dict[str, Any]] | None = None,
+    grade_validation: dict[str, Any] | None = None,
+    failure_justification: str = "",
 ) -> StreamingResponse:
     pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
         current_user=current_user,
@@ -6875,7 +8494,36 @@ def _teacher_compliance_response(
         actualizaciones=actualizaciones,
         observaciones=observaciones,
         teams_recordings=teams_recordings,
+        moodle_resources=moodle_resources,
         evidence_images=evidence_images,
+        grade_validation=grade_validation,
+        failure_justification=failure_justification,
+    )
+    record_teacher_report_event(
+        stage="GENERADO",
+        document_type="INFORME_CUMPLIMIENTO",
+        teacher_code=current_user.codigo_doc,
+        teacher_id=current_user.cedula,
+        teacher_name=current_user.nombres or current_user.login,
+        subject_code=codigo_materia,
+        period_codes=codigo_periodo,
+        parallel=paralelo,
+        schedule=cod_jornada,
+        filename=f"{filename_stem}.pdf",
+        student_count=len(set(codigo_estud or [])) if codigo_estud else None,
+        detail="Informe de cumplimiento docente generado.",
+        metadata={
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "grabaciones_teams": len(teams_recordings or []),
+            "recursos_moodle": len(moodle_resources or []),
+            "evidencias": len(evidence_images or []),
+            "reprobados": _int((grade_validation or {}).get("failed_count")) or 0,
+            "porcentaje_reprobados": _number(
+                (grade_validation or {}).get("failed_percentage")
+            ) or 0,
+            "justificacion_reprobados": _clean(failure_justification),
+        },
     )
     return StreamingResponse(
         BytesIO(pdf_bytes),
@@ -7293,7 +8941,7 @@ async def _sign_pdf_with_pkcs12(
     stamp_text = (
         "Firmado electronicamente por:\n"
         f"{visible_signer_name}\n"
-        "Validar unicamente con FirmaEC"
+        "Validar únicamente con FirmaEC"
     )
     writer = IncrementalPdfFileWriter(BytesIO(pdf_bytes))
     metadata = signers.PdfSignatureMetadata(
@@ -7494,7 +9142,7 @@ def _teacher_academic_planning_pdf(
         [p("Distribución de horas en las actividades de aprendizaje", "PlanningCellBold"), "", "", "", "", ""],
         [p("Docencia:", "PlanningCellBold"), p(total_docencia, "PlanningCellCenter"), p("Trabajo Autónomo", "PlanningCellBold"), p(total_autonomo, "PlanningCellCenter"), p("Prácticas Aprendizaje", "PlanningCellBold"), p(total_practica, "PlanningCellCenter")],
         [p("Práctica profesional", "PlanningCellBold"), p(0, "PlanningCellCenter"), p("Vinculación", "PlanningCellBold"), p(0, "PlanningCellCenter"), p("Trabajo de titulación", "PlanningCellBold"), p(0, "PlanningCellCenter")],
-        [p("Periodo Académico", "PlanningCellBold"), p(period, "PlanningCellCenter"), "", p("Modalidad", "PlanningCellBold"), p(payload.modalidad, "PlanningCellCenter"), ""],
+        [p("Período académico", "PlanningCellBold"), p(period, "PlanningCellCenter"), "", p("Modalidad", "PlanningCellBold"), p(payload.modalidad, "PlanningCellCenter"), ""],
         [p("Prerrequisitos de la asignatura", "PlanningCellBold"), "", "", p("Co Requisitos de la asignatura", "PlanningCellBold"), "", ""],
         [p(payload.prerrequisitos), "", "", p(payload.correquisitos), "", ""],
         [p("Horario de clases", "PlanningCellBold"), "", "", p("Horario atención de tutorías", "PlanningCellBold"), "", ""],
@@ -7918,7 +9566,7 @@ def teacher_course_report_pdf(
     subject_filter = _clean(codigo_materia).upper()
     period_codes = list(dict.fromkeys(codigo_periodo))
     if not period_codes:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período')
     if not subject_filter:
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
 
@@ -7982,7 +9630,7 @@ def _build_teacher_student_grade_report_pdf(
     subject_filter = _clean(codigo_materia).upper()
     period_codes = list(dict.fromkeys(codigo_periodo))
     if not period_codes:
-        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un período')
     if not subject_filter:
         raise HTTPException(status_code=400, detail="Debe seleccionar una materia")
 
@@ -8119,7 +9767,7 @@ async def teacher_sign_student_grade_report(
 
 @router.get("/teacher/compliance-report-docx")
 @router.get("/teacher/compliance-report-pdf")
-def teacher_compliance_report_pdf(
+async def teacher_compliance_report_pdf(
     current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
     codigo_periodo: Annotated[list[int], Query()],
     codigo_materia: Annotated[str, Query()],
@@ -8132,7 +9780,18 @@ def teacher_compliance_report_pdf(
     telefono: Annotated[str, Query(max_length=40)] = "",
     actualizaciones: Annotated[str, Query(max_length=1000)] = "",
     observaciones: Annotated[str, Query(max_length=1000)] = "",
+    justificacion_reprobados: Annotated[str, Query(max_length=2000)] = "",
 ) -> StreamingResponse:
+    _, grade_validation = await _prepare_teacher_compliance_generation(
+        current_user,
+        codigo_periodo,
+        codigo_materia,
+        paralelo,
+        cod_anio_basica,
+        [],
+        codigo_estud,
+        justificacion_reprobados,
+    )
     return _teacher_compliance_response(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -8146,6 +9805,8 @@ def teacher_compliance_report_pdf(
         telefono=telefono,
         actualizaciones=actualizaciones,
         observaciones=observaciones,
+        grade_validation=grade_validation,
+        failure_justification=justificacion_reprobados,
     )
 
 
@@ -8164,7 +9825,9 @@ async def teacher_compliance_report_pdf_with_evidence(
     telefono: Annotated[str, Form(max_length=40)] = "",
     actualizaciones: Annotated[str, Form(max_length=1000)] = "",
     observaciones: Annotated[str, Form(max_length=1000)] = "",
+    justificacion_reprobados: Annotated[str, Form(max_length=2000)] = "",
     teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
+    moodle_resources_json: Annotated[str, Form(max_length=300000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
     reporte_notas_firmado: Annotated[UploadFile | None, File()] = None,
@@ -8172,6 +9835,17 @@ async def teacher_compliance_report_pdf_with_evidence(
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
     evidence_images.extend(await _read_signed_grade_report_evidence(reporte_notas_firmado))
     teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
+    requested_moodle_resources = _parse_teacher_moodle_resources(moodle_resources_json)
+    moodle_resources, grade_validation = await _prepare_teacher_compliance_generation(
+        current_user,
+        codigo_periodo,
+        codigo_materia,
+        paralelo,
+        cod_anio_basica,
+        requested_moodle_resources,
+        codigo_estud,
+        justificacion_reprobados,
+    )
     return _teacher_compliance_response(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -8186,7 +9860,10 @@ async def teacher_compliance_report_pdf_with_evidence(
         actualizaciones=actualizaciones,
         observaciones=observaciones,
         teams_recordings=teams_recordings,
+        moodle_resources=moodle_resources,
         evidence_images=evidence_images,
+        grade_validation=grade_validation,
+        failure_justification=justificacion_reprobados,
     )
 
 
@@ -8209,7 +9886,9 @@ async def teacher_sign_compliance_report(
     telefono: Annotated[str, Form(max_length=40)] = "",
     actualizaciones: Annotated[str, Form(max_length=1000)] = "",
     observaciones: Annotated[str, Form(max_length=1000)] = "",
+    justificacion_reprobados: Annotated[str, Form(max_length=2000)] = "",
     teams_recordings_json: Annotated[str, Form(max_length=100000)] = "",
+    moodle_resources_json: Annotated[str, Form(max_length=300000)] = "",
     evidencia_label: Annotated[list[str] | None, Form()] = None,
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
     reporte_notas_firmado: Annotated[UploadFile | None, File()] = None,
@@ -8226,6 +9905,17 @@ async def teacher_sign_compliance_report(
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
     evidence_images.extend(await _read_signed_grade_report_evidence(reporte_notas_firmado))
     teams_recordings = _parse_teacher_teams_recordings(teams_recordings_json)
+    requested_moodle_resources = _parse_teacher_moodle_resources(moodle_resources_json)
+    moodle_resources, grade_validation = await _prepare_teacher_compliance_generation(
+        current_user,
+        codigo_periodo,
+        codigo_materia,
+        paralelo,
+        cod_anio_basica,
+        requested_moodle_resources,
+        codigo_estud,
+        justificacion_reprobados,
+    )
     pdf_bytes, filename_stem = _build_teacher_compliance_pdf(
         current_user=current_user,
         codigo_periodo=codigo_periodo,
@@ -8240,7 +9930,36 @@ async def teacher_sign_compliance_report(
         actualizaciones=actualizaciones,
         observaciones=observaciones,
         teams_recordings=teams_recordings,
+        moodle_resources=moodle_resources,
         evidence_images=evidence_images,
+        grade_validation=grade_validation,
+        failure_justification=justificacion_reprobados,
+    )
+    await run_in_threadpool(
+        record_teacher_report_event,
+        stage="GENERADO",
+        document_type="INFORME_CUMPLIMIENTO",
+        teacher_code=current_user.codigo_doc,
+        teacher_id=current_user.cedula,
+        teacher_name=current_user.nombres or current_user.login,
+        subject_code=codigo_materia,
+        period_codes=codigo_periodo,
+        parallel=paralelo,
+        schedule=cod_jornada,
+        filename=f"{filename_stem}.pdf",
+        student_count=len(set(codigo_estud or [])) if codigo_estud else None,
+        detail="Informe de cumplimiento docente generado para firma electrónica.",
+        metadata={
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "grabaciones_teams": len(teams_recordings),
+            "recursos_moodle": len(moodle_resources),
+            "evidencias": len(evidence_images),
+            "origen": "firma_electronica",
+            "reprobados": _int(grade_validation.get("failed_count")) or 0,
+            "porcentaje_reprobados": _number(grade_validation.get("failed_percentage")) or 0,
+            "justificacion_reprobados": _clean(justificacion_reprobados),
+        },
     )
     signature_page, signature_box = _pdf_signature_target_above_text(
         pdf_bytes,
@@ -8249,16 +9968,48 @@ async def teacher_sign_compliance_report(
         box_height=58,
         fallback_box=(72, 458, 262, 516),
     )
-    signed_pdf = await _sign_pdf_with_pkcs12(
-        pdf_bytes=pdf_bytes,
-        pkcs12_bytes=certificate_bytes,
-        password=contrasena_certificado,
-        current_user=current_user,
-        reason=firma_motivo,
-        location=firma_ubicacion,
-        contact=firma_contacto,
-        signature_box=signature_box,
-        signature_page=signature_page,
+    try:
+        signed_pdf = await _sign_pdf_with_pkcs12(
+            pdf_bytes=pdf_bytes,
+            pkcs12_bytes=certificate_bytes,
+            password=contrasena_certificado,
+            current_user=current_user,
+            reason=firma_motivo,
+            location=firma_ubicacion,
+            contact=firma_contacto,
+            signature_box=signature_box,
+            signature_page=signature_page,
+        )
+    except Exception as exc:
+        await run_in_threadpool(
+            record_teacher_report_event,
+            stage="FIRMADO",
+            status="ERROR",
+            document_type="INFORME_CUMPLIMIENTO",
+            teacher_code=current_user.codigo_doc,
+            teacher_id=current_user.cedula,
+            teacher_name=current_user.nombres or current_user.login,
+            subject_code=codigo_materia,
+            period_codes=codigo_periodo,
+            parallel=paralelo,
+            filename=f"{filename_stem}-firmado.pdf",
+            detail=f"No se pudo firmar el informe: {type(exc).__name__}",
+        )
+        raise
+    await run_in_threadpool(
+        record_teacher_report_event,
+        stage="FIRMADO",
+        document_type="INFORME_CUMPLIMIENTO",
+        teacher_code=current_user.codigo_doc,
+        teacher_id=current_user.cedula,
+        teacher_name=current_user.nombres or current_user.login,
+        subject_code=codigo_materia,
+        period_codes=codigo_periodo,
+        parallel=paralelo,
+        schedule=cod_jornada,
+        filename=f"{filename_stem}-firmado.pdf",
+        student_count=len(set(codigo_estud or [])) if codigo_estud else None,
+        detail="Firma electrónica aplicada al informe de cumplimiento docente.",
     )
     return StreamingResponse(
         BytesIO(signed_pdf),
@@ -8276,6 +10027,8 @@ async def teacher_signed_documents_archive(
     informe: Annotated[UploadFile, File()],
     notas: Annotated[UploadFile, File()],
     contrato: Annotated[UploadFile, File()],
+    factura_xml: Annotated[UploadFile | None, File()] = None,
+    ride_pdf: Annotated[UploadFile | None, File()] = None,
     codigo_materia: Annotated[str, Form()] = "",
     nombre_materia: Annotated[str, Form()] = "",
     codigo_periodo: Annotated[list[str] | None, Form()] = None,
@@ -8283,10 +10036,12 @@ async def teacher_signed_documents_archive(
     compliance_pdf = await informe.read()
     grades_pdf = await notas.read()
     contract_pdf = await contrato.read()
+    invoice_documents = await _teacher_invoice_backup_documents(factura_xml, ride_pdf)
     archive_bytes = _signed_teacher_documents_archive(
         compliance_pdf,
         grades_pdf,
         contract_pdf,
+        invoice_documents,
     )
     identity = _teacher_contract_identity(current_user)
     try:
@@ -8296,15 +10051,45 @@ async def teacher_signed_documents_archive(
             compliance_pdf=compliance_pdf,
             grades_pdf=grades_pdf,
             contract_pdf=contract_pdf,
-            archive_bytes=archive_bytes,
             subject_code=codigo_materia,
             subject_name=nombre_materia,
             period_codes=codigo_periodo or [],
+            invoice_documents=invoice_documents,
         )
+        expected_item_count = 5 if invoice_documents else 3
+        stored_items = stored.get("items") if isinstance(stored.get("items"), list) else []
+        if len(stored_items) != expected_item_count or not bool(stored.get("same_folder")):
+            raise RuntimeError(
+                f"OneDrive no confirmó los {expected_item_count} documentos en una misma carpeta."
+            )
     except Exception as exc:
         logger.exception(
             "No se pudieron guardar los documentos firmados del docente %s en OneDrive.",
             _clean(identity.get("codigo_doc")),
+        )
+        await run_in_threadpool(
+            record_teacher_report_event,
+            stage="ARCHIVADO",
+            status="ERROR",
+            document_type="PAQUETE_DOCUMENTOS_DOCENTE",
+            teacher_code=identity.get("codigo_doc"),
+            teacher_id=identity.get("cedula"),
+            teacher_name=identity.get("nombre"),
+            subject_code=codigo_materia,
+            subject_name=nombre_materia,
+            period_codes=codigo_periodo or [],
+            filename="documentos-docente-firmados.zip",
+            detail=f"OneDrive no confirmó el archivo: {type(exc).__name__}",
+            metadata={
+                "respaldos_factura": [
+                    {
+                        "tipo_documento": document.get("document_type"),
+                        "nombre_original": document.get("original_name"),
+                        "tamano_bytes": len(document.get("content") or b""),
+                    }
+                    for document in invoice_documents
+                ]
+            },
         )
         raise HTTPException(
             status_code=502,
@@ -8320,6 +10105,48 @@ async def teacher_signed_documents_archive(
         _clean(stored.get("folder_path")),
         len(stored.get("items") or []),
     )
+    stored_folder = stored.get("folder") if isinstance(stored.get("folder"), dict) else {}
+    stored_items = stored.get("items") if isinstance(stored.get("items"), list) else []
+    await run_in_threadpool(
+        record_teacher_report_event,
+        stage="ARCHIVADO",
+        document_type="PAQUETE_DOCUMENTOS_DOCENTE",
+        teacher_code=identity.get("codigo_doc"),
+        teacher_id=identity.get("cedula"),
+        teacher_name=identity.get("nombre"),
+        subject_code=codigo_materia,
+        subject_name=nombre_materia,
+        period_codes=codigo_periodo or [],
+        filename="documentos-docente-firmados.zip",
+        document_path=stored.get("folder_path"),
+        document_url=stored_folder.get("webUrl"),
+        detail=(
+            "Cinco documentos archivados juntos en la misma carpeta de OneDrive: informe, notas, contrato, "
+            "factura XML y RIDE."
+            if invoice_documents
+            else "Tres documentos firmados y archivados juntos en la misma carpeta de OneDrive: informe, notas y contrato."
+        ),
+        metadata={
+            "documentos_guardados": len(stored_items),
+            "documentos_en_misma_carpeta": bool(stored.get("same_folder")),
+            "carpeta_compartida": stored.get("folder_path"),
+            "paquete_zip": "Descarga temporal; no se almacena como un documento adicional.",
+            "archivos": [
+                {
+                    "id": item.get("id"),
+                    "nombre": item.get("name"),
+                    "url": item.get("webUrl"),
+                    "tipo_documento": item.get("tipo_documento"),
+                    "nombre_original": item.get("nombre_original"),
+                    "content_type": item.get("content_type"),
+                    "tamano_bytes": item.get("tamano_bytes"),
+                    "ruta_documento": item.get("document_path"),
+                }
+                for item in stored_items
+                if isinstance(item, dict)
+            ]
+        },
+    )
     return StreamingResponse(
         BytesIO(archive_bytes),
         media_type="application/zip",
@@ -8330,6 +10157,7 @@ async def teacher_signed_documents_archive(
             "X-OneDrive-Saved": "true",
             "X-OneDrive-Root": _TEACHER_DOCUMENT_ONEDRIVE_ROOT,
             "X-OneDrive-Item-Count": str(len(stored.get("items") or [])),
+            "X-OneDrive-Same-Folder": "true" if stored.get("same_folder") else "false",
         },
     )
 
@@ -8445,7 +10273,7 @@ def teacher_save_grades(
                 payload.codigo_materia,
             )
             if int(cursor.fetchone()[0] or 0) == 0:
-                raise HTTPException(status_code=403, detail="El curso no esta asignado al docente actual")
+                raise HTTPException(status_code=403, detail='El curso no está asignado al docente actual')
 
             cursor.execute(
                 f"""
@@ -8465,7 +10293,7 @@ def teacher_save_grades(
             if affected != 1:
                 raise HTTPException(
                     status_code=409,
-                    detail="Solo se pueden actualizar notas de una matricula unica con estudiante activo",
+                    detail='Solo se pueden actualizar notas de una matrícula única con estudiante activo',
                 )
             conn.commit()
         return {"ok": True, "message": "Notas actualizadas", "affected_rows": affected}

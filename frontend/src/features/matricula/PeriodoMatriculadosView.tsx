@@ -192,7 +192,7 @@ export function PeriodoMatriculadosView({
   const filteredStudentsTotal = filteredStudents.length
   const listSummary = selectedListLabel
     ? `${selectedListLabel} / ${filteredStudentsTotal} estudiantes`
-    : 'Selecciona una tarjeta'
+    : 'Seleccione una tarjeta'
 
   const handleYearClick = async (yearValue: string, label: string, year: number | null) => {
     setSelectedYear(yearValue)
@@ -204,7 +204,7 @@ export function PeriodoMatriculadosView({
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Periodo matriculados</p>
+          <p className="eyebrow">Estudiantes matriculados por período</p>
           <h2>{displayName}</h2>
           <p className="report-description">
             Cada registro cuenta una sola vez por estudiante y se agrupa por año, tipo y estado para evitar desfases.
@@ -214,7 +214,7 @@ export function PeriodoMatriculadosView({
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Periodo matriculados</span>
+              <span>Período matriculados</span>
             </div>
           </div>
         </div>
@@ -247,7 +247,7 @@ export function PeriodoMatriculadosView({
       <section className="student-grid student-grid--content">
         <article className="student-card student-card--wide periodo-panel">
           <div className="card-head">
-            <h3>Inscripciones por periodo</h3>
+            <h3>Inscripciones por período</h3>
             <span>{loading ? 'Cargando...' : `${filteredSummary.length} filas`}</span>
           </div>
 
@@ -257,7 +257,7 @@ export function PeriodoMatriculadosView({
               <select value={tipoFilter} onChange={(event) => setTipoFilter(event.target.value as 'ALL' | MatriculaTipo)}>
                 <option value="ALL">Todos</option>
                 <option value="R">Regular (R)</option>
-                <option value="H">Homologacion (H)</option>
+                <option value="H">Homologación (H)</option>
               </select>
             </label>
             <label>
@@ -303,7 +303,7 @@ export function PeriodoMatriculadosView({
               <thead>
                 <tr>
                   <th>Año</th>
-                  <th>Periodo</th>
+                  <th>Período</th>
                   <th>Detalle</th>
                   <th>Tipo</th>
                   <th>Estado</th>
@@ -314,7 +314,7 @@ export function PeriodoMatriculadosView({
                 {filteredSummary.map((item, index) => (
                   <tr key={`${item.anio_periodo ?? 'na'}-${item.tipo_matricula}-${item.estado_codigo ?? 'na'}-${index}`}>
                     <td>{item.anio_periodo ?? 'Sin año'}</td>
-                    <td>{item.codigo_periodo || 'Sin periodo'}</td>
+                    <td>{item.codigo_periodo || 'Sin período'}</td>
                     <td>{item.detalle_periodo || '-'}</td>
                     <td>{item.tipo_matricula}</td>
                     <td>{item.estado_nombre ?? item.estado_codigo ?? 'Sin estado'}</td>
@@ -377,7 +377,7 @@ export function PeriodoMatriculadosView({
                     <td colSpan={6}>
                       {selectedListLabel
                         ? 'Sin estudiantes para la tarjeta seleccionada.'
-                        : 'Selecciona una tarjeta de año para cargar estudiantes.'}
+                        : 'Seleccione una tarjeta de año para cargar estudiantes.'}
                     </td>
                   </tr>
                 ) : null}

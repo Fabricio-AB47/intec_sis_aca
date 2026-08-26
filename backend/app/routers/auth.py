@@ -66,7 +66,7 @@ def _decode_ms_state(state: str) -> tuple[str, str | None]:
     decoded = jwt.decode(state, settings.signing_secret, algorithms=["HS256"])
     login = str(decoded.get("login") or "").strip()
     if not login:
-        raise ValueError("Estado Microsoft invalido")
+        raise ValueError('Estado Microsoft inválido')
     team_id_raw = str(decoded.get("team_id") or "").strip()
     team_id = team_id_raw if team_id_raw else None
     return login, team_id

@@ -8,7 +8,7 @@ import { SessionStatusView } from './features/auth/SessionStatusView'
 import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
 import { screenPermissionAllowsCode, screenPermissionAllowsPage, screenPermissionForView } from './lib/screenAccess'
-import type { AcademicEnrollmentMode, PreinscriptionStage } from './types/app'
+import type { AcademicEnrollmentMode, MoodleSection, PreinscriptionStage } from './types/app'
 
 const lazyView = <T,>(loader: () => Promise<T>, name: keyof T) =>
   lazy(async () => ({ default: (await loader())[name] as ComponentType<Record<string, unknown>> }))
@@ -55,8 +55,18 @@ const PortalEstudianteView = lazyView(() => import('./features/portal/PortalEstu
 const PracticasInstitucionalesView = lazyView(() => import('./features/practicas/PracticasInstitucionalesView'), 'PracticasInstitucionalesView')
 const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
 const TeamsView = lazyView(() => import('./features/teams/TeamsView'), 'TeamsView')
+const HistoricoIntegracionesView = lazyView(
+  () => import('./features/integraciones/HistoricoIntegracionesView'),
+  'HistoricoIntegracionesView',
+)
+const InformeCumplimientoView = lazyView(
+  () => import('./features/admin/InformeCumplimientoView'),
+  'InformeCumplimientoView',
+)
+const MoodleView = lazyView(() => import('./features/moodle/MoodleView'), 'MoodleView')
 
 const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos']
+const moodleSections: MoodleSection[] = ['alerts', 'courses', 'resources', 'grades', 'status', 'users']
 const preinscriptionStages: PreinscriptionStage[] = [
   'registro',
   'inscritos',
@@ -86,6 +96,19 @@ function assignedDynamicChildren(permissions: string[] | null, parent: string): 
     .filter(Boolean)
 }
 
+function isAdministratorRole(role?: string): boolean {
+  const normalized = role
+    ?.trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') || ''
+
+  return normalized === '1'
+    || normalized === 'ADMIN'
+    || normalized === 'ADMINISTRACION'
+    || normalized.includes('ADMINISTRADOR')
+}
+
 function App() {
   const app = useReporteriaApp()
   const [publicTeacherEvaluation, setPublicTeacherEvaluation] = useState(() => {
@@ -103,16 +126,23 @@ function App() {
     'preinscripcion',
     preinscriptionStages,
   )
+  const allowedMoodleSections = assignedChildren(
+    app.screenAccessPages,
+    'moodle',
+    moodleSections,
+  )
   const allowedSisAcademicoSections = assignedDynamicChildren(app.screenAccessPages, 'gestion-sisacademico')
+  const canOpenMoodleUsers = isAdministratorRole(app.session?.rol)
+    || screenPermissionAllowsCode(app.screenAccessPages, 'moodle/users')
 
   if (app.bootstrapping) {
-    return <SessionStatusView message="Validando sesion activa..." />
+    return <SessionStatusView message="Validando sesión activa..." />
   }
 
   if (!app.session && publicTeacherEvaluation) {
     return (
       <TeacherEvaluationView
-        displayName="Formulario publico"
+        displayName="Formulario público"
         publicMode
         onBackToLogin={() => setPublicTeacherEvaluation(false)}
       />
@@ -136,13 +166,13 @@ function App() {
   }
 
   if (app.session && (app.screenAccessLoading || app.screenAccessPages === null)) {
-    return <SessionStatusView message="Cargando navegacion autorizada..." />
+    return <SessionStatusView message="Cargando navegación autorizada..." />
   }
 
   if (app.session && app.screenAccessPages?.length === 0) {
     return (
       <SessionStatusView
-        message="No se pudo habilitar la navegacion"
+        message="No se pudo habilitar la navegación"
         detail={app.screenAccessError || 'El tipo de usuario no tiene pantallas activas asignadas.'}
         onRetry={app.refreshScreenAccess}
         onLogout={() => {
@@ -156,6 +186,7 @@ function App() {
     let pageContent: ReactNode
     const activePermission = screenPermissionForView(app.activePage, {
       matriculaAcadMode: app.matriculaAcadMode,
+      moodleSection: app.activeMoodleSection,
       preinscriptionStage: app.preinscriptionActiveStage,
       sisAcademicoSection: app.sisAcademicoSectionKey,
       reportKey: app.legacyReportKey,
@@ -167,7 +198,7 @@ function App() {
       pageContent = (
         <SessionStatusView
           message="Validando acceso a la pantalla..."
-          detail={app.screenAccessError || 'La opcion solicitada no esta asignada al perfil autenticado.'}
+          detail={app.screenAccessError || 'La opción solicitada no está asignada al perfil autenticado.'}
         />
       )
     } else if (app.activePage === 'dashboard') {
@@ -278,6 +309,9 @@ function App() {
           initialSectionKey={app.sisAcademicoSectionKey}
           allowedSectionKeys={allowedSisAcademicoSections}
           onSectionChange={app.openGestionSisAcademicoPage}
+          onOpenMoodleUsers={canOpenMoodleUsers
+            ? () => app.openMoodlePage('users')
+            : undefined}
         />
       )
     } else if (app.activePage === 'periodo-academico') {
@@ -472,11 +506,24 @@ function App() {
           onTeamIdFromCatalog={app.setTeamsTeamId}
         />
       )
+    } else if (app.activePage === 'historico-integraciones') {
+      pageContent = <HistoricoIntegracionesView displayName={app.displayName} />
+    } else if (app.activePage === 'informe-cumplimiento') {
+      pageContent = <InformeCumplimientoView displayName={app.displayName} />
+    } else if (app.activePage === 'moodle') {
+      pageContent = (
+        <MoodleView
+          displayName={app.displayName}
+          activeSection={app.activeMoodleSection}
+          availableSections={allowedMoodleSections}
+          onSectionChange={app.openMoodlePage}
+        />
+      )
     } else {
       pageContent = (
         <SessionStatusView
           message="Pantalla no disponible"
-          detail="La opcion solicitada no forma parte de la navegacion activa."
+          detail="La opción solicitada no forma parte de la navegación activa."
         />
       )
     }
@@ -490,6 +537,7 @@ function App() {
           activePortalStudentSection={app.portalStudentSection}
           activePreinscriptionStage={app.preinscriptionActiveStage}
           activeMatriculaAcadMode={app.matriculaAcadMode}
+          activeMoodleSection={app.activeMoodleSection}
           role={app.session.rol}
           screenAccessPages={app.screenAccessPages}
           displayName={app.displayName}
@@ -505,6 +553,9 @@ function App() {
           onOpenPortalDocenteContratos={app.openPortalDocenteContratosPage}
           onOpenTeams={app.openTeamsPage}
           onOpenTeamsMatricula={app.openTeamsMatriculaPage}
+          onOpenHistoricoIntegraciones={app.openHistoricoIntegracionesPage}
+          onOpenInformeCumplimiento={app.openInformeCumplimientoPage}
+          onOpenMoodle={app.openMoodlePage}
           onOpenMatricula={app.openMatriculaPage}
           onOpenMatriculaAcad={app.openMatriculaAcadPage}
           onOpenMatriculaDocente={app.openMatriculaDocentePage}
@@ -546,7 +597,7 @@ function App() {
             void app.logout()
           }}
         >
-          <Suspense fallback={<SessionStatusView message="Cargando modulo..." />}>{pageContent}</Suspense>
+          <Suspense fallback={<SessionStatusView message="Cargando módulo..." />}>{pageContent}</Suspense>
         </StudentLayout>
       </main>
     )

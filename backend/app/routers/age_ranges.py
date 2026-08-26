@@ -23,7 +23,7 @@ AGE_RANGE_ORDER = [
     ("30 a 40", 2),
     ("41 a 50", 3),
     ("51 a 60", 4),
-    ("61 o mas", 5),
+    ("61 o más", 5),
     ("Sin fecha", 99),
 ]
 
@@ -149,7 +149,7 @@ def _age_ranges_sql(
                     WHEN edad.edad BETWEEN 30 AND 40 THEN '30 a 40'
                     WHEN edad.edad BETWEEN 41 AND 50 THEN '41 a 50'
                     WHEN edad.edad BETWEEN 51 AND 60 THEN '51 a 60'
-                    ELSE '61 o mas'
+                    ELSE '61 o más'
                 END AS rango_edad,
                 CASE
                     WHEN edad.edad IS NULL THEN 99
@@ -401,7 +401,7 @@ def catalog(_: SessionUser = AllowedUser) -> dict[str, Any]:
             )
             becas = [_clean(row.tipo_beca) for row in cursor.fetchall() if _clean(row.tipo_beca)]
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo cargar el catalogo de edades") from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='No se pudo cargar el catálogo de edades') from exc
 
     return {
         "becas": becas,

@@ -162,7 +162,7 @@ def integration_status(
             "configured_name": settings.eval_db_name,
             "role": "Evaluación institucional y docente 360",
             "domains": ["faculty", "analytics"],
-            "relation": "Cédula, CodigoDoc y periodo",
+            "relation": "Cédula, código del docente y período",
             "connection_factory": get_evaluation_connection,
         },
         {
@@ -170,7 +170,7 @@ def integration_status(
             "configured_name": settings.teams_db_name,
             "role": "Aulas virtuales y operación educativa continua",
             "domains": ["records", "faculty", "analytics"],
-            "relation": "Correo institucional, curso y periodo",
+            "relation": "Correo institucional, curso y período",
             "connection_factory": get_teams_connection,
         },
         {

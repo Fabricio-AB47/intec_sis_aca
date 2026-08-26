@@ -425,7 +425,7 @@ export function DashboardView({
         {hasNoAdvisorRecords ? (
           <p className="teams-error teams-error--info">
             {admissionTotals.mensaje_vista ||
-              `No hay preinscripciones vinculadas por codigo de asesor a ${admissionTotals.usuario_consultado || displayName}.`}
+              `No hay preinscripciones vinculadas por código de asesor a ${admissionTotals.usuario_consultado || displayName}.`}
           </p>
         ) : null}
 
@@ -433,7 +433,7 @@ export function DashboardView({
           <article className="student-card dashboard-summary-panel">
             <div className="card-head">
               <h3>Resumen personal</h3>
-              <span>{conversion} conversion a matricula</span>
+              <span>{conversion} conversión a matrícula</span>
             </div>
 
             <div className="dashboard-metric-tiles">
@@ -444,7 +444,7 @@ export function DashboardView({
               >
                 <span>Preinscritos</span>
                 <strong>{personalTotal}</strong>
-                <small>Registros creados en PREINSCRIPCION</small>
+                <small>Registros creados en preinscripción</small>
               </button>
               <button
                 type="button"
@@ -559,14 +559,14 @@ export function DashboardView({
 
           <article className="student-card student-card--wide dashboard-bars-card">
             <div className="card-head">
-              <h3>Detalle por periodo académico</h3>
-              <span>{admissionsByUserPeriod.length} periodo(s)</span>
+              <h3>Detalle por período académico</h3>
+              <span>{admissionsByUserPeriod.length} período(s)</span>
             </div>
             <div className="matricula-table-wrap">
               <table className="matricula-table">
                 <thead>
                   <tr>
-                    <th>Periodo académico</th>
+                    <th>Período académico</th>
                     <th>Preinscritos</th>
                     <th>Cabecera matrícula</th>
                     <th>Activos</th>
@@ -593,7 +593,7 @@ export function DashboardView({
                       return (
                         <tr key={`${row.codigo_periodo || 'sp'}-${index}`}>
                           <td>
-                            <strong>{row.detalle_periodo || 'Sin periodo'}</strong>
+                            <strong>{row.detalle_periodo || 'Sin período'}</strong>
                             <br />
                             <small>{row.codigo_periodo || '-'}</small>
                           </td>
@@ -659,7 +659,7 @@ export function DashboardView({
                 <div className="matricula-modal-title">
                   <h3>{selectedAdmissionsDetail.label}</h3>
                   <span>
-                    {selectedAdmissionsDetail.detalle_periodo || 'Todos los periodos'} ·{' '}
+                    {selectedAdmissionsDetail.detalle_periodo || 'Todos los períodos'} ·{' '}
                     {admissionsStudents.length} estudiante(s)
                   </span>
                 </div>
@@ -682,7 +682,7 @@ export function DashboardView({
                   <strong>{selectedAdmissionsDetail.label}</strong>
                 </div>
                 <div>
-                  <span>Periodo</span>
+                  <span>Período</span>
                   <strong>{selectedAdmissionsDetail.detalle_periodo || 'Todos'}</strong>
                 </div>
                 <div>
@@ -701,7 +701,7 @@ export function DashboardView({
                       <tr>
                         <th>Estudiante</th>
                         <th>Cédula</th>
-                        <th>Periodo</th>
+                        <th>Período</th>
                         <th>Carrera</th>
                         <th>Estado</th>
                         <th>Ingreso</th>
@@ -751,7 +751,7 @@ export function DashboardView({
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">{isAdmissionsDashboard ? 'Panel admisiones' : 'Panel academico'}</p>
+          <p className="eyebrow">{isAdmissionsDashboard ? 'Panel admisiones' : 'Panel académico'}</p>
           <h1>{isAdmissionsDashboard ? 'Dashboard de admisiones' : 'Dashboard Estudiantil'}</h1>
         </div>
 
@@ -905,7 +905,7 @@ export function DashboardView({
 
         <article className="student-card dashboard-summary-panel">
           <div className="card-head">
-            <h3>{isAdmissionsDashboard ? 'Resumen de admisiones' : 'Resumen de matricula'}</h3>
+            <h3>{isAdmissionsDashboard ? 'Resumen de admisiones' : 'Resumen de matrícula'}</h3>
             <span>
               {isAdmissionsDashboard
                 ? `Activos ${activeStudents} de ${totalStudents}`
@@ -1015,13 +1015,13 @@ export function DashboardView({
             <div className="card-head dashboard-active-type-head">
               <div>
                 <h3>Activos R/H</h3>
-                <small>Matriculas activas por tipo</small>
+                <small>Matrículas activas por tipo</small>
               </div>
               <span>{activeRhStudents} activo(s)</span>
             </div>
 
             <div className="dashboard-active-type-layout">
-              <div className="dashboard-active-total-card" aria-label="Total de estudiantes activos regular y homologacion">
+              <div className="dashboard-active-total-card" aria-label="Total de estudiantes activos regular y homologación">
                 <span>Total activos</span>
                 <strong>{activeRhStudents}</strong>
                 <small>Regular + Homologación</small>
@@ -1056,7 +1056,7 @@ export function DashboardView({
 
         <article className="student-card dashboard-bars-card">
           <div className="card-head">
-            <h3>{isAdmissionsDashboard ? 'Distribucion mensual de ingresos' : 'Distribucion mensual'}</h3>
+            <h3>{isAdmissionsDashboard ? 'Distribución mensual de ingresos' : 'Distribución mensual'}</h3>
             <span>{distributionYear}</span>
           </div>
 
@@ -1094,7 +1094,7 @@ export function DashboardView({
               <table className="matricula-table">
                 <thead>
                   <tr>
-                    <th>Periodo académico</th>
+                    <th>Período académico</th>
                     <th>Usuario admisiones</th>
                     <th>Tipo usuario</th>
                     <th>Preinscritos</th>
@@ -1112,7 +1112,7 @@ export function DashboardView({
                     admissionsByUserPeriod.map((row, index) => (
                       <tr key={`${row.codigo_periodo || 'sp'}-${row.usuario_id || row.usuario_login || 'su'}-${index}`}>
                         <td>
-                          <strong>{row.detalle_periodo || 'Sin periodo'}</strong>
+                          <strong>{row.detalle_periodo || 'Sin período'}</strong>
                           <br />
                           <small>{row.codigo_periodo || '-'}</small>
                         </td>
@@ -1274,9 +1274,9 @@ export function DashboardView({
                 <thead>
                   <tr>
                     <th>Estudiante</th>
-                    <th>Cedula</th>
+                    <th>Cédula</th>
                     <th>Carrera</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Tipo</th>
                     <th>Estado</th>
                     <th>Correo personal</th>
@@ -1341,10 +1341,10 @@ export function DashboardView({
                 <thead>
                   <tr>
                     <th>Estudiante</th>
-                    <th>Cedula</th>
+                    <th>Cédula</th>
                     <th>Tipo</th>
                     <th>Estado</th>
-                    <th>Periodo</th>
+                    <th>Período</th>
                     <th>Fecha inicio</th>
                     <th>Correo personal</th>
                     <th>Nombre Carrera</th>

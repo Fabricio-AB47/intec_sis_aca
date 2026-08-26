@@ -940,7 +940,7 @@ def _graph_error_detail(exc: httpx.HTTPStatusError) -> str:
         )
 
     if message and message != exc.response.text:
-        suffix = f" Codigo Graph: {code}." if code else ""
+        suffix = f" Código de Graph: {code}." if code else ""
         return f"{message}{suffix}"
     return exc.response.text
 
@@ -1312,7 +1312,7 @@ def _resolve_team_call_status(team_id: str) -> dict[str, Any]:
         result["note"] = (
             "Llamada detectada por actividad reciente de canal. "
             "Microsoft Graph no expone participantes en vivo para este tipo de llamada; "
-            "la invitacion masiva se enviara a todo el equipo para asegurar cobertura."
+            "la invitación masiva se enviará a todo el equipo para asegurar la cobertura."
         )
     elif events_note:
         result["note"] = events_note
@@ -1692,7 +1692,7 @@ def _send_channel_join_request_massive(
     if not attendees:
         return {
             "ok": False,
-            "message": "No se encontraron contactos validos para invitar en calendario.",
+            "message": 'No se encontraron contactos válidos para invitar en calendario.',
             "invited_count": 0,
         }
 
@@ -1749,7 +1749,7 @@ def _send_channel_join_request_massive(
             join_web_url = _meeting_join_url(active_meeting)
             return {
                 "ok": True,
-                "message": "Se actualizo el evento de invitacion masiva existente para la llamada en curso.",
+                "message": "Se actualizó el evento de invitación masiva existente para la llamada en curso.",
                 "invited_count": len(attendees),
                 "event_id": existing_event["id"],
                 "join_web_url": join_web_url,
@@ -1765,7 +1765,7 @@ def _send_channel_join_request_massive(
         )
         return {
             "ok": True,
-            "message": "Se creo un evento de calendario para invitar masivamente a usuarios faltantes.",
+            "message": "Se creó un evento de calendario para invitar masivamente a los usuarios faltantes.",
             "invited_count": len(attendees),
             "event_id": created.get("id"),
             "join_web_url": created_join_web_url or _meeting_join_url(active_meeting),
@@ -1799,7 +1799,7 @@ def _send_channel_join_request_massive(
             join_web_url = _meeting_join_url(active_meeting)
             return {
                 "ok": True,
-                "message": "Se actualizo el evento de invitacion masiva en el calendario del propietario del Team.",
+                "message": "Se actualizó el evento de invitación masiva en el calendario del propietario del equipo.",
                 "invited_count": len(attendees),
                 "event_id": owner_existing["id"],
                 "join_web_url": join_web_url,
@@ -1815,7 +1815,7 @@ def _send_channel_join_request_massive(
         )
         return {
             "ok": True,
-            "message": "Se creo el evento de invitacion masiva en el calendario del propietario del Team.",
+            "message": "Se creó el evento de invitación masiva en el calendario del propietario del equipo.",
             "invited_count": len(attendees),
             "event_id": owner_created.get("id"),
             "join_web_url": owner_created_join_web_url or _meeting_join_url(active_meeting),
@@ -1838,7 +1838,7 @@ def _invite_http_error_response(exc: httpx.HTTPStatusError, team_id: str) -> dic
         del team_id
         return {
             "ok": False,
-            "message": "No fue posible crear/editar el evento ni en calendario del grupo ni en calendario del propietario. Revisa Calendars.ReadWrite (Aplicacion), Group.ReadWrite.All y consentimiento de administrador.",
+            "message": 'No fue posible crear/editar el evento ni en calendario del grupo ni en calendario del propietario. Revisa Calendars.ReadWrite (Aplicación), Group.ReadWrite.All y consentimiento de administrador.',
             "invited_count": 0,
         }
 
@@ -1876,7 +1876,7 @@ def _graph_value_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def _normalize_graph_operation_url(operation_url: str) -> str:
     raw_url = str(operation_url or "").strip()
     if not raw_url:
-        raise RuntimeError("Graph no devolvio URL de operacion para rastrear la creacion del Team")
+        raise RuntimeError("Graph no devolvió la URL de operación para rastrear la creación del equipo.")
 
     if raw_url.startswith(("http://", "https://")):
         return raw_url
@@ -1904,7 +1904,7 @@ def _wait_for_team_creation(operation_url: str, timeout_seconds: int = 120) -> s
         if status == "succeeded":
             team_id = operation.get("targetResourceId")
             if not team_id:
-                raise RuntimeError("Graph no devolvio targetResourceId para el Team creado")
+                raise RuntimeError("Graph no devolvió targetResourceId para el equipo creado.")
             return str(team_id)
 
         if status == "failed":
@@ -1912,7 +1912,7 @@ def _wait_for_team_creation(operation_url: str, timeout_seconds: int = 120) -> s
 
         time.sleep(2)
 
-    raise RuntimeError("Timeout esperando la creacion del Team en Graph")
+    raise RuntimeError('Timeout esperando la creación del Team en Graph')
 
 
 def _graph_retry_delay_seconds(attempt: int) -> float:
@@ -1967,8 +1967,8 @@ def _graph_post_with_meta_retry(url: str, payload: dict[str, Any]) -> dict[str, 
             time.sleep(_graph_retry_delay_seconds(attempt))
 
     raise RuntimeError(
-        "No se pudo iniciar la creacion del Team porque Microsoft Graph no respondio de forma estable."
-        + (f" Ultimo error Graph: {last_error}" if last_error else "")
+        "No se pudo iniciar la creación del equipo porque Microsoft Graph no respondió de forma estable."
+        + (f" Último error de Graph: {last_error}" if last_error else "")
     )
 
 
@@ -1991,7 +1991,7 @@ def _is_already_team_member_error(exc: httpx.HTTPStatusError) -> bool:
 def _team_id_url_value(team_id: str) -> str:
     normalized = str(team_id or "").strip()
     if not normalized:
-        raise RuntimeError("Graph no devolvio un id de Team valido")
+        raise RuntimeError("Graph no devolvió un identificador válido para el equipo.")
     return quote(normalized, safe="")
 
 
@@ -2014,8 +2014,8 @@ def _reserve_team_creation_slot(display_name: str) -> str:
     raise HTTPException(
         status_code=409,
         detail=(
-            "Ya existe una creacion de Team en proceso con el mismo nombre. "
-            "Espera a que termine y vuelve a intentar para evitar matricular en un aula incorrecta."
+            "Ya existe una creación de equipo en proceso con el mismo nombre. "
+            "Espere a que termine y vuelva a intentarlo para evitar matrículas en un aula incorrecta."
         ),
     )
 
@@ -2075,7 +2075,7 @@ def _existing_classroom_team(display_name: str) -> dict[str, Any] | None:
             status_code=409,
             detail=(
                 f"Existen {len(existing_teams)} Teams con el nombre exacto '{display_name}'. "
-                "Usa un nombre unico antes de matricular para evitar enviar estudiantes al Team incorrecto."
+                "Use un nombre único antes de matricular para evitar enviar estudiantes al equipo incorrecto."
             ),
         )
 
@@ -2108,7 +2108,7 @@ def _wait_for_team_ready(team_id: str, timeout_seconds: int = _TEAM_READY_TIMEOU
             attempt += 1
             time.sleep(_graph_retry_delay_seconds(attempt))
 
-    suffix = f" Ultimo error: {last_error}" if last_error else ""
+    suffix = f" Último error: {last_error}" if last_error else ""
     raise RuntimeError(
         f"Timeout esperando que el Team '{team_id}' exista y acepte miembros en Microsoft Graph.{suffix}"
     )
@@ -3058,7 +3058,7 @@ def enroll_user_to_team(
     team_id = str(payload.team_id or "").strip()
     user_id = str(payload.user_id or "").strip()
     if not team_id or not user_id:
-        raise HTTPException(status_code=400, detail="Debes indicar user_id y team_id para matricular")
+        raise HTTPException(status_code=400, detail='Debe indicar user_id y team_id para matricular')
 
     try:
         _wait_for_team_ready(team_id)
@@ -3084,7 +3084,7 @@ def enroll_user_to_team(
 
 @router.post(
     "/mass-enrollment/preview",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def mass_enrollment_preview(
     payload: TeamMassEnrollmentRequest,
@@ -3097,7 +3097,7 @@ def mass_enrollment_preview(
 
 @router.post(
     "/mass-enrollment/execute",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def mass_enrollment_execute(
     payload: TeamMassEnrollmentRequest,
@@ -3110,7 +3110,7 @@ def mass_enrollment_execute(
 
 @router.post(
     "/enrollment/filter-options",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_filter_options(
     payload: TeamEnrollmentFilterOptionsRequest,
@@ -3129,7 +3129,7 @@ def enrollment_filter_options(
 
 @router.post(
     "/enrollment/search-groups",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_search_groups(
     payload: TeamEnrollmentGroupSearchRequest,
@@ -3147,7 +3147,7 @@ def enrollment_search_groups(
 
 @router.post(
     "/enrollment/group-students",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_group_students(
     payload: TeamEnrollmentGroupStudentsRequest,
@@ -3168,7 +3168,7 @@ def enrollment_group_students(
 
 @router.post(
     "/enrollment/selected/preview",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_selected_preview(
     payload: TeamEnrollmentSelectionRequest,
@@ -3176,13 +3176,13 @@ def enrollment_selected_preview(
 ) -> dict[str, Any]:
     del current_user
     if not payload.team_id.strip():
-        raise HTTPException(status_code=400, detail="Debes indicar el Team ID para validar los estudiantes seleccionados")
+        raise HTTPException(status_code=400, detail='Debe indicar el Team ID para validar los estudiantes seleccionados')
     return _build_selected_students_preview(payload)
 
 
 @router.post(
     "/enrollment/selected/execute",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_selected_execute(
     payload: TeamEnrollmentSelectionRequest,
@@ -3190,13 +3190,13 @@ def enrollment_selected_execute(
 ) -> dict[str, Any]:
     del current_user
     if not payload.team_id.strip():
-        raise HTTPException(status_code=400, detail="Debes indicar el Team ID para matricular los estudiantes seleccionados")
+        raise HTTPException(status_code=400, detail='Debe indicar el Team ID para matricular los estudiantes seleccionados')
     return _execute_selected_students(payload)
 
 
 @router.post(
     "/enrollment/individual/search-students",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_individual_search_students(
     payload: TeamIndividualStudentSearchRequest,
@@ -3210,16 +3210,16 @@ def enrollment_individual_search_students(
         "total": len(items),
         "items": items,
         "message": (
-            f"Se encontraron {len(items)} estudiante(s) en el periodo."
+            f"Se encontraron {len(items)} estudiante(s) en el período."
             if items
-            else "No se encontro el estudiante en el periodo seleccionado."
+            else "No se encontró al estudiante en el período seleccionado."
         ),
     }
 
 
 @router.post(
     "/enrollment/individual/preview",
-    responses={400: {"description": "Solicitud invalida"}, 404: {"description": "No encontrado"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 404: {"description": "No encontrado"}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_individual_preview(
     payload: TeamIndividualEnrollmentRequest,
@@ -3231,7 +3231,7 @@ def enrollment_individual_preview(
 
 @router.post(
     "/enrollment/individual/execute",
-    responses={400: {"description": "Solicitud invalida"}, 404: {"description": "No encontrado"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 404: {"description": "No encontrado"}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_individual_execute(
     payload: TeamIndividualEnrollmentRequest,
@@ -3243,7 +3243,7 @@ def enrollment_individual_execute(
 
 @router.post(
     "/enrollment/manual/preview",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_manual_preview(
     payload: TeamManualEmailEnrollmentRequest,
@@ -3255,7 +3255,7 @@ def enrollment_manual_preview(
 
 @router.post(
     "/enrollment/manual/execute",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def enrollment_manual_execute(
     payload: TeamManualEmailEnrollmentRequest,
@@ -3272,7 +3272,7 @@ def _normalize_items(values: list[str]) -> list[str]:
 def _normalize_team_mass_enrollment_payload(payload: TeamMassEnrollmentRequest) -> dict[str, Any]:
     team_id = payload.team_id.strip()
     if not team_id:
-        raise HTTPException(status_code=400, detail="Debes indicar el Team ID para la matriculacion masiva")
+        raise HTTPException(status_code=400, detail='Debe indicar el Team ID para la matriculación masiva')
 
     tipo_matricula: str | None = None
     tipo_raw = str(payload.tipo_matricula or "").strip().upper()
@@ -3287,7 +3287,7 @@ def _normalize_team_mass_enrollment_payload(payload: TeamMassEnrollmentRequest) 
     if punto_matricula == "ALL":
         punto_matricula = "BOTH"
     if punto_matricula not in {"PRIMERA", "ULTIMA", "BOTH"}:
-        raise HTTPException(status_code=400, detail="punto_matricula debe ser PRIMERA, ULTIMA o BOTH")
+        raise HTTPException(status_code=400, detail='punto_matricula debe ser PRIMERA, ULTIMA o BOTH.')
 
     codigo_periodo = str(payload.codigo_periodo or "").strip() or None
 
@@ -3437,7 +3437,7 @@ def _load_mass_enrollment_candidates(criteria: dict[str, Any]) -> list[dict[str,
             )
             rows = cursor.fetchall()
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando candidatos de matriculacion masiva: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar los candidatos de matriculación masiva: {exc}") from exc
 
     return [
         {
@@ -3508,7 +3508,7 @@ def _resolve_graph_user_for_teacher(identifier: str, cache: dict[str, dict[str, 
     raw_value = str(identifier or "").strip()
     normalized = raw_value.lower()
     if not raw_value:
-        raise HTTPException(status_code=400, detail="Debes indicar al menos un docente valido")
+        raise HTTPException(status_code=400, detail='Debe indicar al menos un docente válido')
 
     if normalized in cache and cache[normalized]:
         return cast(dict[str, Any], cache[normalized])
@@ -3561,7 +3561,7 @@ def _resolve_graph_user_for_teacher(identifier: str, cache: dict[str, dict[str, 
     raise HTTPException(
         status_code=400,
         detail=(
-            f"No se encontro el docente '{raw_value}' en Microsoft Graph. "
+            f"No se encontró al docente '{raw_value}' en Microsoft Graph. "
             "Usa correo institucional, UPN o id de usuario."
         ),
     )
@@ -3632,7 +3632,10 @@ def _normalize_distinct_text_items(values: list[str], max_items: int | None = No
         seen.add(text)
 
     if max_items is not None and len(normalized) > max_items:
-        raise HTTPException(status_code=400, detail=f"Solo puedes seleccionar hasta {max_items} periodos")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo puede seleccionar hasta {max_items} períodos.",
+        )
 
     return normalized
 
@@ -3649,7 +3652,7 @@ def _normalize_selected_periods(
 
     normalized = _normalize_distinct_text_items(combined_values, max_items=2)
     if required and not normalized:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un periodo para iniciar la busqueda")
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un período para iniciar la búsqueda.")
     return normalized
 
 
@@ -3728,7 +3731,7 @@ def _normalize_group_identity_fields(
     if not codigo_periodo_text or not cod_anio_basica_text or not paralelo_text or not materia_base_key_text:
         raise HTTPException(
             status_code=400,
-            detail="Debes indicar codigo_periodo, cod_anio_basica, paralelo y materia_base_key",
+            detail='Debe indicar codigo_periodo, cod_anio_basica, paralelo y materia_base_key',
         )
 
     return {
@@ -3781,7 +3784,7 @@ def _normalize_group_identities(
     if not normalized:
         raise HTTPException(
             status_code=400,
-            detail="Debes indicar al menos un grupo valido para consultar o matricular estudiantes",
+            detail='Debe indicar al menos un grupo válido para consultar o matricular estudiantes',
         )
 
     return normalized
@@ -3915,7 +3918,10 @@ def _load_team_enrollment_period_options() -> list[dict[str, Any]]:
             cursor.execute(query)
             rows = cursor.fetchall()
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando periodos disponibles para Teams: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al consultar los períodos disponibles para Teams: {exc}",
+        ) from exc
 
     return [
         {
@@ -4148,7 +4154,7 @@ def _team_enrollment_student_summary_from_row(row: Any) -> dict[str, Any]:
 def _normalize_individual_student_search_payload(payload: TeamIndividualStudentSearchRequest) -> dict[str, Any]:
     codigo_periodo = str(payload.codigo_periodo or "").strip()
     if not codigo_periodo:
-        raise HTTPException(status_code=400, detail="Debes seleccionar un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar un período')
 
     query = str(payload.query or "").strip()
 
@@ -4170,11 +4176,11 @@ def _normalize_individual_enrollment_payload(payload: TeamIndividualEnrollmentRe
     )
 
     if not team_id:
-        raise HTTPException(status_code=400, detail="Debes seleccionar un Team")
+        raise HTTPException(status_code=400, detail='Debe seleccionar un Team')
     if not codigo_periodo:
-        raise HTTPException(status_code=400, detail="Debes seleccionar un periodo")
+        raise HTTPException(status_code=400, detail='Debe seleccionar un período')
     if not selected_student_codes:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un estudiante")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un estudiante')
 
     return {
         "team_id": team_id,
@@ -4325,7 +4331,7 @@ def _load_individual_team_enrollment_candidates(criteria: dict[str, Any]) -> lis
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail="Los estudiantes seleccionados no existen o no estan matriculados en el periodo seleccionado",
+            detail='Los estudiantes seleccionados no existen o no estan matriculados en el período seleccionado',
         )
 
     items_by_code: dict[str, dict[str, Any]] = {}
@@ -4359,7 +4365,7 @@ def _load_team_enrollment_students_for_groups(group_identities: list[dict[str, A
 
 def _group_context_from_students(students: list[dict[str, Any]], group_identities: list[dict[str, Any]]) -> dict[str, Any]:
     if not group_identities:
-        raise HTTPException(status_code=400, detail="Debes indicar al menos un grupo valido")
+        raise HTTPException(status_code=400, detail='Debe indicar al menos un grupo válido')
 
     if len(group_identities) == 1:
         group_identity = group_identities[0]
@@ -4450,7 +4456,7 @@ def _selected_students_from_groups(
         if str(code).strip()
     }
     if not selected_codes:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un estudiante")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un estudiante')
 
     all_students = _load_team_enrollment_students_for_groups(group_identities)
     selected_students = [student for student in all_students if str(student.get("codigo_estud") or "") in selected_codes]
@@ -4596,8 +4602,8 @@ def _add_directory_object_to_team(team_id: str, directory_object_id: str) -> Non
             time.sleep(_graph_retry_delay_seconds(attempt))
 
     raise RuntimeError(
-        "No se pudo confirmar que el Team este listo para matricular estudiantes."
-        + (f" Ultimo error Graph: {last_error}" if last_error else "")
+        "No se pudo confirmar que el equipo esté listo para matricular estudiantes."
+        + (f" Último error de Microsoft Graph: {last_error}" if last_error else "")
     )
 
 
@@ -4719,8 +4725,8 @@ def _ensure_owner_on_team(team_id: str, teacher_user: dict[str, Any]) -> str:
         status_code=504,
         detail=(
             f"No se pudo agregar el docente propietario '{teacher_label}' al Team porque Microsoft Graph "
-            "no confirmo que el recurso este listo."
-            + (f" Ultimo error Graph: {last_error}" if last_error else "")
+            "no confirmó que el recurso esté listo."
+            + (f" Último error de Microsoft Graph: {last_error}" if last_error else "")
         ),
     )
 
@@ -4944,7 +4950,7 @@ def _execute_preview_result(preview: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "message": (
-            "Matriculacion masiva ejecutada."
+            "Matriculación masiva ejecutada."
             if processed > 0
             else "No habia candidatos listos para matricular."
         ),
@@ -4991,9 +4997,9 @@ def _build_individual_team_enrollment_preview(payload: TeamIndividualEnrollmentR
         },
     )
     preview["message"] = (
-        "Validacion individual completada."
+        "Validación individual completada."
         if not missing_codes
-        else f"Validacion completada. No se encontraron {len(missing_codes)} estudiante(s) dentro de los filtros."
+        else f"Validación completada. No se encontraron {len(missing_codes)} estudiante(s) dentro de los filtros."
     )
     return preview
 
@@ -5012,7 +5018,7 @@ def _execute_individual_team_enrollment(payload: TeamIndividualEnrollmentRequest
 def _normalize_manual_email_enrollment_payload(payload: TeamManualEmailEnrollmentRequest) -> tuple[str, list[str]]:
     team_id = str(payload.team_id or "").strip()
     if not team_id:
-        raise HTTPException(status_code=400, detail="Debes seleccionar o indicar el Team ID")
+        raise HTTPException(status_code=400, detail='Debe seleccionar o indicar el Team ID')
 
     emails: list[str] = []
     seen: set[str] = set()
@@ -5024,10 +5030,10 @@ def _normalize_manual_email_enrollment_payload(payload: TeamManualEmailEnrollmen
         seen.add(email)
 
     if not emails:
-        raise HTTPException(status_code=400, detail="Debes ingresar al menos un correo para matricular")
+        raise HTTPException(status_code=400, detail='Debe ingresar al menos un correo para matricular')
 
     if len(emails) > 500:
-        raise HTTPException(status_code=400, detail="Solo puedes matricular hasta 500 correos por operacion")
+        raise HTTPException(status_code=400, detail='Solo puedes matricular hasta 500 correos por operación')
 
     return team_id, emails
 
@@ -5055,7 +5061,7 @@ def _build_manual_email_enrollment_preview(payload: TeamManualEmailEnrollmentReq
             "manual_email_count": len(emails),
         },
     )
-    preview["message"] = f"Validacion manual completada para {len(emails)} correo(s)."
+    preview["message"] = f"Validación manual completada para {len(emails)} correo(s)."
     return preview
 
 
@@ -5107,13 +5113,13 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
     teacher_inputs = _normalize_items(payload.teacher_user_ids)
 
     if not payload.display_name.strip():
-        raise HTTPException(status_code=400, detail="Debes indicar el nombre del aula")
+        raise HTTPException(status_code=400, detail='Debe indicar el nombre del aula')
 
     if not courses:
-        raise HTTPException(status_code=400, detail="Debes indicar al menos un curso")
+        raise HTTPException(status_code=400, detail='Debe indicar al menos un curso')
 
     if not teacher_inputs:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos un docente")
+        raise HTTPException(status_code=400, detail='Debe seleccionar al menos un docente')
 
     teacher_cache: dict[str, dict[str, Any] | None] = {}
     resolved_teachers: list[dict[str, Any]] = []
@@ -5169,7 +5175,9 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
                 location = str(header_location) if header_location else ""
 
             if not location:
-                raise RuntimeError("Graph no devolvio encabezado Location para rastrear la creacion del Team")
+                raise RuntimeError(
+                    "Graph no devolvió el encabezado Location para rastrear la creación del equipo."
+                )
 
             team_id = _wait_for_team_creation(location)
             _wait_for_team_ready(team_id)
@@ -5251,7 +5259,7 @@ def _create_classroom_and_auto_enroll(payload: TeamCreateAndEnrollRequest) -> di
 
 @router.post(
     "/create-classroom",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def create_classroom(
     payload: TeamCreateClassroomRequest,
@@ -5263,7 +5271,7 @@ def create_classroom(
 
 @router.post(
     "/create-and-enroll",
-    responses={400: {"description": "Solicitud invalida"}, 500: {"description": "Error interno del servidor"}},
+    responses={400: {"description": 'Solicitud inválida'}, 500: {"description": "Error interno del servidor"}},
 )
 def create_and_enroll(
     payload: TeamCreateAndEnrollRequest,

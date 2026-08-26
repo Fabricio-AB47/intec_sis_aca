@@ -89,7 +89,8 @@ USING (VALUES
     ('INGLES', N'Ingles', N'Archivos y evidencias de evaluacion del idioma Ingles.'),
     ('TITULACION', N'Titulacion', N'Documentos habilitantes, actas y titulos.'),
     ('PRACTICAS', N'Practicas preprofesionales', N'Documentos del expediente de practicas preprofesionales.'),
-    ('VINCULACION', N'Vinculacion con la sociedad', N'Documentos del expediente de vinculacion con la sociedad.')
+    ('VINCULACION', N'Vinculacion con la sociedad', N'Documentos del expediente de vinculacion con la sociedad.'),
+    ('FACTURACION', N'Facturacion', N'Facturas electronicas XML y representaciones impresas RIDE del estudiante.')
 ) AS source(Codigo, Nombre, Descripcion)
 ON target.TipoExpedienteGraphCodigo = source.Codigo
 WHEN MATCHED THEN

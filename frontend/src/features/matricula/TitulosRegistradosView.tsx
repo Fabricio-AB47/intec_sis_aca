@@ -38,7 +38,7 @@ function getModuleCopy(tipo: TituloRegistradoTipo | '') {
   if (tipo === 'senescyt') {
     return {
       title: 'Títulos registrados SENESCYT',
-      description: 'Registro documental independiente en OneDrive: TITULACION GESTION DOCUMENTAL / TITULOS REGISTRADOS SENESCYT.',
+      description: 'Registro documental independiente en OneDrive: TITULACIÓN GESTIÓN DOCUMENTAL / TITULOS REGISTRADOS SENESCYT.',
       folderHint: 'OneDrive: TITULOS REGISTRADOS SENESCYT',
       folderLabel: 'Carpeta SENESCYT destino',
       empty: 'No existen títulos SENESCYT registrados para el filtro seleccionado.',
@@ -48,7 +48,7 @@ function getModuleCopy(tipo: TituloRegistradoTipo | '') {
   if (tipo === 'intec') {
     return {
       title: 'Titulación',
-      description: 'Registro documental independiente en OneDrive: TITULACION GESTION DOCUMENTAL / TITULOS INTEC.',
+      description: 'Registro documental independiente en OneDrive: TITULACIÓN GESTIÓN DOCUMENTAL / TITULOS INTEC.',
       folderHint: 'OneDrive: TITULOS INTEC',
       folderLabel: 'Carpeta INTEC destino',
       empty: 'No existen títulos INTEC registrados para el filtro seleccionado.',
@@ -57,7 +57,7 @@ function getModuleCopy(tipo: TituloRegistradoTipo | '') {
   }
   return {
     title: 'Títulos registrados',
-    description: 'Registro documental en OneDrive: TITULACION GESTION DOCUMENTAL.',
+    description: 'Registro documental en OneDrive: TITULACIÓN GESTIÓN DOCUMENTAL.',
     folderHint: 'OneDrive: TITULOS REGISTRADOS SENESCYT / TITULOS INTEC',
     folderLabel: 'Carpeta destino',
     empty: 'No existen títulos registrados para el filtro seleccionado.',
@@ -150,7 +150,7 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
 
   async function createFolder() {
     if (!newFolderName.trim()) {
-      setError('Ingresa el nombre de la carpeta.')
+      setError('Ingrese el nombre de la carpeta.')
       return
     }
     setError('')
@@ -169,7 +169,7 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
 
   async function searchStudents() {
     if (studentQuery.trim().length < 2) {
-      setError('Ingresa al menos 2 caracteres para buscar estudiante.')
+      setError('Ingrese al menos 2 caracteres para buscar estudiante.')
       return
     }
     setStudentLoading(true)
@@ -201,15 +201,15 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
   async function saveTitle() {
     if (!isAdmin) return
     if (!form.modelo.trim()) {
-      setError('Ingresa el modelo del título.')
+      setError('Ingrese el modelo del título.')
       return
     }
     if (!file) {
-      setError('Selecciona el archivo del título.')
+      setError('Seleccione el archivo del título.')
       return
     }
     if ((fixedTipo || form.tipo) === 'senescyt' && (!form.estudiante.trim() || !form.cedula.trim())) {
-      setError('Selecciona el estudiante para asociar el título SENESCYT.')
+      setError('Seleccione el estudiante para asociar el título SENESCYT.')
       return
     }
     setSaving(true)
@@ -241,11 +241,11 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
       return
     }
     if (!form.modelo.trim()) {
-      setError('Selecciona o crea la carpeta SENESCYT donde se almacenarán los documentos.')
+      setError('Seleccione o crea la carpeta SENESCYT donde se almacenarán los documentos.')
       return
     }
     if (bulkFiles.length === 0) {
-      setError('Selecciona uno o varios PDFs SENESCYT para procesar.')
+      setError('Seleccione uno o varios PDFs SENESCYT para procesar.')
       return
     }
     setBulkSaving(true)
@@ -271,7 +271,7 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
 
   async function removeTitle(item: TituloRegistradoItem) {
     if (!isAdmin) return
-    const confirmed = window.confirm(`Eliminar el título ${item.filename || item.modelo}?`)
+    const confirmed = window.confirm(`¿Desea eliminar el título ${item.filename || item.modelo}?`)
     if (!confirmed) return
     setError('')
     setMessage('')
@@ -392,7 +392,7 @@ export function TitulosRegistradosView({ displayName, role, initialTipo = '' }: 
                   onChange={(event) => setForm((current) => ({ ...current, modelo: event.target.value }))}
                   disabled={folderLoading}
                 >
-                  <option value="">{folderLoading ? 'Cargando carpetas...' : 'Selecciona carpeta'}</option>
+                  <option value="">{folderLoading ? 'Cargando carpetas...' : 'Seleccione carpeta'}</option>
                   {folders.map((folder) => (
                     <option key={folder.id || folder.name} value={folder.name}>
                       {folder.name}

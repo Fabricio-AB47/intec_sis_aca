@@ -611,7 +611,7 @@ def _write_convenio_document(
             Paragraph(
                 f"<b>Estudiante:</b> {student or '-'} &nbsp;&nbsp; <b>Cédula:</b> {cedula or '-'}<br/>"
                 f"<b>Carrera:</b> {carrera or '-'}<br/>"
-                f"<b>Periodo:</b> {periodo or '-'}<br/>"
+                f"<b>Período:</b> {periodo or '-'}<br/>"
                 f"<b>Alcance del convenio:</b> {alcance} &nbsp;&nbsp; "
                 f"<b>Costo por semestre:</b> {_format_money(plan.get('costo_semestre'))} &nbsp;&nbsp; "
                 f"<b>Beca:</b> {tipo_beca} ({float(plan.get('porcentaje_beca') or 0):.2f}%)",
@@ -676,7 +676,7 @@ def _split_student_name(full_name: str) -> tuple[str, str, str, str]:
 
 def _next_preinscription_code(cursor: pyodbc.Cursor, field_name: str) -> int:
     if field_name not in {"Codestu", "num"}:
-        raise ValueError("Campo de secuencia invalido")
+        raise ValueError('Campo de secuencia inválido')
     cursor.execute(f"SELECT COALESCE(MAX(TRY_CONVERT(int, {field_name})), 0) + 1 FROM dbo.PREINSCRIPCION")
     return int(cursor.fetchone()[0] or 1)
 
@@ -855,7 +855,7 @@ def _fetch_student_for_photo(cursor: pyodbc.Cursor, row: Any) -> Any:
     if not student:
         raise HTTPException(
             status_code=400,
-            detail="Primero genera la prematricula para crear el estudiante antes de subir la foto de carnet",
+            detail="Primero genere la prematrícula para crear al estudiante antes de subir la foto para el carné.",
         )
     return student
 
@@ -895,7 +895,7 @@ def _photo_status_payload(cursor: pyodbc.Cursor, codigo_estud: int | str) -> dic
         return {
             "existe": False,
             "estado": "SIN_FOTO",
-            "mensaje": "No existe una foto de carnet cargada para aprobacion.",
+            "mensaje": "No existe una foto para el carné cargada para aprobación.",
         }
     return {
         "existe": True,
@@ -1018,10 +1018,10 @@ def _sync_financial_preinscription(
                 """,
                 cedula, str(codperiodo), str(codcarrera),
                 codestu, student_name, str(codmodalidad), str(codjornada), correo, telefono,
-                usuario, codasesor, "Registro previo creado desde preinscripcion",
+                usuario, codasesor, "Registro previo creado desde preinscripción",
                 codestu, cedula, student_name, str(codperiodo), str(codcarrera),
                 str(codmodalidad), str(codjornada), correo, telefono, usuario, codasesor,
-                "Registro previo creado desde preinscripcion",
+                "Registro previo creado desde preinscripción",
             )
             cursor.execute(
                 """
@@ -1120,7 +1120,7 @@ def _sync_financial_preinscription(
                         WHERE BecaId = ?
                         """,
                         int(type_row[0]), int(status_row[0]), percentage, scholarship_value,
-                        motivo_beca or f"Solicitud registrada en preinscripcion: {scholarship_type}",
+                        motivo_beca or f"Solicitud registrada en preinscripción: {scholarship_type}",
                         desired_status_code, desired_status_code, usuario, beca_id,
                     )
                 else:
@@ -1137,7 +1137,7 @@ def _sync_financial_preinscription(
                         """,
                         estudiante_id, cuenta_id, int(type_row[0]), int(status_row[0]),
                         f"PRE-{codestu}-{codperiodo}", percentage, scholarship_value,
-                        motivo_beca or f"Solicitud registrada en preinscripcion: {scholarship_type}",
+                        motivo_beca or f"Solicitud registrada en preinscripción: {scholarship_type}",
                         desired_status_code, desired_status_code, usuario,
                     )
                     beca_id = int(cursor.fetchone()[0])
@@ -1773,7 +1773,7 @@ def _fetch_preinscription_row(cursor: pyodbc.Cursor, num: str) -> Any:
     )
     row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="No se encontro la preinscripcion seleccionada")
+        raise HTTPException(status_code=404, detail='No se encontró la preinscripción seleccionada')
     return row
 
 
@@ -1782,7 +1782,7 @@ def _resolve_preinscription_student_code(row: Any) -> int:
     if not code:
         raise HTTPException(
             status_code=400,
-            detail="La preinscripcion no tiene codigo de estudiante valido para crear cabecera",
+            detail='La preinscripción no tiene código de estudiante válido para crear cabecera',
         )
     return code
 
@@ -1790,7 +1790,7 @@ def _resolve_preinscription_student_code(row: Any) -> int:
 def _resolve_preinscription_required_code(row: Any, field_name: str, label: str) -> int:
     code = _int_value(getattr(row, field_name, None))
     if not code:
-        raise HTTPException(status_code=400, detail=f"La preinscripcion no tiene {label} valido")
+        raise HTTPException(status_code=400, detail=f"La preinscripción no tiene {label} válido.")
     return code
 
 
@@ -2150,7 +2150,7 @@ def preinscription_catalog(
             "becas": becas,
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando catalogo de preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar el catálogo de preinscripción: {exc}") from exc
 
 
 @router.get("")
@@ -2164,7 +2164,7 @@ def preinscription_list(
 ) -> dict[str, Any]:
     document_filter = documentos.strip().upper() or "ALL"
     if document_filter not in _DOCUMENT_FILTERS:
-        raise HTTPException(status_code=400, detail="Filtro de documentos invalido")
+        raise HTTPException(status_code=400, detail='Filtro de documentos inválido')
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -2234,7 +2234,7 @@ def validate_preinscription_cedula(
     clean_cedula = re.sub(r"\D+", "", _clean(cedula))
     clean_periodo = _clean(codigo_periodo)
     if len(clean_cedula) != 10:
-        raise HTTPException(status_code=400, detail="La cedula debe tener 10 digitos")
+        raise HTTPException(status_code=400, detail='La cédula debe tener 10 dígitos')
 
     try:
         with get_connection() as conn:
@@ -2277,7 +2277,7 @@ def validate_preinscription_cedula(
             },
         }
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error validando cedula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al validar la cédula: {exc}") from exc
 
 
 @router.post("")
@@ -2293,16 +2293,16 @@ def create_preinscription(
     student_name = student_name.upper()
     cedula = re.sub(r"\D+", "", _clean(payload.cedula))
     if not student_name:
-        raise HTTPException(status_code=400, detail="Ingresa el nombre del estudiante")
+        raise HTTPException(status_code=400, detail='Ingrese el nombre del estudiante')
     if len(cedula) != 10:
-        raise HTTPException(status_code=400, detail="La cedula debe tener 10 digitos")
+        raise HTTPException(status_code=400, detail='La cédula debe tener 10 dígitos')
 
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             codprov = _int_value(payload.codprov)
             if codprov is None:
-                raise HTTPException(status_code=400, detail="Selecciona una provincia valida")
+                raise HTTPException(status_code=400, detail='Seleccione una provincia válida')
             cursor.execute(
                 "SELECT COUNT(*) FROM dbo.Provincias WHERE TRY_CONVERT(int, Cod_Provincia) = ? AND ISNULL(activo, 1) = 1",
                 codprov,
@@ -2313,9 +2313,9 @@ def create_preinscription(
             codperiodo = _int_value(payload.codperiodo) or _default_preinscription_period(cursor)
             codcarrera = _int_value(payload.codcarrera) or _default_preinscription_career(cursor)
             if not codperiodo:
-                raise HTTPException(status_code=400, detail="No se pudo resolver el periodo de preinscripcion")
+                raise HTTPException(status_code=400, detail='No se pudo resolver el período de preinscripción')
             if not codcarrera:
-                raise HTTPException(status_code=400, detail="No se pudo resolver la carrera de preinscripcion")
+                raise HTTPException(status_code=400, detail='No se pudo resolver la carrera de preinscripción')
 
             cursor.execute(
                 """
@@ -2374,9 +2374,9 @@ def create_preinscription(
             )
             scholarship_value = max(float(payload.valor_beca or 0), 0)
             if scholarship_type and scholarship_percentage <= 0:
-                raise HTTPException(status_code=400, detail="Ingresa el porcentaje otorgado para la beca seleccionada")
+                raise HTTPException(status_code=400, detail='Ingrese el porcentaje otorgado para la beca seleccionada')
             if scholarship_percentage > 0 and not scholarship_type:
-                raise HTTPException(status_code=400, detail="Selecciona el tipo de beca")
+                raise HTTPException(status_code=400, detail='Seleccione el tipo de beca')
             if scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD and not _clean(payload.motivo_beca):
                 raise HTTPException(
                     status_code=400,
@@ -2460,7 +2460,7 @@ def create_preinscription(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error registrando preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al registrar la preinscripción: {exc}") from exc
 
 
 def _validated_scholarship_configuration(payload: ScholarshipConfigurationPayload) -> dict[str, Any]:
@@ -2914,7 +2914,7 @@ def register_preinscription_cabecera(
 ) -> dict[str, Any]:
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -2932,7 +2932,7 @@ def register_preinscription_cabecera(
             payload.tipo_beca = scholarship_type
             payload.porcentaje_beca = scholarship_percentage
             if scholarship_type and scholarship_percentage <= 0:
-                raise HTTPException(status_code=400, detail="Ingresa el porcentaje otorgado para la beca seleccionada")
+                raise HTTPException(status_code=400, detail='Ingrese el porcentaje otorgado para la beca seleccionada')
             plan = _payment_plan(payload, _clean(getattr(row, "Nombre_Basica", "")))
             payload.valor = float(plan["total"])
             payload.costo_semestre = float(plan["costo_semestre"])
@@ -3099,7 +3099,7 @@ def register_preinscription_cabecera(
             tipo_beca=_clean(payload.tipo_beca),
             porcentaje_beca=float(plan["porcentaje_beca"]),
             valor_beca=float(plan["beca_valor"]),
-            motivo_beca="Beca confirmada al generar cabecera de matricula",
+            motivo_beca="Beca confirmada al generar la cabecera de matrícula.",
         )
         complement_sync = sync_preinscription_complements(
             {
@@ -3127,9 +3127,9 @@ def register_preinscription_cabecera(
         )
         response = _cabecera_response_from_row(refreshed)
         response["message"] = (
-            "Cabecera de matricula registrada correctamente. Convenio generado."
+            "Cabecera de matrícula registrada correctamente. Convenio generado."
             if convenio_url
-            else "Cabecera de matricula registrada correctamente."
+            else "Cabecera de matrícula registrada correctamente."
         )
         response["action"] = action
         response["num_matricula"] = str(num_matricula)
@@ -3145,7 +3145,7 @@ def register_preinscription_cabecera(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error registrando cabecera de matricula: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al registrar la cabecera de matrícula: {exc}") from exc
 
 
 @router.put("/{num}/seguimiento")
@@ -3157,7 +3157,7 @@ def update_preinscription_followup(
     del current_user
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3212,7 +3212,7 @@ def update_preinscription_followup(
             refreshed = _fetch_preinscription_row(cursor, clean_num)
         return {
             "ok": True,
-            "message": "Seguimiento de preinscripcion actualizado.",
+            "message": 'Seguimiento de preinscripción actualizado.',
             "item": _preinscription_item(refreshed),
         }
     except HTTPException:
@@ -3222,7 +3222,7 @@ def update_preinscription_followup(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error actualizando seguimiento de preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al actualizar el seguimiento de la preinscripción: {exc}") from exc
 
 
 @router.put("/{num}/documentos")
@@ -3234,7 +3234,7 @@ def update_preinscription_documents(
     del current_user
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3244,7 +3244,7 @@ def update_preinscription_documents(
             if not current_item["en_cabecera_matricula"]:
                 raise HTTPException(
                     status_code=400,
-                    detail="Primero registra la cabecera de matricula para obtener el codigo de documentacion",
+                    detail='Primero, registre la cabecera de matrícula para obtener el código de documentación.',
                 )
             codigo_estud = _resolve_preinscription_student_code(current_row)
             cod_anio_basica = _resolve_preinscription_required_code(current_row, "codcarrera", "carrera")
@@ -3265,7 +3265,7 @@ def update_preinscription_documents(
                 clean_num,
             )
             if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail="No se encontro la preinscripcion seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la preinscripción seleccionada')
             _sync_cabecera_documents(
                 cursor,
                 codigo_estud,
@@ -3282,11 +3282,11 @@ def update_preinscription_documents(
 
             row = _fetch_preinscription_row(cursor, clean_num)
         if not row:
-            raise HTTPException(status_code=404, detail="No se encontro la preinscripcion actualizada")
+            raise HTTPException(status_code=404, detail='No se encontró la preinscripción actualizada')
         item = _preinscription_item(row)
         return {
             "ok": True,
-            "message": "Documentos de preinscripcion actualizados.",
+            "message": 'Documentos de preinscripción actualizados.',
             "item": item,
             "en_cabecera_matricula": item["en_cabecera_matricula"],
             "codigo_documentacion": item["cabecera"].get("numcodigo") or item["cabecera"].get("num_matricula") or "",
@@ -3298,7 +3298,7 @@ def update_preinscription_documents(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error actualizando documentos de preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al actualizar los documentos de la preinscripción: {exc}") from exc
 
 
 @router.post("/{num}/documentos/{document_field}/upload")
@@ -3312,9 +3312,9 @@ async def upload_preinscription_document(
     clean_num = num.strip()
     field = document_field.strip().lower()
     if field not in _DOCUMENT_FIELDS:
-        raise HTTPException(status_code=400, detail="Campo de documento invalido")
+        raise HTTPException(status_code=400, detail='Campo de documento inválido')
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3324,7 +3324,7 @@ async def upload_preinscription_document(
             if not item["en_cabecera_matricula"]:
                 raise HTTPException(
                     status_code=400,
-                    detail="Primero registra la cabecera de matricula para obtener el codigo de documentacion",
+                    detail='Primero, registre la cabecera de matrícula para obtener el código de documentación.',
                 )
             code = item["cabecera"].get("numcodigo") or item["cabecera"].get("num_matricula") or clean_num
             extension_name = _safe_filename(file.filename or f"{field}.bin")
@@ -3372,7 +3372,7 @@ async def upload_preinscription_document(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error subiendo documento de preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al subir el documento de la preinscripción: {exc}") from exc
 
 
 @router.get("/{num}/foto-carnet")
@@ -3383,7 +3383,7 @@ def get_preinscription_carnet_photo_status(
     del current_user
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3396,7 +3396,7 @@ def get_preinscription_carnet_photo_status(
     except HTTPException:
         raise
     except pyodbc.Error as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al consultar la foto para el carné: {exc}") from exc
 
 
 @router.post("/{num}/foto-carnet/upload")
@@ -3407,7 +3407,7 @@ async def upload_preinscription_carnet_photo(
 ) -> dict[str, Any]:
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     original_name = _safe_filename(file.filename or "foto-carnet")
     mime_type = _photo_mime_type(original_name, file.content_type)
@@ -3416,9 +3416,9 @@ async def upload_preinscription_carnet_photo(
 
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="La imagen esta vacia")
+        raise HTTPException(status_code=400, detail='La imagen esta vacía')
     if len(content) > _PHOTO_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el limite de 8 MB")
+        raise HTTPException(status_code=400, detail='La imagen supera el límite de 8 MB')
 
     try:
         with get_connection() as conn:
@@ -3428,7 +3428,7 @@ async def upload_preinscription_carnet_photo(
             if not item["en_cabecera_matricula"]:
                 raise HTTPException(
                     status_code=400,
-                    detail="Primero registra la cabecera de matricula para crear el estudiante antes de subir la foto",
+                    detail='Primero registra la cabecera de matrícula para crear el estudiante antes de subir la foto',
                 )
             student = _fetch_student_for_photo(cursor, row)
             _ensure_carnet_photo_tables(cursor)
@@ -3484,7 +3484,7 @@ async def upload_preinscription_carnet_photo(
                         fecha_revision = NULL
                     WHERE id_solicitud_foto = ?
                     """,
-                    "Foto reemplazada para revision previa",
+                    "Foto reemplazada para revisión previa.",
                     _clean(current_user.login)[:100],
                     request_id,
                 )
@@ -3501,8 +3501,8 @@ async def upload_preinscription_carnet_photo(
                     """,
                     code,
                     cedula,
-                    "Foto de carnet pendiente",
-                    "Imagen cargada desde preinscripcion para aprobacion previa",
+                    "Foto para el carné pendiente",
+                    "Imagen cargada desde preinscripción para aprobación previa",
                     original_name,
                     relative_url,
                     mime_type,
@@ -3521,7 +3521,7 @@ async def upload_preinscription_carnet_photo(
                     code,
                     cedula,
                     image_id,
-                    "Foto cargada para revision previa",
+                    "Foto cargada para revisión previa.",
                     _clean(current_user.login)[:100],
                 )
 
@@ -3529,7 +3529,7 @@ async def upload_preinscription_carnet_photo(
             conn.commit()
         return {
             "ok": True,
-            "message": "Foto cargada. Queda pendiente de aprobacion antes de usarla en carnet.",
+            "message": "Foto cargada. Queda pendiente de aprobación antes de usarla en el carné.",
             "foto": status,
         }
     except HTTPException:
@@ -3539,7 +3539,7 @@ async def upload_preinscription_carnet_photo(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error subiendo foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al subir la foto para el carné: {exc}") from exc
 
 
 @router.post("/{num}/foto-carnet/{request_id}/aprobar")
@@ -3550,7 +3550,7 @@ def approve_preinscription_carnet_photo(
 ) -> dict[str, Any]:
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3570,7 +3570,7 @@ def approve_preinscription_carnet_photo(
             )
             request_row = cursor.fetchone()
             if not request_row:
-                raise HTTPException(status_code=404, detail="No se encontro la solicitud de foto seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la solicitud de foto seleccionada')
             if _clean(getattr(request_row, "estado", "")).upper() == "RECHAZADA":
                 raise HTTPException(status_code=400, detail="No se puede aprobar una solicitud rechazada")
 
@@ -3604,13 +3604,13 @@ def approve_preinscription_carnet_photo(
                     fecha_revision = SYSDATETIME()
                 WHERE id_solicitud_foto = ?
                 """,
-                "Foto aprobada para carnet",
+                "Foto aprobada para el carné",
                 _clean(current_user.login)[:100],
                 request_id,
             )
             status = _photo_status_payload(cursor, codigo_estud)
             conn.commit()
-        return {"ok": True, "message": "Foto aprobada para carnet.", "foto": status}
+        return {"ok": True, "message": "Foto aprobada para el carné.", "foto": status}
     except HTTPException:
         raise
     except pyodbc.Error as exc:
@@ -3618,7 +3618,7 @@ def approve_preinscription_carnet_photo(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error aprobando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al aprobar la foto para el carné: {exc}") from exc
 
 
 @router.post("/{num}/foto-carnet/{request_id}/rechazar")
@@ -3630,7 +3630,7 @@ def reject_preinscription_carnet_photo(
 ) -> dict[str, Any]:
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3650,7 +3650,7 @@ def reject_preinscription_carnet_photo(
             )
             request_row = cursor.fetchone()
             if not request_row:
-                raise HTTPException(status_code=404, detail="No se encontro la solicitud de foto seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la solicitud de foto seleccionada')
             cursor.execute(
                 """
                 UPDATE dbo.ESTUDIANTE_IMAGEN
@@ -3684,7 +3684,7 @@ def reject_preinscription_carnet_photo(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error rechazando foto de carnet: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al rechazar la foto para el carné: {exc}") from exc
 
 
 @router.delete("/{num}/revertir")
@@ -3695,7 +3695,7 @@ def revert_preinscription_process(
     del current_user
     clean_num = num.strip()
     if not clean_num:
-        raise HTTPException(status_code=400, detail="Debes indicar el identificador num de la preinscripcion")
+        raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
     try:
         with get_connection() as conn:
@@ -3808,12 +3808,12 @@ def revert_preinscription_process(
             )
             deleted["PREINSCRIPCION"] = max(cursor.rowcount, 0)
             if deleted["PREINSCRIPCION"] == 0:
-                raise HTTPException(status_code=404, detail="No se encontro la preinscripcion seleccionada")
+                raise HTTPException(status_code=404, detail='No se encontró la preinscripción seleccionada')
 
             conn.commit()
         return {
             "ok": True,
-            "message": "Proceso de inscripcion revertido correctamente.",
+            "message": 'Proceso de inscripción revertido correctamente.',
             "deleted": deleted,
         }
     except HTTPException:
@@ -3823,4 +3823,4 @@ def revert_preinscription_process(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Error revirtiendo preinscripcion: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al revertir la preinscripción: {exc}") from exc

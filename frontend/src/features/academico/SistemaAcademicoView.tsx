@@ -130,7 +130,7 @@ export function SistemaAcademicoView({
       number: '03',
       title: 'Matrícula académica',
       owner: 'Secretaría académica',
-      record: 'Carrera, periodo, paralelo y materias',
+      record: 'Carrera, período, paralelo y materias',
       result: 'Matrícula académica activa',
       actionLabel: 'Abrir matrícula',
       roles: ['ACADEMICO', 'ADMISIONES'],

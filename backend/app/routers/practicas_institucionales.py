@@ -431,7 +431,7 @@ def _apply_period_designation_to_expediente(
         _clean(designation.correo_responsable) or None,
         _clean(designation.rol_responsable) or "RESPONSABLE",
         usuario,
-        f"Designación automática periodo {codigo_periodo}",
+        f"Designación automática del período {codigo_periodo}.",
     )
     return True
 
@@ -560,7 +560,7 @@ def _build_carta_compromiso_pdf(expediente: Any) -> bytes:
         ["Estudiante", _clean(expediente.estudiante_snapshot)],
         ["Cédula", _clean(expediente.cedula_est)],
         ["Carrera", _clean(expediente.carrera_snapshot)],
-        ["Periodo", _clean(expediente.periodo_snapshot) or _clean(expediente.codigo_periodo)],
+        ["Período", _clean(expediente.periodo_snapshot) or _clean(expediente.codigo_periodo)],
         ["Proceso", _clean(expediente.tipo_proceso)],
     ]
     table = Table(table_data, colWidths=[4.2 * cm, 11.0 * cm])
@@ -1427,7 +1427,7 @@ def admin_periods(
             ]
         return {"items": items, "total": len(items)}
     except (pyodbc.Error, RuntimeError) as exc:
-        raise _db_error(exc, "No se pudo consultar periodos de prácticas") from exc
+        raise _db_error(exc, 'No se pudo consultar períodos de prácticas') from exc
 
 
 @router.get("/admin/designaciones-periodo")
@@ -1470,7 +1470,7 @@ def admin_period_designations(
             items = _fetch_all(cursor)
         return {"items": items, "total": len(items)}
     except (pyodbc.Error, RuntimeError) as exc:
-        raise _db_error(exc, "No se pudo consultar designaciones por periodo") from exc
+        raise _db_error(exc, 'No se pudo consultar designaciones por período') from exc
 
 
 @router.post("/admin/autorizaciones")
@@ -1513,7 +1513,7 @@ async def upload_admin_authorization(
                 codigo_estud,
             )
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail="No se encontró el estudiante en el periodo seleccionado.")
+                raise HTTPException(status_code=404, detail='No se encontró el estudiante en el período seleccionado.')
 
             safe_period = _safe_filename(str(codigo_periodo), "periodo")
             safe_student = _safe_filename(str(codigo_estud), "estudiante")
@@ -1589,13 +1589,13 @@ def save_period_designation(
         with get_practices_connection() as conn:
             cursor = conn.cursor()
             if not _use_legacy_schema(cursor):
-                raise HTTPException(status_code=400, detail="La designación por periodo está disponible para la estructura actual de prácticas.")
+                raise HTTPException(status_code=400, detail='La designación por período está disponible para la estructura actual de prácticas.')
             _ensure_period_designation_table(cursor)
             tipo_id = _tipo_proceso_id(cursor, process)
             source_period = payload.codigo_periodo_origen or payload.codigo_periodo
             selected_students = sorted({int(item) for item in payload.estudiantes if int(item) > 0})
             if not selected_students:
-                raise HTTPException(status_code=400, detail="Selecciona al menos un estudiante para la designación.")
+                raise HTTPException(status_code=400, detail='Seleccione al menos un estudiante para la designación.')
             cursor.execute(
                 """
                 SELECT TOP 1 periodo
@@ -1699,7 +1699,7 @@ def save_period_designation(
                     process,
                     tipo_id,
                     current_user.login,
-                    f"Expediente creado desde periodo origen {source_period} para matrícula en periodo {payload.codigo_periodo}",
+                    f"Expediente creado desde el período de origen {source_period} para la matrícula del período {payload.codigo_periodo}.",
                     payload.codigo_periodo,
                     target_period_name,
                 )
@@ -1712,7 +1712,7 @@ def save_period_designation(
                     payload.correo_responsable,
                     "RESPONSABLE",
                     current_user.login,
-                    f"Designación por periodo {payload.codigo_periodo}",
+                    f"Designación por período {payload.codigo_periodo}.",
                 )
                 expediente_ids.append(expediente_id)
                 cursor.execute(
@@ -1739,7 +1739,7 @@ def save_period_designation(
             conn.commit()
         return {
             "ok": True,
-            "message": "Matrícula por periodo registrada en prácticas correctamente.",
+            "message": 'Matrícula por período registrada en prácticas correctamente.',
             "designacion_id": getattr(row, "DesignacionId", None) if row else None,
             "expedientes_actualizados": len(expediente_ids),
         }
@@ -1750,7 +1750,7 @@ def save_period_designation(
             conn.rollback()  # type: ignore[name-defined]
         except Exception:
             pass
-        raise _db_error(exc, "No se pudo guardar la designación por periodo") from exc
+        raise _db_error(exc, 'No se pudo guardar la designación por período') from exc
 
 
 @router.get("/responsable/avance")
@@ -1879,7 +1879,7 @@ def create_responsable(
             cursor = conn.cursor()
             if _use_legacy_schema(cursor):
                 if not payload.expediente_id:
-                    raise HTTPException(status_code=400, detail="Selecciona un expediente para designar el responsable.")
+                    raise HTTPException(status_code=400, detail='Seleccione un expediente para designar el responsable.')
                 cursor.execute(
                     """
                     EXEC pp.sp_registrar_responsable_proceso

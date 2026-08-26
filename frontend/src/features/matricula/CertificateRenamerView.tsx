@@ -46,8 +46,8 @@ function valueOrDash(value: unknown) {
 function statusLabel(status?: string) {
   if (status === 'LISTO') return 'Listo'
   if (status === 'RENOMBRADO_DOCUMENTO') return 'Renombrado con documento'
-  if (status === 'SIN_CEDULA') return 'Sin cedula'
-  if (status === 'CEDULA_NO_ENCONTRADA') return 'Cedula sin registro'
+  if (status === 'SIN_CEDULA') return 'Sin cédula'
+  if (status === 'CEDULA_NO_ENCONTRADA') return 'Cédula sin registro'
   if (status === 'NO_PDF') return 'No PDF'
   return valueOrDash(status)
 }
@@ -64,8 +64,8 @@ function progressIdFromFile(file: File, index: number) {
 function progressStage(progress: number) {
   if (progress >= 100) return 'Finalizado'
   if (progress >= 76) return 'Generando nombre final'
-  if (progress >= 54) return 'Validando cedula en base'
-  if (progress >= 30) return 'Buscando cedula en PDF'
+  if (progress >= 54) return 'Validando cédula en base'
+  if (progress >= 30) return 'Buscando cédula en PDF'
   if (progress >= 12) return 'Extrayendo texto'
   return 'Preparando archivo'
 }
@@ -125,17 +125,17 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     },
     {
       label: 'Lectura PDF',
-      detail: 'Extraccion de texto y busqueda de cedula.',
+      detail: 'Extracción de texto y búsqueda de cédula.',
       progress: boundedStepProgress(overallProgress, 16, 46),
     },
     {
-      label: 'Validacion SQL',
-      detail: 'Cruce con DATOS_ESTUD y matriculas.',
+      label: 'Validación SQL',
+      detail: 'Cruce con DATOS_ESTUD y matrículas.',
       progress: boundedStepProgress(overallProgress, 46, 76),
     },
     {
       label: 'Nombre final',
-      detail: 'Generacion del archivo renombrado.',
+      detail: 'Generación del archivo renombrado.',
       progress: boundedStepProgress(overallProgress, 76, 100),
     },
   ]
@@ -193,7 +193,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     setMessage('')
 
     if (!files.length) {
-      setError('Sube uno o mas PDF o un ZIP con PDFs de certificado matricula para analizar.')
+      setError('Suba uno o más PDF, o un ZIP con los PDF de certificados de matrícula, para analizarlos.')
       return
     }
 
@@ -240,7 +240,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
         current.map((item) => ({
           ...item,
           progress: 100,
-          stage: 'Error durante el analisis',
+          stage: 'Error durante el análisis',
           status: 'ERROR',
         })),
       )
@@ -255,7 +255,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     setMessage('')
 
     if (!files.length) {
-      setError('Sube uno o mas PDF o un ZIP con PDFs antes de descargar.')
+      setError('Suba uno o más PDF, o un ZIP con los PDF, antes de descargar.')
       return
     }
 
@@ -276,7 +276,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     setMessage('')
 
     if (!files.length) {
-      setError('Sube uno o mas PDF o un ZIP con PDFs antes de descargar.')
+      setError('Suba uno o más PDF, o un ZIP con los PDF, antes de descargar.')
       return
     }
 
@@ -297,7 +297,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
     setMessage('')
 
     if (!files.length) {
-      setError('Sube uno o mas PDF o un ZIP con PDFs antes de guardar.')
+      setError('Suba uno o más PDF, o un ZIP con los PDF, antes de guardar.')
       return
     }
 
@@ -318,13 +318,13 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
       <header className="student-topbar">
         <div>
           <p className="eyebrow">Certificados</p>
-          <h1>Renombrar certificados de matricula</h1>
+          <h1>Renombrar certificados de matrícula</h1>
         </div>
         <div className="student-topbar__right">
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Lectura de cedula en PDF</span>
+              <span>Lectura de cédula en PDF</span>
             </div>
           </div>
         </div>
@@ -339,7 +339,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
         <article>
           <span>Listos para renombrar</span>
           <strong>{summary.ready || 0}</strong>
-          <small>Con cedula y estudiante encontrado</small>
+          <small>Con cédula y estudiante encontrado</small>
         </article>
         <article>
           <span>Incidencias</span>
@@ -353,7 +353,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
           <div className="card-head">
             <div>
               <h3>Cargar lote de certificados</h3>
-              <p>Sube PDFs sueltos o un ZIP con PDFs. El sistema extrae cada PDF, detecta la cedula y valida el estudiante.</p>
+              <p>Suba archivos PDF sueltos o un ZIP con archivos PDF. El sistema extrae cada PDF, detecta la cédula y valida al estudiante.</p>
             </div>
             <span>{loading ? 'Analizando...' : `${files.length} archivo(s)`}</span>
           </div>
@@ -363,7 +363,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
 
           <div className="certificate-renamer-upload">
             <label>
-              <span>PDF o ZIP de certificados matricula</span>
+              <span>PDF o ZIP de certificados matrícula</span>
               <input type="file" accept="application/pdf,.pdf,application/zip,.zip" multiple onChange={updateFiles} />
             </label>
             <div className="credential-actions">
@@ -421,7 +421,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
           <div className="card-head">
             <div>
               <h3>Resultado del análisis</h3>
-              <p>Revisa el nombre final antes de descargar el lote.</p>
+              <p>Revise el nombre final antes de descargar el lote.</p>
             </div>
             <span>{items.length} registro(s)</span>
           </div>
@@ -434,7 +434,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
                   <span>
                     {loading
                       ? 'Procesando documentos, extrayendo cédula y validando contra la base.'
-                      : 'Análisis finalizado. Revisa los documentos listos y los que requieren validación.'}
+                      : 'Análisis finalizado. Revise los documentos listos y los que requieren validación.'}
                   </span>
                 </div>
                 <b>{overallProgress}%</b>
@@ -482,7 +482,7 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
               <strong>{readyCount}</strong>
             </article>
             <article>
-              <span>Con revision</span>
+              <span>Con revisión</span>
               <strong>{issueCount}</strong>
             </article>
             <article>
@@ -511,10 +511,10 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
                     <div>
                       <span>Estudiante</span>
                       <strong>{valueOrDash(item.nombres)}</strong>
-                      <small>Codigo {valueOrDash(item.codigo_estud)}</small>
+                      <small>Código {valueOrDash(item.codigo_estud)}</small>
                     </div>
                     <div>
-                      <span>Carrera / periodo</span>
+                      <span>Carrera / período</span>
                       <strong>{valueOrDash(item.carrera)}</strong>
                       <small>{valueOrDash(item.periodo)}</small>
                     </div>
@@ -524,8 +524,8 @@ export function CertificateRenamerView({ displayName }: Readonly<CertificateRena
             </div>
           ) : (
             <div className="certificate-renamer-empty">
-              <strong>Sin analisis cargado</strong>
-              <span>Sube PDFs o un ZIP y pulsa Analizar documentos para ver cedula, estudiante y nombre final.</span>
+              <strong>Sin análisis cargado</strong>
+              <span>Suba archivos PDF o un ZIP y presione Analizar documentos para ver la cédula, el estudiante y el nombre final.</span>
             </div>
           )}
         </article>

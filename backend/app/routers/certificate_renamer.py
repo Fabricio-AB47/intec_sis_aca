@@ -627,7 +627,7 @@ def _student_lookup(cedulas: list[str]) -> dict[str, dict[str, Any]]:
     except pyodbc.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No se pudo consultar estudiantes por cedula",
+            detail='No se pudo consultar estudiantes por cédula',
         ) from exc
 
     return found
@@ -654,11 +654,11 @@ def _analyze_pdf(original_name: str, data: bytes, index: int) -> dict[str, Any]:
     student = students.get(selected_cedula, {})
 
     if not selected_cedula:
-        detail = "No se encontro una cedula valida; se renombro con informacion detectada en el PDF."
+        detail = "No se encontró una cédula válida; se renombró con información detectada en el PDF."
         if not _ocr_is_available():
             detail = (
-                "No se encontro una cedula valida y OCR no esta disponible; "
-                "se renombro con el texto seleccionable o el nombre original del documento."
+                "No se encontró una cédula válida y el OCR no está disponible; "
+                "se renombró con el texto seleccionable o el nombre original del documento."
             )
         return _rename_from_document(
             original_name=original_name,
@@ -672,7 +672,7 @@ def _analyze_pdf(original_name: str, data: bytes, index: int) -> dict[str, Any]:
             original_name=original_name,
             selected_cedula=selected_cedula,
             text=text,
-            detail="La cedula no existe en DATOS_ESTUD/PREINSCRIPCION; se renombro con informacion detectada en el PDF.",
+            detail='La cédula no existe en DATOS_ESTUD/PREINSCRIPCION; se renombró con la información detectada en el PDF.',
         )
 
     nombres = _clean(student.get("nombres"))
@@ -708,7 +708,7 @@ def _append_file(
     total_size: int,
 ) -> int:
     if len(result) >= MAX_FILES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Maximo {MAX_FILES} archivos por lote.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Máximo {MAX_FILES} archivos por lote.")
     if len(data) > MAX_FILE_BYTES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{name} supera 12 MB.")
     total_size += len(data)
@@ -738,7 +738,7 @@ def _zip_pdf_entries(zip_name: str, data: bytes) -> list[tuple[str, bytes]]:
                 entry_name = _safe_filename(f"{Path(zip_name).stem} - {Path(raw_name).name}", f"archivo_{len(entries) + 1}.pdf")
                 entries.append((entry_name, archive.read(info)))
     except BadZipFile as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{zip_name} no es un ZIP valido.") from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{zip_name} no es un archivo ZIP válido.") from exc
 
     return entries
 
@@ -748,7 +748,7 @@ async def _read_files(files: list[UploadFile] | None) -> list[tuple[str, bytes]]
     if not uploads:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sube al menos un PDF o un ZIP con PDFs.")
     if len(uploads) > MAX_FILES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Maximo {MAX_FILES} archivos por lote.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Máximo {MAX_FILES} archivos por lote.")
 
     total_size = 0
     result: list[tuple[str, bytes]] = []

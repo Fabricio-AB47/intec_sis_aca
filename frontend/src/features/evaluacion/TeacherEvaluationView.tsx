@@ -33,35 +33,35 @@ const FLOW_COPY: Record<
   student: {
     eyebrow: 'Estudiante',
     title: 'Evaluación al docente',
-    description: 'Evalúa una sola vez cada materia activa del periodo, aunque esté relacionada con varias carreras.',
+    description: 'Evalúa una sola vez cada materia activa del período, aunque esté relacionada con varias carreras.',
     empty: 'No se encontraron materias con docente asignado para esta cédula.',
     action: 'Evaluar docente',
   },
   auto_estudiante: {
     eyebrow: 'Estudiante',
     title: 'Autoevaluación estudiantil',
-    description: 'Registra tu autoevaluación una sola vez por materia del periodo.',
+    description: 'Registre tu autoevaluación una sola vez por materia del período.',
     empty: 'No se encontraron materias disponibles para autoevaluación estudiantil.',
     action: 'Autoevaluar',
   },
   auto_docente: {
     eyebrow: 'Docente',
     title: 'Autoevaluación docente',
-    description: 'Registra la autoevaluación una sola vez por materia activa del periodo.',
+    description: 'Registre la autoevaluación una sola vez por materia activa del período.',
     empty: 'No se encontraron materias asignadas para esta cédula.',
     action: 'Autoevaluar',
   },
   par_docente: {
     eyebrow: 'Docente',
     title: 'Evaluación par docente',
-    description: 'Evalúa una sola vez por materia del periodo, consolidando carreras relacionadas.',
+    description: 'Evalúa una sola vez por materia del período, consolidando carreras relacionadas.',
     empty: 'No se encontraron docentes pares disponibles para esta cédula.',
     action: 'Evaluar par',
   },
   academico_docente: {
     eyebrow: 'Administrativo',
     title: 'Evaluación administrativa docente',
-    description: 'Evalúa una sola vez por materia del periodo desde la autoridad activa registrada en USUARIO_SIS.',
+    description: 'Evalúa una sola vez por materia del período desde la autoridad activa registrada en USUARIO_SIS.',
     empty: 'No se encontraron docentes asignados para evaluación administrativa.',
     action: 'Evaluar docente',
   },
@@ -643,7 +643,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                 <>
                   <div className="teacher-evaluation__course-filters">
                     <select value={coursePeriodFilter} onChange={(event) => setCoursePeriodFilter(event.target.value)}>
-                      <option value="">Todos los periodos</option>
+                      <option value="">Todos los períodos</option>
                       {coursePeriodOptions.map((period) => (
                         <option key={period.value} value={period.value}>
                           {period.label}
@@ -727,7 +727,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
                 <p className="teacher-evaluation__eyebrow">Materia consolidada</p>
                 <h2 id="teacher-evaluation-detail-title">{courseTitle(detailCourse)}</h2>
                 <p>
-                  Periodo {detailCourse.detalle_periodo || detailCourse.codigo_periodo} · Código materia {detailCourse.codigo_materia}
+                  Período {detailCourse.detalle_periodo || detailCourse.codigo_periodo} · Código materia {detailCourse.codigo_materia}
                 </p>
                 {detailCourse.codigo_materia_interno ? (
                   <p>Código único académico: {detailCourse.codigo_materia_interno}</p>

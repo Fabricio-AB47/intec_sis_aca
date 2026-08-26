@@ -398,7 +398,7 @@ const analyzeCourseChannel = (course: TeamCourse, identity: AcademicTeamIdentity
           ? 'Coincide paralelo'
           : isDefaultChannel
             ? 'Canal base'
-            : 'Sin coincidencia academica'
+            : 'Sin coincidencia académica'
 
   return {
     course,
@@ -483,7 +483,7 @@ export function TeamsView({
   const toErrorMessage = useCallback((error: unknown): string => {
     if (error instanceof ApiError) return error.message
     if (error instanceof Error) return error.message
-    return 'No se pudo cargar la informacion del equipo seleccionado.'
+    return 'No se pudo cargar la información del equipo seleccionado.'
   }, [])
 
   const filteredTeams = useMemo(() => {
@@ -697,7 +697,7 @@ export function TeamsView({
           redirectToMicrosoftConnect(teamId, result.connect_url)
           return
         }
-        setTeamInfoMessage(result.message || 'Invitacion automatica completada.')
+        setTeamInfoMessage(result.message || 'Invitacion automática completada.')
         await loadTeamInfo(teamId)
       } catch (error) {
         if (isMicrosoftConnectRequiredError(error)) {
@@ -778,7 +778,7 @@ export function TeamsView({
 
   const handleInviteMissing = async () => {
     if (!modalSelectedTeam?.id) {
-      setTeamInfoError('Selecciona un equipo para invitar participantes faltantes.')
+      setTeamInfoError('Seleccione un equipo para invitar participantes faltantes.')
       return
     }
 
@@ -881,7 +881,7 @@ export function TeamsView({
 
   const renderInfoContent = () => {
     if (teamInfoLoading) {
-      return <p className="teams-message">Cargando informacion del equipo...</p>
+      return <p className="teams-message">Cargando información del equipo...</p>
     }
 
     if (activeInfoTab === 'participants') {
@@ -939,13 +939,13 @@ export function TeamsView({
 
           <article className="teams-activity-card teams-course-insight">
             <div className="teams-activity-card__head">
-              <strong>Identidad academica inferida</strong>
+              <strong>Identidad académica inferida</strong>
               <span>Precision {academicIdentity.confidence}</span>
             </div>
             <InfoMetaGrid
               items={[
                 { label: 'Ronda', value: academicIdentity.roundLabel },
-                { label: 'Anio', value: academicIdentity.academicYear },
+                { label: 'Año', value: academicIdentity.academicYear },
                 { label: 'Materia', value: academicIdentity.subject },
                 { label: 'Paralelo', value: academicIdentity.parallel },
                 { label: 'Docente', value: academicIdentity.teacher },
@@ -971,7 +971,7 @@ export function TeamsView({
               items={[
                 { label: 'Nombre del Team', value: academicIdentity.teamName },
                 { label: 'Correo del grupo', value: academicIdentity.mail },
-                { label: 'Descripcion Teams', value: modalSelectedTeam?.description as string | undefined },
+                { label: 'Descripción Teams', value: modalSelectedTeam?.description as string | undefined },
                 { label: 'Canales relacionados', value: relatedCourseChannels.length },
                 { label: 'Canales no relacionados', value: Math.max(0, courses.length - relatedCourseChannels.length) },
               ]}
@@ -991,10 +991,10 @@ export function TeamsView({
                     <InfoMetaGrid
                       items={[
                         { label: 'Tipo Graph', value: item.membershipType || 'standard' },
-                        { label: 'Descripcion', value: item.description || 'Sin descripcion' },
-                        { label: 'Coincide materia', value: analysis.subjectMatch ? 'Si' : 'No' },
-                        { label: 'Coincide paralelo', value: analysis.parallelMatch ? 'Si' : 'No' },
-                        { label: 'Canal base', value: analysis.isDefaultChannel ? 'Si' : 'No' },
+                        { label: 'Descripción', value: item.description || 'Sin descripción' },
+                        { label: 'Coincide materia', value: analysis.subjectMatch ? 'Sí' : 'No' },
+                        { label: 'Coincide paralelo', value: analysis.parallelMatch ? 'Sí' : 'No' },
+                        { label: 'Canal base', value: analysis.isDefaultChannel ? 'Sí' : 'No' },
                       ]}
                     />
                     {item.webUrl ? (
@@ -1158,7 +1158,7 @@ export function TeamsView({
         {attendance.length > 0 ? (
           attendance.map((item) => (
             <article key={item.id || item.topic}>
-              <strong>{item.topic || 'Evento sin titulo'}</strong>
+              <strong>{item.topic || 'Evento sin título'}</strong>
               <span>
                 {item.startLabel || formatDateTimeInEcuador(item.start) || 'Sin inicio'} | invitados: {item.totalAttendees ?? 0}
               </span>
@@ -1178,7 +1178,7 @@ export function TeamsView({
           <p className="eyebrow">Microsoft Teams</p>
           <h2>Movimientos Teams</h2>
           <p className="report-description">
-            Consulta global de aulas, detalles y actividad de Microsoft Teams con una distribucion simetrica.
+            Consulta global de aulas, detalles y actividad de Microsoft Teams con una distribución simetrica.
           </p>
         </div>
 
@@ -1195,7 +1195,7 @@ export function TeamsView({
       <section className="student-grid student-grid--content teams-page-grid">
         <article className="student-card student-card--wide">
           <div className="card-head">
-            <h3>Catalogo de aulas de Teams</h3>
+            <h3>Catálogo de aulas de Teams</h3>
             <span>Consulta global desde Microsoft Graph</span>
           </div>
 
@@ -1238,7 +1238,7 @@ export function TeamsView({
         <article className="student-card student-card--wide">
           <div className="card-head">
             <h3>Lista de Teams</h3>
-            <span>Haz clic para ver detalles</span>
+            <span>Haga clic para ver detalles</span>
           </div>
 
           <div className="teams-actions">
@@ -1252,7 +1252,7 @@ export function TeamsView({
           </div>
 
           <p className="empty-block">
-            Usa el boton Ver equipos para abrir la subpantalla, navegar por nombre y revisar
+            Use el botón «Ver equipos» para abrir la subpantalla, navegar por nombre y revisar
             detalles del Team.
           </p>
         </article>
@@ -1261,7 +1261,7 @@ export function TeamsView({
           <div className="teams-modal-overlay">
             <article className={isTeamDetailScreenOpen ? 'teams-modal teams-modal--team-detail' : 'teams-modal'}>
               <div className="card-head">
-                <h3>{isTeamDetailScreenOpen ? 'Informacion del Team' : 'Seleccionar equipo'}</h3>
+                <h3>{isTeamDetailScreenOpen ? 'Información del Team' : 'Seleccionar equipo'}</h3>
                 <span>
                   {isTeamDetailScreenOpen
                     ? modalSelectedTeam?.displayName || 'Sin equipo seleccionado'
@@ -1277,7 +1277,7 @@ export function TeamsView({
                       <input
                         value={teamNameFilter}
                         onChange={(event) => setTeamNameFilter(event.target.value)}
-                        placeholder="Escribe parte del nombre..."
+                        placeholder="Escriba parte del nombre..."
                       />
                     </label>
                   </div>
@@ -1298,7 +1298,7 @@ export function TeamsView({
                           onClick={() => handlePickTeam(index)}
                         >
                           <strong>{team.displayName || 'Sin nombre'}</strong>
-                          <span>{team.mail || team.description || 'Sin descripcion'}</span>
+                          <span>{team.mail || team.description || 'Sin descripción'}</span>
                           <small>{team.id}</small>
                         </button>
                       ))
@@ -1319,7 +1319,7 @@ export function TeamsView({
                       Volver a equipos
                     </button>
                     <button type="button" onClick={refreshSelectedTeamInfo} disabled={teamInfoLoading || !modalSelectedTeam?.id}>
-                      {teamInfoLoading ? 'Actualizando...' : 'Actualizar informacion'}
+                      {teamInfoLoading ? 'Actualizando...' : 'Actualizar información'}
                     </button>
                     <button type="button" onClick={closeTeamsModal}>
                       Cerrar
@@ -1330,7 +1330,7 @@ export function TeamsView({
                     <div>
                       <strong>{modalSelectedTeam?.displayName || 'Sin nombre'}</strong>
                       <span>{modalSelectedTeam?.mail || 'Sin correo del grupo'}</span>
-                      <span>{modalSelectedTeam?.description || 'Sin descripcion registrada'}</span>
+                      <span>{modalSelectedTeam?.description || 'Sin descripción registrada'}</span>
                       <small>ID: {modalSelectedTeam?.id || 'N/D'}</small>
                     </div>
                     {modalSelectedTeam?.webUrl ? (

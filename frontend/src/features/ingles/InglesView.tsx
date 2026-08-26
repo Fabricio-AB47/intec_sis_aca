@@ -607,7 +607,7 @@ function ActivityScheduleCard({
         <small>
           {component.configured
             ? `Último cambio: ${dateTime(component.updated_at)}${component.updated_by ? ` · ${component.updated_by}` : ''}`
-            : 'Usa inicialmente las fechas del período académico.'}
+            : 'Use inicialmente las fechas del período académico.'}
         </small>
         <button type="submit" className="primary-action" disabled={saving}>
           {saving ? 'Guardando...' : `Actualizar ${component.code}`}
