@@ -189,10 +189,16 @@ class MoodleGradeAlertService:
             return self._response(role=role, items=[], errors=[], assignments=assignments)
 
         catalog = await self._grade_sync.catalog(refresh=refresh)
+        active_period_codes = {
+            int(assignment.get("period_code") or 0)
+            for assignment in assignments
+            if int(assignment.get("period_code") or 0) > 0
+        }
         jobs = self._preview_jobs(
             catalog.get("courses") or [],
             assignments=assignments,
             role=role,
+            active_period_codes=active_period_codes,
         )
         academic_pairs = self._academic_pairs(catalog.get("courses") or [], jobs)
         academic_enrollments = await asyncio.to_thread(
@@ -343,6 +349,16 @@ class MoodleGradeAlertService:
                 LEFT JOIN dbo.CARRERAS AS carrera
                   ON TRY_CONVERT(int, carrera.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
                 WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), periodo.TipoMatricula)))) IN (N'R', N'H')
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), periodo.Estado))))
+                        IN (N'A', N'ACTIVO', N'ACTIVA')
+                  AND (
+                        TRY_CONVERT(date, periodo.fechain) IS NULL
+                        OR TRY_CONVERT(date, periodo.fechain) <= CONVERT(date, GETDATE())
+                  )
+                  AND (
+                        TRY_CONVERT(date, periodo.fechafin) IS NULL
+                        OR TRY_CONVERT(date, periodo.fechafin) >= CONVERT(date, GETDATE())
+                  )
             """
             parameters: list[Any] = []
             if teacher_code is not None:
@@ -468,6 +484,7 @@ class MoodleGradeAlertService:
         *,
         assignments: Sequence[dict[str, Any]],
         role: str = "ADMINISTRADOR",
+        active_period_codes: set[int] | None = None,
     ) -> list[tuple[int, list[int]]]:
         assignment_periods: dict[str, set[int]] = defaultdict(set)
         for assignment in assignments:
@@ -488,6 +505,8 @@ class MoodleGradeAlertService:
                 period_type = _text(period.get("period_type")).upper()
                 students = int(period.get("students") or 0)
                 if period_code <= 0 or period_type not in {"R", "H"} or students <= 0:
+                    continue
+                if active_period_codes is not None and period_code not in active_period_codes:
                     continue
                 # El docente conserva exclusivamente su asignación exacta. Los perfiles
                 # institucionales revisan toda matrícula activa del catálogo para poder

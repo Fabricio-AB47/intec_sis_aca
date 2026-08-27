@@ -255,7 +255,7 @@ class MoodleReadService:
         self._course_grade_items_cache: dict[int, _CacheEntry] = {}
         self._users_lock = asyncio.Lock()
         self._courses_lock = asyncio.Lock()
-        self._course_contents_lock = asyncio.Lock()
+        self._course_contents_locks: dict[int, asyncio.Lock] = {}
         self._course_enrolled_users_locks: dict[int, asyncio.Lock] = {}
         self._course_grade_items_locks: dict[int, asyncio.Lock] = {}
 
@@ -865,7 +865,8 @@ class MoodleReadService:
         if current is not None:
             return current, True
 
-        async with self._course_contents_lock:
+        lock = self._course_contents_locks.setdefault(course_id, asyncio.Lock())
+        async with lock:
             if refresh:
                 self._course_contents_cache.pop(course_id, None)
             current = self._valid_cache(self._course_contents_cache.get(course_id))

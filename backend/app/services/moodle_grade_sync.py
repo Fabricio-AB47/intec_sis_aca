@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unicodedata
@@ -969,11 +970,17 @@ class MoodleGradeSyncService:
                     missing_periods.append(selected_period_code)
             return rows_by_period, missing_periods
 
-        enrollments_by_period, missing_periods = load_enrollments(course_codes)
+        enrollments_by_period, missing_periods = await asyncio.to_thread(
+            load_enrollments,
+            course_codes,
+        )
         if missing_periods:
             # CorreoIntec is the only student identity shared by Moodle and INTECBDD.
             # Course metadata selects the subject only after that identity match.
-            academic_options = self._academic_period_options_for_emails(institutional_emails)
+            academic_options = await asyncio.to_thread(
+                self._academic_period_options_for_emails,
+                institutional_emails,
+            )
             context = self._resolve_course_context(course, academic_options)
             resolved_codes = {
                 canonical_course_code(value)
@@ -996,7 +1003,10 @@ class MoodleGradeSyncService:
                     )
                 raise MoodleGradeSyncError(detail)
             course_codes = resolved_codes
-            enrollments_by_period, missing_periods = load_enrollments(course_codes)
+            enrollments_by_period, missing_periods = await asyncio.to_thread(
+                load_enrollments,
+                course_codes,
+            )
             if missing_periods:
                 raise MoodleGradeSyncError(
                     "No existen matrículas activas para el curso y los períodos validados por CorreoIntec"
@@ -1057,8 +1067,18 @@ class MoodleGradeSyncService:
             if int(group.get("userid") or 0) > 0
         }
         ledger: dict[tuple[Any, ...], Any] = {}
-        for selected_period_code, period_enrollments in enrollments_by_period.items():
-            ledger.update(self._grade_ledger(selected_period_code, period_enrollments))
+        ledger_parts = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    self._grade_ledger,
+                    selected_period_code,
+                    period_enrollments,
+                )
+                for selected_period_code, period_enrollments in enrollments_by_period.items()
+            )
+        )
+        for ledger_part in ledger_parts:
+            ledger.update(ledger_part)
 
         changes: list[dict[str, Any]] = []
         enrollment_summaries: list[dict[str, Any]] = []

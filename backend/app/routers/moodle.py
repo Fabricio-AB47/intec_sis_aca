@@ -103,7 +103,7 @@ def get_moodle_grade_sync_service() -> MoodleGradeSyncService:
 
 @lru_cache(maxsize=1)
 def get_moodle_grade_alert_service() -> MoodleGradeAlertService:
-    return MoodleGradeAlertService(get_moodle_grade_sync_service())
+    return MoodleGradeAlertService(get_moodle_grade_sync_service(), concurrency=16)
 
 
 def _raise_http_error(exc: Exception) -> None:
