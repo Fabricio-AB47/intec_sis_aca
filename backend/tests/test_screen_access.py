@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
-from app.core.security import SessionUser, require_screen_access
+from app.core.security import SessionUser, require_any_screen_access, require_screen_access
 from app.routers.screen_access import list_screen_access
 from app.services.screen_access import (
     ADMIN_ONLY_PAGES,
@@ -589,6 +589,24 @@ class ScreenAccessAuthorizationTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 403)
         check_access.assert_called_once_with("DOCENTE", "matricula-acad")
+
+    @patch("app.services.screen_access.role_has_screen_access")
+    def test_any_screen_dependency_accepts_the_shared_operation(
+        self,
+        check_access: MagicMock,
+    ) -> None:
+        check_access.side_effect = lambda _role, page: page == "moodle-teams"
+        dependency = require_any_screen_access("moodle/courses", "moodle-teams")
+        current_user = profile("ACADEMICO")
+
+        self.assertIs(dependency(current_user), current_user)
+        self.assertEqual(
+            check_access.call_args_list,
+            [
+                unittest.mock.call("ACADEMICO", "moodle/courses"),
+                unittest.mock.call("ACADEMICO", "moodle-teams"),
+            ],
+        )
 
 
 if __name__ == "__main__":

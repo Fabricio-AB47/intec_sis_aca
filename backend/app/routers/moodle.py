@@ -11,7 +11,7 @@ from starlette.responses import StreamingResponse
 
 from app.core.audit_context import get_audit_context
 from app.core.config import get_settings
-from app.core.security import SessionUser, require_screen_access
+from app.core.security import SessionUser, require_any_screen_access, require_screen_access
 from app.integrations.moodle.exceptions import (
     MoodleApiError,
     MoodleConfigurationError,
@@ -39,7 +39,7 @@ from app.services.moodle_grade_sync import MoodleGradeSyncError, MoodleGradeSync
 router = APIRouter(prefix="/api/moodle", tags=["moodle"])
 _MOODLE_STATUS_ACCESS = require_screen_access("moodle/status")
 _MOODLE_USERS_ACCESS = require_screen_access("moodle/users")
-_MOODLE_COURSES_ACCESS = require_screen_access("moodle/courses")
+_MOODLE_COURSES_ACCESS = require_any_screen_access("moodle/courses", "moodle-teams")
 _MOODLE_RESOURCES_ACCESS = require_screen_access("moodle/resources")
 _MOODLE_GRADES_ACCESS = require_screen_access("moodle/grades")
 _MOODLE_ALERTS_ACCESS = require_screen_access("moodle/alerts")

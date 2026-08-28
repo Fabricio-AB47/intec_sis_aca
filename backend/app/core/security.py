@@ -232,3 +232,44 @@ def require_screen_access(page: str) -> Callable[[SessionUser], SessionUser]:
         return current_user
 
     return dependency
+
+
+def require_any_screen_access(*pages: str) -> Callable[[SessionUser], SessionUser]:
+    """Autoriza una operación compartida cuando el rol tiene alguna pantalla indicada."""
+
+    from app.services.screen_access import (
+        KNOWN_PAGES,
+        ScreenAccessUnavailableError,
+        role_has_screen_access,
+    )
+
+    page_codes = tuple(dict.fromkeys(str(page or "").strip() for page in pages))
+    if not page_codes or any(page_code not in KNOWN_PAGES for page_code in page_codes):
+        unknown = next(
+            (page_code or "(vacia)" for page_code in page_codes if page_code not in KNOWN_PAGES),
+            "(vacia)",
+        )
+        raise ValueError(f"Pantalla no reconocida: {unknown}")
+
+    def dependency(
+        current_user: SessionUser = Depends(get_current_user),
+    ) -> SessionUser:
+        try:
+            allowed = any(
+                role_has_screen_access(current_user.rol, page_code)
+                for page_code in page_codes
+            )
+        except ScreenAccessUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail='No se pudo validar la asignación institucional de pantallas',
+            ) from exc
+
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='No tiene asignada la pantalla requerida para esta operación',
+            )
+        return current_user
+
+    return dependency
