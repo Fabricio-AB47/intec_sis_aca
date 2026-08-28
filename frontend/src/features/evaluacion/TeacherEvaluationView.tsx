@@ -423,9 +423,14 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
     }
 
     try {
+      const accessToken = identity?.access_token
+      if (!accessToken) {
+        setError('La autorización temporal expiró. Consulte nuevamente la cédula.')
+        return
+      }
       const response = isTeacherFlow(flow)
-        ? await saveTeacherRoleEvaluation({ ...payload, flow })
-        : await saveTeacherEvaluation({ ...payload, flow })
+        ? await saveTeacherRoleEvaluation({ ...payload, flow }, accessToken)
+        : await saveTeacherEvaluation({ ...payload, flow }, accessToken)
       const refreshed = await fetchTeacherEvaluationIdentity(normalizeCedula(cedula))
       setIdentity(refreshed)
       setSelectedCourse(null)

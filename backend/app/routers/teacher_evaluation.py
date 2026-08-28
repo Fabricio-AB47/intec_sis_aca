@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 from html import escape
@@ -10,7 +10,8 @@ from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pyodbc
-from fastapi import APIRouter, HTTPException, Query
+import jwt
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from reportlab.graphics import renderPDF
@@ -23,6 +24,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
+from app.core.config import get_settings
+from app.core.rate_limit import RateLimitExceeded, rate_limiter
+from app.core.security import require_roles
 from app.services.db import get_connection, get_evaluation_connection
 
 router = APIRouter(prefix="/api/evaluacion-docente", tags=["evaluacion-docente"])
@@ -38,6 +42,8 @@ _QUESTION_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SUBMITTED_STATES = ("FINALIZADA",)
+_ADMIN_EVALUATION_ROLES = ("ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR")
+_EVALUATION_TOKEN_TTL_MINUTES = 30
 _LIKERT_5_LABELS = {
     1: "Nunca",
     2: "Rara vez",
@@ -140,6 +146,56 @@ class TeacherEvaluationSubmitPayload(BaseModel):
 
 class TeacherRoleEvaluationSubmitPayload(TeacherEvaluationSubmitPayload):
     flow: str = Field(pattern="^(auto_docente|par_docente|academico_docente)$")
+
+
+def _create_evaluation_access_token(cedula: str, roles: list[str]) -> str:
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": cedula,
+        "cedula": cedula,
+        "roles": roles,
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "typ": "teacher_evaluation_access",
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "nbf": now,
+        "exp": now + timedelta(minutes=_EVALUATION_TOKEN_TTL_MINUTES),
+    }
+    return str(jwt.encode(payload, settings.signing_secret, algorithm="HS256"))
+
+
+def _validate_evaluation_access_token(
+    token: str | None,
+    *,
+    cedula: str,
+    required_role: str,
+) -> None:
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Acceso de evaluación inválido o expirado.")
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            token,
+            settings.signing_secret,
+            algorithms=["HS256"],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={"require": ["sub", "iss", "aud", "jti", "iat", "nbf", "exp"]},
+        )
+    except jwt.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Acceso de evaluación inválido o expirado.",
+        ) from exc
+    roles = {str(item).strip().lower() for item in payload.get("roles") or []}
+    if (
+        payload.get("typ") != "teacher_evaluation_access"
+        or str(payload.get("cedula") or "").strip() != str(cedula or "").strip()
+        or required_role.lower() not in roles
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="El acceso no corresponde a esta evaluación.")
 
 
 def _clean(value: Any) -> Any:
@@ -3745,7 +3801,7 @@ def get_teacher_evaluation_questions(flow: str = Query(default="student")) -> di
         raise HTTPException(status_code=500, detail=f"No se pudo consultar el cuestionario 360: {exc}") from exc
 
 
-@router.get("/admin/periodos")
+@router.get("/admin/periodos", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_admin_periods(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
     try:
         with get_connection() as conn:
@@ -3775,7 +3831,7 @@ def get_teacher_evaluation_admin_periods(limit: int = Query(default=20, ge=1, le
         ) from exc
 
 
-@router.get("/admin/pendientes")
+@router.get("/admin/pendientes", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_admin_pending(
     periodo: str = Query(..., min_length=1),
     flow: str = Query(default="all"),
@@ -3993,7 +4049,7 @@ def _course_matches_subject(course: dict[str, Any], subject_codes: list[str]) ->
     return bool(selected_codes.intersection(course_codes))
 
 
-@router.get("/admin/progreso-detalle")
+@router.get("/admin/progreso-detalle", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_progress_detail(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(..., min_length=1),
@@ -4116,7 +4172,7 @@ def get_teacher_evaluation_progress_detail(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar detalle de progreso docente: {exc}") from exc
 
 
-@router.get("/admin/progreso-participantes")
+@router.get("/admin/progreso-participantes", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_progress_participants(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(..., min_length=1),
@@ -4218,7 +4274,7 @@ def get_teacher_evaluation_progress_participants(
         raise HTTPException(status_code=500, detail=f"No se pudieron consultar los participantes de la evaluación: {exc}") from exc
 
 
-@router.get("/admin/avance-estudiantes")
+@router.get("/admin/avance-estudiantes", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_student_progress(
     periodo: str = Query(..., min_length=1),
     limit: int = Query(default=1000, ge=1, le=2000),
@@ -4313,7 +4369,7 @@ def get_teacher_evaluation_student_progress(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar avance por estudiante: {exc}") from exc
 
 
-@router.get("/admin/autoevaluacion-estudiantes")
+@router.get("/admin/autoevaluacion-estudiantes", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_auto_student_list(
     periodo: str = Query(..., min_length=1),
     estado: str = Query(default="pendientes"),
@@ -4382,7 +4438,7 @@ def get_teacher_evaluation_auto_student_list(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar la autoevaluación estudiantil: {exc}") from exc
 
 
-@router.get("/admin/estudiante-notas")
+@router.get("/admin/estudiante-notas", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_student_grades(
     periodo: str = Query(..., min_length=1),
     codigo_estud: int = Query(..., ge=1),
@@ -4419,7 +4475,7 @@ def get_teacher_evaluation_student_grades(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar notas del estudiante: {exc}") from exc
 
 
-@router.get("/admin/docentes-calificados")
+@router.get("/admin/docentes-calificados", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_graded_teachers(
     periodo: str = Query(..., min_length=1),
     flow: str = Query(default="all"),
@@ -4625,7 +4681,7 @@ def get_teacher_evaluation_graded_teachers(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar docentes calificados: {exc}") from exc
 
 
-@router.get("/admin/docente-materias-calificadas")
+@router.get("/admin/docente-materias-calificadas", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def get_teacher_evaluation_graded_subjects(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(..., min_length=1),
@@ -4676,7 +4732,7 @@ def get_teacher_evaluation_graded_subjects(
         raise HTTPException(status_code=500, detail=f"No se pudo consultar materias calificadas del docente: {exc}") from exc
 
 
-@router.get("/admin/reporte-docentes.pdf")
+@router.get("/admin/reporte-docentes.pdf", dependencies=[Depends(require_roles(*_ADMIN_EVALUATION_ROLES))])
 def download_teacher_evaluation_grades_pdf(
     periodo: str = Query(..., min_length=1),
     codigo_docente: str = Query(default=""),
@@ -4726,11 +4782,26 @@ def download_teacher_evaluation_grades_pdf(
 
 
 @router.get("/identity/{cedula}")
-def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
+def get_teacher_evaluation_identity(cedula: str, request: Request) -> dict[str, Any]:
     """Resuelve una cédula entre estudiantes y docentes para abrir el flujo correcto."""
     cleaned = _clean_text(cedula)
-    if not cleaned:
-        raise HTTPException(status_code=400, detail='Ingrese un número de cédula válido.')
+    if not re.fullmatch(r"\d{10}", cleaned):
+        raise HTTPException(status_code=400, detail='Ingrese un número de cédula válido de 10 dígitos.')
+
+    settings = get_settings()
+    client_ip = request.client.host if request.client else "unknown"
+    try:
+        rate_limiter.consume(
+            f"evaluation-identity:{client_ip}",
+            limit=settings.evaluation_lookup_rate_limit,
+            window_seconds=60,
+        )
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiadas consultas de evaluación. Intente nuevamente más tarde.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
 
     try:
         with get_connection() as conn:
@@ -4828,6 +4899,8 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
             return {
                 "cedula": cleaned,
                 "roles": roles,
+                "access_token": _create_evaluation_access_token(cleaned, roles),
+                "access_token_expires_minutes": _EVALUATION_TOKEN_TTL_MINUTES,
                 "student": student,
                 "teacher": teacher,
                 "authority": authority,
@@ -4844,7 +4917,11 @@ def get_teacher_evaluation_identity(cedula: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"No se pudo consultar la evaluación docente: {exc}") from exc
 
 @router.get("/student/{cedula}")
-def get_teacher_evaluation_student(cedula: str) -> dict[str, Any]:
+def get_teacher_evaluation_student(
+    cedula: str,
+    evaluation_token: str | None = Header(default=None, alias="X-Evaluation-Token"),
+) -> dict[str, Any]:
+    _validate_evaluation_access_token(evaluation_token, cedula=cedula, required_role="student")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -4864,7 +4941,11 @@ def get_teacher_evaluation_student(cedula: str) -> dict[str, Any]:
 
 
 @router.get("/teacher/{cedula}")
-def get_teacher_evaluation_teacher(cedula: str) -> dict[str, Any]:
+def get_teacher_evaluation_teacher(
+    cedula: str,
+    evaluation_token: str | None = Header(default=None, alias="X-Evaluation-Token"),
+) -> dict[str, Any]:
+    _validate_evaluation_access_token(evaluation_token, cedula=cedula, required_role="teacher")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -4895,8 +4976,16 @@ def get_teacher_evaluation_teacher(cedula: str) -> dict[str, Any]:
 
 
 @router.post("/evaluate")
-def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str, Any]:
+def save_teacher_evaluation(
+    payload: TeacherEvaluationSubmitPayload,
+    evaluation_token: str | None = Header(default=None, alias="X-Evaluation-Token"),
+) -> dict[str, Any]:
     flow = payload.flow or "student"
+    _validate_evaluation_access_token(
+        evaluation_token,
+        cedula=payload.cedula,
+        required_role="student",
+    )
     try:
         with get_connection() as academic_conn:
             academic_cursor = academic_conn.cursor()
@@ -4965,8 +5054,16 @@ def save_teacher_evaluation(payload: TeacherEvaluationSubmitPayload) -> dict[str
 
 
 @router.post("/teacher/evaluate")
-def save_teacher_role_evaluation(payload: TeacherRoleEvaluationSubmitPayload) -> dict[str, Any]:
+def save_teacher_role_evaluation(
+    payload: TeacherRoleEvaluationSubmitPayload,
+    evaluation_token: str | None = Header(default=None, alias="X-Evaluation-Token"),
+) -> dict[str, Any]:
     flow = payload.flow
+    _validate_evaluation_access_token(
+        evaluation_token,
+        cedula=payload.cedula,
+        required_role="authority" if flow == "academico_docente" else "teacher",
+    )
     try:
         with get_connection() as academic_conn:
             academic_cursor = academic_conn.cursor()

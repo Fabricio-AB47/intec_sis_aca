@@ -15,6 +15,7 @@ from app.core.security import SessionUser, require_roles
 from app.services.db import (
     get_connection,
     get_expedient_connection,
+    get_finance_connection,
     get_practices_connection,
     get_titulation_connection,
 )
@@ -39,8 +40,8 @@ from app.services.graph_documents import (
 
 router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients"])
 
-_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
-_REVIEW_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_REVIEW_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
     ".zip", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".wav", ".m4a", ".mp4",
@@ -51,8 +52,12 @@ _MODULE_NAMES = {
     "TITULACION": "Titulación",
     "PRACTICAS": "Prácticas preprofesionales",
     "VINCULACION": "Vinculación con la sociedad",
+    "BECAS": "Becas",
     "FACTURACION": "Facturas",
 }
+_SCHOLARSHIP_DOCUMENT_TYPES = [
+    {"code": "CONTRATO_BECA_FIRMADO", "name": "Contrato de beca firmado"},
+]
 _INVOICE_DOCUMENT_TYPES = [
     {"code": "FACTURA_XML", "name": "Factura electrónica (XML)"},
     {"code": "RIDE_FACTURA", "name": "RIDE de la factura (PDF)"},
@@ -215,6 +220,67 @@ def _invoice_expedient(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _scholarship_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    student_code = _clean(profile.get("code"))
+    if not student_code:
+        return []
+
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            if not cursor.execute("SELECT OBJECT_ID(N'bec.ContratoBeca', N'U')").fetchval():
+                return []
+            cursor.execute(
+                """
+                WITH Contratos AS
+                (
+                    SELECT
+                        ContratoBecaId, CodigoPeriodo, Periodo, NumeroContrato,
+                        EstadoCodigo, EstadoExpedienteCodigo, FechaGeneracion,
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY CodigoPeriodo
+                            ORDER BY ContratoBecaId DESC
+                        ) AS Fila
+                    FROM bec.ContratoBeca
+                    WHERE TRY_CONVERT(nvarchar(50), CodigoEstud) = ?
+                )
+                SELECT
+                    ContratoBecaId, CodigoPeriodo, Periodo, NumeroContrato,
+                    EstadoCodigo, EstadoExpedienteCodigo
+                FROM Contratos
+                WHERE Fila = 1
+                ORDER BY FechaGeneracion DESC, ContratoBecaId DESC
+                """,
+                student_code,
+            )
+            rows = cursor.fetchall()
+    except (RuntimeError, pyodbc.Error):
+        return []
+
+    return [
+        {
+            "module_code": "BECAS",
+            "module_name": _MODULE_NAMES["BECAS"],
+            "origin_id": f"{student_code}-{_clean(row.CodigoPeriodo)}",
+            "domain_expedient_id": int(row.ContratoBecaId),
+            "expedient_code": f"BECA-{_clean(row.CodigoPeriodo)}",
+            "status": _clean(row.EstadoExpedienteCodigo) or _clean(row.EstadoCodigo),
+            "base_origin": "INTEC_FINANZAS_INSTITUCIONAL",
+            "schema_origin": "bec",
+            "table_origin": "ContratoBeca",
+            "period_code": _clean(row.CodigoPeriodo),
+            "period_name": _clean(row.Periodo) or _clean(row.CodigoPeriodo),
+            "reference": _clean(row.NumeroContrato),
+            "document_types": [dict(item) for item in _SCHOLARSHIP_DOCUMENT_TYPES],
+            "upload_enabled": False,
+            "upload_message": "Cargue el contrato firmado desde Becas > Contratos de beca.",
+        }
+        for row in rows
+        if _clean(row.CodigoPeriodo)
+    ]
+
+
 def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     expedients: list[dict[str, Any]] = []
     document = profile["identification"]
@@ -332,6 +398,7 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     except (RuntimeError, pyodbc.Error):
         pass
 
+    expedients.extend(_scholarship_expedients(profile))
     expedients.append(_invoice_expedient(profile))
     return expedients
 

@@ -202,6 +202,7 @@ export function MoodleGradeAlertsPanel() {
 
   useEffect(() => {
     if (!selectedAlert && !courseIssuesOpen) return undefined
+    const previousOverflow = document.body.style.overflow
     const closeWithEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (selectedAlert) {
@@ -216,8 +217,12 @@ export function MoodleGradeAlertsPanel() {
       setCourseIssueSearch('')
       setCourseIssuePage(1)
     }
+    document.body.style.overflow = 'hidden'
     window.addEventListener('keydown', closeWithEscape)
-    return () => window.removeEventListener('keydown', closeWithEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeWithEscape)
+    }
   }, [courseIssuesOpen, selectedAlert, selectedCourseIssue])
 
   const visibleItems = useMemo(() => {
@@ -429,20 +434,20 @@ export function MoodleGradeAlertsPanel() {
               <tbody>
                 {paginatedItems.map((item) => (
                   <tr key={item.id}>
-                    <td>
+                    <td data-label="Estudiante">
                       <strong>{item.student || 'Estudiante sin nombre'}</strong>
                       <small>{item.identity || 'Sin identificación'} · {item.email || 'Sin correo institucional'}</small>
                     </td>
-                    <td>
+                    <td data-label="Asignatura y carrera">
                       <strong>{item.matter || item.course || 'Asignatura sin nombre'}</strong>
                       <small>{item.course_code || 'Sin código'} · {item.career || 'Sin carrera'}</small>
                     </td>
-                    <td>
+                    <td data-label="Período">
                       <strong>{item.period || `Período ${item.period_code}`}</strong>
                       <small>Tipo {item.type || '-'} · Paralelo {item.parallel || '-'}</small>
                     </td>
-                    <td>{item.teacher || 'Sin docente asignado'}</td>
-                    <td>
+                    <td data-label="Docente responsable">{item.teacher || 'Sin docente asignado'}</td>
+                    <td data-label="Estado">
                       <span className={`moodle-grade-alert-badge moodle-grade-alert-badge--${item.kind.toLocaleLowerCase('es-EC')}`}>
                         {kindLabel(item.kind)}
                       </span>
@@ -453,10 +458,11 @@ export function MoodleGradeAlertsPanel() {
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Acción" className="moodle-grade-alert-action-cell">
                       <button
                         type="button"
                         className="moodle-button moodle-grade-alert-detail-button"
+                        aria-label={`Ver detalle de ${item.student || 'estudiante'}`}
                         onClick={() => setSelectedAlert(item)}
                       >
                         Ver detalle
@@ -550,7 +556,12 @@ export function MoodleGradeAlertsPanel() {
                   {selectedCourseIssue ? 'Detalle del curso no verificado' : 'Cursos no verificados'}
                 </h2>
               </div>
-              <button type="button" className="moodle-button" onClick={closeCourseIssues}>
+              <button
+                type="button"
+                className="moodle-button moodle-dialog-close"
+                aria-label="Cerrar cursos no verificados"
+                onClick={closeCourseIssues}
+              >
                 Cerrar
               </button>
             </header>
@@ -615,20 +626,20 @@ export function MoodleGradeAlertsPanel() {
                         <tbody>
                           {selectedCourseIssue.relatedAlerts.map((item) => (
                             <tr key={item.id}>
-                              <td>
+                              <td data-label="Estudiante">
                                 <strong>{item.student || 'Estudiante sin nombre'}</strong>
                                 <small>{item.identity || 'Sin identificación'}</small>
                               </td>
-                              <td>
+                              <td data-label="Asignatura y carrera">
                                 <strong>{item.matter || 'Sin asignatura'}</strong>
                                 <small>{item.career || 'Sin carrera'}</small>
                               </td>
-                              <td>
+                              <td data-label="Período">
                                 <strong>{item.period || item.period_code || 'Sin período'}</strong>
                                 <small>Tipo {item.type || '-'} · Paralelo {item.parallel || '-'}</small>
                               </td>
-                              <td>{item.teacher || 'Sin docente asignado'}</td>
-                              <td>{item.message || selectedCourseIssue.message}</td>
+                              <td data-label="Docente">{item.teacher || 'Sin docente asignado'}</td>
+                              <td data-label="Incidencia">{item.message || selectedCourseIssue.message}</td>
                             </tr>
                           ))}
                           {selectedCourseIssue.relatedAlerts.length === 0 && (
@@ -679,24 +690,25 @@ export function MoodleGradeAlertsPanel() {
                       <tbody>
                         {paginatedCourseIssues.map((issue, index) => (
                           <tr key={issue.key}>
-                            <td>{(currentCourseIssuePage - 1) * COURSE_ERROR_PAGE_SIZE + index + 1}</td>
-                            <td>
+                            <td data-label="#">{(currentCourseIssuePage - 1) * COURSE_ERROR_PAGE_SIZE + index + 1}</td>
+                            <td data-label="Curso Moodle">
                               <strong>{issue.course}</strong>
                               <small>ID {issue.course_id}</small>
                             </td>
-                            <td>
+                            <td data-label="Relación académica">
                               <strong>{issue.matters.join(', ') || 'Sin asignatura relacionada'}</strong>
                               <small>{issue.courseCodes.join(', ') || 'Sin código académico'}</small>
                             </td>
-                            <td>{issue.period_codes.join(', ') || 'Sin período'}</td>
-                            <td className="moodle-grade-course-issues-table__message">{issue.message}</td>
-                            <td>
+                            <td data-label="Período(s)">{issue.period_codes.join(', ') || 'Sin período'}</td>
+                            <td data-label="Motivo" className="moodle-grade-course-issues-table__message">{issue.message}</td>
+                            <td data-label="Acción" className="moodle-grade-alert-action-cell">
                               <button
                                 type="button"
                                 className="moodle-button moodle-grade-course-issues-table__detail"
+                                aria-label={`Ver detalle de ${issue.course}`}
                                 onClick={() => setSelectedCourseIssue(issue)}
                               >
-                                Detalle
+                                Ver detalle
                               </button>
                             </td>
                           </tr>
@@ -742,16 +754,13 @@ export function MoodleGradeAlertsPanel() {
               )}
             </div>
 
-            <footer className="moodle-confirm-dialog__actions">
-              {selectedCourseIssue && (
+            {selectedCourseIssue && (
+              <footer className="moodle-confirm-dialog__actions">
                 <button type="button" className="moodle-button" onClick={() => setSelectedCourseIssue(null)}>
                   Volver al listado
                 </button>
-              )}
-              <button type="button" className="moodle-button moodle-button--primary" onClick={closeCourseIssues}>
-                Cerrar subpantalla
-              </button>
-            </footer>
+              </footer>
+            )}
           </section>
         </div>
       )}
@@ -775,7 +784,12 @@ export function MoodleGradeAlertsPanel() {
                 <span>Detalle de calificaciones</span>
                 <h2 id="moodle-grade-alert-detail-title">{selectedAlert.student || 'Estudiante sin nombre'}</h2>
               </div>
-              <button type="button" className="moodle-button" onClick={() => setSelectedAlert(null)}>
+              <button
+                type="button"
+                className="moodle-button moodle-dialog-close"
+                aria-label="Cerrar detalle de calificaciones"
+                onClick={() => setSelectedAlert(null)}
+              >
                 Cerrar
               </button>
             </header>
@@ -867,19 +881,19 @@ export function MoodleGradeAlertsPanel() {
                     <tbody>
                       {selectedAlert.component_details.map((component) => (
                         <tr key={component.field}>
-                          <td>
+                          <td data-label="Componente">
                             <strong>{componentLabel(component.field)}</strong>
                             <small>{component.component || component.field}</small>
                           </td>
-                          <td>
+                          <td data-label="INTECBDD">
                             <strong>{formatGrade(component.academic_grade)}</strong>
                             <small>{component.academic_registered ? 'Registrada' : 'Sin nota'}</small>
                           </td>
-                          <td>
+                          <td data-label="Moodle / 10">
                             <strong>{formatGrade(component.moodle_grade)}</strong>
                             <small>{component.moodle_registered ? 'Normalizada' : 'Sin nota'}</small>
                           </td>
-                          <td>
+                          <td data-label="Validación de escala">
                             <strong>Sobre 10</strong>
                             <small>
                               {component.moodle_grade_scale_source === 'gradeformatted_direct_10'
@@ -887,7 +901,7 @@ export function MoodleGradeAlertsPanel() {
                                 : `Normalizada desde el rango ${formatGrade(component.moodle_grade_min)} a ${formatGrade(component.moodle_grade_max)}`}
                             </small>
                           </td>
-                          <td>
+                          <td data-label="Actividad de Moodle">
                             <strong>{component.moodle_grade_item || 'Sin actividad identificada'}</strong>
                             <small>
                               {component.moodle_grade_item_count > 1
@@ -898,7 +912,7 @@ export function MoodleGradeAlertsPanel() {
                               <small>{component.moodle_grade_items.join(', ')}</small>
                             )}
                           </td>
-                          <td>
+                          <td data-label="Validación">
                             <strong>{componentStatusLabel(component)}</strong>
                             {component.reason && <small>{component.reason}</small>}
                             {component.previous_synced_grade != null && (

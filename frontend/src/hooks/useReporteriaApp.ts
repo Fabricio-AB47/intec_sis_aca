@@ -204,7 +204,7 @@ function preinscriptionStage(stage: string | null): PreinscriptionStage {
   const value = stage || ''
   return [
     'registro', 'inscritos', 'cabecera', 'documentos', 'materias',
-    'seguimiento', 'gestion-becas', 'becas', 'becados',
+    'seguimiento', 'gestion-becas', 'becas', 'becados', 'contratos-becas',
   ].includes(value)
     ? value as PreinscriptionStage
     : 'registro'
@@ -1160,6 +1160,7 @@ export function useReporteriaApp() {
       void loadCatalog()
     }
   }
+  const openMoodleTeamsPage = () => activateAssignedScreen('moodle-teams')
   const openMatriculaPage = async () => {
     if (!activateAssignedScreen('matricula')) return
     await loadAcademicMatriculaSummary()
@@ -1378,6 +1379,7 @@ export function useReporteriaApp() {
     openInformeCumplimientoPage,
     openMoodlePage,
     openTeamsMatriculaPage,
+    openMoodleTeamsPage,
     openMatriculaPage,
     openMatriculaAcadPage,
     openMatriculaDocentePage,

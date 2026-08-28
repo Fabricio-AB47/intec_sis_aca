@@ -1,0 +1,71 @@
+name: Seguridad de aplicación
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend, pruebas y dependencias
+    runs-on: ubuntu-latest
+    env:
+      DB_NAME: INTECBDD_TEST
+      DB_USER: test_user
+      DB_PASSWORD: test_password_not_used
+      DB_HOST: localhost
+      SESSION_SECRET: ci-session-secret-with-more-than-thirty-two-characters
+      AUTH_LEGACY_PLAINTEXT_ENABLED: "false"
+    steps:
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          grep -v '^pywin32==' backend/requirements.txt > /tmp/requirements-ci.txt
+          python -m pip install --upgrade pip
+          python -m pip install -r /tmp/requirements-ci.txt pip-audit
+
+      - name: Auditar dependencias Python
+        run: python -m pip_audit -r /tmp/requirements-ci.txt --strict
+
+      - name: Ejecutar pruebas
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  frontend:
+    name: Frontend, construcción y dependencias
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+
+      - name: Auditar dependencias Node.js
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: Validar y construir
+        working-directory: frontend
+        run: npm run build

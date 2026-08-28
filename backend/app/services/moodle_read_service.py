@@ -1133,8 +1133,30 @@ class MoodleReadService:
         lastname = _as_text(item.get("lastname"))
         fullname = _as_text(item.get("fullname")) or f"{firstname} {lastname}".strip()
         suspended = _as_bool(item.get("suspended"))
-        confirmed = _as_bool(item.get("confirmed"))
+        confirmed = _as_bool(item.get("confirmed", True))
         status = "SUSPENDIDO" if suspended else ("ACTIVO" if confirmed else "NO_CONFIRMADO")
+        raw_roles = item.get("roles")
+        roles: list[dict[str, Any]] = []
+        if isinstance(raw_roles, list):
+            for raw_role in raw_roles:
+                if not isinstance(raw_role, dict):
+                    continue
+                role = {
+                    "roleid": _as_int(raw_role.get("roleid") or raw_role.get("id")),
+                    "name": _as_text(raw_role.get("name")),
+                    "shortname": _as_text(raw_role.get("shortname")),
+                    "sortorder": _as_int(raw_role.get("sortorder")),
+                }
+                if role["roleid"] or role["name"] or role["shortname"]:
+                    roles.append(role)
+
+        role_shortnames = sorted(
+            {
+                _as_text(role.get("shortname")).casefold()
+                for role in roles
+                if _as_text(role.get("shortname"))
+            }
+        )
         return {
             "id": _as_int(item.get("id")),
             "username": _as_text(item.get("username")),
@@ -1151,6 +1173,8 @@ class MoodleReadService:
             "firstaccess": _as_int(item.get("firstaccess")),
             "lastaccess": _as_int(item.get("lastaccess")),
             "profileimageurlsmall": _as_text(item.get("profileimageurlsmall")),
+            "roles": roles,
+            "role_shortnames": role_shortnames,
             "status": status,
         }
 

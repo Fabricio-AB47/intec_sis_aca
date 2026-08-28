@@ -17,6 +17,10 @@ export default defineConfig(({ mode }) => {
   return {
     base: './',
     cacheDir: 'node_modules/.vite',
+    // Vite 8.1 can leave this client constant unresolved and stop the app before React mounts.
+    define: {
+      __BUNDLED_DEV__: 'false',
+    },
     plugins: [react()],
     optimizeDeps: {
       include: optimizedDependencies,

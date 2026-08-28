@@ -37,6 +37,7 @@ class GraphDocumentPathTests(unittest.TestCase):
 
     def test_separates_each_supported_module(self) -> None:
         expected_folders = {
+            "BECAS": "BECAS",
             "INGLES": "IDIOMAS",
             "TITULACION": "TITULACION",
             "PRACTICAS": "PRACTICAS PREPROFESIONALES",

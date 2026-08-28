@@ -64,6 +64,7 @@ export type Page =
   | 'sistema-academico'
   | 'teams'
   | 'teams-matricula'
+  | 'moodle-teams'
   | 'historico-integraciones'
   | 'informe-cumplimiento'
   | 'moodle'
@@ -1092,7 +1093,7 @@ export type DocumentExpedientFinalizeResponse = {
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type MoodleSection = 'alerts' | 'status' | 'users' | 'courses' | 'resources' | 'grades'
-export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
+export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'contratos-becas' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
 export type TeacherEvaluationFlow = 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente' | 'academico_docente'
@@ -1822,6 +1823,8 @@ export type TeacherEvaluationTeacherResponse = {
 export type TeacherEvaluationIdentityResponse = {
   cedula: string
   roles: Array<'student' | 'teacher' | 'authority'>
+  access_token: string
+  access_token_expires_minutes: number
   student: TeacherEvaluationStudentResponse['student'] | null
   teacher: TeacherEvaluationTeacherResponse['teacher'] | null
   authority?: TeacherEvaluationAuthority | null
@@ -3992,6 +3995,8 @@ export type AcademicEnrollmentCatalogResponse = {
   carreras?: AcademicCareerOption[]
   periodos?: AcademicPeriodOption[]
   jornadas?: PreinscriptionProcessOption[]
+  paralelos?: AcademicTeacherParallelOption[]
+  niveles_materia?: number[]
   tipos_matricula?: AcademicEnrollmentTypeOption[]
   detail?: string
 }
@@ -4771,6 +4776,36 @@ export type AcademicTeacherUniqueEnrollmentPayload = {
   codigos_estudiantes?: number[]
 }
 
+export type AcademicTeacherPeriodEnrollmentPayload = {
+  codigo_periodo: number
+  paralelo: string
+  codigos_estudiantes?: number[]
+}
+
+export type AcademicTeacherMultiEnrollmentPayload = {
+  codigo_doc: number
+  cod_materia: string
+  periodos: AcademicTeacherPeriodEnrollmentPayload[]
+  semestre?: number | null
+  cod_jornada: number
+  estado_moodle_doc: number
+  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+}
+
+export type AcademicTeacherSubjectEnrollmentPayload = {
+  cod_materia: string
+  periodos: AcademicTeacherPeriodEnrollmentPayload[]
+  semestre?: number | null
+}
+
+export type AcademicTeacherMultiSubjectEnrollmentPayload = {
+  codigo_doc: number
+  materias: AcademicTeacherSubjectEnrollmentPayload[]
+  cod_jornada: number
+  estado_moodle_doc: number
+  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+}
+
 export type AcademicTeacherEnrollmentSaveResponse = {
   ok?: boolean
   message?: string
@@ -4789,9 +4824,110 @@ export type AcademicTeacherEnrollmentSaveResponse = {
     codigo_materia?: string
     nombre_materia?: string
     nombre_carrera?: string
+    codigo_periodo?: string
+    paralelo?: string
     students_linked?: number
   }>
-  criteria?: AcademicTeacherEnrollmentPayload | AcademicTeacherUniqueEnrollmentPayload
+  period_results?: Array<{
+    codigo_periodo?: string
+    paralelo?: string
+    inserted_count?: number
+    updated_count?: number
+    existing_count?: number
+    students_linked?: number
+  }>
+  subject_results?: Array<{
+    cod_materia?: string
+    semestre?: number | null
+    period_results?: Array<{
+      codigo_periodo?: string
+      paralelo?: string
+      inserted_count?: number
+      updated_count?: number
+      existing_count?: number
+      students_linked?: number
+    }>
+  }>
+  criteria?:
+    | AcademicTeacherEnrollmentPayload
+    | AcademicTeacherUniqueEnrollmentPayload
+    | AcademicTeacherMultiEnrollmentPayload
+    | AcademicTeacherMultiSubjectEnrollmentPayload
+  detail?: string
+}
+
+export type ScholarshipContractCandidateItem = ScholarshipBeneficiaryItem & {
+  contratos_generados: number
+  ultimo_contrato_id: number
+  ultima_generacion: string
+}
+
+export type ScholarshipContractPeriodOption = {
+  codigo_periodo: string
+  periodo: string
+  total: number
+}
+
+export type ScholarshipContractCandidateListResponse = {
+  ok?: boolean
+  items: ScholarshipContractCandidateItem[]
+  total: number
+  tipos_beca: string[]
+  periodos: ScholarshipContractPeriodOption[]
+  criteria?: {
+    query?: string
+    tipo_beca?: string
+    codigo_periodo?: string
+    estado_estudiante?: string
+  }
+  detail?: string
+}
+
+export type ScholarshipContractHistoryItem = {
+  contrato_id: number
+  beca_id: number
+  origen: string
+  codigo_estud: string
+  cedula: string
+  estudiante: string
+  codigo_carrera: string
+  carrera: string
+  codigo_periodo: string
+  periodo: string
+  tipo_beca: string
+  porcentaje_beca: number
+  valor_beca: number
+  numero_contrato: string
+  fecha_contrato: string
+  nombre_archivo: string
+  hash_sha256: string
+  estado: string
+  usuario_generacion: string
+  fecha_generacion: string
+  expediente_documento_id: number | null
+  expediente_url: string
+  nombre_archivo_firmado: string
+  hash_firmado: string
+  estado_expediente: string
+  usuario_carga_expediente: string
+  fecha_carga_expediente: string
+}
+
+export type ScholarshipContractHistoryResponse = {
+  ok?: boolean
+  items: ScholarshipContractHistoryItem[]
+  total: number
+  detail?: string
+}
+
+export type ScholarshipContractUploadResponse = {
+  ok?: boolean
+  contrato_id: number
+  numero_contrato: string
+  expediente_documento_id: number
+  expediente_url: string
+  nombre_archivo: string
+  estado_expediente: string
   detail?: string
 }
 
@@ -5983,4 +6119,77 @@ export type TeamMassEnrollmentResponse = {
   source?: string
   manual_email_count?: number
   items?: TeamMassEnrollmentCandidate[]
+}
+
+export type MoodleTeamsParticipantRole = 'administrator' | 'teacher' | 'student' | 'ignored'
+
+export type MoodleTeamsParticipant = {
+  moodle_user_id: number
+  full_name: string
+  email: string
+  moodle_username: string
+  moodle_roles: string[]
+  role: MoodleTeamsParticipantRole
+  fixed_administrator: boolean
+  graph_user_id?: string | null
+  graph_display_name?: string | null
+  graph_mail?: string | null
+  graph_user_principal_name?: string | null
+  graph_account_enabled?: boolean | null
+  graph_user_type?: string | null
+  status: string
+  status_label: string
+  reason?: string
+  error?: string
+}
+
+export type MoodleTeamsPreviewResponse = {
+  course: {
+    id: number
+    fullname: string
+    shortname: string
+    idnumber: string
+  }
+  team: {
+    id?: string | null
+    display_name: string
+    exists: boolean
+    web_url?: string | null
+    creation_action: 'create' | 'synchronize'
+    template: 'educationClass'
+  }
+  owners: MoodleTeamsParticipant[]
+  students: MoodleTeamsParticipant[]
+  ignored: MoodleTeamsParticipant[]
+  summary: {
+    moodle_user_count: number
+    moodle_teacher_count: number
+    owner_count: number
+    student_count: number
+    student_ready_count: number
+    student_existing_count: number
+    student_unresolved_count: number
+    ignored_count: number
+    selected_student_count?: number
+    selected_ready_count?: number
+    selected_existing_count?: number
+  }
+  fixed_administrator: string
+  warnings: string[]
+  blocking_reasons: string[]
+  can_execute: boolean
+}
+
+export type MoodleTeamsEnrollmentResponse = {
+  ok: boolean
+  message: string
+  course: MoodleTeamsPreviewResponse['course']
+  team: MoodleTeamsPreviewResponse['team'] & {
+    already_existed?: boolean
+    created_new?: boolean
+  }
+  owners: MoodleTeamsParticipant[]
+  creation?: TeamsActionResponse & Record<string, unknown>
+  enrollment?: TeamMassEnrollmentResponse
+  warnings: string[]
 }

@@ -1,4 +1,6 @@
-from pydantic import AliasChoices, Field, SecretStr
+from urllib.parse import urlparse
+
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +19,25 @@ class Settings(BaseSettings):
     db_driver: str = "ODBC Driver 18 for SQL Server"
     db_encrypt: str = "no"
     db_trust_cert: str = "yes"
+
+    app_environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("APP_ENVIRONMENT", "ENVIRONMENT"),
+    )
+    api_docs_enabled: bool = True
+    expose_internal_errors: bool = False
+    security_headers_enabled: bool = True
+    security_hsts_enabled: bool = False
+    csrf_protection_enabled: bool = True
+    csrf_require_origin: bool = False
+    trusted_hosts: str = "*"
+    max_request_body_bytes: int = Field(default=2_200_000_000, ge=1_048_576, le=2_500_000_000)
+    jwt_issuer: str = "intec-sis-aca"
+    jwt_audience: str = "intec-sis-aca-web"
+    login_rate_limit_attempts: int = Field(default=5, ge=1, le=50)
+    login_rate_limit_window_seconds: int = Field(default=300, ge=30, le=3600)
+    login_rate_limit_lockout_seconds: int = Field(default=900, ge=30, le=86400)
+    evaluation_lookup_rate_limit: int = Field(default=30, ge=1, le=300)
 
     eval_db_name: str | None = Field(default=None, validation_alias=AliasChoices("DB_NAME1", "B_NAME1"))
     eval_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER1"))
@@ -202,25 +223,132 @@ class Settings(BaseSettings):
 
     session_secret: str | None = Field(default=None, repr=False)
     session_cookie_name: str = "reporteria_session"
-    session_expire_minutes: int = 480
+    session_expire_minutes: int = Field(default=480, ge=5, le=1440)
     session_cookie_secure: bool = False
     session_cookie_samesite: str = "lax"
     auth_legacy_plaintext_enabled: bool = True
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+    cors_allowed_headers: str = (
+        "Accept,Accept-Language,Authorization,Content-Language,Content-Type,"
+        "If-Modified-Since,If-None-Match,Range,X-Evaluation-Token,X-Request-ID,X-Requested-With"
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
+    def cors_allowed_headers_list(self) -> list[str]:
+        return [header.strip() for header in self.cors_allowed_headers.split(",") if header.strip()]
+
+    @property
+    def trusted_hosts_list(self) -> list[str]:
+        return [host.strip() for host in self.trusted_hosts.split(",") if host.strip()] or ["*"]
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_environment.strip().lower() in {"production", "produccion", "prod"}
+
+    @property
     def signing_secret(self) -> str:
-        secret = self.session_secret or self.client_secret
+        secret = self.session_secret
+        if not secret and not self.is_production:
+            secret = self.client_secret
         if not secret:
             raise RuntimeError(
-                'Debe definir SESSION_SECRET o CLIENT_SECRET para firmar la sesión'
+                'Debe definir SESSION_SECRET para firmar la sesión'
             )
         return secret
+
+    @model_validator(mode="after")
+    def validate_security_configuration(self) -> "Settings":
+        same_site = self.session_cookie_samesite.strip().lower()
+        if same_site not in {"lax", "strict", "none"}:
+            raise ValueError("SESSION_COOKIE_SAMESITE debe ser lax, strict o none")
+        self.session_cookie_samesite = same_site
+        if same_site == "none" and not self.session_cookie_secure:
+            raise ValueError("SESSION_COOKIE_SECURE debe estar habilitado cuando SameSite=None")
+
+        if not self.is_production:
+            return self
+
+        errors: list[str] = []
+        if not self.session_secret or len(self.session_secret) < 32:
+            errors.append("SESSION_SECRET debe contener al menos 32 caracteres")
+        if not self.session_cookie_secure:
+            errors.append("SESSION_COOKIE_SECURE debe estar habilitado")
+        if self.auth_legacy_plaintext_enabled:
+            errors.append("AUTH_LEGACY_PLAINTEXT_ENABLED debe estar deshabilitado")
+        if not self.security_headers_enabled:
+            errors.append("SECURITY_HEADERS_ENABLED debe estar habilitado")
+        if not self.csrf_protection_enabled or not self.csrf_require_origin:
+            errors.append("CSRF_PROTECTION_ENABLED y CSRF_REQUIRE_ORIGIN deben estar habilitados")
+        if self.expose_internal_errors:
+            errors.append("EXPOSE_INTERNAL_ERRORS debe estar deshabilitado")
+
+        encrypted_values = {"yes", "true", "mandatory", "strict"}
+        trusted_values = {"yes", "true", "1"}
+        database_transports = (
+            ("DB", self.db_driver, self.db_encrypt, self.db_trust_cert),
+            ("DB1", self.eval_db_driver, self.eval_db_encrypt, self.eval_db_trust_cert),
+            ("DB2", self.practices_db_driver, self.practices_db_encrypt, self.practices_db_trust_cert),
+            ("DB3", self.titulation_db_driver, self.titulation_db_encrypt, self.titulation_db_trust_cert),
+            ("DB4", self.teams_db_driver, self.teams_db_encrypt, self.teams_db_trust_cert),
+            ("EXPEDIENT_DB", self.expedient_db_driver, self.expedient_db_encrypt, self.expedient_db_trust_cert),
+            ("FINANCE_DB", self.finance_db_driver, self.finance_db_encrypt, self.finance_db_trust_cert),
+            ("GRAPH_DB", self.graph_db_driver, self.graph_db_encrypt, self.graph_db_trust_cert),
+            (
+                "INTEGRATION_CONTROL_DB",
+                self.integration_control_db_driver,
+                self.integration_control_db_encrypt,
+                self.integration_control_db_trust_cert,
+            ),
+        )
+        for label, driver, encrypt, trust_cert in database_transports:
+            effective_driver = (driver or self.db_driver).strip().lower()
+            effective_encrypt = (encrypt or self.db_encrypt).strip().lower()
+            effective_trust = (trust_cert or self.db_trust_cert).strip().lower()
+            if effective_driver == "sql server":
+                errors.append(f"{label}_DRIVER debe usar ODBC Driver 17 o 18 para SQL Server")
+            if effective_encrypt not in encrypted_values:
+                errors.append(f"{label}_ENCRYPT debe exigir cifrado")
+            if effective_trust in trusted_values:
+                errors.append(f"{label}_TRUST_CERT debe estar deshabilitado")
+        if not self.moodle_verify_tls:
+            errors.append("MOODLE_VERIFY_TLS debe estar habilitado")
+        if urlparse(self.moodle_base_url).scheme != "https":
+            errors.append("MOODLE_BASE_URL debe usar HTTPS")
+        if not self.security_hsts_enabled:
+            errors.append("SECURITY_HSTS_ENABLED debe estar habilitado")
+        if self.api_docs_enabled:
+            errors.append("API_DOCS_ENABLED debe estar deshabilitado")
+        if "*" in self.trusted_hosts_list:
+            errors.append("TRUSTED_HOSTS no puede usar comodines")
+
+        for origin in self.cors_origins_list:
+            parsed = urlparse(origin)
+            if origin == "*" or parsed.scheme != "https":
+                errors.append("CORS_ORIGINS debe contener únicamente orígenes HTTPS explícitos")
+                break
+        if not self.cors_allowed_headers_list or "*" in self.cors_allowed_headers_list:
+            errors.append("CORS_ALLOWED_HEADERS debe declarar cabeceras explícitas")
+
+        frontend = urlparse(self.frontend_base_url)
+        if frontend.scheme != "https":
+            errors.append("FRONTEND_BASE_URL debe usar HTTPS")
+
+        graph_redirect = urlparse(self.graph_delegate_redirect_uri)
+        if self.graph_delegate_redirect_uri and graph_redirect.scheme != "https":
+            errors.append("GRAPH_DELEGATE_REDIRECT_URI debe usar HTTPS")
+        if self.smtp_host and not self.smtp_use_tls:
+            errors.append("SMTP_USE_TLS debe estar habilitado cuando SMTP está configurado")
+        if not self.jwt_issuer.strip() or not self.jwt_audience.strip():
+            errors.append("JWT_ISSUER y JWT_AUDIENCE no pueden estar vacíos")
+
+        if errors:
+            raise ValueError("Configuración de producción insegura: " + "; ".join(errors))
+        return self
 
 
 def get_settings() -> Settings:

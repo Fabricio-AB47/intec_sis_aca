@@ -729,17 +729,17 @@ SECTIONS: dict[str, dict[str, Any]] = {
     "docente_materias": {
         "title": 'Asignación docente',
         "category": "Docencia",
-        "description": 'Relaciones docente, carrera, materia, período, jornada y paralelo.',
+        "description": 'Docentes asignados a cada carrera, materia, período, jornada y paralelo.',
         "table": "[dbo].[CARRERAXDOCENTE]",
         "key_fields": ["codigo_doc", "codigo_materia", "Paralelo", "codigo_periodo", "Cod_Jornada"],
         "list_fields": fields(
-            ("codigo_doc", "Docente", "number"),
-            ("cod_Anio_Basica", "Carrera", "number"),
-            ("codigo_materia", "Materia", "number"),
-            ("codigo_periodo", 'Período', "number"),
+            ("docente_nombre", "Docente"),
+            ("carrera_nombre", "Carrera"),
+            ("materia_nombre", "Materia"),
+            ("periodo_nombre", 'Período'),
             ("Paralelo", "Paralelo"),
-            ("Cod_Jornada", "Jornada", "number"),
-            ("estadoMoodleDoc", "Moodle", "bool"),
+            ("jornada_nombre", "Jornada"),
+            ("estadoMoodleDoc", "Vinculación Moodle", "bool"),
         ),
         "detail_fields": fields(
             ("codigo_doc", "Docente", "number"),
@@ -1191,38 +1191,10 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "search_fields": ["NumM", "DetalleM"],
         "order_by": "DetalleM",
     },
-    "menu_general": {
-        "title": "Mapa operativo SisAcademicoV1",
-        "category": "Seguridad",
-        "description": "Mapa funcional de procesos clonados desde SisAcademicoV1. La tabla heredada queda como respaldo técnico.",
-        "table": "[dbo].[MENU_GENERAL]",
-        "key_fields": ["ID", "idGrupo", "idOpcion"],
-        "list_fields": fields(
-            ("ID", "Id", "number"),
-            ("idGrupo", "Grupo id", "number"),
-            ("Grupo", "Grupo"),
-            ("idOpcion", 'Opción id', "number"),
-            ("Opcion", 'Opción'),
-            ("url", "URL"),
-            ("ReporteCry", "Reporte", "number"),
-        ),
-        "detail_fields": fields(
-            ("ID", "Id", "number"),
-            ("idGrupo", "Grupo id", "number"),
-            ("Grupo", "Grupo"),
-            ("idOpcion", 'Opción id', "number"),
-            ("Opcion", 'Opción'),
-            ("url", "URL"),
-            ("ReporteCry", "Reporte", "number"),
-        ),
-        "editable_fields": fields(("Grupo", "Grupo"), ("Opcion", 'Opción'), ("url", "URL"), ("ReporteCry", "Reporte", "number")),
-        "search_fields": ["ID", "idGrupo", "Grupo", "idOpcion", "Opcion", "url"],
-        "order_by": "idGrupo, idOpcion",
-    },
     "menu_usuarios": {
-        "title": "Accesos operativos por usuario",
+        "title": "Accesos operativos",
         "category": "Seguridad",
-        "description": "Mapa funcional de accesos por perfil. La tabla MENU_USUARIOS queda como respaldo técnico.",
+        "description": "Accesos por perfil y navegación a los módulos disponibles. La tabla MENU_USUARIOS queda como respaldo técnico.",
         "table": "[dbo].[MENU_USUARIOS]",
         "key_fields": ["id_usuarios", "idGrupo", "idOpcion"],
         "list_fields": fields(
@@ -2544,6 +2516,96 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
             """,
         ],
     },
+    "docente_materias": {
+        "codigo_doc": [
+            """
+            SELECT TOP (2000)
+                TRY_CONVERT(nvarchar(100), codigo_doc) AS option_value,
+                CONCAT(
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), apellidos_nombre))), N''),
+                        N'Docente sin nombre'
+                    ),
+                    CASE
+                        WHEN NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), cedula_doc))), N'') IS NULL THEN N''
+                        ELSE CONCAT(N' · Cédula ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), cedula_doc))))
+                    END,
+                    N' · Código ',
+                    TRY_CONVERT(nvarchar(100), codigo_doc)
+                ) AS option_label
+            FROM dbo.DATOSDOCENTE
+            WHERE codigo_doc IS NOT NULL
+            ORDER BY apellidos_nombre, codigo_doc
+            """,
+        ],
+        "cod_Anio_Basica": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(
+                    COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre_Basica))), N''), N'Carrera sin nombre'),
+                    N' · Código ',
+                    TRY_CONVERT(nvarchar(100), Cod_AnioBasica)
+                ) AS option_label
+            FROM dbo.CARRERAS
+            WHERE Cod_AnioBasica IS NOT NULL
+            ORDER BY Nombre_Basica, Cod_AnioBasica
+            """,
+        ],
+        "codigo_materia": [
+            """
+            SELECT TOP (2000)
+                TRY_CONVERT(nvarchar(100), p.codigo_materia) AS option_value,
+                CONCAT(
+                    COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), p.Nomb_Materia))), N''), N'Materia sin nombre'),
+                    CASE
+                        WHEN NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), p.cod_materia))), N'') IS NULL THEN N''
+                        ELSE CONCAT(N' · Código ', LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), p.cod_materia))))
+                    END,
+                    N' · Carrera ',
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), c.Nombre_Basica))), N''),
+                        TRY_CONVERT(nvarchar(100), p.Cod_AnioBasica)
+                    ),
+                    N' · Interno ',
+                    TRY_CONVERT(nvarchar(100), p.codigo_materia)
+                ) AS option_label
+            FROM dbo.PENSUM p
+            LEFT JOIN dbo.CARRERAS c
+              ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, p.Cod_AnioBasica)
+            WHERE p.codigo_materia IS NOT NULL
+            ORDER BY p.Nomb_Materia, p.codigo_materia
+            """,
+        ],
+        "codigo_periodo": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), cod_periodo) AS option_value,
+                CONCAT(
+                    COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Detalle_Periodo))), N''), N'Período sin nombre'),
+                    N' · Código ',
+                    TRY_CONVERT(nvarchar(100), cod_periodo)
+                ) AS option_label
+            FROM dbo.PERIODO
+            WHERE cod_periodo IS NOT NULL
+            ORDER BY TRY_CONVERT(int, cod_periodo) DESC
+            """,
+        ],
+        "Cod_Jornada": [
+            """
+            SELECT TOP (100)
+                TRY_CONVERT(nvarchar(100), NumJ) AS option_value,
+                CONCAT(
+                    COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), DetalleJ))), N''), N'Jornada sin nombre'),
+                    N' · Código ',
+                    TRY_CONVERT(nvarchar(100), NumJ)
+                ) AS option_label
+            FROM dbo.JORNADA
+            WHERE NumJ IS NOT NULL
+            ORDER BY DetalleJ, NumJ
+            """,
+        ],
+    },
     "materias": {
         "Cod_AnioBasica": [
             """
@@ -3682,6 +3744,113 @@ def _attach_student_identity(cursor: Any, rows: list[dict[str, Any]], section_ke
         row["estudiante_cedula"] = identity.get("estudiante_cedula") or ""
 
 
+def _list_docente_materias_records(
+    section: dict[str, Any],
+    query: str | None,
+) -> dict[str, Any]:
+    cleaned_query = str(query or "").strip()
+    search_expressions = [
+        "TRY_CONVERT(nvarchar(100), cxd.codigo_doc)",
+        "TRY_CONVERT(nvarchar(100), cxd.cod_Anio_Basica)",
+        "TRY_CONVERT(nvarchar(100), cxd.codigo_materia)",
+        "TRY_CONVERT(nvarchar(100), cxd.codigo_periodo)",
+        "TRY_CONVERT(nvarchar(100), cxd.Paralelo)",
+        "TRY_CONVERT(nvarchar(100), cxd.Cod_Jornada)",
+        "TRY_CONVERT(nvarchar(4000), d.apellidos_nombre)",
+        "TRY_CONVERT(nvarchar(100), d.cedula_doc)",
+        "TRY_CONVERT(nvarchar(255), d.correo)",
+        "TRY_CONVERT(nvarchar(255), c.Nombre_Basica)",
+        "TRY_CONVERT(nvarchar(255), materia.Nomb_Materia)",
+        "TRY_CONVERT(nvarchar(100), materia.cod_materia)",
+        "TRY_CONVERT(nvarchar(255), per.Detalle_Periodo)",
+        "TRY_CONVERT(nvarchar(255), j.DetalleJ)",
+    ]
+    params: list[Any] = []
+    where_sql = ""
+    if cleaned_query:
+        like = f"%{cleaned_query}%"
+        where_sql = "WHERE " + " OR ".join(f"{expression} LIKE ?" for expression in search_expressions)
+        params = [like] * len(search_expressions)
+
+    sql = f"""
+        SELECT
+            cxd.codigo_doc,
+            cxd.cod_Anio_Basica,
+            cxd.codigo_materia,
+            cxd.codigo_periodo,
+            cxd.Paralelo,
+            cxd.Cod_Jornada,
+            cxd.estadoMoodleDoc,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre))), N''),
+                CONCAT(N'Docente código ', TRY_CONVERT(nvarchar(100), cxd.codigo_doc))
+            ) AS docente_nombre,
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.cedula_doc))), N'') AS docente_cedula,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), c.Nombre_Basica))), N''),
+                CONCAT(N'Carrera código ', TRY_CONVERT(nvarchar(100), cxd.cod_Anio_Basica))
+            ) AS carrera_nombre,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), materia.Nomb_Materia))), N''),
+                CONCAT(N'Materia código ', TRY_CONVERT(nvarchar(100), cxd.codigo_materia))
+            ) AS materia_nombre,
+            NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), materia.cod_materia))), N'') AS materia_codigo_institucional,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), per.Detalle_Periodo))), N''),
+                CONCAT(N'Período código ', TRY_CONVERT(nvarchar(100), cxd.codigo_periodo))
+            ) AS periodo_nombre,
+            COALESCE(
+                NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), j.DetalleJ))), N''),
+                CONCAT(N'Jornada código ', TRY_CONVERT(nvarchar(100), cxd.Cod_Jornada))
+            ) AS jornada_nombre
+        FROM dbo.CARRERAXDOCENTE cxd
+        LEFT JOIN dbo.DATOSDOCENTE d
+          ON TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, cxd.codigo_doc)
+        LEFT JOIN dbo.CARRERAS c
+          ON TRY_CONVERT(int, c.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+        OUTER APPLY (
+            SELECT TOP (1)
+                p.Nomb_Materia,
+                p.cod_materia
+            FROM dbo.PENSUM p
+            WHERE TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
+            ORDER BY
+                CASE
+                    WHEN TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica) THEN 0
+                    ELSE 1
+                END,
+                TRY_CONVERT(int, p.Cod_AnioBasica)
+        ) materia
+        LEFT JOIN dbo.PERIODO per
+          ON TRY_CONVERT(int, per.cod_periodo) = TRY_CONVERT(int, cxd.codigo_periodo)
+        LEFT JOIN dbo.JORNADA j
+          ON TRY_CONVERT(int, j.NumJ) = TRY_CONVERT(int, cxd.Cod_Jornada)
+        {where_sql}
+        ORDER BY
+            TRY_CONVERT(int, cxd.codigo_periodo) DESC,
+            COALESCE(d.apellidos_nombre, N''),
+            COALESCE(materia.Nomb_Materia, N''),
+            cxd.Paralelo
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            rows = _rows_from_cursor(cursor, "docente_materias", section["key_fields"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudieron consultar las asignaciones docentes",
+        ) from exc
+
+    return {
+        "section": _section_meta("docente_materias", section).model_dump(),
+        "rows": rows,
+        "total": len(rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _encode_key(values: list[Any]) -> str:
     raw = json.dumps([_serialize_value(value) for value in values], separators=(",", ":"), ensure_ascii=False)
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
@@ -3801,7 +3970,7 @@ LEGACY_CLONE_MODULES: list[dict[str, Any]] = [
         "description": "Login, perfiles, accesos y menus heredados.",
         "source_paths": ["Default.aspx", "Index.aspx", "Cabecera.aspx", "cabeceras.aspx", "izquierda.aspx", "menus.aspx", "blanco.aspx", "MensajeError.aspx", "accesousuarios/"],
         "tables": ["USUARIOS", "USUARIO_SIS", "TIPO_USUARIO", "MENU_GENERAL", "MENU_TIPO_USU", "MENU_USUARIOS"],
-        "modern_sections": ["usuarios", "menu_usuarios", "menu_general"],
+        "modern_sections": ["usuarios", "menu_usuarios"],
         "modern_routes": ["auth.py", "sisacademico_admin.py"],
         "coverage": "base",
         "notes": 'El login WebForms no se copia; se conserva autenticación moderna y datos legacy administrables.',
@@ -4345,6 +4514,8 @@ def list_records(
         return _list_actualizacion_estudiantes_records(section, query, None, periodo)
     if section_key == "actualizacion_est":
         return _list_actualizacion_est_records(section, query, None)
+    if section_key == "docente_materias":
+        return _list_docente_materias_records(section, query)
     if section_key == "cambio_periodo_hr":
         return {
             "section": _section_meta(section_key, section).model_dump(),

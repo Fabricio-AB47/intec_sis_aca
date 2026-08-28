@@ -77,6 +77,7 @@ def _connect_with_fallback(
     encrypt: str,
     trust_cert: str,
 ) -> pyodbc.Connection:
+    settings = get_settings()
     connection_string = _build_connection_string(
         database=database,
         user=user,
@@ -97,11 +98,13 @@ def _connect_with_fallback(
             or "timeout error" in message
             or "unable to complete login process" in message
         )
-        fallback_drivers = (
-            ("SQL Server", "ODBC Driver 17 for SQL Server")
-            if is_login_timeout
-            else ("ODBC Driver 17 for SQL Server", "SQL Server")
-        )
+        fallback_drivers = ("ODBC Driver 17 for SQL Server",)
+        if not settings.is_production:
+            fallback_drivers = (
+                ("SQL Server", "ODBC Driver 17 for SQL Server")
+                if is_login_timeout
+                else ("ODBC Driver 17 for SQL Server", "SQL Server")
+            )
         should_retry_driver_17 = (
             is_login_timeout
             or "encryption not supported" in message

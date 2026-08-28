@@ -18,6 +18,20 @@ _catalog_bootstrap_lock = Lock()
 _catalog_bootstrapped = False
 
 
+_SCREEN_GROUP_ALIASES = {
+    "Actualizaciones": "Actualización",
+    "Inscripción / Matrícula": "Matrícula",
+    "Matrícula / Operación": "Matrícula",
+    "Matrícula / Control académico": "Matrícula",
+    "Operación / Matrícula": "Matrícula",
+}
+
+
+def _canonical_screen_group(group: str) -> str:
+    normalized_group = group.strip()
+    return _SCREEN_GROUP_ALIASES.get(normalized_group, normalized_group)
+
+
 ROLE_CATALOG: tuple[dict[str, str], ...] = (
     {"value": "ADMINISTRADOR", "label": "Administrador", "description": 'Acceso total y configuración institucional.'},
     {"value": "ACADEMICO", "label": "Académico", "description": 'Matrícula, estudiantes, notas y titulación.'},
@@ -39,7 +53,7 @@ def _screen(page: str, label: str, description: str, group: str) -> dict[str, st
         "page": page,
         "label": label,
         "description": description,
-        "group": group,
+        "group": _canonical_screen_group(group),
         "parent_page": "",
         "kind": "screen",
     }
@@ -50,7 +64,7 @@ def _flow(parent_page: str, key: str, label: str, group: str) -> dict[str, str]:
         "page": f"{parent_page}/{key}",
         "label": label,
         "description": f"Acceso independiente al flujo {label.lower()}.",
-        "group": group,
+        "group": _canonical_screen_group(group),
         "parent_page": parent_page,
         "kind": "flow",
     }
@@ -72,9 +86,14 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
         "Registro y actualización de la cabecera de matrícula y materias del estudiante.",
         "Matrícula",
     ),
-    _screen("matricula-docente", "Matrícula docente", "Asignación docente por materia y período.", "Docencia"),
+    _screen(
+        "matricula-docente",
+        "Matrícula docente",
+        "Asignación individual o masiva de docentes activos por materia, período y estudiantes.",
+        "Matrícula",
+    ),
     _screen("estado-docente", "Estado docente", "Activación, inactivación y observaciones docentes.", "Docencia"),
-    _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Personas"),
+    _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Actualización"),
     _screen(
         "actualizar-correo-intec",
         "Actualización de correo INTEC",
@@ -96,6 +115,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("validar-excel", "Validar Excel", "Validación estructurada de archivos de carga.", "Herramientas"),
     _screen("teams", "Movimientos Teams", "Equipos, clases, grabaciones y actividad Microsoft 365.", "Microsoft 365"),
     _screen("teams-matricula", "Matrícula en Teams", "Creación de aulas y matriculación en Microsoft Teams.", "Microsoft 365"),
+    _screen(
+        "moodle-teams",
+        "Matrícula Moodle-Teams",
+        "Creación de aulas de Teams con docentes y estudiantes matriculados en Moodle.",
+        "Integraciones",
+    ),
     _screen(
         "historico-integraciones",
         "Movimientos de auditoría",
@@ -164,6 +189,7 @@ PREINSCRIPTION_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("preinscripcion", "gestion-becas", "Gestión de becas", "Inscripción / Becas"),
     _flow("preinscripcion", "becas", "Aprobaciones de becas", "Inscripción / Becas"),
     _flow("preinscripcion", "becados", "Listado de becados", "Inscripción / Becas"),
+    _flow("preinscripcion", "contratos-becas", "Contratos de beca", "Inscripción / Becas"),
 )
 
 
@@ -188,10 +214,10 @@ SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("gestion-sisacademico", "estudiantes", "Ficha del estudiante", "Operación / Estudiantes"),
     _flow("gestion-sisacademico", "registro_documentos_estudiante", "Documentos del estudiante", "Operación / Estudiantes"),
     _flow("gestion-sisacademico", "seguimiento", "Seguimiento académico", "Operación / Estudiantes"),
-    _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Operación / Estudiantes"),
+    _flow("gestion-sisacademico", "actualizacion_estudiantes", "Estado del estudiante", "Actualización"),
     _flow("gestion-sisacademico", "docentes", "Ficha docente", "Operación / Docentes"),
     _flow("gestion-sisacademico", "docente_materias", "Materias asignadas al docente", "Operación / Docentes"),
-    _flow("gestion-sisacademico", "actualizacion_est", "Estado docente", "Operación / Docentes"),
+    _flow("gestion-sisacademico", "actualizacion_est", "Estado docente", "Actualización"),
     _flow("gestion-sisacademico", "numero_preguntas", "Control de cuestionarios", "Operación / Evaluación"),
     _flow("gestion-sisacademico", "cuestionarios", "Banco de preguntas", "Operación / Evaluación"),
     _flow("gestion-sisacademico", "preguntas_evaluacion", "Preguntas de evaluación", "Operación / Evaluación"),
@@ -200,8 +226,7 @@ SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("gestion-sisacademico", "autoevaluacion_resultados", "Resultados de autoevaluación", "Operación / Evaluación"),
     _flow("gestion-sisacademico", "fechas_autoevaluacion", "Apertura de autoevaluación", "Operación / Evaluación"),
     _flow("gestion-sisacademico", "usuarios", "Registrar usuarios", "Operación / Seguridad"),
-    _flow("gestion-sisacademico", "menu_usuarios", "Accesos por usuario", "Operación / Seguridad"),
-    _flow("gestion-sisacademico", "menu_general", "Mapa operativo", "Operación / Seguridad"),
+    _flow("gestion-sisacademico", "menu_usuarios", "Accesos operativos", "Operación / Seguridad"),
     _flow("gestion-sisacademico", "talento_humano_empleados", "Empleados", "Operación / Talento humano"),
     _flow("gestion-sisacademico", "talento_humano_solicitudes", "Solicitudes de talento humano", "Operación / Talento humano"),
     _flow("gestion-sisacademico", "talento_humano_tareas", "Tareas de talento humano", "Operación / Talento humano"),
@@ -382,7 +407,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
             "admin-notas-asignatura", "reportes-individuales", "reporteria-integral",
             "carnet-institucional",
         ),
-        _flow_codes("preinscripcion", ("gestion-becas", "becas", "becados")),
+        _flow_codes("preinscripcion", ("gestion-becas", "becas", "becados", "contratos-becas")),
         _ACADEMIC_REPORT_FLOWS,
     ),
     "ADMISIONES": _combine_pages(

@@ -194,6 +194,14 @@ class FakeMoodleClient:
                 "email": "ESTUDIANTE@INTEC.EDU.EC",
                 "suspended": 0,
                 "confirmed": 1,
+                "roles": [
+                    {
+                        "roleid": 5,
+                        "name": "Estudiante",
+                        "shortname": "student",
+                        "sortorder": 0,
+                    }
+                ],
             }
         ]
 
@@ -820,6 +828,15 @@ class MoodleReadServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached, first)
         self.assertEqual(refreshed, first)
         self.assertEqual(self.client.enrollment_calls, 2)
+
+    async def test_course_enrolled_users_preserve_normalized_roles(self) -> None:
+        users = await self.service.get_course_enrolled_users(12)
+
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0]["email"], "ESTUDIANTE@INTEC.EDU.EC")
+        self.assertEqual(users[0]["status"], "ACTIVO")
+        self.assertEqual(users[0]["role_shortnames"], ["student"])
+        self.assertEqual(users[0]["roles"][0]["name"], "Estudiante")
 
     async def test_course_resources_are_normalized_and_tokens_are_removed(self) -> None:
         result = await self.service.get_course_resources(12)

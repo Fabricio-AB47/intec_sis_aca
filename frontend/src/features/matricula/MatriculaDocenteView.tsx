@@ -6,7 +6,7 @@ import {
   fetchAcademicTeacherParallels,
   fetchAcademicTeacherParallelStudents,
   fetchAcademicTeacherUniqueSubjects,
-  saveAcademicTeacherUniqueEnrollment,
+  saveAcademicTeacherMultiSubjectEnrollment,
   searchAcademicEnrollmentTeachers,
 } from '../../lib/api'
 import type {
@@ -23,6 +23,13 @@ type MatriculaDocenteViewProps = {
 }
 
 type TeacherEnrollmentMode = 'MASIVA' | 'INDIVIDUAL'
+
+type TeacherStudentWithSubject = AcademicTeacherStudentItem & {
+  selected_subject_code: string
+  selected_subject_name: string
+  selected_subject_codes?: string[]
+  selected_subject_names?: string[]
+}
 
 type ConfirmDialogState = {
   title: string
@@ -46,13 +53,31 @@ function handleError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+function isActiveTeacher(teacher: AcademicTeacherOption): boolean {
+  return String(teacher.estado || '').trim().toUpperCase() === 'A'
+}
+
+function teacherIdentityKey(teacher: AcademicTeacherOption): string {
+  const document = String(teacher.cedula || '')
+    .trim()
+    .toLocaleLowerCase('es')
+    .replace(/[^a-z0-9]/g, '')
+  if (document) return `document:${document}`
+
+  const email = String(teacher.correo || teacher.login || '')
+    .trim()
+    .toLocaleLowerCase('es')
+  return email ? `email:${email}` : `code:${teacher.codigo_doc}`
+}
+
 function uniqueTeachers(items: AcademicTeacherOption[]): AcademicTeacherOption[] {
   const seen = new Set<string>()
   return items.filter((teacher) => {
-    if (!teacher.codigo_doc || seen.has(teacher.codigo_doc)) {
+    const identity = teacherIdentityKey(teacher)
+    if (!isActiveTeacher(teacher) || !teacher.codigo_doc || seen.has(identity)) {
       return false
     }
-    seen.add(teacher.codigo_doc)
+    seen.add(identity)
     return true
   })
 }
@@ -74,10 +99,16 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [periods, setPeriods] = useState<AcademicPeriodOption[]>([])
-  const [selectedPeriod, setSelectedPeriod] = useState('')
+  const [journeyOptions, setJourneyOptions] = useState<Array<{ value: string; label: string }>>([
+    { value: '1', label: 'Matutina' },
+    { value: '2', label: 'Nocturna' },
+  ])
+  const [catalogParallelOptions, setCatalogParallelOptions] = useState<AcademicTeacherParallelOption[]>([])
+  const [subjectLevelOptions, setSubjectLevelOptions] = useState<string[]>(['1', '2', '3', '4'])
+  const [selectedPeriods, setSelectedPeriods] = useState<string[]>([])
+  const [periodCandidate, setPeriodCandidate] = useState('')
 
   const [teacherQuery, setTeacherQuery] = useState('')
-  const [validateTeacherUser, setValidateTeacherUser] = useState(true)
   const [teacherSearchLoading, setTeacherSearchLoading] = useState(false)
   const [teacherSearchError, setTeacherSearchError] = useState('')
   const [teacherOptions, setTeacherOptions] = useState<AcademicTeacherOption[]>([])
@@ -90,7 +121,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const [subjectOptions, setSubjectOptions] = useState<AcademicTeacherUniqueSubjectOption[]>([])
   const [subjectLoading, setSubjectLoading] = useState(false)
   const [subjectError, setSubjectError] = useState('')
-  const [selectedSubject, setSelectedSubject] = useState<AcademicTeacherUniqueSubjectOption | null>(null)
+  const [selectedSubjects, setSelectedSubjects] = useState<AcademicTeacherUniqueSubjectOption[]>([])
   const [selectedSubjectLevel, setSelectedSubjectLevel] = useState('')
 
   const [parallel, setParallel] = useState('')
@@ -105,7 +136,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const [teacherActionMessage, setTeacherActionMessage] = useState('')
   const [teacherSaveLoading, setTeacherSaveLoading] = useState(false)
 
-  const [teacherStudents, setTeacherStudents] = useState<AcademicTeacherStudentItem[]>([])
+  const [teacherStudents, setTeacherStudents] = useState<TeacherStudentWithSubject[]>([])
   const [teacherStudentsLoading, setTeacherStudentsLoading] = useState(false)
   const [teacherStudentsError, setTeacherStudentsError] = useState('')
   const [teacherEnrollmentMode, setTeacherEnrollmentMode] = useState<TeacherEnrollmentMode>('MASIVA')
@@ -113,16 +144,32 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   const [teacherStudentQuery, setTeacherStudentQuery] = useState('')
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null)
 
-  const selectedPeriodName = periods.find((period) => period.codigo_periodo === selectedPeriod)?.detalle_periodo || ''
+  const selectedPeriod = selectedPeriods[0] || ''
+  const selectedPeriodsKey = selectedPeriods.join('|')
+  const selectedPeriodNames = selectedPeriods.map((code) => {
+    const period = periods.find((item) => item.codigo_periodo === code)
+    return period?.detalle_periodo || code
+  })
   const selectedTeacher =
     selectedTeacherRecord?.codigo_doc === selectedTeacherCode
       ? selectedTeacherRecord
       : teacherOptions.find((teacher) => teacher.codigo_doc === selectedTeacherCode)
-  const selectedSubjectCode = selectedSubject?.cod_materia || ''
-  const selectedSubjectLevels = useMemo(() => subjectLevels(selectedSubject), [selectedSubject])
-  const selectedCareerCodes = useMemo(() => subjectCareerCodes(selectedSubject), [selectedSubject])
+  const selectedSubjectCodes = useMemo(() => selectedSubjects.map((subject) => subject.cod_materia), [selectedSubjects])
+  const selectedSubjectsKey = selectedSubjectCodes.join('|')
+  const selectedSubjectNames = useMemo(
+    () => selectedSubjects.map((subject) => subject.nombre_materia || subject.cod_materia).join(', '),
+    [selectedSubjects]
+  )
+  const selectedCareerCodes = useMemo(
+    () => [...new Set(selectedSubjects.flatMap((subject) => subjectCareerCodes(subject)))],
+    [selectedSubjects]
+  )
   const selectedCareerCodesKey = selectedCareerCodes.join('|')
-  const selectedCareerNames = useMemo(() => subjectCareerNames(selectedSubject), [selectedSubject])
+  const selectedCareerNames = useMemo(
+    () =>
+      [...new Set(selectedSubjects.flatMap((subject) => subjectCareerNames(subject).split(', ')).filter(Boolean))].join(', '),
+    [selectedSubjects]
+  )
   const selectedParallelOption = parallelOptions.find((item) => item.paralelo === parallel)
   const enrollmentSummary = useMemo(() => {
     const teacherCodes = new Set(teacherEnrollments.map((item) => item.codigo_doc).filter(Boolean))
@@ -134,10 +181,23 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     }
   }, [teacherEnrollments])
   const uniqueTeacherStudents = useMemo(() => {
-    const studentsByCode = new Map<string, AcademicTeacherStudentItem>()
+    const studentsByCode = new Map<string, TeacherStudentWithSubject>()
     teacherStudents.forEach((student) => {
-      if (student.codigo_estud && !studentsByCode.has(student.codigo_estud)) {
-        studentsByCode.set(student.codigo_estud, student)
+      const key = `${student.codigo_periodo}:${student.codigo_estud}`
+      const existing = studentsByCode.get(key)
+      if (student.codigo_estud && !existing) {
+        studentsByCode.set(key, {
+          ...student,
+          selected_subject_codes: [student.selected_subject_code],
+          selected_subject_names: [student.selected_subject_name],
+        })
+      } else if (existing) {
+        existing.selected_subject_codes = [
+          ...new Set([...(existing.selected_subject_codes || []), student.selected_subject_code]),
+        ]
+        existing.selected_subject_names = [
+          ...new Set([...(existing.selected_subject_names || []), student.selected_subject_name]),
+        ]
       }
     })
     return [...studentsByCode.values()]
@@ -157,7 +217,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
   }, [teacherStudentQuery, uniqueTeacherStudents])
   const selectedStudentCodeSet = useMemo(() => new Set(selectedStudentCodes), [selectedStudentCodes])
   const allVisibleStudentsSelected =
-    filteredTeacherStudents.length > 0 && filteredTeacherStudents.every((student) => selectedStudentCodeSet.has(student.codigo_estud))
+    filteredTeacherStudents.length > 0 &&
+    filteredTeacherStudents.every((student) => selectedStudentCodeSet.has(`${student.codigo_periodo}:${student.codigo_estud}`))
 
   useEffect(() => {
     let cancelled = false
@@ -169,6 +230,19 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
         const payload = await fetchAcademicEnrollmentCatalog()
         if (cancelled) return
         setPeriods(payload.periodos || [])
+        const journeys = (payload.jornadas || [])
+          .filter((item) => ['1', '2'].includes(String(item.value)))
+          .map((item) => ({
+            value: String(item.value),
+            label: String(item.value) === '1' ? 'Matutina' : 'Nocturna',
+          }))
+        setJourneyOptions(journeys)
+        setTeacherJourney((current) => (journeys.some((item) => item.value === current) ? current : journeys[0]?.value || '1'))
+        setCatalogParallelOptions(payload.paralelos || [])
+        const levels = [...new Set((payload.niveles_materia || []).filter((level) => level >= 1 && level <= 4))]
+          .sort((left, right) => left - right)
+          .map(String)
+        setSubjectLevelOptions(levels.length ? levels : ['1', '2', '3', '4'])
       } catch (error) {
         if (!cancelled) {
           setCatalogError(handleError(error, 'Error consultando catálogo académico'))
@@ -204,21 +278,43 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     clearTeacherMessages()
   }
 
-  function toggleStudentSelection(studentCode: string) {
+  function studentSelectionKey(student: AcademicTeacherStudentItem): string {
+    return `${student.codigo_periodo}:${student.codigo_estud}`
+  }
+
+  function toggleStudentSelection(student: AcademicTeacherStudentItem) {
+    const selectionKey = studentSelectionKey(student)
     setSelectedStudentCodes((current) =>
-      current.includes(studentCode) ? current.filter((code) => code !== studentCode) : [...current, studentCode]
+      current.includes(selectionKey) ? current.filter((code) => code !== selectionKey) : [...current, selectionKey]
     )
     clearTeacherMessages()
   }
 
   function selectVisibleStudents() {
-    const visibleCodes = filteredTeacherStudents.map((student) => student.codigo_estud).filter(Boolean)
+    const visibleCodes = filteredTeacherStudents.map(studentSelectionKey)
     setSelectedStudentCodes((current) => [...new Set([...current, ...visibleCodes])])
     clearTeacherMessages()
   }
 
   function clearStudentSelection() {
     setSelectedStudentCodes([])
+    clearTeacherMessages()
+  }
+
+  function addSelectedPeriod() {
+    if (!periodCandidate || selectedPeriods.includes(periodCandidate)) return
+    if (selectedPeriods.length >= 3) {
+      setTeacherActionError('Puede seleccionar como máximo tres períodos distintos.')
+      return
+    }
+    setSelectedPeriods((current) => [...current, periodCandidate])
+    setPeriodCandidate('')
+    clearTeacherMessages()
+  }
+
+  function removeSelectedPeriod(periodCode: string) {
+    setSelectedPeriods((current) => current.filter((code) => code !== periodCode))
+    setSelectedStudentCodes((current) => current.filter((key) => !key.startsWith(`${periodCode}:`)))
     clearTeacherMessages()
   }
 
@@ -259,7 +355,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setPendingTeacherCode(selectedTeacherCode)
     setTeacherQuery('')
     setTeacherSelectorOpen(true)
-    void loadTeacherOptions('', validateTeacherUser)
+    void loadTeacherOptions('')
   }
 
   function confirmTeacherSelection() {
@@ -271,10 +367,20 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherSelectorOpen(false)
   }
 
-  function selectSubject(subject: AcademicTeacherUniqueSubjectOption) {
-    setSelectedSubject(subject)
-    setSelectedSubjectLevel(subjectLevels(subject)[0] || '')
-    setSubjectQuery(`${subject.nombre_materia} - ${subject.cod_materia}`)
+  function toggleSubject(subject: AcademicTeacherUniqueSubjectOption) {
+    const alreadySelected = selectedSubjectCodes.includes(subject.cod_materia)
+    if (!alreadySelected && selectedSubjects.length >= 3) {
+      setSubjectError('Puede seleccionar como máximo tres materias.')
+      return
+    }
+    setSelectedSubjects((current) =>
+      alreadySelected
+        ? current.filter((item) => item.cod_materia !== subject.cod_materia)
+        : [...current, subject]
+    )
+    const levels = subjectLevels(subject)
+    setSelectedSubjectLevel((current) => (current && levels.includes(current) ? current : levels[0] || current))
+    setSubjectError('')
     setParallelOptionsError('')
     setTeacherEnrollments([])
     setTeacherStudents([])
@@ -283,9 +389,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     clearTeacherMessages()
   }
 
-  function clearSelectedSubject() {
-    setSelectedSubject(null)
-    setSelectedSubjectLevel('')
+  function clearSelectedSubjects() {
+    setSelectedSubjects([])
     setSubjectQuery('')
     clearParallelOptions()
     setTeacherEnrollments([])
@@ -313,7 +418,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setConfirmDialog(null)
   }
 
-  async function loadTeacherOptions(queryValue: string = teacherQuery, validarUsuario: boolean = validateTeacherUser) {
+  async function loadTeacherOptions(queryValue: string = teacherQuery) {
     const query = queryValue.trim()
     if (query.length === 1) {
       setTeacherSearchError('Ingrese al menos 2 caracteres para filtrar docente.')
@@ -323,7 +428,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherSearchError('')
     setTeacherActionMessage('')
     try {
-      const payload = await searchAcademicEnrollmentTeachers(query, query ? 200 : 1000, validarUsuario)
+      const payload = await searchAcademicEnrollmentTeachers(query, query ? 200 : 1000, true)
       const items = uniqueTeachers(payload.items || [])
       setTeacherOptions(items)
       setPendingTeacherCode((current) => (items.some((teacher) => teacher.codigo_doc === current) ? current : ''))
@@ -343,7 +448,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     await loadTeacherOptions()
   }
 
-  const loadSubjectOptions = useCallback(async (queryValue: string = subjectQuery, periodCode: string = selectedPeriod) => {
+  const loadSubjectOptions = useCallback(async (queryValue: string, periodCode: string, subjectLevel: string) => {
     if (!periodCode) {
       setSubjectError('Seleccione primero el período.')
       return
@@ -354,6 +459,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       const payload = await fetchAcademicTeacherUniqueSubjects({
         codigoPeriodo: periodCode,
         buscar: queryValue.trim(),
+        semestre: subjectLevel,
         limite: 150,
       })
       const items = payload.items || []
@@ -367,10 +473,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setSubjectLoading(false)
     }
-  }, [selectedPeriod, subjectQuery])
+  }, [])
 
   const loadParallelOptions = useCallback(async () => {
-    if (!selectedPeriod) {
+    if (!selectedPeriod || selectedSubjects.length === 0) {
       setParallel('')
       setParallelOptions([])
       setParallelOptionsError('')
@@ -379,8 +485,32 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setParallelOptionsLoading(true)
     setParallelOptionsError('')
     try {
-      const payload = await fetchAcademicTeacherParallels(selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel)
-      const items = (payload.items || []).sort((left, right) => String(left.paralelo).localeCompare(String(right.paralelo)))
+      const payloads = await Promise.all(
+        selectedSubjects.map((subject) =>
+          fetchAcademicTeacherParallels(
+            subjectCareerCodes(subject),
+            selectedPeriod,
+            subject.cod_materia,
+            selectedSubjectLevel
+          )
+        )
+      )
+      const optionsByParallel = new Map(
+        catalogParallelOptions.map((item) => [String(item.paralelo).trim().toUpperCase(), item])
+      )
+      for (const item of payloads.flatMap((payload) => payload.items || [])) {
+        const key = String(item.paralelo).trim().toUpperCase()
+        const existing = optionsByParallel.get(key)
+        optionsByParallel.set(key, {
+          ...existing,
+          ...item,
+          total_estudiantes: Math.max(existing?.total_estudiantes || 0, item.total_estudiantes || 0),
+          total_materias: (existing?.total_materias || 0) + (item.total_materias || 0),
+        })
+      }
+      const items = [...optionsByParallel.values()].sort((left, right) =>
+        String(left.paralelo).localeCompare(String(right.paralelo))
+      )
       setParallelOptions(items)
       setParallel((current) => (items.some((item) => item.paralelo === current) ? current : items[0]?.paralelo || ''))
     } catch (error) {
@@ -390,51 +520,70 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setParallelOptionsLoading(false)
     }
-  }, [selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [catalogParallelOptions, selectedPeriod, selectedSubjectLevel, selectedSubjects])
 
   const loadTeacherEnrollments = useCallback(async () => {
-    if (!selectedPeriod || !selectedSubjectCode) {
+    if (selectedPeriods.length === 0 || selectedSubjects.length === 0) {
       setTeacherEnrollments([])
       return
     }
     setTeacherEnrollmentsLoading(true)
     setTeacherActionError('')
     try {
-      const payload = await fetchAcademicTeacherEnrollments(
-        selectedCareerCodes,
-        selectedPeriod,
-        selectedSubjectCode,
-        parallel.trim().toUpperCase() || '',
-        selectedSubjectLevel
+      const payloads = await Promise.all(
+        selectedSubjects.flatMap((subject) =>
+          selectedPeriods.map((periodCode) =>
+            fetchAcademicTeacherEnrollments(
+              subjectCareerCodes(subject),
+              periodCode,
+              subject.cod_materia,
+              parallel.trim().toUpperCase() || '',
+              selectedSubjectLevel
+            )
+          )
+        )
       )
-      setTeacherEnrollments(payload.items || [])
+      setTeacherEnrollments(
+        payloads
+          .flatMap((payload) => payload.items || [])
+          .filter(isActiveTeacher)
+      )
     } catch (error) {
       setTeacherActionError(handleError(error, 'Error consultando docentes matriculados'))
       setTeacherEnrollments([])
     } finally {
       setTeacherEnrollmentsLoading(false)
     }
-  }, [parallel, selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [parallel, selectedPeriods, selectedSubjectLevel, selectedSubjects])
 
   const loadTeacherStudents = useCallback(async () => {
-    if (!selectedPeriod || !selectedSubjectCode || !parallel) {
+    if (selectedPeriods.length === 0 || selectedSubjects.length === 0 || !parallel) {
       setTeacherStudents([])
-      setTeacherStudentsError('Seleccione período, materia y paralelo para ver estudiantes.')
+      setTeacherStudentsError('Seleccione período, entre una y tres materias, y paralelo para ver estudiantes.')
       return
     }
     setTeacherStudentsLoading(true)
     setTeacherStudentsError('')
     try {
-      const payload = await fetchAcademicTeacherParallelStudents(
-        selectedPeriod,
-        selectedSubjectCode,
-        parallel.trim().toUpperCase(),
-        selectedCareerCodes,
-        selectedSubjectLevel
+      const payloads = await Promise.all(
+        selectedSubjects.map(async (subject) => {
+          const payload = await fetchAcademicTeacherParallelStudents(
+            selectedPeriods,
+            subject.cod_materia,
+            parallel.trim().toUpperCase(),
+            subjectCareerCodes(subject),
+            selectedSubjectLevel
+          )
+          return (payload.items || []).map((student) => ({
+            ...student,
+            selected_subject_code: subject.cod_materia,
+            selected_subject_name: subject.nombre_materia || subject.cod_materia,
+          }))
+        })
       )
-      const items = payload.items || []
+      const items = payloads.flat()
       setTeacherStudents(items)
-      const availableCodes = new Set(items.map((student) => student.codigo_estud))
+      const availableCodes = new Set(items.map((student) => `${student.codigo_periodo}:${student.codigo_estud}`))
       setSelectedStudentCodes((current) => current.filter((code) => availableCodes.has(code)))
     } catch (error) {
       setTeacherStudents([])
@@ -442,10 +591,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     } finally {
       setTeacherStudentsLoading(false)
     }
-  }, [parallel, selectedCareerCodes, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [parallel, selectedPeriods, selectedSubjectLevel, selectedSubjects])
 
   useEffect(() => {
-    setSelectedSubject(null)
+    setSelectedSubjects([])
     setSelectedSubjectLevel('')
     setSubjectQuery('')
     setParallel('')
@@ -457,47 +606,47 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherActionError('')
     setTeacherActionMessage('')
     if (selectedPeriod) {
-      void loadSubjectOptions('', selectedPeriod)
+      void loadSubjectOptions('', selectedPeriod, '')
     } else {
       setSubjectOptions([])
     }
   }, [loadSubjectOptions, selectedPeriod])
 
   useEffect(() => {
-    if (!selectedPeriod) {
+    if (!selectedPeriod || selectedSubjects.length === 0) {
       setParallel('')
       setParallelOptions([])
       setParallelOptionsError('')
       return
     }
     void loadParallelOptions()
-  }, [loadParallelOptions, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [loadParallelOptions, selectedCareerCodesKey, selectedPeriod, selectedSubjects.length, selectedSubjectsKey, selectedSubjectLevel])
 
   useEffect(() => {
-    if (!selectedPeriod || !selectedSubjectCode) {
+    if (!selectedPeriod || selectedSubjects.length === 0) {
       setTeacherEnrollments([])
       return
     }
     void loadTeacherEnrollments()
-  }, [loadTeacherEnrollments, parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [loadTeacherEnrollments, parallel, selectedCareerCodesKey, selectedPeriod, selectedPeriodsKey, selectedSubjects.length, selectedSubjectsKey, selectedSubjectLevel])
 
   useEffect(() => {
-    if (!selectedPeriod || !selectedSubjectCode || !parallel) {
+    if (!selectedPeriod || selectedSubjects.length === 0 || !parallel) {
       setTeacherStudents([])
       setTeacherStudentsError('')
       return
     }
     void loadTeacherStudents()
-  }, [loadTeacherStudents, parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [loadTeacherStudents, parallel, selectedCareerCodesKey, selectedPeriod, selectedPeriodsKey, selectedSubjects.length, selectedSubjectsKey, selectedSubjectLevel])
 
   useEffect(() => {
     setSelectedStudentCodes([])
     setTeacherStudentQuery('')
-  }, [parallel, selectedCareerCodesKey, selectedPeriod, selectedSubjectCode, selectedSubjectLevel])
+  }, [parallel, selectedCareerCodesKey, selectedPeriod, selectedPeriodsKey, selectedSubjectsKey, selectedSubjectLevel])
 
   async function saveTeacherEnrollment() {
-    if (!selectedTeacherCode || !selectedPeriod || !selectedSubjectCode) {
-      setTeacherActionError('Seleccione docente, período y materia única.')
+    if (!selectedTeacherCode || selectedPeriods.length === 0 || selectedSubjects.length === 0) {
+      setTeacherActionError('Seleccione docente, entre uno y tres períodos, y entre una y tres materias.')
       return
     }
     if (!parallel.trim()) {
@@ -508,13 +657,56 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
       setTeacherActionError('Seleccione al menos un estudiante para la matrícula docente individual.')
       return
     }
+    const subjectsWithoutStudents: string[] = []
+    const subjectPayloads = selectedSubjects.map((subject) => {
+      const subjectRows = teacherStudents.filter((student) => student.selected_subject_code === subject.cod_materia)
+      const periodos = selectedPeriods.flatMap((periodCode) => {
+        const periodRows = subjectRows.filter((student) => student.codigo_periodo === periodCode)
+        if (periodRows.length === 0) return []
+        const studentCodes =
+          teacherEnrollmentMode === 'INDIVIDUAL'
+            ? [
+                ...new Set(
+                  periodRows
+                    .filter((student) => selectedStudentCodeSet.has(studentSelectionKey(student)))
+                    .map((student) => Number(student.codigo_estud))
+                    .filter((code) => Number.isFinite(code) && code > 0)
+                ),
+              ]
+            : []
+        if (teacherEnrollmentMode === 'INDIVIDUAL' && studentCodes.length === 0) return []
+        return [
+          {
+            codigo_periodo: Number(periodCode),
+            paralelo: parallel.trim().toUpperCase(),
+            codigos_estudiantes: studentCodes,
+          },
+        ]
+      })
+      if (periodos.length === 0) {
+        subjectsWithoutStudents.push(subject.nombre_materia || subject.cod_materia)
+      }
+      return {
+        cod_materia: subject.cod_materia,
+        periodos,
+        semestre: selectedSubjectLevel ? Number(selectedSubjectLevel) : null,
+      }
+    })
+    if (subjectsWithoutStudents.length > 0) {
+      setTeacherActionError(
+        teacherEnrollmentMode === 'INDIVIDUAL'
+          ? `Seleccione estudiantes matriculados en cada materia: ${subjectsWithoutStudents.join(', ')}.`
+          : `No existen estudiantes para guardar en: ${subjectsWithoutStudents.join(', ')}.`
+      )
+      return
+    }
     const assignmentDescription =
       teacherEnrollmentMode === 'INDIVIDUAL'
-        ? `${selectedStudentCodes.length} estudiante(s) seleccionado(s)`
-        : `todos los ${uniqueTeacherStudents.length} estudiante(s) del paralelo`
+        ? `${selectedStudentCodes.length} matrícula(s) estudiantil(es) seleccionada(s)`
+        : `todos los ${uniqueTeacherStudents.length} registro(s) estudiantil(es) de los períodos`
     const confirmed = await requestConfirm(
       teacherEnrollmentMode === 'INDIVIDUAL' ? 'Asignar estudiantes' : 'Matrícula docente masiva',
-      `¿Desea asignar ${assignmentDescription} a ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubject?.nombre_materia || selectedSubjectCode}, período ${selectedPeriodName || selectedPeriod}, paralelo ${parallel}?`
+      `¿Desea asignar ${assignmentDescription} a ${selectedTeacher?.descripcion || selectedTeacher?.login || selectedTeacherCode} en ${selectedSubjects.length} materia(s): ${selectedSubjectNames}, para ${selectedPeriodNames.join(', ')}, paralelo ${parallel}?`
     )
     if (!confirmed) return
 
@@ -522,30 +714,25 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
     setTeacherActionError('')
     setTeacherActionMessage('')
     try {
-      const response = await saveAcademicTeacherUniqueEnrollment({
+      const response = await saveAcademicTeacherMultiSubjectEnrollment({
         codigo_doc: Number(selectedTeacherCode),
-        cod_materia: selectedSubjectCode,
-        codigo_periodo: Number(selectedPeriod),
-        paralelo: parallel.trim().toUpperCase(),
-        semestre: selectedSubjectLevel ? Number(selectedSubjectLevel) : null,
+        materias: subjectPayloads,
         cod_jornada: toNumber(teacherJourney, 1),
         estado_moodle_doc: 0,
         modo_asignacion: teacherEnrollmentMode,
-        codigos_estudiantes:
-          teacherEnrollmentMode === 'INDIVIDUAL' ? selectedStudentCodes.map((code) => Number(code)) : [],
       })
       const inserted = response.inserted_count ?? (response.action === 'INSERTADA' ? 1 : 0)
       const existing = response.existing_count ?? (response.action === 'EXISTENTE' ? 1 : 0)
       const linked = response.students_linked ?? 0
-      if (response.ok === false || response.already_exists || response.action === 'EXISTENTE') {
+      if (response.ok === false) {
         setTeacherActionError(
           `${response.message || 'La matrícula docente ya existe.'} Estudiantes vinculados: ${linked}.`
         )
       } else {
         setTeacherActionMessage(
           teacherEnrollmentMode === 'INDIVIDUAL'
-            ? `Asignacion individual guardada. ${linked} estudiante(s) vinculado(s) al docente.`
-            : `Matrícula docente masiva guardada. Insertadas: ${inserted}; existentes: ${existing}; estudiantes vinculados: ${linked}.`
+            ? `Asignación individual guardada para ${selectedSubjects.length} materia(s). ${linked} vínculo(s) de estudiantes procesado(s).`
+            : `Matrícula docente masiva guardada para ${selectedSubjects.length} materia(s). Insertadas: ${inserted}; existentes: ${existing}; vínculos procesados: ${linked}.`
         )
       }
       if (teacherEnrollmentMode === 'INDIVIDUAL' && response.ok !== false) {
@@ -579,14 +766,14 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           <div className="section-title">
             <div>
               <span>Parametros</span>
-              <h2>{selectedSubject?.nombre_materia || 'Seleccione período, materia y paralelo'}</h2>
+              <h2>{selectedSubjectNames || 'Seleccione período, materias y paralelo'}</h2>
             </div>
             <div className="matricula-acad-title-actions">
               <button
                 type="button"
                 className="ghost-button"
                 onClick={() => void loadTeacherEnrollments()}
-                disabled={teacherEnrollmentsLoading || !selectedPeriod || !selectedSubjectCode}
+                disabled={teacherEnrollmentsLoading || !selectedPeriod || selectedSubjects.length === 0}
               >
                 {teacherEnrollmentsLoading ? 'Cargando...' : 'Actualizar'}
               </button>
@@ -598,7 +785,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   teacherSaveLoading ||
                   !selectedTeacherCode ||
                   !selectedPeriod ||
-                  !selectedSubjectCode ||
+                  selectedSubjects.length === 0 ||
                   !parallel ||
                   uniqueTeacherStudents.length === 0 ||
                   (teacherEnrollmentMode === 'INDIVIDUAL' && selectedStudentCodes.length === 0)
@@ -626,18 +813,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 <span>Docente seleccionado</span>
                 <strong>{selectedTeacher ? teacherLabel(selectedTeacher) : 'Sin docente seleccionado'}</strong>
               </div>
-              <label className="matricula-acad-check matricula-docente-user-check">
-                <input
-                  type="checkbox"
-                  checked={validateTeacherUser}
-                  onChange={(event) => {
-                    setValidateTeacherUser(event.target.checked)
-                    setTeacherOptions([])
-                    clearSelectedTeacher()
-                  }}
-                />
-                Validar con usuario
-              </label>
+              <div className="matricula-docente-active-rule">
+                <span>Validación obligatoria</span>
+                <strong>Usuario activo (A)</strong>
+              </div>
             </div>
             <div className="matricula-acad-actions matricula-docente-school-actions">
               <button type="button" className="primary-action" onClick={openTeacherSelector}>
@@ -672,21 +851,50 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           </div>
 
           <div className="matricula-acad-form">
-            <label>
-              <span>Período</span>
-              <select
-                value={selectedPeriod}
-                disabled={catalogLoading}
-                onChange={(event) => setSelectedPeriod(event.target.value)}
-              >
-                <option value="">Seleccionar</option>
-                {periods.map((period) => (
-                  <option key={period.codigo_periodo} value={period.codigo_periodo}>
-                    {period.detalle_periodo} {period.anio ? `(${period.anio})` : ''} - {period.total_matriculados ?? 0}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="matricula-docente-period-selector">
+              <div className="matricula-docente-period-controls">
+                <label>
+                  <span>Períodos (máximo 3)</span>
+                  <select
+                    value={periodCandidate}
+                    disabled={catalogLoading || selectedPeriods.length >= 3}
+                    onChange={(event) => setPeriodCandidate(event.target.value)}
+                  >
+                    <option value="">Seleccionar período</option>
+                    {periods
+                      .filter((period) => !selectedPeriods.includes(period.codigo_periodo))
+                      .map((period) => (
+                        <option key={period.codigo_periodo} value={period.codigo_periodo}>
+                          {period.detalle_periodo} {period.anio ? `(${period.anio})` : ''} - {period.total_matriculados ?? 0}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={!periodCandidate || selectedPeriods.length >= 3}
+                  onClick={addSelectedPeriod}
+                >
+                  Agregar período
+                </button>
+              </div>
+              <div className="matricula-docente-period-list" aria-live="polite">
+                {selectedPeriods.length === 0 ? <span>Seleccione entre uno y tres períodos distintos.</span> : null}
+                {selectedPeriods.map((periodCode, index) => {
+                  const period = periods.find((item) => item.codigo_periodo === periodCode)
+                  return (
+                    <div key={periodCode}>
+                      <span>{index + 1}</span>
+                      <strong>{period?.detalle_periodo || periodCode}</strong>
+                      <button type="button" className="ghost-button" onClick={() => removeSelectedPeriod(periodCode)}>
+                        Quitar
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
             <label>
               <span>Paralelo</span>
               <select
@@ -697,29 +905,48 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 <option value="">{parallelOptionsLoading ? 'Cargando...' : 'Seleccionar'}</option>
                 {parallelOptions.map((item) => (
                   <option key={item.paralelo} value={item.paralelo}>
-                    {item.paralelo} - {item.total_estudiantes ?? 0} estudiante(s)
+                    {item.paralelo} - {item.total_estudiantes ? `${item.total_estudiantes} estudiante(s)` : 'sin estudiantes'}
                   </option>
                 ))}
               </select>
             </label>
             <label>
               <span>Jornada</span>
-              <input type="number" min="0" value={teacherJourney} onChange={(event) => setTeacherJourney(event.target.value)} />
+              <select
+                value={teacherJourney}
+                disabled={catalogLoading}
+                onChange={(event) => setTeacherJourney(event.target.value)}
+              >
+                {journeyOptions.map((journey) => (
+                  <option key={journey.value} value={journey.value}>
+                    {journey.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               <span>Nivel materia</span>
               <select
                 value={selectedSubjectLevel}
-                disabled={!selectedSubject || selectedSubjectLevels.length <= 1}
+                disabled={!selectedPeriod || catalogLoading}
                 onChange={(event) => {
-                  setSelectedSubjectLevel(event.target.value)
+                  const level = event.target.value
+                  setSelectedSubjectLevel(level)
+                  setSelectedSubjects([])
+                  setSubjectQuery('')
+                  setSubjectOptions([])
+                  setParallel('')
+                  setParallelOptions([])
                   setTeacherStudents([])
                   setTeacherEnrollments([])
                   clearTeacherMessages()
+                  if (selectedPeriod) {
+                    void loadSubjectOptions('', selectedPeriod, level)
+                  }
                 }}
               >
-                <option value="">{selectedSubject ? 'Seleccionar' : 'Seleccione materia'}</option>
-                {selectedSubjectLevels.map((level) => (
+                <option value="">Seleccionar nivel</option>
+                {subjectLevelOptions.map((level) => (
                   <option key={level} value={level}>
                     Nivel {level}
                   </option>
@@ -727,7 +954,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
               </select>
             </label>
             <div className="matricula-acad-career-picker matricula-docente-subject-picker">
-              <span>Materia única</span>
+              <span>Materias (máximo 3)</span>
               {!selectedPeriod ? <p>Seleccione primero el período para buscar materias matriculadas.</p> : null}
               <div className="matricula-docente-selector-controls">
                 <label>
@@ -740,52 +967,64 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
                         event.preventDefault()
-                        void loadSubjectOptions()
+                        void loadSubjectOptions(subjectQuery, selectedPeriod, selectedSubjectLevel)
                       }
                     }}
                   />
                 </label>
-                <button type="button" className="ghost-button" onClick={() => void loadSubjectOptions()} disabled={!selectedPeriod || subjectLoading}>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void loadSubjectOptions(subjectQuery, selectedPeriod, selectedSubjectLevel)}
+                  disabled={!selectedPeriod || subjectLoading}
+                >
                   {subjectLoading ? 'Buscando...' : 'Buscar'}
                 </button>
-                <button type="button" className="ghost-button" onClick={clearSelectedSubject} disabled={!selectedSubject}>
+                <button type="button" className="ghost-button" onClick={clearSelectedSubjects} disabled={selectedSubjects.length === 0}>
                   Limpiar
                 </button>
               </div>
-              {selectedSubject ? (
+              {selectedSubjects.length > 0 ? (
                 <div className="matricula-acad-preview matricula-docente-teacher-detail">
                   <div>
-                    <span>Materia seleccionada</span>
-                    <strong>{selectedSubject.nombre_materia}</strong>
+                    <span>Materias seleccionadas</span>
+                    <strong>{selectedSubjects.length} de 3</strong>
                   </div>
                   <div>
-                    <span>Código comun</span>
-                    <strong>{selectedSubject.cod_materia}</strong>
+                    <span>Nombres</span>
+                    <strong>{selectedSubjectNames}</strong>
+                  </div>
+                  <div>
+                    <span>Códigos comunes</span>
+                    <strong>{selectedSubjectCodes.join(', ')}</strong>
                   </div>
                   <div>
                     <span>Nivel</span>
-                    <strong>{selectedSubjectLevel ? `Nivel ${selectedSubjectLevel}` : valueOrDash(selectedSubject.semestre)}</strong>
+                    <strong>{selectedSubjectLevel ? `Nivel ${selectedSubjectLevel}` : '-'}</strong>
                   </div>
                   <div>
                     <span>Carreras vinculadas</span>
                     <strong>{selectedCareerNames || '-'}</strong>
                   </div>
                   <div>
-                    <span>Estudiantes del período</span>
-                    <strong>{selectedSubject.total_estudiantes ?? 0}</strong>
+                    <span>Matrículas identificadas</span>
+                    <strong>{selectedSubjects.reduce((total, subject) => total + (subject.total_estudiantes || 0), 0)}</strong>
                   </div>
                 </div>
               ) : null}
               <div className="matricula-acad-career-options">
                 {subjectOptions.map((subject) => {
-                  const active = selectedSubject?.cod_materia === subject.cod_materia
+                  const active = selectedSubjectCodes.includes(subject.cod_materia)
+                  const selectionLimitReached = selectedSubjects.length >= 3 && !active
                   return (
                     <button
                       key={subject.cod_materia}
                       type="button"
                       className={`matricula-acad-career-option ${active ? 'matricula-acad-career-option--active matricula-acad-career-option--focus' : ''}`}
-                      disabled={!selectedPeriod}
-                      onClick={() => selectSubject(subject)}
+                      disabled={!selectedPeriod || selectionLimitReached}
+                      aria-pressed={active}
+                      title={selectionLimitReached ? 'Puede seleccionar como máximo tres materias.' : undefined}
+                      onClick={() => toggleSubject(subject)}
                     >
                       <input type="checkbox" checked={active} readOnly tabIndex={-1} />
                       <strong>{subject.nombre_materia}</strong>
@@ -801,8 +1040,8 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
           </div>
 
           <div className="matricula-acad-context">
-            <span>{selectedPeriodName || 'Período pendiente'}</span>
-            <span>{selectedSubject?.nombre_materia || 'Materia pendiente'}</span>
+            <span>{selectedPeriods.length ? `${selectedPeriods.length} período(s)` : 'Período pendiente'}</span>
+            <span>{selectedSubjects.length ? `${selectedSubjects.length} materia(s)` : 'Materias pendientes'}</span>
             <span>Nivel {selectedSubjectLevel || 'pendiente'}</span>
             <span>{selectedCareerCodes.length} carrera(s) vinculada(s)</span>
             <span>
@@ -940,7 +1179,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 type="button"
                 className="ghost-button"
                 onClick={() => void loadTeacherStudents()}
-                disabled={!selectedPeriod || !selectedSubjectCode || !parallel || teacherStudentsLoading}
+                disabled={!selectedPeriod || selectedSubjects.length === 0 || !parallel || teacherStudentsLoading}
               >
                 {teacherStudentsLoading ? 'Actualizando...' : 'Actualizar estudiantes'}
               </button>
@@ -1019,15 +1258,15 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                 {filteredTeacherStudents.map((student) => (
                   <tr
                     key={`${student.codigo_periodo}-${student.codigo_estud}-${student.codigo_materia}-${student.paralelo}`}
-                    className={selectedStudentCodeSet.has(student.codigo_estud) ? 'matricula-docente-student-row--selected' : ''}
+                    className={selectedStudentCodeSet.has(studentSelectionKey(student)) ? 'matricula-docente-student-row--selected' : ''}
                   >
                     {teacherEnrollmentMode === 'INDIVIDUAL' ? (
                       <td className="matricula-docente-select-column">
                         <input
                           type="checkbox"
-                          checked={selectedStudentCodeSet.has(student.codigo_estud)}
+                          checked={selectedStudentCodeSet.has(studentSelectionKey(student))}
                           aria-label={`Seleccionar ${student.nombre_estudiante || student.codigo_estud}`}
-                          onChange={() => toggleStudentSelection(student.codigo_estud)}
+                          onChange={() => toggleStudentSelection(student)}
                         />
                       </td>
                     ) : null}
@@ -1038,7 +1277,7 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                     <td>{student.cedula || '-'}</td>
                     <td>{student.nombre_carrera || student.cod_anio_basica || '-'}</td>
                     <td>{student.detalle_periodo || student.codigo_periodo || '-'}</td>
-                    <td>{student.nombre_materia || student.codigo_materia || '-'}</td>
+                    <td>{student.selected_subject_names?.join(', ') || student.nombre_materia || student.codigo_materia || '-'}</td>
                     <td>{student.paralelo || '-'}</td>
                     <td>{student.num_matricula || '-'}</td>
                     <td>{valueOrDash(student.promedio_final)}</td>
@@ -1082,19 +1321,10 @@ export function MatriculaDocenteView({ displayName }: Readonly<MatriculaDocenteV
                   }}
                 />
               </label>
-              <label className="matricula-acad-check matricula-docente-user-check">
-                <input
-                  type="checkbox"
-                  checked={validateTeacherUser}
-                  onChange={(event) => {
-                    const checked = event.target.checked
-                    setValidateTeacherUser(checked)
-                    setPendingTeacherCode('')
-                    void loadTeacherOptions(teacherQuery, checked)
-                  }}
-                />
-                Validar con usuario
-              </label>
+              <div className="matricula-docente-active-rule">
+                <span>Filtro</span>
+                <strong>Solo usuarios activos (A)</strong>
+              </div>
               <button type="button" className="ghost-button" onClick={() => void searchTeachers()} disabled={teacherSearchLoading}>
                 {teacherSearchLoading ? 'Buscando...' : 'Buscar'}
               </button>

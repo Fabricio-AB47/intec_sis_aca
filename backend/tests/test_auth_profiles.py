@@ -71,6 +71,34 @@ class AuthenticateProfilesTests(unittest.TestCase):
         self.assertEqual(roles, ["ADMINISTRADOR", "ESTUDIANTE", "DOCENTE"])
         self.assertEqual(len(roles), len(set(roles)))
 
+    def test_does_not_repeat_resolvers_when_all_sources_match_login(self):
+        with (
+            patch("app.services.auth._authenticate_administrative_user", return_value=profile("ADMINISTRADOR")) as admin,
+            patch("app.services.auth._authenticate_student", return_value=profile("ESTUDIANTE")) as student,
+            patch("app.services.auth._authenticate_teacher", return_value=profile("DOCENTE")) as teacher,
+        ):
+            session = authenticate_user("persona@institucion.edu.ec", TEST_CREDENTIAL)
+
+        self.assertEqual(len(session["perfiles"]), 3)
+        self.assertEqual(admin.call_count, 1)
+        self.assertEqual(student.call_count, 1)
+        self.assertEqual(teacher.call_count, 1)
+
+    def test_uses_linked_identifier_only_for_missing_source(self):
+        administrative = MagicMock(return_value=None)
+        student = MagicMock(return_value=profile("ESTUDIANTE"))
+        teacher = MagicMock(side_effect=lambda identifier, _password: profile("DOCENTE") if identifier == "1724036536" else None)
+        with (
+            patch("app.services.auth._authenticate_administrative_user", administrative),
+            patch("app.services.auth._authenticate_student", student),
+            patch("app.services.auth._authenticate_teacher", teacher),
+        ):
+            session = authenticate_user("persona@institucion.edu.ec", TEST_CREDENTIAL)
+
+        self.assertEqual([item["rol"] for item in session["perfiles"]], ["ESTUDIANTE", "DOCENTE"])
+        self.assertEqual(student.call_count, 1)
+        self.assertEqual(teacher.call_count, 2)
+
 
 class AdministrativeTypeTests(unittest.TestCase):
     @staticmethod

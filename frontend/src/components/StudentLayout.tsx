@@ -33,6 +33,7 @@ type StudentLayoutProps = {
   onOpenPortalDocenteContratos: () => void
   onOpenTeams: () => void
   onOpenTeamsMatricula: () => void
+  onOpenMoodleTeams: () => void
   onOpenHistoricoIntegraciones: () => void
   onOpenInformeCumplimiento: () => void
   onOpenMoodle: (section?: MoodleSection) => void
@@ -555,6 +556,7 @@ export function StudentLayout({
   onOpenPortalDocenteContratos,
   onOpenTeams,
   onOpenTeamsMatricula,
+  onOpenMoodleTeams,
   onOpenHistoricoIntegraciones,
   onOpenInformeCumplimiento,
   onOpenMoodle,
@@ -605,11 +607,9 @@ export function StudentLayout({
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
-    const coarsePointerQuery = window.matchMedia('(pointer: coarse)')
-
     const syncMobileState = () => {
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth
-      const isMobile = viewportWidth <= 767 || (coarsePointerQuery.matches && viewportWidth <= 1180)
+      const isMobile = viewportWidth <= 1180
       setIsMobileViewport(isMobile)
       if (!isMobile) {
         setMobileMenuOpen(false)
@@ -617,14 +617,29 @@ export function StudentLayout({
     }
 
     syncMobileState()
-    coarsePointerQuery.addEventListener('change', syncMobileState)
     window.addEventListener('resize', syncMobileState)
 
     return () => {
-      coarsePointerQuery.removeEventListener('change', syncMobileState)
       window.removeEventListener('resize', syncMobileState)
     }
   }, [])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeWithEscape)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeWithEscape)
+    }
+  }, [mobileMenuOpen])
 
   const preinscriptionFlowItems: NavItem[] = [
     {
@@ -730,9 +745,15 @@ export function StudentLayout({
   }
   const enrollmentMenuGroup: NavGroup = {
     key: 'matriculacion',
-    title: 'Matriculación',
-    summary: 'Matrícula y configuración académica',
+    title: 'Matrícula',
+    summary: 'Estudiantes, docentes y configuración académica',
     items: [
+      {
+        label: 'Consulta de matrícula',
+        description: 'Consultar la información general de matrícula.',
+        page: 'matricula',
+        action: onOpenMatricula,
+      },
       {
         label: 'Matrícula individual',
         description: 'Buscar por nombre, cédula o código y matricular materias.',
@@ -748,11 +769,23 @@ export function StudentLayout({
         action: () => onOpenMatriculaAcad('masiva'),
       },
       {
+        label: 'Matrícula docente',
+        description: 'Asignar docentes activos a materias, períodos y estudiantes.',
+        page: 'matricula-docente',
+        action: onOpenMatriculaDocente,
+      },
+      {
         label: 'Prerrequisitos de materias',
         description: 'Crear y administrar las relaciones entre materias.',
         page: 'matricula-acad',
         sectionKey: 'prerrequisitos',
         action: () => onOpenMatriculaAcad('prerrequisitos'),
+      },
+      {
+        label: 'Matriculados por período',
+        description: 'Revisar estudiantes matriculados por período académico.',
+        page: 'periodo-matriculados',
+        action: onOpenPeriodoMatriculados,
       },
     ],
   }
@@ -781,6 +814,13 @@ export function StudentLayout({
         page: 'preinscripcion',
         preinscriptionStage: 'becados',
         action: () => onOpenPreinscripcion('becados'),
+      },
+      {
+        label: 'Contratos de beca',
+        description: 'Seleccionar beneficiarios activos y generar sus contratos.',
+        page: 'preinscripcion',
+        preinscriptionStage: 'contratos-becas',
+        action: () => onOpenPreinscripcion('contratos-becas'),
       },
     ],
   }
@@ -913,9 +953,9 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'admision-matriculas',
-      title: 'Admisión y matrículas',
-      summary: 'Aspirantes, matrícula y pagos',
+      key: 'matriculacion',
+      title: 'Matrícula',
+      summary: 'Aspirantes, estudiantes, matrícula y pagos',
       items: [
         ...preinscriptionFlowItems,
         {
@@ -1153,7 +1193,6 @@ export function StudentLayout({
           sectionKey: 'docentes',
           action: () => onOpenGestionSisAcademico('docentes'),
         },
-        { label: 'Matriculación docente', description: 'Proceso de matriculación/asignación docente.', page: 'matricula-docente', action: onOpenMatriculaDocente },
         {
           label: 'Materias asignadas',
           description: 'Relación entre docente, materia, período, paralelo y jornada.',
@@ -1272,7 +1311,7 @@ export function StudentLayout({
         },
         {
           label: 'Accesos operativos',
-          description: 'Mapa funcional de accesos por perfil y módulos disponibles.',
+          description: 'Accesos por perfil y navegación a los módulos disponibles.',
           page: 'gestion-sisacademico',
           sectionKey: 'menu_usuarios',
           action: () => onOpenGestionSisAcademico('menu_usuarios'),
@@ -1282,13 +1321,6 @@ export function StudentLayout({
           description: 'Seleccionar pantallas disponibles por tipo de usuario.',
           page: 'asignacion-pantallas',
           action: onOpenAsignacionPantallas,
-        },
-        {
-          label: 'Mapa operativo',
-          description: 'Acceso funcional a los procesos integrados del sistema.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'menu_general',
-          action: () => onOpenGestionSisAcademico('menu_general'),
         },
       ],
     },
@@ -1580,8 +1612,14 @@ export function StudentLayout({
           page: 'correos-masivos' as Page,
           action: onOpenMassEmail,
         },
-        { label: 'Movimientos Teams', description: 'Gestión de equipos y movimientos.', page: 'teams', action: onOpenTeams },
         { label: 'Matrícula en Teams', description: 'Creación y matrícula de equipos.', page: 'teams-matricula', action: onOpenTeamsMatricula },
+        {
+          label: 'Matrícula Moodle-Teams',
+          description: 'Crear aulas de Teams con docentes y estudiantes de Moodle.',
+          page: 'moodle-teams',
+          action: onOpenMoodleTeams,
+        },
+        { label: 'Movimientos Teams', description: 'Gestión de equipos y movimientos.', page: 'teams', action: onOpenTeams },
       ],
     },
   ]
@@ -1775,8 +1813,8 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'admision-matriculas',
-      title: 'Control de matrícula',
+      key: 'matriculacion',
+      title: 'Matrícula',
       summary: 'Matrícula, estudiantes y notas',
       items: [
         {
@@ -1856,7 +1894,6 @@ export function StudentLayout({
           sectionKey: 'docentes',
           action: () => onOpenGestionSisAcademico('docentes'),
         },
-        { label: 'Matriculación docente', description: 'Asignación docente por materia, período y paralelo.', page: 'matricula-docente', action: onOpenMatriculaDocente },
         {
           label: 'Materias asignadas',
           description: 'Relación docente, materia, período, paralelo y jornada.',
@@ -2321,18 +2358,6 @@ export function StudentLayout({
     summary: 'Consultas y controles autorizados',
     items: [
       {
-        label: 'Consulta de matrícula',
-        description: 'Consultar la información general de matrícula.',
-        page: 'matricula',
-        action: onOpenMatricula,
-      },
-      {
-        label: 'Matriculados por período',
-        description: 'Revisar estudiantes matriculados por período académico.',
-        page: 'periodo-matriculados',
-        action: onOpenPeriodoMatriculados,
-      },
-      {
         label: 'Reportería por carreras',
         description: 'Consultar indicadores y reportes agrupados por carrera.',
         page: 'reporteria-carreras',
@@ -2473,7 +2498,7 @@ export function StudentLayout({
     <div className={`student-shell ${isMobileViewport ? 'student-shell--mobile-view' : ''}`}>
       <aside
         className={`student-sidebar ${isMobileViewport ? 'student-sidebar--mobile' : ''} ${mobileMenuOpen ? 'student-sidebar--open' : ''}`}
-        aria-label="Menu lateral"
+        aria-label="Menú lateral"
       >
         <div className="student-sidebar__head">
           <div className="student-brand">
@@ -2491,6 +2516,7 @@ export function StudentLayout({
             className="student-mobile-menu-button"
             aria-controls="student-mobile-nav"
             aria-expanded={mobileMenuOpen}
+            aria-label={mobileMenuOpen ? 'Cerrar menú principal' : 'Abrir menú principal'}
             onClick={() => setMobileMenuOpen((value) => !value)}
           >
             <span className="student-mobile-menu-button__icon" aria-hidden="true">
@@ -2509,12 +2535,12 @@ export function StudentLayout({
                 )}
               </svg>
             </span>
-            <span className="student-mobile-menu-button__label">{mobileMenuOpen ? 'Cerrar' : 'Menu'}</span>
+            <span className="student-mobile-menu-button__label">{mobileMenuOpen ? 'Cerrar' : 'Menú'}</span>
           </button>
         </div>
 
         <div className="student-sidebar__panel" id="student-mobile-nav">
-          <nav className="student-nav" aria-label="Menu principal">
+          <nav className="student-nav" aria-label="Menú principal">
             {visibleMenuGroups.map((group) => {
               const isOpen = groupIsOpen(group)
               const isActive = groupHasActivePage(group)
@@ -2526,8 +2552,8 @@ export function StudentLayout({
                     className={`student-nav__group-button ${isActive ? 'student-nav__group-button--active' : ''}`}
                     aria-expanded={isOpen}
                     onClick={() => toggleGroup(group.key)}
-                    >
-                      <span className="student-nav__group-icon" aria-hidden="true">
+                  >
+                    <span className="student-nav__group-icon" aria-hidden="true">
                       <GroupIcon name={groupIconName(group.key)} />
                     </span>
                     <span className="student-nav__group-copy">
@@ -2592,7 +2618,7 @@ export function StudentLayout({
         <button
           type="button"
           className="student-mobile-menu-backdrop"
-          aria-label="Cerrar menu"
+          aria-label="Cerrar menú"
           onClick={() => setMobileMenuOpen(false)}
         />
       ) : null}

@@ -59,6 +59,10 @@ const HistoricoIntegracionesView = lazyView(
   () => import('./features/integraciones/HistoricoIntegracionesView'),
   'HistoricoIntegracionesView',
 )
+const MoodleTeamsEnrollmentView = lazyView(
+  () => import('./features/integraciones/MoodleTeamsEnrollmentView'),
+  'MoodleTeamsEnrollmentView',
+)
 const InformeCumplimientoView = lazyView(
   () => import('./features/admin/InformeCumplimientoView'),
   'InformeCumplimientoView',
@@ -73,6 +77,7 @@ const preinscriptionStages: PreinscriptionStage[] = [
   'becas',
   'gestion-becas',
   'becados',
+  'contratos-becas',
   'seguimiento',
   'cabecera',
   'materias',
@@ -491,6 +496,8 @@ function App() {
           onCreateAndEnroll={app.createAndEnroll}
         />
       )
+    } else if (app.activePage === 'moodle-teams') {
+      pageContent = <MoodleTeamsEnrollmentView displayName={app.displayName} />
     } else if (app.activePage === 'teams') {
       pageContent = (
         <TeamsView
@@ -553,6 +560,7 @@ function App() {
           onOpenPortalDocenteContratos={app.openPortalDocenteContratosPage}
           onOpenTeams={app.openTeamsPage}
           onOpenTeamsMatricula={app.openTeamsMatriculaPage}
+          onOpenMoodleTeams={app.openMoodleTeamsPage}
           onOpenHistoricoIntegraciones={app.openHistoricoIntegracionesPage}
           onOpenInformeCumplimiento={app.openInformeCumplimientoPage}
           onOpenMoodle={app.openMoodlePage}

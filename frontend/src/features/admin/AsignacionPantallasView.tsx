@@ -6,12 +6,48 @@ import type { Role, ScreenAccessResponse, ScreenAccessRole, ScreenPermissionCode
 
 type AccessTab = 'roles' | 'summary'
 type AssignmentMap = Partial<Record<Role, ScreenPermissionCode[]>>
+type ScreenSelectionFilter = 'all' | 'assigned' | 'available'
 
 const LEGACY_STORAGE_KEY = 'intec:user-type-screen-access:v1'
 const SCREEN_ACCESS_SYNC_KEY = 'intec:screen-access-updated:v2'
 const ADMIN_ONLY_PAGES = new Set<ScreenPermissionCode>(['sistema-academico', 'asignacion-pantallas'])
+const EMPTY_PAGES: ScreenPermissionCode[] = []
+const SPANISH_COLLATOR = new Intl.Collator('es-EC', {
+  numeric: true,
+  sensitivity: 'base',
+})
 const ROLE_DENIED_PAGES: Partial<Record<Role, Set<ScreenPermissionCode>>> = {
   ESTUDIANTE: new Set<ScreenPermissionCode>(['expedientes-documentales']),
+}
+const UPDATE_SCREEN_PAGES = new Set<ScreenPermissionCode>([
+  'actualizar-datos-estudiante',
+  'actualizar-correo-intec',
+  'fecha-grado',
+  'gestion-sisacademico/actualizacion_est',
+  'gestion-sisacademico/actualizacion_estudiantes',
+])
+const ENROLLMENT_GROUP_ALIASES = new Set([
+  'inscripcion / matricula',
+  'matricula / operacion',
+  'matricula / control academico',
+  'operacion / matricula',
+])
+
+function normalizedGroupName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLocaleLowerCase('es')
+}
+
+function canonicalScreenGroup(page: ScreenPermissionCode, group: string) {
+  if (UPDATE_SCREEN_PAGES.has(page)) return 'Actualización'
+
+  const normalizedGroup = normalizedGroupName(group)
+  if (normalizedGroup === 'actualizacion' || normalizedGroup === 'actualizaciones') return 'Actualización'
+  if (normalizedGroup === 'matricula' || ENROLLMENT_GROUP_ALIASES.has(normalizedGroup)) return 'Matrícula'
+  return group.trim()
 }
 
 function isPageOrFlowOf(page: ScreenPermissionCode, parent: ScreenPermissionCode) {
@@ -45,6 +81,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   const [activeTab, setActiveTab] = useState<AccessTab>('roles')
   const [query, setQuery] = useState('')
   const [screenQuery, setScreenQuery] = useState('')
+  const [screenSelectionFilter, setScreenSelectionFilter] = useState<ScreenSelectionFilter>('all')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false)
@@ -72,28 +109,47 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
   const filteredRoles = useMemo(() => {
     const roles = data?.roles || []
     const needle = query.trim().toLocaleLowerCase('es')
-    if (!needle) return roles
-    return roles.filter((role) =>
-      `${role.label} ${role.value} ${role.description}`.toLocaleLowerCase('es').includes(needle),
-    )
+    return roles
+      .filter((role) => !needle ||
+        `${role.label} ${role.value} ${role.description}`.toLocaleLowerCase('es').includes(needle))
+      .toSorted((left, right) => SPANISH_COLLATOR.compare(left.label, right.label))
   }, [data?.roles, query])
+
+  const selectedRoleMeta = data?.roles.find((role) => role.value === selectedRole) || null
+  const selectedPages = selectedRole ? assignments[selectedRole] || EMPTY_PAGES : EMPTY_PAGES
+  const selectedSet = new Set(selectedPages)
+
+  const eligibleScreens = useMemo(() =>
+    (data?.screens || [])
+      .filter((screen) => screenAvailableForRole(selectedRole, screen.page))
+      .map((screen) => ({ ...screen, group: canonicalScreenGroup(screen.page, screen.group) }))
+      .toSorted((left, right) => {
+        const groupOrder = SPANISH_COLLATOR.compare(left.group, right.group)
+        if (groupOrder !== 0) return groupOrder
+        const labelOrder = SPANISH_COLLATOR.compare(left.label, right.label)
+        return labelOrder !== 0 ? labelOrder : SPANISH_COLLATOR.compare(left.page, right.page)
+      }),
+  [data?.screens, selectedRole])
 
   const groupedScreens = useMemo(() => {
     const groups = new Map<string, NonNullable<ScreenAccessResponse['screens']>>()
     const needle = screenQuery.trim().toLocaleLowerCase('es')
-    ;(data?.screens || [])
-      .filter((screen) => screenAvailableForRole(selectedRole, screen.page))
+    const selectedPageSet = new Set(selectedPages)
+    eligibleScreens
       .filter((screen) => !needle || `${screen.label} ${screen.description} ${screen.group} ${screen.page}`.toLocaleLowerCase('es').includes(needle))
+      .filter((screen) => screenSelectionFilter === 'all'
+        || (screenSelectionFilter === 'assigned' && selectedPageSet.has(screen.page))
+        || (screenSelectionFilter === 'available' && !selectedPageSet.has(screen.page)))
       .forEach((screen) => {
         groups.set(screen.group, [...(groups.get(screen.group) || []), screen])
       })
     return Array.from(groups.entries())
-  }, [data?.screens, screenQuery, selectedRole])
+      .toSorted(([leftGroup], [rightGroup]) => SPANISH_COLLATOR.compare(leftGroup, rightGroup))
+  }, [eligibleScreens, screenQuery, screenSelectionFilter, selectedPages])
 
-  const selectedRoleMeta = data?.roles.find((role) => role.value === selectedRole) || null
-  const selectedPages = selectedRole ? assignments[selectedRole] || [] : []
-  const selectedSet = new Set(selectedPages)
   const visiblePages = groupedScreens.flatMap(([, items]) => items.map((screen) => screen.page))
+  const assignedEligibleCount = eligibleScreens.filter((screen) => selectedSet.has(screen.page)).length
+  const availableEligibleCount = eligibleScreens.length - assignedEligibleCount
   const assignedPages = new Set(selectedRoleMeta?.pages || [])
   const hasChanges = selectedPages.length !== assignedPages.size || selectedPages.some((page) => !assignedPages.has(page))
   const canSave = Boolean(
@@ -111,6 +167,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
     setAssignments((current) => ({ ...current, [role.value]: current[role.value] || role.pages }))
     setCloseConfirmationOpen(false)
     setScreenQuery('')
+    setScreenSelectionFilter('all')
     setMessage('')
     setError('')
   }
@@ -119,6 +176,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
     setSelectedRole(null)
     setCloseConfirmationOpen(false)
     setScreenQuery('')
+    setScreenSelectionFilter('all')
     setMessage('')
     setError('')
   }
@@ -144,6 +202,22 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       const pages = new Set(current[selectedRole] || [])
       if (pages.has(page)) pages.delete(page)
       else pages.add(page)
+      return { ...current, [selectedRole]: Array.from(pages) }
+    })
+    setMessage('')
+  }
+
+  function setGroupSelection(group: string, shouldSelect: boolean) {
+    if (!selectedRole || selectedRoleMeta?.protected) return
+    const groupPages = eligibleScreens
+      .filter((screen) => screen.group === group)
+      .map((screen) => screen.page)
+    setAssignments((current) => {
+      const pages = new Set(current[selectedRole] || [])
+      groupPages.forEach((page) => {
+        if (shouldSelect) pages.add(page)
+        else pages.delete(page)
+      })
       return { ...current, [selectedRole]: Array.from(pages) }
     })
     setMessage('')
@@ -175,7 +249,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
         updatedAt: Date.now(),
       }))
       window.dispatchEvent(new CustomEvent('intec-screen-access-updated'))
-      setMessage(`Asignacion sincronizada para ${savedRole.label}.`)
+      setMessage(`Asignación sincronizada para ${savedRole.label}.`)
     } catch (apiError) {
       setError(apiError instanceof ApiError ? apiError.message : 'No se pudo guardar la asignación de pantallas.')
     } finally {
@@ -189,7 +263,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
         <div>
           <p className="eyebrow">Administración</p>
           <h1>Asignación de pantallas</h1>
-          <p>{displayName} · Configure las pantallas que utilizaran todos los usuarios de cada tipo.</p>
+          <p>{displayName} · Configure las pantallas que utilizarán todos los usuarios de cada tipo.</p>
         </div>
         <div className="screen-access-source">
           <span>Fuente central</span>
@@ -309,13 +383,47 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   <input
                     value={screenQuery}
                     onChange={(event) => setScreenQuery(event.target.value)}
-                    placeholder="Nombre, grupo o funcion de la pantalla"
+                    placeholder="Nombre, grupo o función de la pantalla"
                   />
                 </label>
                 <div>
-                  <strong>{visiblePages.length} visible(s)</strong>
-                  <span>{selectedPages.length} asignada(s)</span>
+                  <strong>{visiblePages.length} mostrada(s)</strong>
+                  <span>{assignedEligibleCount} asignada(s) de {eligibleScreens.length}</span>
                 </div>
+              </div>
+
+              <div className="screen-access-selection-bar">
+                <div className="screen-access-selection-filters" role="group" aria-label="Filtrar pantallas por asignación">
+                  <span>Mostrar</span>
+                  <button
+                    type="button"
+                    className={screenSelectionFilter === 'all' ? 'is-active' : ''}
+                    aria-pressed={screenSelectionFilter === 'all'}
+                    onClick={() => setScreenSelectionFilter('all')}
+                  >
+                    Todas <b>{eligibleScreens.length}</b>
+                  </button>
+                  <button
+                    type="button"
+                    className={screenSelectionFilter === 'assigned' ? 'is-active' : ''}
+                    aria-pressed={screenSelectionFilter === 'assigned'}
+                    onClick={() => setScreenSelectionFilter('assigned')}
+                  >
+                    Asignadas <b>{assignedEligibleCount}</b>
+                  </button>
+                  <button
+                    type="button"
+                    className={screenSelectionFilter === 'available' ? 'is-active' : ''}
+                    aria-pressed={screenSelectionFilter === 'available'}
+                    onClick={() => setScreenSelectionFilter('available')}
+                  >
+                    Disponibles <b>{availableEligibleCount}</b>
+                  </button>
+                </div>
+                <p>
+                  <span className="screen-access-selection-key screen-access-selection-key--assigned">Asignada al perfil</span>
+                  <span className="screen-access-selection-key">Disponible para seleccionar</span>
+                </p>
               </div>
 
               <div className="screen-access-actions">
@@ -334,30 +442,55 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
               {error ? <div className="status-message status-message--error">{error}</div> : null}
 
               <div className="screen-access-groups">
-                {groupedScreens.map(([group, items]) => (
-                  <section key={group} className="screen-access-group">
-                    <div className="screen-access-group__head">
-                      <h4>{group}<span>{items.filter((screen) => selectedSet.has(screen.page)).length} / {items.length}</span></h4>
-                    </div>
-                    <div className="screen-access-grid">
-                      {items.map((screen) => (
-                        <label key={screen.page} className={selectedSet.has(screen.page) ? 'screen-access-item screen-access-item--checked' : 'screen-access-item'}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSet.has(screen.page)}
-                            disabled={saving || selectedRoleMeta.protected}
-                            onChange={() => togglePage(screen.page)}
-                          />
-                          <span>
-                            <strong>{screen.label}</strong>
-                            <small>{screen.description}</small>
-                            <small className="screen-access-item__code">{screen.page}</small>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </section>
-                ))}
+                {groupedScreens.map(([group, items]) => {
+                  const completeGroup = eligibleScreens.filter((screen) => screen.group === group)
+                  const assignedInGroup = completeGroup.filter((screen) => selectedSet.has(screen.page)).length
+                  const isGroupAssigned = completeGroup.length > 0 && assignedInGroup === completeGroup.length
+                  return (
+                    <section key={group} className="screen-access-group">
+                      <div className="screen-access-group__head">
+                        <div>
+                          <h4>{group}</h4>
+                          <span>{assignedInGroup} de {completeGroup.length} asignada(s)</span>
+                        </div>
+                        {!selectedRoleMeta.protected ? (
+                          <button
+                            type="button"
+                            className="screen-access-group__toggle"
+                            disabled={saving}
+                            onClick={() => setGroupSelection(group, !isGroupAssigned)}
+                          >
+                            {isGroupAssigned ? 'Quitar grupo' : 'Seleccionar grupo'}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="screen-access-grid">
+                        {items.map((screen) => {
+                          const isAssigned = selectedSet.has(screen.page)
+                          return (
+                            <label key={screen.page} className={isAssigned ? 'screen-access-item screen-access-item--checked' : 'screen-access-item'}>
+                              <input
+                                type="checkbox"
+                                checked={isAssigned}
+                                disabled={saving || selectedRoleMeta.protected}
+                                aria-label={`${isAssigned ? 'Quitar' : 'Asignar'} ${screen.label}`}
+                                onChange={() => togglePage(screen.page)}
+                              />
+                              <span className="screen-access-item__copy">
+                                <span className={isAssigned ? 'screen-access-item__status is-assigned' : 'screen-access-item__status'}>
+                                  {isAssigned ? 'Asignada' : 'Disponible'}
+                                </span>
+                                <strong>{screen.label}</strong>
+                                <small>{screen.description}</small>
+                                <small className="screen-access-item__code">{screen.page}</small>
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  )
+                })}
                 {groupedScreens.length === 0 ? (
                   <p className="screen-access-empty">No hay pantallas que coincidan con la búsqueda.</p>
                 ) : null}

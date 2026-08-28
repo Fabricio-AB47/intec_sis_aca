@@ -1,5 +1,8 @@
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
+import hashlib
+from threading import Lock
+from uuid import uuid4
 
 import jwt
 import pyodbc
@@ -8,6 +11,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.rate_limit import RateLimitExceeded, rate_limiter
 from app.core.security import (
     SessionProfile,
     SessionUser,
@@ -27,11 +31,13 @@ from app.services.graph import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+_MS_STATE_LOCK = Lock()
+_USED_MS_STATE_IDS: dict[str, float] = {}
 
 
 class LoginRequest(BaseModel):
-    login: str = Field(min_length=1)
-    password: str = Field(min_length=1)
+    login: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class LoginResponse(BaseModel):
@@ -48,14 +54,21 @@ class LoginResponse(BaseModel):
 
 
 class ProfileSelectionRequest(BaseModel):
-    rol: str = Field(min_length=1)
+    rol: str = Field(min_length=1, max_length=64)
 
 
 def _build_ms_state(user: SessionUser, team_id: str | None = None) -> str:
     settings = get_settings()
+    now = datetime.now(timezone.utc)
     payload = {
         "login": user.login,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "typ": "microsoft_oauth_state",
+        "jti": str(uuid4()),
+        "iat": now,
+        "nbf": now,
+        "exp": now + timedelta(minutes=10),
         "team_id": team_id,
     }
     return str(jwt.encode(payload, settings.signing_secret, algorithm="HS256"))
@@ -63,7 +76,26 @@ def _build_ms_state(user: SessionUser, team_id: str | None = None) -> str:
 
 def _decode_ms_state(state: str) -> tuple[str, str | None]:
     settings = get_settings()
-    decoded = jwt.decode(state, settings.signing_secret, algorithms=["HS256"])
+    decoded = jwt.decode(
+        state,
+        settings.signing_secret,
+        algorithms=["HS256"],
+        issuer=settings.jwt_issuer,
+        audience=settings.jwt_audience,
+        options={"require": ["iss", "aud", "jti", "iat", "nbf", "exp"]},
+    )
+    if decoded.get("typ") != "microsoft_oauth_state":
+        raise ValueError('Estado Microsoft inválido')
+    state_id = str(decoded.get("jti") or "").strip()
+    expires_at = float(decoded.get("exp") or 0)
+    now = datetime.now(timezone.utc).timestamp()
+    with _MS_STATE_LOCK:
+        expired = [key for key, expiry in _USED_MS_STATE_IDS.items() if expiry <= now]
+        for key in expired:
+            _USED_MS_STATE_IDS.pop(key, None)
+        if not state_id or state_id in _USED_MS_STATE_IDS:
+            raise ValueError('Estado Microsoft inválido o reutilizado')
+        _USED_MS_STATE_IDS[state_id] = expires_at
     login = str(decoded.get("login") or "").strip()
     if not login:
         raise ValueError('Estado Microsoft inválido')
@@ -72,22 +104,57 @@ def _decode_ms_state(state: str) -> tuple[str, str | None]:
     return login, team_id
 
 
+def _login_rate_keys(request: Request, login_value: str) -> tuple[str, str]:
+    client_ip = request.client.host if request.client else "unknown"
+    normalized_login = login_value.strip().casefold()
+    login_digest = hashlib.sha256(normalized_login.encode("utf-8")).hexdigest()
+    return f"login-ip:{client_ip}", f"login-account:{login_digest}"
+
+
 @router.post("/login")
-def login(payload: LoginRequest, response: Response) -> LoginResponse:
+def login(payload: LoginRequest, request: Request, response: Response) -> LoginResponse:
+    settings = get_settings()
+    ip_key, account_key = _login_rate_keys(request, payload.login)
+    try:
+        rate_limiter.check(
+            ip_key,
+            limit=max(settings.login_rate_limit_attempts * 10, 25),
+            window_seconds=settings.login_rate_limit_window_seconds,
+        )
+        rate_limiter.check(
+            account_key,
+            limit=settings.login_rate_limit_attempts,
+            window_seconds=settings.login_rate_limit_window_seconds,
+        )
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Demasiados intentos de acceso. Intente nuevamente más tarde.',
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
     try:
         user = SessionUser.model_validate(authenticate_user(payload.login, payload.password))
+        rate_limiter.reset(account_key)
         token = create_session_token(user)
         set_auth_cookie(response, token)
         return LoginResponse(**user.model_dump())
-    except ValueError as exc:
+    except (ValueError, PermissionError) as exc:
+        rate_limiter.record_failure(
+            ip_key,
+            limit=max(settings.login_rate_limit_attempts * 10, 25),
+            window_seconds=settings.login_rate_limit_window_seconds,
+            lockout_seconds=settings.login_rate_limit_lockout_seconds,
+        )
+        rate_limiter.record_failure(
+            account_key,
+            limit=settings.login_rate_limit_attempts,
+            window_seconds=settings.login_rate_limit_window_seconds,
+            lockout_seconds=settings.login_rate_limit_lockout_seconds,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
+            detail='Usuario o contraseña inválidos.',
         ) from exc
     except pyodbc.Error as exc:
         raise HTTPException(
@@ -166,9 +233,12 @@ def microsoft_callback(code: str, state: str) -> RedirectResponse:
         )
         return response
     except (ValueError, jwt.PyJWTError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Estado Microsoft inválido o expirado.') from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='No se pudo completar la conexión con Microsoft.',
+        ) from exc
 
 
 @router.get("/microsoft/status")
@@ -187,8 +257,21 @@ def microsoft_status(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> Response:
+    settings = get_settings()
     clear_auth_cookie(response)
-    response.delete_cookie("ms_delegate_access_token", path="/")
-    response.delete_cookie("ms_delegate_exp", path="/")
+    response.delete_cookie(
+        "ms_delegate_access_token",
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        "ms_delegate_exp",
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
     response.status_code = status.HTTP_204_NO_CONTENT
     return response

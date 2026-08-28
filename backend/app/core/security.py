@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Callable
+from uuid import uuid4
 
 import jwt
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -33,17 +34,6 @@ ALLOWED_ROLES = (
     "DOCENTE",
     "ESTUDIANTE",
 )
-ADMIN_PORTAL_ROLES = (
-    "ADMINISTRADOR",
-    "FINANCIERO",
-    "BIENESTAR",
-    "ACADEMICO",
-    "ADMISIONES",
-    "RECTOR",
-    "VICERRECTOR",
-    "SOPORTE",
-    "INVITADO_SOP",
-)
 _HASHER = PasswordHasher() if PasswordHasher is not None else None
 _JWT_ALGORITHM = "HS256"
 
@@ -75,7 +65,7 @@ def verify_password(candidate: str, stored_value: str | None) -> bool:
     settings = get_settings()
 
     if _HASHER is None:
-        return settings.auth_legacy_plaintext_enabled and candidate == normalized
+        return False
 
     try:
         return _HASHER.verify(normalized, candidate)
@@ -90,7 +80,7 @@ def hash_password(value: str) -> str:
     if not normalized:
         raise ValueError('La contraseña no puede estar vacía')
     if _HASHER is None:
-        return normalized
+        raise RuntimeError('Argon2 no está disponible para proteger la contraseña')
     return _HASHER.hash(normalized)
 
 
@@ -111,6 +101,11 @@ def create_session_token(user: SessionUser) -> str:
         "cedula": user.cedula,
         "origen": user.origen,
         "perfiles": [profile.model_dump() for profile in user.perfiles],
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "jti": str(uuid4()),
+        "nbf": issued_at,
+        "typ": "session",
         "iat": issued_at,
         "exp": expires_at,
     }
@@ -122,7 +117,18 @@ def decode_session_token(token: str) -> SessionUser:
     settings = get_settings()
 
     try:
-        payload = jwt.decode(token, settings.signing_secret, algorithms=[_JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            settings.signing_secret,
+            algorithms=[_JWT_ALGORITHM],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={
+                "require": ["sub", "iss", "aud", "jti", "iat", "nbf", "exp"],
+            },
+        )
+        if payload.get("typ") != "session":
+            raise jwt.InvalidTokenError("Tipo de token inválido")
     except jwt.PyJWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -149,7 +155,13 @@ def set_auth_cookie(response: Response, token: str) -> None:
 
 def clear_auth_cookie(response: Response) -> None:
     settings = get_settings()
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(
+        settings.session_cookie_name,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite=settings.session_cookie_samesite,
+    )
 
 
 def get_current_user(request: Request) -> SessionUser:
@@ -162,7 +174,8 @@ def get_current_user(request: Request) -> SessionUser:
             detail='No hay una sesión activa',
         )
 
-    user = decode_session_token(token)
+    cached_user = getattr(request.state, "session_user", None)
+    user = cached_user if isinstance(cached_user, SessionUser) else decode_session_token(token)
     if user.rol not in ALLOWED_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -174,8 +187,6 @@ def get_current_user(request: Request) -> SessionUser:
 
 def require_roles(*roles: str) -> Callable[[SessionUser], SessionUser]:
     requested_roles = {role.upper() for role in roles}
-    if {"ADMINISTRADOR", "ACADEMICO", "RECTOR"}.issubset(requested_roles):
-        requested_roles.update(ADMIN_PORTAL_ROLES)
     allowed_roles = tuple(requested_roles)
 
     def dependency(

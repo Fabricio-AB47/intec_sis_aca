@@ -1,3 +1,5 @@
+from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 from app.core.security import SessionProfile, SessionUser, verify_password
@@ -353,19 +355,42 @@ def authenticate_user(login: str, password: str) -> dict[str, Any]:
 
     profiles: list[SessionProfile] = []
     permission_errors: list[PermissionError] = []
-    resolvers = (
-        _authenticate_administrative_user,
-        _authenticate_student,
-        _authenticate_teacher,
+    resolvers: tuple[tuple[str, Callable[[str, str | None], SessionUser | None]], ...] = (
+        ("USUARIO_SIS", _authenticate_administrative_user),
+        ("ESTUDIANTE", _authenticate_student),
+        ("DOCENTE", _authenticate_teacher),
     )
-    # Primero se valida la credencial contra los tres origenes oficiales.
-    for resolver in resolvers:
+    resolved_sources: set[str] = set()
+    resolver_cache: dict[tuple[str, str], SessionUser | None | PermissionError] = {}
+
+    def resolve(
+        source: str,
+        resolver: Callable[[str, str | None], SessionUser | None],
+        identifier: str,
+    ) -> SessionUser | None:
+        key = (source, identifier.casefold())
+        cached = resolver_cache.get(key)
+        if isinstance(cached, PermissionError):
+            raise cached
+        if key in resolver_cache:
+            return cached
         try:
-            user = resolver(login_or_email, password)
+            user = resolver(identifier, password)
+        except PermissionError as exc:
+            resolver_cache[key] = exc
+            raise
+        resolver_cache[key] = user
+        return user
+
+    # Primero se valida la credencial contra los tres origenes oficiales.
+    for source, resolver in resolvers:
+        try:
+            user = resolve(source, resolver, login_or_email)
         except PermissionError as exc:
             permission_errors.append(exc)
             continue
         if user is not None:
+            resolved_sources.add(source)
             profile = SessionProfile.model_validate(user.model_dump())
             if not any(existing.rol == profile.rol for existing in profiles):
                 profiles.append(profile)
@@ -374,26 +399,29 @@ def authenticate_user(login: str, password: str) -> dict[str, Any]:
         # Una vez comprobada la identidad, se resuelven sus otros perfiles por
         # correo/login institucional o cedula. El rol sigue dependiendo de que
         # exista un registro activo en su tabla de origen.
-        pending_identifiers = [login_or_email]
+        pending_identifiers: deque[str] = deque([login_or_email])
         for profile in profiles:
             pending_identifiers.extend(filter(None, (profile.login, profile.email, profile.cedula)))
         checked_identifiers: set[str] = set()
 
-        while pending_identifiers:
-            identifier = pending_identifiers.pop(0).strip()
+        while pending_identifiers and len(resolved_sources) < len(resolvers):
+            identifier = pending_identifiers.popleft().strip()
             identifier_key = identifier.casefold()
             if not identifier or identifier_key in checked_identifiers:
                 continue
             checked_identifiers.add(identifier_key)
 
-            for resolver in resolvers:
+            for source, resolver in resolvers:
+                if source in resolved_sources:
+                    continue
                 try:
-                    user = resolver(identifier, password)
+                    user = resolve(source, resolver, identifier)
                 except PermissionError as exc:
                     permission_errors.append(exc)
                     continue
                 if user is None:
                     continue
+                resolved_sources.add(source)
                 profile = SessionProfile.model_validate(user.model_dump())
                 if any(existing.rol == profile.rol for existing in profiles):
                     continue

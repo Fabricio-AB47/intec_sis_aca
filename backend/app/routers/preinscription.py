@@ -1,11 +1,17 @@
 import calendar
 from datetime import date, datetime
+from hashlib import sha256
 from html import escape
+from io import BytesIO
 from pathlib import Path
 import re
 from typing import Annotated, Any
+from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import pyodbc
 from reportlab.graphics import renderPDF
@@ -20,6 +26,16 @@ from svglib.svglib import svg2rlg
 from app.core.security import SessionUser, require_roles
 from app.services.complement_sync import sync_preinscription_complements
 from app.services.db import get_connection, get_finance_connection
+from app.services.graph_documents import (
+    complete_upload_session,
+    delete_item,
+    ensure_folder,
+    mark_upload_error,
+    prepare_expedient,
+    register_upload_session,
+    set_document_origin,
+    upload_bytes,
+)
 
 router = APIRouter(prefix="/api/students/preinscripcion", tags=["preinscripcion"])
 
@@ -39,6 +55,7 @@ _PHOTO_MIME_BY_EXTENSION = {
     ".webp": "image/webp",
 }
 _PHOTO_MAX_BYTES = 8 * 1024 * 1024
+_SCHOLARSHIP_CONTRACT_MAX_BYTES = 20 * 1024 * 1024
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.svg"
@@ -124,6 +141,11 @@ class ScholarshipConfigurationPayload(BaseModel):
     activo: bool = True
 
 
+class ScholarshipContractGeneratePayload(BaseModel):
+    beca_ids: list[int]
+    codigo_periodo: str
+
+
 def _clean(value: Any) -> str:
     if value is None:
         return ""
@@ -144,6 +166,20 @@ def _is_intec_scholarship(value: Any) -> bool:
     return not _is_mintel_scholarship(value) and (
         normalized == "INTEC" or normalized.startswith("BECA INTEC")
     )
+
+
+def _is_english_career(career_code: Any = "", career_name: Any = "") -> bool:
+    normalized_code = _clean(career_code).upper()
+    normalized_name = re.sub(r"[^A-Z0-9]+", " ", _clean(career_name).upper()).strip()
+    return normalized_code == "12" or "INGL" in normalized_name or "IDIOMA" in normalized_name
+
+
+def _exclude_english_scholarship_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in items
+        if not _is_english_career(item.get("codigo_carrera"), item.get("carrera"))
+    ]
 
 
 def _scholarship_code(value: Any) -> str:
@@ -493,6 +529,283 @@ def _format_money(value: Any) -> str:
     except (TypeError, ValueError):
         amount = 0
     return f"$ {amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _scholarship_contract_scope(item: dict[str, Any]) -> str:
+    scholarship_name = _clean(item.get("tipo_beca"))
+    percentage = float(item.get("porcentaje_beca") or 0)
+    if _is_intec_scholarship(scholarship_name):
+        return (
+            f"La beca cubre el {percentage:g}% del arancel académico correspondiente. "
+            "Este beneficio no se aplica al valor de matrícula ni a otros rubros administrativos."
+        )
+    if _is_mintel_scholarship(scholarship_name):
+        return (
+            "La Beca MINTEL conserva el porcentaje institucional fijo registrado para el período "
+            "académico y se aplicará conforme a la cuenta estudiantil aprobada."
+        )
+    return (
+        f"La beca cubre el {percentage:g}% conforme a la aprobación registrada para el período "
+        "académico y a los rubros autorizados por la institución."
+    )
+
+
+def _scholarship_contract_initial(value: Any) -> str:
+    words = re.findall(r"[A-Z0-9]+", _clean(value).upper())
+    ignored = {"BECA", "AYUDA", "ECONOMICA", "ECONÓMICA", "DE", "DEL", "LA", "EL"}
+    significant = next((word for word in words if word not in ignored), "BECA")
+    return significant[0]
+
+
+def _scholarship_contract_base_number(item: dict[str, Any], contract_date: date) -> str:
+    initial = _scholarship_contract_initial(item.get("tipo_beca"))
+    scholarship_id = abs(int(item.get("beca_id") or 0))
+    period_digits = re.sub(r"\D+", "", _clean(item.get("codigo_periodo")))
+    period_part = (period_digits[-4:] if period_digits else "0000").zfill(4)
+    return f"{initial}{scholarship_id:04d}{period_part}{contract_date.year}"
+
+
+def _next_scholarship_contract_number(
+    cursor: pyodbc.Cursor,
+    item: dict[str, Any],
+    contract_date: date,
+) -> str:
+    base_number = _scholarship_contract_base_number(item, contract_date)
+    origin = "INTECBDD" if int(item["beca_id"]) < 0 else "FINANZAS"
+    cursor.execute(
+        """
+        SELECT COUNT(1)
+        FROM bec.ContratoBeca
+        WHERE BecaOrigenId = ? AND Origen = ? AND CodigoPeriodo = ?
+        """,
+        int(item["beca_id"]),
+        origin,
+        _clean(item.get("codigo_periodo")),
+    )
+    generated = int(cursor.fetchone()[0] or 0)
+    return base_number if generated == 0 else f"{base_number}-R{generated + 1}"
+
+
+def _scholarship_disability(value: Any) -> str:
+    normalized = _clean(value).upper()
+    if normalized in {"1", "SI", "SÍ", "TRUE"}:
+        return "SÍ"
+    return "NO"
+
+
+def _scholarship_disability_type(item: dict[str, Any]) -> str:
+    if _scholarship_disability(item.get("discapacidad")) == "NO":
+        return "NINGUNA"
+    value = _clean(item.get("tipo_discapacidad"))
+    return "NINGUNA" if value in {"", "0", "7"} else value
+
+
+def _build_scholarship_contract_pdf(
+    item: dict[str, Any],
+    contract_number: str,
+    contract_date: date,
+) -> bytes:
+    output = BytesIO()
+    document = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=1.35 * cm,
+        leftMargin=1.35 * cm,
+        topMargin=0.95 * cm,
+        bottomMargin=1.15 * cm,
+        title=f"Contrato de beca {contract_number}",
+        author="Instituto Superior Tecnológico INTEC",
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ScholarshipContractTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=10.5,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#111111"),
+    )
+    body_style = ParagraphStyle(
+        "ScholarshipContractBody",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=7.2,
+        leading=8.7,
+        alignment=TA_JUSTIFY,
+        textColor=colors.HexColor("#111111"),
+        spaceAfter=3.2,
+    )
+    small_style = ParagraphStyle(
+        "ScholarshipContractSmall",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=6.5,
+        leading=8,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#333333"),
+    )
+    cell_label = ParagraphStyle(
+        "ScholarshipContractCellLabel",
+        parent=small_style,
+        alignment=0,
+        fontName="Helvetica-Bold",
+        fontSize=6.3,
+        leading=7.4,
+    )
+    cell_value = ParagraphStyle(
+        "ScholarshipContractCellValue",
+        parent=cell_label,
+        fontName="Helvetica",
+    )
+
+    def paragraph(value: Any, style: ParagraphStyle = cell_value) -> Paragraph:
+        return Paragraph(escape(_clean(value) or "-"), style)
+
+    def draw_contract_background(canvas: Any, doc: Any) -> None:
+        canvas.saveState()
+        page_width, page_height = A4
+        canvas.setFillColor(colors.HexColor("#F2DEDE"))
+        canvas.setStrokeColor(colors.HexColor("#F2DEDE"))
+        canvas.circle(-0.15 * cm, page_height * 0.55, 3.7 * cm, fill=1, stroke=0)
+        path = canvas.beginPath()
+        path.moveTo(0, page_height * 0.23)
+        path.lineTo(6.3 * cm, page_height * 0.23)
+        path.lineTo(8.8 * cm, page_height * 0.14)
+        path.lineTo(4.8 * cm, 0)
+        path.lineTo(0, 0)
+        path.close()
+        canvas.drawPath(path, fill=1, stroke=0)
+        canvas.setStrokeColor(colors.HexColor("#9E1B17"))
+        canvas.setLineWidth(0.8)
+        canvas.line(doc.leftMargin, 0.78 * cm, page_width - doc.rightMargin, 0.78 * cm)
+        canvas.setFont("Helvetica", 6.2)
+        canvas.setFillColor(colors.HexColor("#555555"))
+        canvas.drawString(doc.leftMargin, 0.46 * cm, "www.intec.edu.ec")
+        canvas.drawCentredString(page_width / 2, 0.46 * cm, "Contrato de beca institucional")
+        canvas.drawRightString(page_width - doc.rightMargin, 0.46 * cm, f"N.° {contract_number}")
+        canvas.restoreState()
+
+    story: list[Any] = []
+    logo: Any = _SvgLogo(_LOGO_PATH, 4.2 * cm) if _LOGO_PATH.exists() else paragraph("INTEC", title_style)
+    header_right = Table(
+        [
+            [Paragraph(f"CONTRATO DE BECA - No. {escape(contract_number)}", title_style)],
+            [Paragraph("INSTITUTO SUPERIOR TECNOLÓGICO INTEC", small_style)],
+            [Paragraph(f"EMISIÓN: {contract_date.strftime('%d/%m/%Y')}", small_style)],
+        ],
+        colWidths=[12.0 * cm],
+    )
+    header_right.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#555555")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    header = Table([[logo, header_right]], colWidths=[4.8 * cm, 12.0 * cm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story.extend([header, Spacer(1, 0.12 * cm)])
+
+    student_name = _clean(item.get("estudiante")) or "la persona beneficiaria"
+    story.append(
+        Paragraph(
+            "Comparecen a la celebración del presente contrato el Instituto Superior Tecnológico INTEC y "
+            f"<b>{escape(student_name)}</b>, en calidad de persona beneficiaria, quienes acuerdan las "
+            "condiciones detalladas a continuación:",
+            body_style,
+        )
+    )
+
+    approved_percentage = f"{float(item.get('porcentaje_beca') or 0):g}%"
+    details = [
+        [paragraph("Nombres y apellidos", cell_label), paragraph(student_name), "", paragraph("N.° de beca", cell_label), paragraph(contract_number)],
+        [paragraph("Identificación", cell_label), paragraph(item.get("cedula")), "", paragraph("Teléfono", cell_label), paragraph(item.get("telefono"))],
+        [paragraph("Nivel de formación", cell_label), paragraph(item.get("nivel_formacion") or "Tecnología superior"), "", paragraph("Carrera", cell_label), paragraph(item.get("carrera") or item.get("codigo_carrera"))],
+        [paragraph("Beca", cell_label), paragraph(item.get("tipo_beca")), "", paragraph("Discapacidad", cell_label), paragraph(f"{_scholarship_disability(item.get('discapacidad'))} - {_scholarship_disability_type(item)}")],
+        [paragraph("Porcentaje / tipo", cell_label), paragraph(approved_percentage), paragraph(_format_money(item.get("valor_beca"))), paragraph("Porcentaje aprobado", cell_label), paragraph(approved_percentage)],
+        [paragraph("Período de adjudicación", cell_label), paragraph(item.get("periodo") or item.get("codigo_periodo")), "", paragraph("Correo", cell_label), paragraph(item.get("correo"))],
+    ]
+    details_table = Table(details, colWidths=[3.0 * cm, 4.0 * cm, 2.4 * cm, 3.3 * cm, 4.1 * cm])
+    details_table.setStyle(
+        TableStyle(
+            [
+                ("SPAN", (1, 0), (2, 0)),
+                ("SPAN", (1, 1), (2, 1)),
+                ("SPAN", (1, 2), (2, 2)),
+                ("SPAN", (1, 3), (2, 3)),
+                ("SPAN", (1, 5), (2, 5)),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F1F1")),
+                ("BACKGROUND", (3, 0), (3, -1), colors.HexColor("#F1F1F1")),
+                ("GRID", (0, 0), (-1, -1), 0.45, colors.HexColor("#777777")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ]
+        )
+    )
+    story.extend([details_table, Spacer(1, 0.14 * cm)])
+
+    scholarship_name = escape(_clean(item.get("tipo_beca")) or "la beca registrada")
+    clauses = [
+        ("PRIMERA. OBJETO", f"INTEC concede a <b>{escape(student_name)}</b> el beneficio <b>{scholarship_name}</b>, aprobado y registrado para el período académico señalado."),
+        ("SEGUNDA. COBERTURA", escape(_scholarship_contract_scope(item))),
+        ("TERCERA. VIGENCIA", "La beca rige exclusivamente durante el período de adjudicación indicado. No se renovará automáticamente y cualquier período posterior requerirá una nueva validación y aprobación."),
+        ("CUARTA. RENDIMIENTO ACADÉMICO", "La persona beneficiaria mantendrá el rendimiento, asistencia y participación establecidos por la normativa institucional y cumplirá oportunamente todas las evaluaciones y actividades académicas."),
+        ("QUINTA. OBLIGACIONES", "La persona beneficiaria mantendrá actualizados sus datos, observará las normas de convivencia, utilizará responsablemente los recursos institucionales y comunicará cualquier novedad que afecte el beneficio."),
+        ("SEXTA. SEGUIMIENTO", "Bienestar Estudiantil, el área Académica y el área Financiera podrán verificar durante el período el cumplimiento de las condiciones de la beca y dejar constancia de sus resultados."),
+        ("SÉPTIMA. SUSPENSIÓN", "El beneficio podrá suspenderse por incumplimiento académico, retiro, inactividad, falsedad documental o vulneración de la normativa institucional, previa verificación del caso."),
+        ("OCTAVA. TERMINACIÓN", "El contrato termina al finalizar el período adjudicado, por renuncia de la persona beneficiaria o por resolución institucional debidamente motivada."),
+        ("NOVENA. INFORMACIÓN", "La información utilizada proviene de los registros académicos y financieros vigentes. La persona beneficiaria autoriza su tratamiento para la administración, seguimiento y auditoría de la beca."),
+        ("DÉCIMA. NOTIFICACIONES", "Las comunicaciones se efectuarán mediante el correo institucional o los datos de contacto registrados en el sistema académico."),
+        ("DÉCIMA PRIMERA. SOLUCIÓN DE CONTROVERSIAS", "Las partes procurarán resolver cualquier diferencia mediante los procedimientos internos de INTEC y la normativa ecuatoriana aplicable."),
+        ("DÉCIMA SEGUNDA. ACEPTACIÓN", "Las partes declaran conocer y aceptar íntegramente este contrato, que se incorpora al expediente estudiantil como requisito complementario del período académico."),
+    ]
+    for heading, text in clauses:
+        story.append(Paragraph(f"<b>{heading}.</b> {text}", body_style))
+    story.append(Spacer(1, 0.28 * cm))
+
+    signature_line = "________________________________"
+    signatures = Table(
+        [
+            [signature_line, signature_line],
+            ["ING. JAIME RODER ORTEGA PEREIRA", _clean(item.get("estudiante")) or "PERSONA BENEFICIARIA"],
+            ["RECTOR", "PERSONA BENEFICIARIA"],
+            ["Instituto Superior Tecnológico INTEC", f"C.I. {_clean(item.get('cedula')) or '-'}"],
+        ],
+        colWidths=[8.4 * cm, 8.4 * cm],
+    )
+    signatures.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 1), (-1, 2), "Helvetica-Bold"),
+                ("FONTNAME", (0, 3), (-1, 3), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#111111")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
+    )
+    story.extend(
+        [
+            signatures,
+            Spacer(1, 0.5 * cm),
+            Paragraph(
+                f"Documento generado desde información institucional vigente. Código de verificación: {escape(contract_number)}.",
+                small_style,
+            ),
+        ]
+    )
+    document.build(story, onFirstPage=draw_contract_background, onLaterPages=draw_contract_background)
+    return output.getvalue()
 
 
 def _date_from_iso(value: str | None) -> date:
@@ -1213,6 +1526,19 @@ def _financial_scholarship_status(cedula: str, codperiodo: Any, codcarrera: Any)
 
 
 def _preinscription_scholarship_status(row: Any) -> dict[str, Any]:
+    if _is_english_career(
+        getattr(row, "codcarrera", ""),
+        getattr(row, "Nombre_Basica", ""),
+    ):
+        return {
+            "beca_id": None,
+            "tipo_beca": "Sin beca",
+            "porcentaje_beca": 0.0,
+            "valor_beca": 0.0,
+            "estado": "NO_APLICA_INGLES",
+            "requiere_aprobacion": False,
+            "puede_continuar": True,
+        }
     return _financial_scholarship_status(
         _clean(getattr(row, "Cedula", "")),
         getattr(row, "codperiodo", ""),
@@ -1225,9 +1551,13 @@ def _approve_financial_scholarship(beca_id: int, usuario: str) -> dict[str, Any]
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT b.PorcentajeBeca, eb.Codigo
+            SELECT b.PorcentajeBeca, eb.Codigo,
+                   c.CodigoCarrera,
+                   COALESCE(ca.NombreCarrera, c.CodigoCarrera) AS Carrera
             FROM bec.BecaEstudiante b
             INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
+            INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
+            LEFT JOIN core.Carrera ca ON ca.CodigoCarrera = c.CodigoCarrera
             WHERE b.BecaId = ?
             """,
             beca_id,
@@ -1235,6 +1565,8 @@ def _approve_financial_scholarship(beca_id: int, usuario: str) -> dict[str, Any]
         scholarship_row = cursor.fetchone()
         if not scholarship_row:
             raise HTTPException(status_code=404, detail="No existe la solicitud de beca")
+        if _is_english_career(scholarship_row.CodigoCarrera, scholarship_row.Carrera):
+            raise HTTPException(status_code=400, detail="Las becas no aplican a la carrera de Inglés")
         if float(scholarship_row.PorcentajeBeca or 0) <= _SCHOLARSHIP_APPROVAL_THRESHOLD:
             raise HTTPException(status_code=400, detail="Esta beca no requiere aprobación especial")
         if _clean(scholarship_row.Codigo).upper() == "APROBADA":
@@ -2369,27 +2701,36 @@ def create_preinscription(
                 apellido1,
                 apellido2,
             )
-            scholarship_type, scholarship_percentage = _validate_scholarship_selection(
-                payload.tipo_beca, payload.porcentaje_beca
-            )
-            scholarship_value = max(float(payload.valor_beca or 0), 0)
-            if scholarship_type and scholarship_percentage <= 0:
-                raise HTTPException(status_code=400, detail='Ingrese el porcentaje otorgado para la beca seleccionada')
-            if scholarship_percentage > 0 and not scholarship_type:
-                raise HTTPException(status_code=400, detail='Seleccione el tipo de beca')
-            if scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD and not _clean(payload.motivo_beca):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Las becas mayores al 15% requieren un motivo para solicitar aprobación",
-                )
             cursor.execute(
                 "SELECT TOP (1) Nombre_Basica FROM dbo.CARRERAS WHERE Cod_AnioBasica = ?",
                 codcarrera,
             )
             career_row = cursor.fetchone()
+            career_name = _clean(getattr(career_row, "Nombre_Basica", ""))
+            if _is_english_career(codcarrera, career_name):
+                scholarship_type = ""
+                scholarship_percentage = 0.0
+                scholarship_value = 0.0
+            else:
+                scholarship_type, scholarship_percentage = _validate_scholarship_selection(
+                    payload.tipo_beca, payload.porcentaje_beca
+                )
+                scholarship_value = max(float(payload.valor_beca or 0), 0)
+                if scholarship_type and scholarship_percentage <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail='Ingrese el porcentaje otorgado para la beca seleccionada',
+                    )
+                if scholarship_percentage > 0 and not scholarship_type:
+                    raise HTTPException(status_code=400, detail='Seleccione el tipo de beca')
+                if scholarship_percentage > _SCHOLARSHIP_APPROVAL_THRESHOLD and not _clean(payload.motivo_beca):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Las becas mayores al 15% requieren un motivo para solicitar aprobación",
+                    )
             institutional_costs = _institutional_study_costs(
                 payload.semestres_convenio,
-                _clean(getattr(career_row, "Nombre_Basica", "")),
+                career_name,
             )
             scholarship_value = round(
                 float(institutional_costs["total"]) * scholarship_percentage / 100,
@@ -2616,7 +2957,9 @@ def list_pending_preinscription_scholarships(
                 FROM bec.BecaEstudiante b
                 INNER JOIN core.Estudiante e ON e.EstudianteId = b.EstudianteId
                 INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
-                    AND c.Activo = 1
+                INNER JOIN INTECBDD.dbo.DATOS_ESTUD active_student
+                    ON TRY_CONVERT(nvarchar(50), active_student.codigo_estud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                   AND UPPER(LTRIM(RTRIM(ISNULL(active_student.Estado, '')))) = 'A'
                 INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
                 INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
                 LEFT JOIN core.Carrera ca ON ca.CodigoCarrera = c.CodigoCarrera
@@ -2660,6 +3003,7 @@ def list_pending_preinscription_scholarships(
             }
             for row in rows
         ]
+        items = _exclude_english_scholarship_items(items)
         return {
             "ok": True,
             "items": items,
@@ -2700,11 +3044,19 @@ def list_preinscription_scholarship_beneficiaries(
                     b.FechaSolicitud,
                     b.FechaAprobacion,
                     b.UsuarioAprobacion,
+                    active_student.movil AS Telefono,
+                    COALESCE(NULLIF(active_student.correointec, ''), active_student.correo) AS Correo,
+                    active_student.nivelAcademicoQueCursa AS NivelFormacion,
+                    active_student.discapacidad AS Discapacidad,
+                    active_student.Tipo_Capacidad AS TipoDiscapacidad,
                     eb.Codigo AS Estado
                 FROM bec.BecaEstudiante b
                 INNER JOIN core.Estudiante e ON e.EstudianteId = b.EstudianteId
                 INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
                     AND c.Activo = 1
+                INNER JOIN INTECBDD.dbo.DATOS_ESTUD active_student
+                    ON TRY_CONVERT(nvarchar(50), active_student.codigo_estud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                   AND UPPER(LTRIM(RTRIM(ISNULL(active_student.Estado, '')))) = 'A'
                 INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
                 INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
                 LEFT JOIN core.Carrera ca ON ca.CodigoCarrera = c.CodigoCarrera
@@ -2721,6 +3073,12 @@ def list_preinscription_scholarship_beneficiaries(
                 ) lb
                 WHERE eb.Codigo = 'APROBADA'
                   AND ISNULL(b.PorcentajeBeca, 0) > 0
+                  AND EXISTS
+                  (
+                      SELECT 1
+                      FROM INTECBDD.dbo.CARRERAXESTUD active_enrollment
+                      WHERE TRY_CONVERT(nvarchar(50), active_enrollment.codigo_estud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                  )
                   AND (
                     ? = '' OR e.NumeroIdentificacion LIKE ? OR e.NombreCompleto LIKE ?
                     OR ISNULL(ca.NombreCarrera, c.CodigoCarrera) LIKE ?
@@ -2758,10 +3116,16 @@ def list_preinscription_scholarship_beneficiaries(
                 "fecha_solicitud": _date_text(row.FechaSolicitud),
                 "fecha_aprobacion": _date_text(row.FechaAprobacion),
                 "usuario_aprobacion": _clean(row.UsuarioAprobacion),
+                "telefono": _clean(row.Telefono),
+                "correo": _clean(row.Correo),
+                "nivel_formacion": _clean(row.NivelFormacion),
+                "discapacidad": _clean(row.Discapacidad),
+                "tipo_discapacidad": _clean(row.TipoDiscapacidad),
                 "estado": _clean(row.Estado).upper(),
             }
             for row in rows
         ]
+        items = _exclude_english_scholarship_items(items)
         financial_student_codes = {item["codigo_estud"] for item in items if item["codigo_estud"]}
         with get_connection() as legacy_conn:
             legacy_cursor = legacy_conn.cursor()
@@ -2778,10 +3142,16 @@ def list_preinscription_scholarship_beneficiaries(
                     COALESCE(p.Detalle_Periodo, TRY_CONVERT(nvarchar(50), ce.codigo_periodo)) AS Periodo,
                     b.tipo_beca AS TipoBeca,
                     b.porcentaje_beca AS PorcentajeBeca,
-                    b.valor_monto_beca AS ValorBeca
+                    b.valor_monto_beca AS ValorBeca,
+                    d.movil AS Telefono,
+                    COALESCE(NULLIF(d.correointec, ''), d.correo) AS Correo,
+                    d.nivelAcademicoQueCursa AS NivelFormacion,
+                    d.discapacidad AS Discapacidad,
+                    d.Tipo_Capacidad AS TipoDiscapacidad
                 FROM dbo.Becas b
-                LEFT JOIN dbo.DATOS_ESTUD d
+                INNER JOIN dbo.DATOS_ESTUD d
                     ON TRY_CONVERT(nvarchar(50), d.codigo_estud) = TRY_CONVERT(nvarchar(50), b.codestud)
+                   AND UPPER(LTRIM(RTRIM(ISNULL(d.Estado, '')))) = 'A'
                 OUTER APPLY
                 (
                     SELECT TOP (1) cx.cod_anio_Basica, cx.codigo_periodo
@@ -2792,6 +3162,7 @@ def list_preinscription_scholarship_beneficiaries(
                 LEFT JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = ce.cod_anio_Basica
                 LEFT JOIN dbo.PERIODO p ON p.cod_periodo = ce.codigo_periodo
                 WHERE ISNULL(TRY_CONVERT(decimal(9,2), b.porcentaje_beca), 0) > 0
+                  AND ce.codigo_periodo IS NOT NULL
                   AND (
                     ? = '' OR d.Cedula_Est LIKE ? OR d.Apellidos_nombre LIKE ?
                     OR ISNULL(c.Nombre_Basica, '') LIKE ? OR ISNULL(b.tipo_beca, '') LIKE ?
@@ -2813,6 +3184,8 @@ def list_preinscription_scholarship_beneficiaries(
             student_code = str(row.CodigoEstud or "")
             if student_code in financial_student_codes:
                 continue
+            if _is_english_career(row.CodigoCarrera, row.Carrera):
+                continue
             items.append(
                 {
                     "beca_id": -int(row.BecaId),
@@ -2830,6 +3203,11 @@ def list_preinscription_scholarship_beneficiaries(
                     "fecha_solicitud": "",
                     "fecha_aprobacion": "",
                     "usuario_aprobacion": "INTECBDD",
+                    "telefono": _clean(row.Telefono),
+                    "correo": _clean(row.Correo),
+                    "nivel_formacion": _clean(row.NivelFormacion),
+                    "discapacidad": _clean(row.Discapacidad),
+                    "tipo_discapacidad": _clean(row.TipoDiscapacidad),
                     "estado": "REGISTRADA",
                 }
             )
@@ -2847,6 +3225,620 @@ def list_preinscription_scholarship_beneficiaries(
         }
     except pyodbc.Error as exc:
         raise HTTPException(status_code=503, detail=f"No se pudo consultar el listado de becados: {exc}") from exc
+
+
+def _ensure_scholarship_contract_table(cursor: pyodbc.Cursor) -> None:
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'bec')
+            EXEC(N'CREATE SCHEMA bec AUTHORIZATION dbo');
+
+        IF OBJECT_ID(N'bec.ContratoBeca', N'U') IS NULL
+        BEGIN
+            CREATE TABLE bec.ContratoBeca
+            (
+                ContratoBecaId BIGINT IDENTITY(1,1) NOT NULL
+                    CONSTRAINT PK_ContratoBeca PRIMARY KEY,
+                BecaOrigenId BIGINT NOT NULL,
+                Origen VARCHAR(20) NOT NULL,
+                CodigoEstud NVARCHAR(50) NOT NULL,
+                NumeroIdentificacion NVARCHAR(30) NULL,
+                Estudiante NVARCHAR(250) NOT NULL,
+                CodigoCarrera NVARCHAR(50) NULL,
+                Carrera NVARCHAR(250) NULL,
+                CodigoPeriodo NVARCHAR(50) NULL,
+                Periodo NVARCHAR(250) NULL,
+                TipoBeca NVARCHAR(200) NOT NULL,
+                PorcentajeBeca DECIMAL(9,2) NOT NULL,
+                ValorBeca DECIMAL(18,2) NOT NULL,
+                NumeroContrato NVARCHAR(100) NOT NULL,
+                FechaContrato DATE NOT NULL,
+                NombreArchivo NVARCHAR(260) NOT NULL,
+                RutaArchivo NVARCHAR(1000) NOT NULL,
+                HashSha256 CHAR(64) NOT NULL,
+                GraphDocumentoId BIGINT NULL,
+                GraphWebUrl NVARCHAR(2000) NULL,
+                NombreArchivoFirmado NVARCHAR(260) NULL,
+                HashFirmado CHAR(64) NULL,
+                FechaCargaExpediente DATETIME2 NULL,
+                UsuarioCargaExpediente NVARCHAR(128) NULL,
+                EstadoExpedienteCodigo VARCHAR(30) NULL,
+                EstadoCodigo VARCHAR(30) NOT NULL
+                    CONSTRAINT DF_ContratoBeca_Estado DEFAULT 'GENERADO',
+                UsuarioGeneracion NVARCHAR(128) NOT NULL,
+                FechaGeneracion DATETIME2 NOT NULL
+                    CONSTRAINT DF_ContratoBeca_FechaGeneracion DEFAULT SYSDATETIME(),
+                CONSTRAINT UQ_ContratoBeca_NumeroContrato UNIQUE (NumeroContrato),
+                CONSTRAINT CK_ContratoBeca_Porcentaje CHECK (PorcentajeBeca BETWEEN 0 AND 100)
+            );
+
+            CREATE INDEX IX_ContratoBeca_Estudiante
+                ON bec.ContratoBeca (CodigoEstud, FechaGeneracion DESC);
+            CREATE INDEX IX_ContratoBeca_Beca
+                ON bec.ContratoBeca (BecaOrigenId, Origen, FechaGeneracion DESC);
+        END
+
+        IF COL_LENGTH(N'bec.ContratoBeca', N'GraphDocumentoId') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD GraphDocumentoId BIGINT NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'GraphWebUrl') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD GraphWebUrl NVARCHAR(2000) NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'NombreArchivoFirmado') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD NombreArchivoFirmado NVARCHAR(260) NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'HashFirmado') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD HashFirmado CHAR(64) NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'FechaCargaExpediente') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD FechaCargaExpediente DATETIME2 NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'UsuarioCargaExpediente') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD UsuarioCargaExpediente NVARCHAR(128) NULL;
+        IF COL_LENGTH(N'bec.ContratoBeca', N'EstadoExpedienteCodigo') IS NULL
+            ALTER TABLE bec.ContratoBeca ADD EstadoExpedienteCodigo VARCHAR(30) NULL;
+
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM sys.indexes
+            WHERE object_id = OBJECT_ID(N'bec.ContratoBeca')
+              AND name = N'IX_ContratoBeca_EstudiantePeriodo'
+        )
+            CREATE INDEX IX_ContratoBeca_EstudiantePeriodo
+                ON bec.ContratoBeca (CodigoEstud, CodigoPeriodo, FechaGeneracion DESC);
+        """
+    )
+
+
+def _scholarship_contract_candidates(
+    current_user: SessionUser,
+    query: str = "",
+    scholarship_type: str = "",
+    academic_period: str = "",
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
+    response = list_preinscription_scholarship_beneficiaries(
+        current_user=current_user,
+        query=query,
+        limit=limit,
+    )
+    selected_type = _scholarship_code(scholarship_type) if _clean(scholarship_type) else ""
+    selected_period = _clean(academic_period)
+    items = [
+        dict(item)
+        for item in response.get("items", [])
+        if not selected_type or _scholarship_code(item.get("tipo_beca")) == selected_type
+        if not selected_period or _clean(item.get("codigo_periodo")) == selected_period
+    ]
+    if not items:
+        return []
+
+    with get_finance_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_scholarship_contract_table(cursor)
+        cursor.execute(
+            """
+            SELECT BecaOrigenId, Origen, CodigoPeriodo, COUNT(1) AS TotalContratos,
+                   MAX(ContratoBecaId) AS UltimoContratoId,
+                   MAX(FechaGeneracion) AS UltimaGeneracion
+            FROM bec.ContratoBeca
+            WHERE EstadoCodigo IN ('GENERADO', 'ARCHIVADO')
+            GROUP BY BecaOrigenId, Origen, CodigoPeriodo
+            """
+        )
+        contract_rows = cursor.fetchall()
+        conn.commit()
+
+    generated = {
+        (int(row.BecaOrigenId), _clean(row.Origen).upper(), _clean(row.CodigoPeriodo)): {
+            "contratos_generados": int(row.TotalContratos or 0),
+            "ultimo_contrato_id": int(row.UltimoContratoId or 0),
+            "ultima_generacion": _date_text(row.UltimaGeneracion),
+        }
+        for row in contract_rows
+    }
+    for item in items:
+        origin = "INTECBDD" if int(item["beca_id"]) < 0 else "FINANZAS"
+        item.update(
+            generated.get(
+                (int(item["beca_id"]), origin, _clean(item.get("codigo_periodo"))),
+                {"contratos_generados": 0, "ultimo_contrato_id": 0, "ultima_generacion": ""},
+            )
+        )
+    return items
+
+
+@router.get("/becas/contratos/candidatos")
+def list_scholarship_contract_candidates(
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    query: str = Query(default="", max_length=120),
+    tipo_beca: str = Query(default="", max_length=150),
+    codigo_periodo: str = Query(default="", max_length=50),
+    limit: int = Query(default=1000, ge=1, le=2000),
+) -> dict[str, Any]:
+    try:
+        all_items = _scholarship_contract_candidates(current_user, query, "", "", limit)
+        scholarship_types = sorted(
+            {_clean(item.get("tipo_beca")) for item in all_items if _clean(item.get("tipo_beca"))},
+            key=str.casefold,
+        )
+        selected_code = _scholarship_code(tipo_beca) if _clean(tipo_beca) else ""
+        type_items = [
+            item
+            for item in all_items
+            if not selected_code or _scholarship_code(item.get("tipo_beca")) == selected_code
+        ]
+        periods_by_code: dict[str, dict[str, Any]] = {}
+        if selected_code:
+            for item in type_items:
+                period_code = _clean(item.get("codigo_periodo"))
+                if not period_code:
+                    continue
+                option = periods_by_code.setdefault(
+                    period_code,
+                    {
+                        "codigo_periodo": period_code,
+                        "periodo": _clean(item.get("periodo")) or period_code,
+                        "total": 0,
+                    },
+                )
+                option["total"] += 1
+        periods = sorted(
+            periods_by_code.values(),
+            key=lambda item: (item["periodo"].casefold(), item["codigo_periodo"]),
+            reverse=True,
+        )
+        selected_period = _clean(codigo_periodo)
+        items = [
+            item
+            for item in type_items
+            if selected_code
+            and selected_period
+            and _clean(item.get("codigo_periodo")) == selected_period
+        ]
+        return {
+            "ok": True,
+            "items": items,
+            "total": len(items),
+            "tipos_beca": scholarship_types,
+            "periodos": periods,
+            "criteria": {
+                "query": _clean(query),
+                "tipo_beca": _clean(tipo_beca),
+                "codigo_periodo": selected_period,
+                "estado_estudiante": "A",
+            },
+        }
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudieron consultar los contratos de beca: {exc}") from exc
+
+
+@router.post("/becas/contratos/generar")
+def generate_scholarship_contracts(
+    payload: ScholarshipContractGeneratePayload,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> StreamingResponse:
+    scholarship_ids = list(dict.fromkeys(int(value) for value in payload.beca_ids))
+    academic_period = _clean(payload.codigo_periodo)
+    if not scholarship_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos un estudiante becado")
+    if not academic_period:
+        raise HTTPException(status_code=400, detail="Seleccione el período académico de la beca")
+    if len(scholarship_ids) > 100:
+        raise HTTPException(status_code=400, detail="Puede generar hasta 100 contratos por operación")
+
+    try:
+        candidates = _scholarship_contract_candidates(current_user, "", "", academic_period, 2000)
+        candidates_by_id = {int(item["beca_id"]): item for item in candidates}
+        selected = [candidates_by_id[item_id] for item_id in scholarship_ids if item_id in candidates_by_id]
+        missing = [item_id for item_id in scholarship_ids if item_id not in candidates_by_id]
+        if missing:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Uno o más registros ya no corresponden a estudiantes activos con una beca vigente. "
+                    "Actualice el listado y vuelva a seleccionar."
+                ),
+            )
+        selected_types = {_scholarship_code(item.get("tipo_beca")) for item in selected}
+        if len(selected_types) != 1:
+            raise HTTPException(status_code=400, detail="Genere los contratos de un solo tipo de beca por operación")
+        selected_periods = {_clean(item.get("codigo_periodo")) for item in selected}
+        if selected_periods != {academic_period}:
+            raise HTTPException(
+                status_code=400,
+                detail="Cada operación debe contener una sola beca y un único período académico",
+            )
+
+        contract_date = date.today()
+        generated_files: list[tuple[str, bytes]] = []
+        written_paths: list[Path] = []
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_scholarship_contract_table(cursor)
+            try:
+                for item in selected:
+                    student_code = _safe_filename(_clean(item.get("codigo_estud")) or _clean(item.get("cedula")))
+                    period_code = _safe_filename(_clean(item.get("codigo_periodo")))
+                    contract_number = _next_scholarship_contract_number(cursor, item, contract_date)
+                    filename = _safe_filename(f"{contract_number}.pdf")
+                    pdf_bytes = _build_scholarship_contract_pdf(item, contract_number, contract_date)
+                    target_directory = (
+                        _PREINSCRIPTION_UPLOAD_ROOT / "contratos-becas" / student_code / period_code
+                    )
+                    target_directory.mkdir(parents=True, exist_ok=True)
+                    target_path = target_directory / filename
+                    target_path.write_bytes(pdf_bytes)
+                    written_paths.append(target_path)
+                    relative_path = target_path.relative_to(_BACKEND_ROOT)
+                    origin = "INTECBDD" if int(item["beca_id"]) < 0 else "FINANZAS"
+                    cursor.execute(
+                        """
+                        INSERT INTO bec.ContratoBeca
+                        (
+                            BecaOrigenId, Origen, CodigoEstud, NumeroIdentificacion, Estudiante,
+                            CodigoCarrera, Carrera, CodigoPeriodo, Periodo, TipoBeca,
+                            PorcentajeBeca, ValorBeca, NumeroContrato, FechaContrato,
+                            NombreArchivo, RutaArchivo, HashSha256, EstadoCodigo, UsuarioGeneracion
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'GENERADO', ?)
+                        """,
+                        int(item["beca_id"]),
+                        origin,
+                        _clean(item.get("codigo_estud")),
+                        _clean(item.get("cedula")),
+                        _clean(item.get("estudiante")),
+                        _clean(item.get("codigo_carrera")),
+                        _clean(item.get("carrera")),
+                        _clean(item.get("codigo_periodo")),
+                        _clean(item.get("periodo")),
+                        _clean(item.get("tipo_beca")),
+                        float(item.get("porcentaje_beca") or 0),
+                        float(item.get("valor_beca") or 0),
+                        contract_number,
+                        contract_date,
+                        filename,
+                        str(relative_path),
+                        sha256(pdf_bytes).hexdigest(),
+                        current_user.login,
+                    )
+                    generated_files.append((filename, pdf_bytes))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                for path in written_paths:
+                    if path.exists() and path.is_relative_to(_PREINSCRIPTION_UPLOAD_ROOT):
+                        path.unlink()
+                raise
+
+        if len(generated_files) == 1:
+            filename, content = generated_files[0]
+            return StreamingResponse(
+                BytesIO(content),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Generated-Contracts": "1",
+                },
+            )
+
+        bundle = BytesIO()
+        with ZipFile(bundle, mode="w", compression=ZIP_DEFLATED) as archive:
+            for filename, content in generated_files:
+                archive.writestr(filename, content)
+        bundle.seek(0)
+        archive_name = f"contratos_beca_{contract_date.isoformat()}.zip"
+        return StreamingResponse(
+            bundle,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{archive_name}"',
+                "X-Generated-Contracts": str(len(generated_files)),
+            },
+        )
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudieron generar los contratos de beca: {exc}") from exc
+
+
+@router.get("/becas/contratos/historial")
+def list_scholarship_contract_history(
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    query: str = Query(default="", max_length=120),
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> dict[str, Any]:
+    del current_user
+    search = _clean(query)
+    pattern = f"%{search}%"
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_scholarship_contract_table(cursor)
+            cursor.execute(
+                """
+                SELECT TOP (?)
+                    ContratoBecaId, BecaOrigenId, Origen, CodigoEstud,
+                    NumeroIdentificacion, Estudiante, CodigoCarrera, Carrera,
+                    CodigoPeriodo, Periodo, TipoBeca, PorcentajeBeca, ValorBeca,
+                    NumeroContrato, FechaContrato, NombreArchivo, HashSha256,
+                    EstadoCodigo, UsuarioGeneracion, FechaGeneracion,
+                    GraphDocumentoId, GraphWebUrl, NombreArchivoFirmado, HashFirmado,
+                    FechaCargaExpediente, UsuarioCargaExpediente, EstadoExpedienteCodigo
+                FROM bec.ContratoBeca
+                WHERE
+                    ? = '' OR NumeroIdentificacion LIKE ? OR Estudiante LIKE ?
+                    OR Carrera LIKE ? OR Periodo LIKE ? OR TipoBeca LIKE ?
+                    OR NumeroContrato LIKE ? OR UsuarioGeneracion LIKE ?
+                    OR ISNULL(NombreArchivoFirmado, '') LIKE ?
+                    OR ISNULL(EstadoExpedienteCodigo, '') LIKE ?
+                ORDER BY FechaGeneracion DESC, ContratoBecaId DESC
+                """,
+                limit,
+                search,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            )
+            rows = cursor.fetchall()
+            conn.commit()
+        items = [
+            {
+                "contrato_id": int(row.ContratoBecaId),
+                "beca_id": int(row.BecaOrigenId),
+                "origen": _clean(row.Origen),
+                "codigo_estud": _clean(row.CodigoEstud),
+                "cedula": _clean(row.NumeroIdentificacion),
+                "estudiante": _clean(row.Estudiante),
+                "codigo_carrera": _clean(row.CodigoCarrera),
+                "carrera": _clean(row.Carrera),
+                "codigo_periodo": _clean(row.CodigoPeriodo),
+                "periodo": _clean(row.Periodo),
+                "tipo_beca": _clean(row.TipoBeca),
+                "porcentaje_beca": float(row.PorcentajeBeca or 0),
+                "valor_beca": float(row.ValorBeca or 0),
+                "numero_contrato": _clean(row.NumeroContrato),
+                "fecha_contrato": _date_text(row.FechaContrato),
+                "nombre_archivo": _clean(row.NombreArchivo),
+                "hash_sha256": _clean(row.HashSha256),
+                "estado": _clean(row.EstadoCodigo),
+                "usuario_generacion": _clean(row.UsuarioGeneracion),
+                "fecha_generacion": _date_text(row.FechaGeneracion),
+                "expediente_documento_id": (
+                    int(row.GraphDocumentoId) if row.GraphDocumentoId is not None else None
+                ),
+                "expediente_url": _clean(row.GraphWebUrl),
+                "nombre_archivo_firmado": _clean(row.NombreArchivoFirmado),
+                "hash_firmado": _clean(row.HashFirmado),
+                "estado_expediente": _clean(row.EstadoExpedienteCodigo),
+                "usuario_carga_expediente": _clean(row.UsuarioCargaExpediente),
+                "fecha_carga_expediente": _date_text(row.FechaCargaExpediente),
+            }
+            for row in rows
+        ]
+        items = _exclude_english_scholarship_items(items)
+        return {"ok": True, "items": items, "total": len(items)}
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo consultar el historial de contratos: {exc}") from exc
+
+
+@router.get("/becas/contratos/{contract_id}/descargar")
+def download_scholarship_contract(
+    contract_id: int,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> StreamingResponse:
+    del current_user
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_scholarship_contract_table(cursor)
+            cursor.execute(
+                """
+                SELECT NombreArchivo, RutaArchivo
+                FROM bec.ContratoBeca
+                WHERE ContratoBecaId = ? AND EstadoCodigo IN ('GENERADO', 'ARCHIVADO')
+                """,
+                contract_id,
+            )
+            row = cursor.fetchone()
+            conn.commit()
+        if not row:
+            raise HTTPException(status_code=404, detail="No se encontró el contrato de beca")
+        contract_root = (_PREINSCRIPTION_UPLOAD_ROOT / "contratos-becas").resolve()
+        target_path = (_BACKEND_ROOT / _clean(row.RutaArchivo)).resolve()
+        if not target_path.is_relative_to(contract_root) or not target_path.is_file():
+            raise HTTPException(status_code=404, detail="El archivo del contrato no está disponible")
+        filename = _safe_filename(_clean(row.NombreArchivo) or target_path.name)
+        return StreamingResponse(
+            BytesIO(target_path.read_bytes()),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except pyodbc.Error as exc:
+        raise HTTPException(status_code=503, detail=f"No se pudo descargar el contrato de beca: {exc}") from exc
+
+
+@router.post("/becas/contratos/{contract_id}/expediente")
+async def upload_signed_scholarship_contract(
+    contract_id: int,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    filename = _safe_filename(_clean(file.filename) or "contrato-beca-firmado.pdf")
+    content_type = _clean(file.content_type).lower() or "application/pdf"
+    try:
+        content = await file.read(_SCHOLARSHIP_CONTRACT_MAX_BYTES + 1)
+    finally:
+        await file.close()
+    if not filename.lower().endswith(".pdf") or content_type not in {
+        "application/pdf",
+        "application/octet-stream",
+    }:
+        raise HTTPException(status_code=400, detail="El contrato firmado debe ser un archivo PDF")
+    if not content or len(content) > _SCHOLARSHIP_CONTRACT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="El contrato firmado debe pesar entre 1 byte y 20 MB")
+    if not content.lstrip().startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="El archivo seleccionado no contiene un PDF válido")
+
+    try:
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_scholarship_contract_table(cursor)
+            cursor.execute(
+                """
+                SELECT
+                    cb.ContratoBecaId, cb.CodigoEstud, cb.NumeroIdentificacion,
+                    cb.Estudiante, cb.CodigoPeriodo, cb.NumeroContrato,
+                    COALESCE(NULLIF(d.correointec, ''), d.correo, '') AS Correo
+                FROM bec.ContratoBeca cb
+                LEFT JOIN INTECBDD.dbo.DATOS_ESTUD d
+                  ON TRY_CONVERT(nvarchar(50), d.codigo_estud) = cb.CodigoEstud
+                WHERE cb.ContratoBecaId = ?
+                  AND cb.EstadoCodigo IN ('GENERADO', 'ARCHIVADO')
+                """,
+                contract_id,
+            )
+            contract = cursor.fetchone()
+            conn.commit()
+        if not contract:
+            raise HTTPException(status_code=404, detail="No se encontró el contrato de beca")
+
+        student_code_text = _clean(contract.CodigoEstud)
+        student_code = int(student_code_text) if student_code_text.isdigit() else None
+        period_code = _clean(contract.CodigoPeriodo)
+        if not period_code:
+            raise HTTPException(
+                status_code=409,
+                detail="El contrato no tiene un período académico asociado y no puede archivarse",
+            )
+
+        session_id = uuid4()
+        graph_item: dict[str, Any] | None = None
+        session_registered = False
+        graph_expedient = prepare_expedient(
+            module_code="BECAS",
+            identification=_clean(contract.NumeroIdentificacion),
+            student_code=student_code,
+            student_name=_clean(contract.Estudiante),
+            student_email=_clean(contract.Correo),
+            base_origin="INTEC_FINANZAS_INSTITUCIONAL",
+            schema_origin="bec",
+            table_origin="ContratoBeca",
+            origin_id=f"{student_code_text}-{period_code}",
+            expedient_code=f"BECA-{period_code}",
+            audit_user=current_user.login,
+        )
+        upload_folder = f"{graph_expedient['folder_path']}/CONTRATO DE BECA"
+        ensure_folder(upload_folder)
+        cloud_filename = _safe_filename(
+            f"CONTRATO-BECA-FIRMADO-{_clean(contract.NumeroContrato)}.pdf"
+        )
+        graph_path = f"{upload_folder}/{cloud_filename}"
+        register_upload_session(
+            session_id=session_id,
+            expedient_graph_id=int(graph_expedient["expedient_graph_id"]),
+            document_type_code="CONTRATO_BECA_FIRMADO",
+            original_filename=filename,
+            cloud_filename=cloud_filename,
+            graph_path=graph_path,
+            content_type="application/pdf",
+            expected_size=len(content),
+            upload_url="",
+            expires_at=None,
+            audit_user=current_user.login,
+            max_expected_size=_SCHOLARSHIP_CONTRACT_MAX_BYTES,
+        )
+        session_registered = True
+        graph_item = upload_bytes(graph_path, content, "application/pdf")
+        graph_document = complete_upload_session(
+            session_id=session_id,
+            graph_item=graph_item,
+            edit_deadline=None,
+            audit_user=current_user.login,
+            append_document=False,
+        )
+        document_id = int(graph_document["document_graph_id"])
+        set_document_origin(document_id, contract_id)
+
+        with get_finance_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE bec.ContratoBeca
+                   SET GraphDocumentoId = ?, GraphWebUrl = ?, NombreArchivoFirmado = ?,
+                       HashFirmado = ?, FechaCargaExpediente = SYSDATETIME(),
+                       UsuarioCargaExpediente = ?, EstadoExpedienteCodigo = 'CARGADO',
+                       EstadoCodigo = 'ARCHIVADO'
+                 WHERE ContratoBecaId = ?
+                """,
+                document_id,
+                _clean(graph_document.get("graph_web_url")),
+                cloud_filename,
+                sha256(content).hexdigest(),
+                current_user.login,
+                contract_id,
+            )
+            conn.commit()
+        return {
+            "ok": True,
+            "contrato_id": contract_id,
+            "numero_contrato": _clean(contract.NumeroContrato),
+            "expediente_documento_id": document_id,
+            "expediente_url": _clean(graph_document.get("graph_web_url")),
+            "nombre_archivo": cloud_filename,
+            "estado_expediente": "CARGADO",
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        if "session_registered" in locals() and session_registered:
+            try:
+                mark_upload_error(session_id, str(exc), current_user.login)
+            except (RuntimeError, pyodbc.Error):
+                pass
+        if "graph_item" in locals() and graph_item and _clean(graph_item.get("id")):
+            try:
+                delete_item(_clean(graph_item.get("id")))
+            except httpx.HTTPError:
+                pass
+        raise HTTPException(status_code=502, detail=f"Microsoft OneDrive no pudo archivar el contrato: {exc}") from exc
+    except (RuntimeError, ValueError, pyodbc.Error) as exc:
+        if "session_registered" in locals() and session_registered:
+            try:
+                mark_upload_error(session_id, str(exc), current_user.login)
+            except (RuntimeError, pyodbc.Error):
+                pass
+        if "graph_item" in locals() and graph_item and _clean(graph_item.get("id")):
+            try:
+                delete_item(_clean(graph_item.get("id")))
+            except httpx.HTTPError:
+                pass
+        status_code = 503 if isinstance(exc, (RuntimeError, pyodbc.Error)) else 400
+        raise HTTPException(status_code=status_code, detail=f"No se pudo archivar el contrato de beca: {exc}") from exc
 
 
 @router.post("/becas/{beca_id}/aprobar")
@@ -2926,9 +3918,12 @@ def register_preinscription_cabecera(
             cod_jornada = _int_value(getattr(row, "codjornada", None)) or 0
             cod_modalidad = _int_value(getattr(row, "codmodalida", None)) or 0
             fecha_pago = payload.fecha_pago or date.today().isoformat()
-            scholarship_type, scholarship_percentage = _validate_scholarship_selection(
-                payload.tipo_beca, payload.porcentaje_beca
-            )
+            if _is_english_career(cod_anio_basica, getattr(row, "Nombre_Basica", "")):
+                scholarship_type, scholarship_percentage = "", 0.0
+            else:
+                scholarship_type, scholarship_percentage = _validate_scholarship_selection(
+                    payload.tipo_beca, payload.porcentaje_beca
+                )
             payload.tipo_beca = scholarship_type
             payload.porcentaje_beca = scholarship_percentage
             if scholarship_type and scholarship_percentage <= 0:

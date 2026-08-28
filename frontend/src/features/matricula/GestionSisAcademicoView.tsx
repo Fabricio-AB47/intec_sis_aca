@@ -105,7 +105,7 @@ const processShortcuts: ProcessShortcut[] = [
     key: 'administrativos',
     title: 'Usuarios',
     description: 'Registro de usuarios administrativos, perfiles y accesos del menú.',
-    sections: ['usuarios', 'menu_usuarios', 'menu_general'],
+    sections: ['usuarios', 'menu_usuarios'],
   },
   {
     key: 'academico',
@@ -255,6 +255,50 @@ function displayValue(field: SisAcademicoField, value: FormValue): string {
   const currentValue = inputValue(value)
   const option = field.options?.find((item) => String(item.value) === currentValue)
   return option?.label || valueLabel(value)
+}
+
+function isEnabledValue(value: FormValue): boolean {
+  if (value === true || value === 1) return true
+  const normalized = String(value ?? '').trim().toLowerCase()
+  return ['1', 'true', 'si', 'sí', 's', 'activo', 'vinculado'].includes(normalized)
+}
+
+function teacherAssignmentPrimary(field: SisAcademicoField, row: SisAcademicoRow): string {
+  if (field.name === 'estadoMoodleDoc') {
+    return isEnabledValue(row[field.name]) ? 'Vinculado' : 'Pendiente'
+  }
+  return displayValue(field, row[field.name])
+}
+
+function teacherAssignmentSecondary(fieldName: string, row: SisAcademicoRow): string {
+  const value = (candidate: unknown) => String(candidate ?? '').trim()
+  if (fieldName === 'docente_nombre') {
+    return [
+      value(row.docente_cedula) ? `Cédula ${value(row.docente_cedula)}` : '',
+      value(row.codigo_doc) ? `Código docente ${value(row.codigo_doc)}` : '',
+    ].filter(Boolean).join(' · ')
+  }
+  if (fieldName === 'carrera_nombre') {
+    return value(row.cod_Anio_Basica) ? `Código de carrera ${value(row.cod_Anio_Basica)}` : ''
+  }
+  if (fieldName === 'materia_nombre') {
+    return [
+      value(row.materia_codigo_institucional) ? `Código ${value(row.materia_codigo_institucional)}` : '',
+      value(row.codigo_materia) ? `Interno ${value(row.codigo_materia)}` : '',
+    ].filter(Boolean).join(' · ')
+  }
+  if (fieldName === 'periodo_nombre') {
+    return value(row.codigo_periodo) ? `Código de período ${value(row.codigo_periodo)}` : ''
+  }
+  if (fieldName === 'jornada_nombre') {
+    return value(row.Cod_Jornada) ? `Código de jornada ${value(row.Cod_Jornada)}` : ''
+  }
+  if (fieldName === 'estadoMoodleDoc') {
+    return isEnabledValue(row.estadoMoodleDoc)
+      ? 'Asignación habilitada para sincronización.'
+      : 'Sin vinculación activa.'
+  }
+  return ''
 }
 
 function inputValue(value: FormValue): string {
@@ -467,7 +511,7 @@ export function GestionSisAcademicoView({
   const createFields = selectedSection?.create_fields || []
   const currentFields = mode === 'create' ? createFields : editableFields
   const canCreate = createFields.length > 0
-  const isOperationalMenuSection = selectedSectionKey === 'menu_general' || selectedSectionKey === 'menu_usuarios'
+  const isOperationalMenuSection = selectedSectionKey === 'menu_usuarios'
   const isEstadoInlineSection = selectedSectionKey === 'actualizacion_est' || selectedSectionKey === 'actualizacion_estudiantes'
   const isDocenteEstadoSection = selectedSectionKey === 'actualizacion_est'
   const isStudentEstadoSection = selectedSectionKey === 'actualizacion_estudiantes'
@@ -492,6 +536,11 @@ export function GestionSisAcademicoView({
   const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isStudentEstadoSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
   const isStudentProfileSection = selectedSectionKey === 'estudiantes'
   const isUserAdministrationSection = selectedSectionKey === 'usuarios'
+  const isTeacherAssignmentSection = selectedSectionKey === 'docente_materias'
+  const selectedTeacherAssignmentRow = useMemo(
+    () => rows.find((row) => recordKey(row) === selectedRecordKey) || null,
+    [rows, selectedRecordKey],
+  )
   const academicHistory = studentAcademicHistory?.historial_academico || []
   const studentProfileName = valueOrDash(
     studentAcademicHistory?.student?.nombre_estudiante
@@ -615,9 +664,7 @@ export function GestionSisAcademicoView({
     [processMenu],
   )
   const workflowTitle = isOperationalMenuSection
-    ? selectedSectionKey === 'menu_usuarios'
-      ? 'Accesos operativos del sistema'
-      : 'Mapa operativo del sistema'
+    ? 'Accesos operativos'
     : selectedSection?.title || 'Seleccione una opción del menú'
   const workflowCategory = isOperationalMenuSection
     ? 'Procesos integrados'
@@ -637,7 +684,7 @@ export function GestionSisAcademicoView({
     if (!sectionKey) return
     setError('')
     setMessage('')
-    if (sectionKey === 'cambio_periodo_hr' || sectionKey === 'menu_general' || sectionKey === 'menu_usuarios') {
+    if (sectionKey === 'cambio_periodo_hr' || sectionKey === 'menu_usuarios') {
       setRows([])
       setInlineEstadoValues({})
       setSelectedRecordKey('')
@@ -1042,7 +1089,7 @@ export function GestionSisAcademicoView({
         if (firstSection) {
           setSelectedProcessKey(processKeyForSection(firstSection))
         }
-        if (firstSection && !['cambio_periodo_hr', 'menu_general', 'menu_usuarios'].includes(firstSection)) {
+        if (firstSection && !['cambio_periodo_hr', 'menu_usuarios'].includes(firstSection)) {
           const rowsPayload = await fetchSisAcademicoRows(firstSection, '')
           if (!cancelled) setRows(rowsPayload.rows || [])
         } else if (!cancelled) {
@@ -1083,7 +1130,7 @@ export function GestionSisAcademicoView({
     setStudentAcademicHistoryError('')
     setStudentProfileEditing(false)
     setMode('edit')
-    if (['cambio_periodo_hr', 'menu_general', 'menu_usuarios'].includes(initialSectionKey)) {
+    if (['cambio_periodo_hr', 'menu_usuarios'].includes(initialSectionKey)) {
       setRows([])
       return
     }
@@ -1766,11 +1813,23 @@ export function GestionSisAcademicoView({
             <>
               <div className="matricula-acad-form gestion-sis-filters">
                 <label>
-                  <span>{isEstadoInlineSection ? 'Buscar nombre o correo' : 'Buscar'}</span>
+                  <span>
+                    {isTeacherAssignmentSection
+                      ? 'Buscar asignación docente'
+                      : isEstadoInlineSection
+                        ? 'Buscar nombre o correo'
+                        : 'Buscar'}
+                  </span>
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder={isEstadoInlineSection ? 'Nombre, correo, cédula o código' : 'Código, cédula, nombre o correo'}
+                    placeholder={
+                      isTeacherAssignmentSection
+                        ? 'Docente, cédula, carrera, materia, período, paralelo o jornada'
+                        : isEstadoInlineSection
+                          ? 'Nombre, correo, cédula o código'
+                          : 'Código, cédula, nombre o correo'
+                    }
                   />
                 </label>
                 {isStudentEstadoSection ? (
@@ -1803,7 +1862,13 @@ export function GestionSisAcademicoView({
 
               <div className="teams-actions">
                 <button type="button" onClick={() => void loadRows()} disabled={!selectedSection || listLoading}>
-                  {listLoading ? 'Consultando...' : isEstadoInlineSection ? 'Filtrar' : 'Consultar'}
+                  {listLoading
+                    ? 'Consultando...'
+                    : isTeacherAssignmentSection
+                      ? 'Consultar asignaciones'
+                      : isEstadoInlineSection
+                        ? 'Filtrar'
+                        : 'Consultar'}
                 </button>
                 {canCreate ? (
                   <button type="button" onClick={startCreate} disabled={!selectedSection}>
@@ -1832,12 +1897,18 @@ export function GestionSisAcademicoView({
                     ? 'Cada cambio requiere motivo y documento de respaldo.'
                     : isEstadoInlineSection
                       ? 'Edita estado y descripción directamente en la fila.'
-                      : 'Doble clic en una fila para editar'}
+                      : isTeacherAssignmentSection
+                        ? 'Abra una asignación para revisar o actualizar su vinculación con Moodle.'
+                        : 'Doble clic en una fila para editar'}
                 </small>
               </div>
 
               <div className="matricula-table-wrap gestion-sis-table-wrap excel-table-wrap">
-                <table className="matricula-table gestion-sis-table">
+                <table
+                  className={`matricula-table gestion-sis-table${
+                    isTeacherAssignmentSection ? ' gestion-sis-table--teacher-assignments' : ''
+                  }`}
+                >
                   <thead>
                     <tr>
                       {hasIndexColumn ? <th>#</th> : null}
@@ -1921,6 +1992,26 @@ export function GestionSisAcademicoView({
                                 </Fragment>
                               )
                             }
+                            if (isTeacherAssignmentSection) {
+                              const secondary = teacherAssignmentSecondary(field.name, row)
+                              const isMoodleStatus = field.name === 'estadoMoodleDoc'
+                              return (
+                                <td key={`${recordKey(row)}-${field.name}`}>
+                                  <div
+                                    className={`gestion-sis-readable-cell${
+                                      isMoodleStatus
+                                        ? isEnabledValue(row[field.name])
+                                          ? ' gestion-sis-readable-cell--linked'
+                                          : ' gestion-sis-readable-cell--pending'
+                                        : ''
+                                    }`}
+                                  >
+                                    <strong>{teacherAssignmentPrimary(field, row)}</strong>
+                                    {secondary ? <span>{secondary}</span> : null}
+                                  </div>
+                                </td>
+                              )
+                            }
                             return <td key={`${recordKey(row)}-${field.name}`}>{displayValue(field, row[field.name])}</td>
                           })}
                           <td>
@@ -1977,6 +2068,8 @@ export function GestionSisAcademicoView({
                 <h3>
                   {isDocenteEstadoSection && mode !== 'create'
                     ? `Observar: ${formValues.apellidos_nombre || selectedSection.title}`
+                    : isTeacherAssignmentSection && mode !== 'create'
+                      ? `Asignación de ${valueOrDash(selectedTeacherAssignmentRow?.docente_nombre)}`
                     : isStudentProfileSection && mode !== 'create'
                       ? studentProfileEditing
                         ? `Actualizar estudiante: ${studentProfileName}`
@@ -1992,6 +2085,8 @@ export function GestionSisAcademicoView({
                       ? studentProfileEditing
                         ? 'Actualización de datos'
                         : 'Consulta académica'
+                      : isTeacherAssignmentSection && mode !== 'create'
+                        ? `${valueOrDash(selectedTeacherAssignmentRow?.materia_nombre)} · ${valueOrDash(selectedTeacherAssignmentRow?.periodo_nombre)}`
                       : selectedSection.table}
                 </span>
               </div>
@@ -2069,6 +2164,43 @@ export function GestionSisAcademicoView({
               </>
             ) : (
               <>
+                {isTeacherAssignmentSection && mode !== 'create' && selectedTeacherAssignmentRow ? (
+                  <section className="gestion-sis-assignment-summary" aria-label="Resumen de la asignación docente">
+                    <article className="gestion-sis-assignment-summary__teacher">
+                      <span>Docente responsable</span>
+                      <strong>{valueOrDash(selectedTeacherAssignmentRow.docente_nombre)}</strong>
+                      <small>{teacherAssignmentSecondary('docente_nombre', selectedTeacherAssignmentRow)}</small>
+                    </article>
+                    <article>
+                      <span>Materia</span>
+                      <strong>{valueOrDash(selectedTeacherAssignmentRow.materia_nombre)}</strong>
+                      <small>{teacherAssignmentSecondary('materia_nombre', selectedTeacherAssignmentRow)}</small>
+                    </article>
+                    <article>
+                      <span>Carrera</span>
+                      <strong>{valueOrDash(selectedTeacherAssignmentRow.carrera_nombre)}</strong>
+                      <small>{teacherAssignmentSecondary('carrera_nombre', selectedTeacherAssignmentRow)}</small>
+                    </article>
+                    <article>
+                      <span>Período académico</span>
+                      <strong>{valueOrDash(selectedTeacherAssignmentRow.periodo_nombre)}</strong>
+                      <small>{teacherAssignmentSecondary('periodo_nombre', selectedTeacherAssignmentRow)}</small>
+                    </article>
+                    <article>
+                      <span>Curso</span>
+                      <strong>Paralelo {valueOrDash(selectedTeacherAssignmentRow.Paralelo)}</strong>
+                      <small>{valueOrDash(selectedTeacherAssignmentRow.jornada_nombre)}</small>
+                    </article>
+                    <article>
+                      <span>Estado en Moodle</span>
+                      <strong>
+                        {isEnabledValue(selectedTeacherAssignmentRow.estadoMoodleDoc) ? 'Vinculado' : 'Pendiente'}
+                      </strong>
+                      <small>{teacherAssignmentSecondary('estadoMoodleDoc', selectedTeacherAssignmentRow)}</small>
+                    </article>
+                  </section>
+                ) : null}
+
                 {isStudentProfileSection && mode !== 'create' && !studentProfileEditing ? (
                   <section className="gestion-sis-student-summary" aria-label="Datos básicos del estudiante">
                     <article>
@@ -2089,12 +2221,16 @@ export function GestionSisAcademicoView({
                           ? 'Nuevo registro'
                           : isStudentProfileSection
                             ? 'Actualizar información del estudiante'
-                            : 'Edicion del registro'}
+                            : isTeacherAssignmentSection
+                              ? 'Vinculación con Moodle'
+                              : 'Edición del registro'}
                       </strong>
                       <span>
                         {isStudentProfileSection && mode !== 'create'
                           ? 'Complete los campos necesarios y guarde para regresar a la ficha estudiantil.'
-                          : 'Complete los campos requeridos y guarda los cambios para actualizar la tabla.'}
+                          : isTeacherAssignmentSection && mode !== 'create'
+                            ? 'Actualice únicamente el estado de vinculación de esta asignación.'
+                            : 'Complete los campos requeridos y guarde los cambios para actualizar la tabla.'}
                       </span>
                     </div>
 

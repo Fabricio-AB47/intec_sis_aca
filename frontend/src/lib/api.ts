@@ -33,6 +33,8 @@ import type {
   AcademicTeacherStateUpdatePayload,
   AcademicTeacherStateUpdateResponse,
   AcademicTeacherStudentsResponse,
+  AcademicTeacherMultiEnrollmentPayload,
+  AcademicTeacherMultiSubjectEnrollmentPayload,
   AcademicTeacherUniqueEnrollmentPayload,
   AcademicTeacherUniqueSubjectsResponse,
   AgeRangeCatalogResponse,
@@ -107,6 +109,8 @@ import type {
   MoodleSectionNameUpdateResponse,
   MoodleSectionVisibilityUpdateResponse,
   MoodleStatusResponse,
+  MoodleTeamsEnrollmentResponse,
+  MoodleTeamsPreviewResponse,
   MoodleUserStatusUpdateResponse,
   MoodleUsersResponse,
   MassEmailRecipient,
@@ -167,6 +171,9 @@ import type {
   ScholarshipConfigurationPayload,
   ScholarshipConfigurationSaveResponse,
   ScholarshipBeneficiaryListResponse,
+  ScholarshipContractCandidateListResponse,
+  ScholarshipContractHistoryResponse,
+  ScholarshipContractUploadResponse,
   ScreenAccessResponse,
   ScreenAccessRole,
   SisAcademicoCatalogResponse,
@@ -371,47 +378,104 @@ export function invalidateMoodleGradeAlertCache() {
   }
 }
 
+let currentSessionRequest: Promise<UserSession | null> | null = null
+const screenAccessRequests = new Map<boolean, Promise<ScreenAccessResponse>>()
+
+function clearAuthReadRequests() {
+  currentSessionRequest = null
+  screenAccessRequests.clear()
+}
+
 export async function loginRequest(login: string, password: string): Promise<UserSession> {
   clearMoodleGradeAlertCache()
-  return request<UserSession>('/api/auth/login', {
+  clearAuthReadRequests()
+  const session = await request<UserSession>('/api/auth/login', {
     method: 'POST',
     body: { login, password },
   })
+  clearAuthReadRequests()
+  return session
 }
 
 export async function selectProfileRequest(role: string): Promise<UserSession> {
   clearMoodleGradeAlertCache()
-  return request<UserSession>('/api/auth/select-profile', {
+  clearAuthReadRequests()
+  const session = await request<UserSession>('/api/auth/select-profile', {
     method: 'POST',
     body: { rol: role },
   })
+  clearAuthReadRequests()
+  return session
 }
 
 export async function getCurrentSession(): Promise<UserSession | null> {
-  try {
-    return await request<UserSession>('/api/auth/me')
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
-      return null
-    }
-    throw error
+  if (!currentSessionRequest) {
+    const pending = (async () => {
+      try {
+        return await request<UserSession>('/api/auth/me')
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          return null
+        }
+        throw error
+      }
+    })()
+    currentSessionRequest = pending
+    pending.then(
+      () => {
+        if (currentSessionRequest === pending) currentSessionRequest = null
+      },
+      () => {
+        if (currentSessionRequest === pending) currentSessionRequest = null
+      },
+    )
   }
+  return currentSessionRequest
+}
+
+function screenAccessRequest(includeAll: boolean): Promise<ScreenAccessResponse> {
+  const activeRequest = screenAccessRequests.get(includeAll)
+  if (activeRequest) return activeRequest
+
+  const pending = request<ScreenAccessResponse>(
+    `/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`,
+  )
+  screenAccessRequests.set(includeAll, pending)
+  pending.then(
+    () => {
+      if (screenAccessRequests.get(includeAll) === pending) screenAccessRequests.delete(includeAll)
+    },
+    () => {
+      if (screenAccessRequests.get(includeAll) === pending) screenAccessRequests.delete(includeAll)
+    },
+  )
+  return pending
 }
 
 export async function logoutRequest(): Promise<void> {
   clearMoodleGradeAlertCache()
-  await request<void>('/api/auth/logout', { method: 'POST' })
+  clearAuthReadRequests()
+  try {
+    await request<void>('/api/auth/logout', { method: 'POST' })
+  } finally {
+    clearAuthReadRequests()
+  }
 }
 
 export async function fetchScreenAccessAssignments(includeAll = false): Promise<ScreenAccessResponse> {
-  return request<ScreenAccessResponse>(`/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`)
+  return screenAccessRequest(includeAll)
 }
 
 export async function updateScreenAccessAssignment(role: string, pages: string[]): Promise<ScreenAccessRole> {
-  return request<ScreenAccessRole>(`/api/auth/screen-access/${encodeURIComponent(role)}`, {
-    method: 'PUT',
-    body: { pages },
-  })
+  clearAuthReadRequests()
+  try {
+    return await request<ScreenAccessRole>(`/api/auth/screen-access/${encodeURIComponent(role)}`, {
+      method: 'PUT',
+      body: { pages },
+    })
+  } finally {
+    clearAuthReadRequests()
+  }
 }
 
 export type IntegrationHistoryQuery = {
@@ -1136,6 +1200,37 @@ export async function createClassroom(payload: TeamCreateAndEnrollPayload): Prom
   return request<TeamsActionResponse>('/api/teams/create-and-enroll', {
     method: 'POST',
     body: payload,
+  })
+}
+
+export async function previewMoodleTeamsEnrollment(
+  courseId: number,
+  refresh = false,
+  teamDisplayName?: string,
+): Promise<MoodleTeamsPreviewResponse> {
+  return request<MoodleTeamsPreviewResponse>('/api/teams/moodle-course/preview', {
+    method: 'POST',
+    body: {
+      course_id: courseId,
+      refresh,
+      team_display_name: teamDisplayName?.trim() || undefined,
+    },
+  })
+}
+
+export async function enrollMoodleCourseInTeams(
+  courseId: number,
+  selectedMoodleUserIds: number[],
+  teamDisplayName: string,
+): Promise<MoodleTeamsEnrollmentResponse> {
+  return request<MoodleTeamsEnrollmentResponse>('/api/teams/moodle-course/enroll', {
+    method: 'POST',
+    body: {
+      course_id: courseId,
+      refresh: true,
+      selected_moodle_user_ids: selectedMoodleUserIds,
+      team_display_name: teamDisplayName.trim(),
+    },
   })
 }
 
@@ -2054,6 +2149,60 @@ export async function fetchScholarshipBeneficiaries(
   )
 }
 
+export async function fetchScholarshipContractCandidates(
+  query = '',
+  scholarshipType = '',
+  academicPeriod = ''
+): Promise<ScholarshipContractCandidateListResponse> {
+  const params = new URLSearchParams({ limit: '1000' })
+  if (query.trim()) params.set('query', query.trim())
+  if (scholarshipType.trim()) params.set('tipo_beca', scholarshipType.trim())
+  if (academicPeriod.trim()) params.set('codigo_periodo', academicPeriod.trim())
+  return request<ScholarshipContractCandidateListResponse>(
+    `/api/students/preinscripcion/becas/contratos/candidatos?${params.toString()}`
+  )
+}
+
+export async function generateScholarshipContracts(
+  becaIds: number[],
+  academicPeriod: string
+): Promise<Blob> {
+  return request<Blob>('/api/students/preinscripcion/becas/contratos/generar', {
+    method: 'POST',
+    body: { beca_ids: becaIds, codigo_periodo: academicPeriod },
+    responseType: 'blob',
+  })
+}
+
+export async function fetchScholarshipContractHistory(
+  query = ''
+): Promise<ScholarshipContractHistoryResponse> {
+  const params = new URLSearchParams({ limit: '500' })
+  if (query.trim()) params.set('query', query.trim())
+  return request<ScholarshipContractHistoryResponse>(
+    `/api/students/preinscripcion/becas/contratos/historial?${params.toString()}`
+  )
+}
+
+export async function downloadScholarshipContract(contractId: number): Promise<Blob> {
+  return request<Blob>(
+    `/api/students/preinscripcion/becas/contratos/${encodeURIComponent(String(contractId))}/descargar`,
+    { responseType: 'blob' }
+  )
+}
+
+export async function uploadScholarshipContractToExpedient(
+  contractId: number,
+  file: File
+): Promise<ScholarshipContractUploadResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<ScholarshipContractUploadResponse>(
+    `/api/students/preinscripcion/becas/contratos/${encodeURIComponent(String(contractId))}/expediente`,
+    { method: 'POST', body: formData }
+  )
+}
+
 export async function approvePreinscriptionScholarshipById(
   becaId: number
 ): Promise<PreinscriptionScholarshipStatus> {
@@ -2384,6 +2533,7 @@ export async function fetchAcademicTeacherParallels(
 export async function fetchAcademicTeacherUniqueSubjects(params: {
   codigoPeriodo: string
   buscar?: string
+  semestre?: string
   limite?: number
 }): Promise<AcademicTeacherUniqueSubjectsResponse> {
   const query = new URLSearchParams({
@@ -2392,6 +2542,9 @@ export async function fetchAcademicTeacherUniqueSubjects(params: {
   })
   if (params.buscar?.trim()) {
     query.set('buscar', params.buscar.trim())
+  }
+  if (params.semestre?.trim()) {
+    query.set('semestre', params.semestre.trim())
   }
   return request<AcademicTeacherUniqueSubjectsResponse>(`/api/students/matricula-acad/docentes/materias-unicas?${query.toString()}`)
 }
@@ -2422,17 +2575,17 @@ export async function fetchAcademicTeacherStudents(
 }
 
 export async function fetchAcademicTeacherParallelStudents(
-  codigoPeriodo: string,
+  codigoPeriodo: string | string[],
   codigoMateria: string,
   paralelo: string,
   codAnioBasica: string | string[] = [],
   semestre: string = ''
 ): Promise<AcademicTeacherStudentsResponse> {
-  const params = new URLSearchParams({
-    codigo_periodo: codigoPeriodo,
-    codigo_materia: codigoMateria,
-    paralelo,
-  })
+  const params = new URLSearchParams({ codigo_materia: codigoMateria, paralelo })
+  const periodCodes = Array.isArray(codigoPeriodo) ? codigoPeriodo : [codigoPeriodo]
+  for (const code of periodCodes.filter(Boolean)) {
+    params.append('codigo_periodo', code)
+  }
   const careerCodes = Array.isArray(codAnioBasica) ? codAnioBasica : [codAnioBasica]
   for (const code of careerCodes.filter(Boolean)) {
     params.append('cod_anio_basica', code)
@@ -2994,18 +3147,46 @@ export async function fetchTeacherEvaluationIdentity(
 }
 
 export async function fetchTeacherEvaluationByCedula(
-  cedula: string
+  cedula: string,
+  accessToken: string,
 ): Promise<TeacherEvaluationStudentResponse> {
   return request<TeacherEvaluationStudentResponse>(
     `/api/evaluacion-docente/student/${encodeURIComponent(cedula.trim())}`,
+    { headers: { 'X-Evaluation-Token': accessToken } },
+  )
+}
+
+export async function saveAcademicTeacherMultiEnrollment(
+  payload: AcademicTeacherMultiEnrollmentPayload
+): Promise<AcademicTeacherEnrollmentSaveResponse> {
+  return request<AcademicTeacherEnrollmentSaveResponse>(
+    '/api/students/matricula-acad/docentes/matricula/materia-unica/multiple',
+    {
+      method: 'POST',
+      body: payload,
+    }
+  )
+}
+
+export async function saveAcademicTeacherMultiSubjectEnrollment(
+  payload: AcademicTeacherMultiSubjectEnrollmentPayload
+): Promise<AcademicTeacherEnrollmentSaveResponse> {
+  return request<AcademicTeacherEnrollmentSaveResponse>(
+    '/api/students/matricula-acad/docentes/matricula/materias/multiple',
+    {
+      method: 'POST',
+      body: payload,
+    }
   )
 }
 
 export async function fetchTeacherEvaluationTeacherByCedula(
-  cedula: string
+  cedula: string,
+  accessToken: string,
 ): Promise<TeacherEvaluationTeacherResponse> {
   return request<TeacherEvaluationTeacherResponse>(
     `/api/evaluacion-docente/teacher/${encodeURIComponent(cedula.trim())}`,
+    { headers: { 'X-Evaluation-Token': accessToken } },
   )
 }
 
@@ -3017,20 +3198,24 @@ export async function fetchTeacherEvaluationQuestions(
 }
 
 export async function saveTeacherEvaluation(
-  payload: TeacherEvaluationSubmitPayload
+  payload: TeacherEvaluationSubmitPayload,
+  accessToken: string,
 ): Promise<TeacherEvaluationSubmitResponse> {
   return request<TeacherEvaluationSubmitResponse>('/api/evaluacion-docente/evaluate', {
     method: 'POST',
     body: payload,
+    headers: { 'X-Evaluation-Token': accessToken },
   })
 }
 
 export async function saveTeacherRoleEvaluation(
-  payload: TeacherRoleEvaluationSubmitPayload
+  payload: TeacherRoleEvaluationSubmitPayload,
+  accessToken: string,
 ): Promise<TeacherEvaluationSubmitResponse> {
   return request<TeacherEvaluationSubmitResponse>('/api/evaluacion-docente/teacher/evaluate', {
     method: 'POST',
     body: payload,
+    headers: { 'X-Evaluation-Token': accessToken },
   })
 }
 

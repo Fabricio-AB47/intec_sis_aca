@@ -20,6 +20,7 @@ GRAPH_DOCUMENT_ROOT = "EXPEDIENTES ESTUDIANTILES"
 GRAPH_SIMPLE_UPLOAD_MAX_BYTES = 250 * 1024 * 1024
 GRAPH_UPLOAD_CHUNK_BYTES = 32 * 320 * 1024
 GRAPH_MODULE_FOLDERS = {
+    "BECAS": "BECAS",
     "INGLES": "IDIOMAS",
     "TITULACION": "TITULACION",
     "PRACTICAS": "PRACTICAS PREPROFESIONALES",
@@ -27,6 +28,10 @@ GRAPH_MODULE_FOLDERS = {
     "FACTURACION": "FACTURAS",
 }
 GRAPH_EXPEDIENT_TYPES = {
+    "BECAS": (
+        "Becas",
+        "Contratos de beca y documentos complementarios por período académico.",
+    ),
     "INGLES": (
         "Inglés",
         "Archivos y evidencias de evaluación del idioma Inglés.",

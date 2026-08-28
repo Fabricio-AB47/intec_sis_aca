@@ -73,6 +73,16 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             with self.subTest(role=role):
                 self.assertNotIn("matricula-acad", denied_pages)
 
+    def test_moodle_teams_enrollment_is_an_assignable_integration(self) -> None:
+        screen = next(item for item in SCREEN_CATALOG if item["page"] == "moodle-teams")
+
+        self.assertEqual(screen["label"], "Matrícula Moodle-Teams")
+        self.assertEqual(screen["group"], "Integraciones")
+        self.assertIn("docentes", screen["description"].lower())
+        self.assertIn("estudiantes", screen["description"].lower())
+        self.assertIn("moodle-teams", ALL_PAGES)
+        self.assertNotIn("moodle-teams", ADMIN_ONLY_PAGES)
+
     def test_enrollment_flows_are_independently_assignable(self) -> None:
         enrollment_flows = {
             page
@@ -90,6 +100,50 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertTrue(enrollment_flows.issubset(DEFAULT_ACCESS["ACADEMICO"]))
         self.assertTrue(enrollment_flows.issubset(DEFAULT_ACCESS["ADMINISTRADOR"]))
         self.assertTrue(enrollment_flows.isdisjoint(DEFAULT_ACCESS["DOCENTE"]))
+
+    def test_teacher_enrollment_is_grouped_with_enrollment(self) -> None:
+        screen = next(item for item in SCREEN_CATALOG if item["page"] == "matricula-docente")
+
+        self.assertEqual(screen["label"], "Matrícula docente")
+        self.assertEqual(screen["group"], "Matrícula")
+        self.assertIn("matricula-docente", ALL_PAGES)
+        self.assertIn("matricula-docente", DEFAULT_ACCESS["ACADEMICO"])
+
+    def test_update_screens_share_one_catalog_group(self) -> None:
+        update_pages = {
+            "actualizar-datos-estudiante",
+            "actualizar-correo-intec",
+            "fecha-grado",
+            "gestion-sisacademico/actualizacion_est",
+            "gestion-sisacademico/actualizacion_estudiantes",
+        }
+
+        for page in update_pages:
+            with self.subTest(page=page):
+                screen = next(item for item in SCREEN_CATALOG if item["page"] == page)
+                self.assertEqual(screen["group"], "Actualización")
+
+    def test_enrollment_flows_share_one_catalog_group(self) -> None:
+        enrollment_pages = {
+            "matricula",
+            "matricula-docente",
+            "preinscripcion/cabecera",
+            "preinscripcion/documentos",
+            "preinscripcion/materias",
+            "matricula-acad/individual",
+            "matricula-acad/masiva",
+            "matricula-acad/prerrequisitos",
+            "gestion-sisacademico/preinscripciones",
+            "gestion-sisacademico/datos_factura",
+            "gestion-sisacademico/cabecera_matricula",
+            "gestion-sisacademico/matricula_materias",
+            "gestion-sisacademico/pagos_matricula",
+        }
+
+        for page in enrollment_pages:
+            with self.subTest(page=page):
+                screen = next(item for item in SCREEN_CATALOG if item["page"] == page)
+                self.assertEqual(screen["group"], "Matrícula")
 
     def test_registration_is_an_explicit_assignable_screen(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "preinscripcion")

@@ -1,6 +1,8 @@
+import asyncio
 import time
 import re
 import logging
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from urllib.parse import quote
@@ -11,9 +13,12 @@ from typing import Annotated, Any, cast
 import httpx
 import pyodbc
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.security import SessionUser, require_roles
+from app.core.security import SessionUser, require_roles, require_screen_access
+from app.integrations.moodle.exceptions import MoodleError
+from app.routers.moodle import get_moodle_read_service
 from app.routers.students import _MATRICULA_BASE_CTE, _validate_tipo
 from app.services.db import get_connection, get_teams_connection
 from app.services.graph import graph_get, graph_get_all, graph_patch, graph_post, graph_post_with_meta
@@ -24,6 +29,19 @@ logger = logging.getLogger(__name__)
 _TEAMS_ROLE_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR")
 _TEAMS_SELF_ROLE_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR", "DOCENTE")
 _INSTITUTIONAL_EMAIL_DOMAIN = "intec.edu.ec"
+_MOODLE_TEAMS_FIXED_OWNER = "dir.tics@intec.edu.ec"
+_MOODLE_TEACHER_ROLE_KEYS = {
+    "coursecreator",
+    "docente",
+    "editingteacher",
+    "gestor",
+    "manager",
+    "profesor",
+    "profesorconpermisodeedicion",
+    "profesorsinpermisodeedicion",
+    "teacher",
+}
+_MOODLE_STUDENT_ROLE_KEYS = {"estudiante", "student"}
 
 
 def _institutional_email_for_user(current_user: SessionUser) -> str | None:
@@ -49,6 +67,23 @@ def _require_teams_access(
 
 
 _TEAMS_ACCESS = _require_teams_access
+
+
+_MOODLE_TEAMS_SCREEN_ACCESS = require_screen_access("moodle-teams")
+
+
+def _require_moodle_teams_access(
+    current_user: SessionUser = Depends(_MOODLE_TEAMS_SCREEN_ACCESS),
+) -> SessionUser:
+    if _institutional_email_for_user(current_user) is None:
+        raise HTTPException(
+            status_code=403,
+            detail="La matrícula Moodle-Teams requiere una cuenta institucional @intec.edu.ec autenticada",
+        )
+    return current_user
+
+
+_MOODLE_TEAMS_ACCESS = _require_moodle_teams_access
 
 
 def _require_teams_self_access(
@@ -118,6 +153,15 @@ class TeamCreateClassroomRequest(BaseModel):
     teacher_user_ids: list[str]
     visibility: str = "private"
     description: str = ""
+
+
+class MoodleTeamsCourseRequest(BaseModel):
+    course_id: int = Field(ge=1)
+    refresh: bool = False
+    selected_moodle_user_ids: list[int] = Field(default_factory=list)
+    team_display_name: str | None = Field(default=None, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TeamMassEnrollmentRequest(BaseModel):
@@ -3478,7 +3522,7 @@ def _resolve_graph_user_by_email(email: str, cache: dict[str, dict[str, Any] | N
     url = (
         "https://graph.microsoft.com/v1.0/users"
         "?$top=5"
-        "&$select=id,displayName,mail,userPrincipalName"
+        "&$select=id,displayName,mail,userPrincipalName,accountEnabled,userType"
         f"&$filter={encoded_filter}"
     )
     payload = graph_get(url)
@@ -3494,7 +3538,7 @@ def _resolve_graph_user_by_email(email: str, cache: dict[str, dict[str, Any] | N
             if _normalize_email_address(user.get("mail")) == normalized
             or _normalize_email_address(user.get("userPrincipalName")) == normalized
         ),
-        users[0],
+        None,
     )
     cache[normalized] = exact_match
     return exact_match
@@ -3592,8 +3636,14 @@ def _preview_status_label(status: str) -> str:
     labels = {
         "ready": "Listo para matricular",
         "already_in_team": "Ya pertenece al Team",
+        "already_owner": "Ya es propietario del Team",
+        "needs_promotion": "Se promoverá a propietario",
         "not_found": "No encontrado en Graph",
-        "invalid_email": "Correo invalido",
+        "invalid_email": "Correo inválido",
+        "invalid_domain": "Correo fuera del dominio institucional",
+        "disabled_account": "Cuenta deshabilitada en Microsoft 365",
+        "identity_mismatch": "El correo no coincide con la cuenta de Microsoft 365",
+        "ignored": "Ignorado",
         "error": "Error al validar en Graph",
         "enrolled": "Matriculado correctamente",
     }
@@ -5108,6 +5158,487 @@ def _execute_selected_students(payload: TeamEnrollmentSelectionRequest) -> dict[
     return _execute_preview_result(_build_selected_students_preview(payload))
 
 
+def _moodle_role_key(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().casefold())
+    without_accents = "".join(character for character in normalized if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]+", "", without_accents)
+
+
+def _moodle_user_role_keys(user: dict[str, Any]) -> set[str]:
+    role_keys = {
+        _moodle_role_key(value)
+        for value in cast(list[Any], user.get("role_shortnames") or [])
+        if _moodle_role_key(value)
+    }
+    for role in cast(list[Any], user.get("roles") or []):
+        if not isinstance(role, dict):
+            continue
+        for field in ("shortname", "name"):
+            role_key = _moodle_role_key(role.get(field))
+            if role_key:
+                role_keys.add(role_key)
+    return role_keys
+
+
+def _moodle_course_team_name(
+    course: dict[str, Any],
+    requested_name: str | None = None,
+) -> str:
+    raw_name = requested_name if requested_name is not None else (
+        course.get("fullname")
+        or course.get("displayname")
+        or course.get("shortname")
+        or f"Curso Moodle {course.get('id')}"
+    )
+    clean_name = _normalize_team_display_name(
+        "".join(character if character.isprintable() else " " for character in str(raw_name))
+    )
+    if not clean_name:
+        raise HTTPException(status_code=409, detail="El curso Moodle no tiene un nombre válido para crear el aula")
+    return clean_name[:256]
+
+
+def _moodle_team_candidate(user: dict[str, Any], *, role: str) -> dict[str, Any]:
+    return {
+        "moodle_user_id": int(user.get("id") or 0),
+        "full_name": str(user.get("fullname") or user.get("username") or "Usuario Moodle").strip(),
+        "email": _normalize_email_address(user.get("email")),
+        "moodle_username": str(user.get("username") or "").strip(),
+        "moodle_roles": sorted(_moodle_user_role_keys(user)),
+        "role": role,
+        "fixed_administrator": False,
+    }
+
+
+def _classify_moodle_course_users(users: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    owners_by_key: dict[str, dict[str, Any]] = {}
+    students_by_key: dict[str, dict[str, Any]] = {}
+    ignored: list[dict[str, Any]] = []
+
+    for user in users:
+        candidate_status = str(user.get("status") or "").strip().upper()
+        suspended = bool(user.get("suspended"))
+        confirmed = bool(user.get("confirmed", True))
+        if suspended or not confirmed or (candidate_status and candidate_status != "ACTIVO"):
+            ignored.append(
+                {
+                    **_moodle_team_candidate(user, role="ignored"),
+                    "status": "ignored",
+                    "status_label": _preview_status_label("ignored"),
+                    "reason": "La matrícula de Moodle está suspendida o no confirmada",
+                }
+            )
+            continue
+
+        role_keys = _moodle_user_role_keys(user)
+        is_teacher = bool(role_keys & _MOODLE_TEACHER_ROLE_KEYS)
+        is_student = bool(role_keys & _MOODLE_STUDENT_ROLE_KEYS)
+        email = _normalize_email_address(user.get("email"))
+        identity_key = email or f"moodle:{int(user.get('id') or 0)}"
+
+        if is_teacher:
+            owners_by_key[identity_key] = _moodle_team_candidate(user, role="teacher")
+            students_by_key.pop(identity_key, None)
+        elif is_student:
+            if identity_key not in owners_by_key:
+                students_by_key.setdefault(identity_key, _moodle_team_candidate(user, role="student"))
+        else:
+            ignored.append(
+                {
+                    **_moodle_team_candidate(user, role="ignored"),
+                    "status": "ignored",
+                    "status_label": _preview_status_label("ignored"),
+                    "reason": "El rol de Moodle no corresponde a docente ni estudiante",
+                }
+            )
+
+    fixed_owner = owners_by_key.get(_MOODLE_TEAMS_FIXED_OWNER)
+    if fixed_owner:
+        fixed_owner["fixed_administrator"] = True
+    else:
+        owners_by_key[_MOODLE_TEAMS_FIXED_OWNER] = {
+            "moodle_user_id": 0,
+            "full_name": "Dirección de Tecnologías de la Información",
+            "email": _MOODLE_TEAMS_FIXED_OWNER,
+            "moodle_username": "",
+            "moodle_roles": [],
+            "role": "administrator",
+            "fixed_administrator": True,
+        }
+
+    owner_emails = {email for email in owners_by_key if "@" in email}
+    students_by_key = {
+        key: value
+        for key, value in students_by_key.items()
+        if _normalize_email_address(value.get("email")) not in owner_emails
+    }
+
+    return {
+        "owners": sorted(
+            owners_by_key.values(),
+            key=lambda item: (not bool(item.get("fixed_administrator")), str(item.get("full_name") or "").casefold()),
+        ),
+        "students": sorted(students_by_key.values(), key=lambda item: str(item.get("full_name") or "").casefold()),
+        "ignored": sorted(ignored, key=lambda item: str(item.get("full_name") or "").casefold()),
+    }
+
+
+def _team_membership_identity_indexes(team_id: str) -> tuple[set[str], set[str], set[str], set[str]]:
+    member_ids: set[str] = set()
+    member_emails: set[str] = set()
+    owner_ids: set[str] = set()
+    owner_emails: set[str] = set()
+    for member in _load_team_members(team_id):
+        member_id = str(member.get("id") or "").strip().lower()
+        emails = {
+            email
+            for email in (
+                _normalize_email_address(member.get("mail")),
+                _normalize_email_address(member.get("userPrincipalName")),
+            )
+            if email
+        }
+        if member_id:
+            member_ids.add(member_id)
+        member_emails.update(emails)
+        if bool(member.get("isOwner")):
+            if member_id:
+                owner_ids.add(member_id)
+            owner_emails.update(emails)
+    return member_ids, member_emails, owner_ids, owner_emails
+
+
+def _resolve_moodle_teams_candidate(
+    candidate: dict[str, Any],
+    *,
+    member_ids: set[str],
+    member_emails: set[str],
+    owner_ids: set[str],
+    owner_emails: set[str],
+) -> dict[str, Any]:
+    item = dict(candidate)
+    email = _normalize_email_address(candidate.get("email"))
+    item.update(
+        {
+            "email": email,
+            "graph_user_id": None,
+            "graph_display_name": None,
+            "graph_mail": None,
+            "graph_user_principal_name": None,
+            "graph_account_enabled": None,
+            "graph_user_type": None,
+            "status": "ready",
+            "status_label": _preview_status_label("ready"),
+        }
+    )
+    if not email or not _email_has_valid_shape(email):
+        item["status"] = "invalid_email"
+        item["status_label"] = _preview_status_label("invalid_email")
+        return item
+    if email.rsplit("@", 1)[-1] != _INSTITUTIONAL_EMAIL_DOMAIN:
+        item["status"] = "invalid_domain"
+        item["status_label"] = _preview_status_label("invalid_domain")
+        return item
+
+    try:
+        graph_user = _resolve_graph_user_by_email(email, {})
+    except (httpx.HTTPStatusError, RuntimeError):
+        item["status"] = "error"
+        item["status_label"] = _preview_status_label("error")
+        item["error"] = "Microsoft 365 no pudo validar esta cuenta"
+        return item
+
+    if not graph_user:
+        item["status"] = "not_found"
+        item["status_label"] = _preview_status_label("not_found")
+        return item
+
+    graph_user_id = str(graph_user.get("id") or "").strip()
+    graph_mail = _normalize_email_address(graph_user.get("mail"))
+    graph_upn = _normalize_email_address(graph_user.get("userPrincipalName"))
+    graph_account_enabled = graph_user.get("accountEnabled")
+    graph_user_type = str(graph_user.get("userType") or "").strip()
+    item.update(
+        {
+            "graph_user_id": graph_user_id or None,
+            "graph_display_name": graph_user.get("displayName"),
+            "graph_mail": graph_mail or None,
+            "graph_user_principal_name": graph_upn or None,
+            "graph_account_enabled": graph_account_enabled,
+            "graph_user_type": graph_user_type or None,
+        }
+    )
+    if email not in {graph_mail, graph_upn}:
+        item["status"] = "identity_mismatch"
+        item["status_label"] = _preview_status_label("identity_mismatch")
+        return item
+    if graph_account_enabled is False:
+        item["status"] = "disabled_account"
+        item["status_label"] = _preview_status_label("disabled_account")
+        return item
+    if not graph_user_id:
+        item["status"] = "not_found"
+        item["status_label"] = _preview_status_label("not_found")
+        return item
+    identity_ids = {graph_user_id.lower()} if graph_user_id else set()
+    identity_emails = {value for value in (email, graph_mail, graph_upn) if value}
+    is_owner = bool(identity_ids & owner_ids or identity_emails & owner_emails)
+    is_member = bool(identity_ids & member_ids or identity_emails & member_emails)
+    if item.get("role") in {"teacher", "administrator"}:
+        if is_owner:
+            item["status"] = "already_owner"
+        elif is_member:
+            item["status"] = "needs_promotion"
+    elif is_member or is_owner:
+        item["status"] = "already_in_team"
+    item["status_label"] = _preview_status_label(str(item["status"]))
+    return item
+
+
+def _build_moodle_teams_graph_preview(
+    course: dict[str, Any],
+    users: list[dict[str, Any]],
+    *,
+    team_display_name: str | None = None,
+) -> dict[str, Any]:
+    display_name = _moodle_course_team_name(course, team_display_name)
+    classified = _classify_moodle_course_users(users)
+    moodle_teacher_count = sum(1 for item in classified["owners"] if item.get("role") == "teacher")
+    existing_team = _existing_classroom_team(display_name)
+    team_id = str((existing_team or {}).get("id") or "").strip()
+    if team_id:
+        member_ids, member_emails, owner_ids, owner_emails = _team_membership_identity_indexes(team_id)
+    else:
+        member_ids, member_emails, owner_ids, owner_emails = set(), set(), set(), set()
+
+    candidates = classified["owners"] + classified["students"]
+
+    def resolve(candidate: dict[str, Any]) -> dict[str, Any]:
+        return _resolve_moodle_teams_candidate(
+            candidate,
+            member_ids=member_ids,
+            member_emails=member_emails,
+            owner_ids=owner_ids,
+            owner_emails=owner_emails,
+        )
+
+    if candidates:
+        with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, len(candidates))) as executor:
+            resolved = list(executor.map(resolve, candidates))
+    else:
+        resolved = []
+    owner_count = len(classified["owners"])
+    owners = resolved[:owner_count]
+    students = resolved[owner_count:]
+
+    blocking_reasons: list[str] = []
+    warnings: list[str] = []
+    valid_owner_statuses = {"ready", "already_owner", "needs_promotion"}
+    valid_student_statuses = {"ready", "already_in_team"}
+    if moodle_teacher_count == 0:
+        blocking_reasons.append("El curso Moodle no tiene un docente activo identificado por rol")
+    invalid_owners = [item for item in owners if item.get("status") not in valid_owner_statuses]
+    if invalid_owners:
+        blocking_reasons.append("No se pudieron validar todos los docentes y el administrador fijo en Microsoft 365")
+    if not classified["students"]:
+        blocking_reasons.append("El curso Moodle no tiene estudiantes activos matriculados")
+    elif not any(item.get("status") in valid_student_statuses for item in students):
+        blocking_reasons.append("Ningún estudiante del curso tiene una cuenta institucional válida en Microsoft 365")
+    unresolved_students = [item for item in students if item.get("status") not in valid_student_statuses]
+    if unresolved_students:
+        warnings.append(f"{len(unresolved_students)} estudiante(s) no podrán matricularse hasta corregir su cuenta")
+    if classified["ignored"]:
+        warnings.append(f"{len(classified['ignored'])} usuario(s) de Moodle fueron ignorados por rol o estado")
+
+    return {
+        "course": {
+            "id": int(course.get("id") or 0),
+            "fullname": str(course.get("fullname") or "").strip(),
+            "shortname": str(course.get("shortname") or "").strip(),
+            "idnumber": str(course.get("idnumber") or "").strip(),
+        },
+        "team": {
+            "id": team_id or None,
+            "display_name": display_name,
+            "exists": bool(existing_team),
+            "web_url": (existing_team or {}).get("webUrl"),
+            "creation_action": "synchronize" if existing_team else "create",
+            "template": "educationClass",
+        },
+        "owners": owners,
+        "students": students,
+        "ignored": classified["ignored"],
+        "summary": {
+            "moodle_user_count": len(users),
+            "moodle_teacher_count": moodle_teacher_count,
+            "owner_count": len(owners),
+            "student_count": len(students),
+            "student_ready_count": sum(1 for item in students if item.get("status") == "ready"),
+            "student_existing_count": sum(1 for item in students if item.get("status") == "already_in_team"),
+            "student_unresolved_count": len(unresolved_students),
+            "ignored_count": len(classified["ignored"]),
+        },
+        "fixed_administrator": _MOODLE_TEAMS_FIXED_OWNER,
+        "warnings": warnings,
+        "blocking_reasons": blocking_reasons,
+        "can_execute": not blocking_reasons,
+    }
+
+
+def _select_moodle_teams_students(
+    preview: dict[str, Any],
+    selected_moodle_user_ids: list[int],
+) -> dict[str, Any]:
+    selected_ids = {int(value) for value in selected_moodle_user_ids if int(value) > 0}
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos un estudiante del curso Moodle")
+
+    students = cast(list[dict[str, Any]], preview.get("students") or [])
+    students_by_id = {int(item.get("moodle_user_id") or 0): item for item in students}
+    unknown_ids = sorted(selected_ids - set(students_by_id))
+    if unknown_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La selección contiene usuarios que ya no pertenecen al curso Moodle: "
+                + ", ".join(str(value) for value in unknown_ids)
+            ),
+        )
+
+    allowed_statuses = {"ready", "already_in_team"}
+    invalid_students = [
+        students_by_id[user_id]
+        for user_id in sorted(selected_ids)
+        if students_by_id[user_id].get("status") not in allowed_statuses
+    ]
+    if invalid_students:
+        invalid_labels = [
+            str(item.get("email") or item.get("full_name") or item.get("moodle_user_id"))
+            for item in invalid_students
+        ]
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Microsoft 365 no validó todas las cuentas seleccionadas: "
+                + ", ".join(invalid_labels)
+            ),
+        )
+
+    selected_students = [
+        item for item in students if int(item.get("moodle_user_id") or 0) in selected_ids
+    ]
+    return {
+        **preview,
+        "students": selected_students,
+        "summary": {
+            **cast(dict[str, Any], preview.get("summary") or {}),
+            "selected_student_count": len(selected_students),
+            "selected_ready_count": sum(1 for item in selected_students if item.get("status") == "ready"),
+            "selected_existing_count": sum(
+                1 for item in selected_students if item.get("status") == "already_in_team"
+            ),
+        },
+    }
+
+
+async def _load_moodle_teams_snapshot(
+    course_id: int,
+    *,
+    refresh: bool,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    service = get_moodle_read_service()
+    courses, users = await asyncio.gather(
+        service.get_all_courses(refresh=refresh),
+        service.get_course_enrolled_users(course_id, refresh=refresh),
+    )
+    course = next((item for item in courses if int(item.get("id") or 0) == course_id), None)
+    if not course:
+        raise HTTPException(status_code=404, detail="No se encontró el curso solicitado en Moodle")
+    return course, users
+
+
+def _execute_moodle_teams_enrollment(preview: dict[str, Any]) -> dict[str, Any]:
+    if not bool(preview.get("can_execute")):
+        reasons = cast(list[str], preview.get("blocking_reasons") or [])
+        raise HTTPException(
+            status_code=409,
+            detail="; ".join(reasons) or "La matrícula Moodle-Teams no está lista para ejecutarse",
+        )
+
+    course = cast(dict[str, Any], preview["course"])
+    team = cast(dict[str, Any], preview["team"])
+    owners = cast(list[dict[str, Any]], preview["owners"])
+    creation = _create_classroom_and_assign_teachers(
+        TeamCreateClassroomRequest(
+            display_name=str(team.get("display_name") or ""),
+            courses=[str(course.get("shortname") or course.get("fullname") or course.get("id"))],
+            teacher_user_ids=[str(item.get("email") or "") for item in owners],
+            visibility="private",
+            description=f"Aula creada desde el curso Moodle {course.get('id')}: {course.get('fullname')}",
+        )
+    )
+    team_id = str(creation.get("team_id") or "").strip()
+    member_ids, member_emails = _team_member_indexes(team_id)
+    enrollment_items: list[dict[str, Any]] = []
+    for student in cast(list[dict[str, Any]], preview["students"]):
+        item = {
+            **student,
+            "correo_intec": _normalize_email_address(student.get("email")),
+        }
+        graph_user_id = str(student.get("graph_user_id") or "").strip().lower()
+        graph_emails = {
+            value
+            for value in (
+                _normalize_email_address(student.get("email")),
+                _normalize_email_address(student.get("graph_mail")),
+                _normalize_email_address(student.get("graph_user_principal_name")),
+            )
+            if value
+        }
+        if student.get("status") not in {"ready", "already_in_team"}:
+            enrollment_items.append(item)
+            continue
+        elif (graph_user_id and graph_user_id in member_ids) or graph_emails & member_emails:
+            item["status"] = "already_in_team"
+            item["status_label"] = _preview_status_label("already_in_team")
+        else:
+            item["status"] = "ready"
+            item["status_label"] = _preview_status_label("ready")
+        enrollment_items.append(item)
+
+    enrollment_preview = {
+        "team_id": team_id,
+        "team_display_name": team.get("display_name"),
+        "items": enrollment_items,
+        **_mass_enrollment_summary(enrollment_items),
+    }
+    enrollment = _execute_preview_result(enrollment_preview)
+    team_already_existed = bool(creation.get("team_already_existed"))
+    return {
+        "ok": True,
+        "message": (
+            "Aula de Teams existente sincronizada desde Moodle y matrícula ejecutada correctamente."
+            if team_already_existed
+            else "Aula nueva de Teams creada desde Moodle y matrícula ejecutada correctamente."
+        ),
+        "course": course,
+        "team": {
+            **team,
+            "id": team_id,
+            "exists": True,
+            "web_url": creation.get("team_web_url") or team.get("web_url"),
+            "already_existed": team_already_existed,
+            "created_new": not team_already_existed,
+            "creation_action": "synchronize" if team_already_existed else "create",
+            "template": "educationClass",
+        },
+        "owners": owners,
+        "creation": creation,
+        "enrollment": enrollment,
+        "warnings": preview.get("warnings") or [],
+    }
+
+
 def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -> dict[str, Any]:
     courses = _normalize_items(payload.courses)
     teacher_inputs = _normalize_items(payload.teacher_user_ids)
@@ -5162,6 +5693,7 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
     try:
         existing_team = _existing_classroom_team(payload.display_name.strip())
         team_already_existed = existing_team is not None
+        team_details: dict[str, Any] = existing_team or {}
 
         if existing_team:
             team_id = str(existing_team.get("id") or "").strip()
@@ -5180,7 +5712,10 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
                 )
 
             team_id = _wait_for_team_creation(location)
-            _wait_for_team_ready(team_id)
+            ready_snapshot = _wait_for_team_ready(team_id)
+            ready_group = ready_snapshot.get("group")
+            if isinstance(ready_group, dict):
+                team_details = cast(dict[str, Any], ready_group)
 
         owner_results = _ensure_teachers_are_team_owners(team_id, resolved_teachers)
         admin_save_result = _save_team_additional_admins(
@@ -5198,6 +5733,10 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
             ),
             "team_id": team_id,
             "team_already_existed": team_already_existed,
+            "created_new": not team_already_existed,
+            "team_display_name": str(team_details.get("displayName") or payload.display_name).strip(),
+            "team_web_url": str(team_details.get("webUrl") or "").strip() or None,
+            "team_template": "educationClass",
             "teacher_count": len(resolved_teachers),
             "course_count": len(courses),
             "teacher_inputs": teacher_inputs,
@@ -5255,6 +5794,86 @@ def _create_classroom_and_auto_enroll(payload: TeamCreateAndEnrollRequest) -> di
             f"Matriculados: {int(enrollment_result.get('enrolled_count') or 0)}."
         ),
     }
+
+
+@router.post(
+    "/moodle-course/preview",
+    responses={
+        404: {"description": "Curso Moodle no encontrado"},
+        409: {"description": "La matrícula no cumple las validaciones"},
+        502: {"description": "No se pudo consultar Moodle o Microsoft 365"},
+    },
+)
+async def preview_moodle_teams_enrollment(
+    payload: MoodleTeamsCourseRequest,
+    current_user: Annotated[SessionUser, Depends(_MOODLE_TEAMS_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        course, users = await _load_moodle_teams_snapshot(payload.course_id, refresh=payload.refresh)
+        preview = await run_in_threadpool(
+            _build_moodle_teams_graph_preview,
+            course,
+            users,
+            team_display_name=payload.team_display_name,
+        )
+        logger.info(
+            "Vista previa Moodle-Teams actor=%s course_id=%s docentes=%s estudiantes=%s ejecutable=%s",
+            current_user.login,
+            payload.course_id,
+            preview["summary"]["moodle_teacher_count"],
+            preview["summary"]["student_count"],
+            preview["can_execute"],
+        )
+        return preview
+    except MoodleError as exc:
+        logger.warning("No se pudo consultar Moodle para la vista previa: %s", exc)
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar el curso en Moodle: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        _raise_graph_http_exception(exc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post(
+    "/moodle-course/enroll",
+    responses={
+        404: {"description": "Curso Moodle no encontrado"},
+        409: {"description": "La matrícula no cumple las validaciones"},
+        502: {"description": "No se pudo consultar Moodle o Microsoft 365"},
+    },
+)
+async def enroll_moodle_course_in_teams(
+    payload: MoodleTeamsCourseRequest,
+    current_user: Annotated[SessionUser, Depends(_MOODLE_TEAMS_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        course, users = await _load_moodle_teams_snapshot(payload.course_id, refresh=True)
+        preview = await run_in_threadpool(
+            _build_moodle_teams_graph_preview,
+            course,
+            users,
+            team_display_name=payload.team_display_name,
+        )
+        preview = _select_moodle_teams_students(preview, payload.selected_moodle_user_ids)
+        result = await run_in_threadpool(_execute_moodle_teams_enrollment, preview)
+        enrollment = cast(dict[str, Any], result.get("enrollment") or {})
+        logger.info(
+            "Matrícula Moodle-Teams actor=%s course_id=%s team_id=%s procesados=%s matriculados=%s fallidos=%s",
+            current_user.login,
+            payload.course_id,
+            cast(dict[str, Any], result.get("team") or {}).get("id"),
+            enrollment.get("processed_count"),
+            enrollment.get("enrolled_count"),
+            enrollment.get("failed_count"),
+        )
+        return result
+    except MoodleError as exc:
+        logger.warning("No se pudo consultar Moodle para ejecutar la matrícula: %s", exc)
+        raise HTTPException(status_code=502, detail=f"No se pudo consultar el curso en Moodle: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        _raise_graph_http_exception(exc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post(

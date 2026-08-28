@@ -159,7 +159,7 @@ class InstitutionalEmailPersistenceTests(unittest.TestCase):
             item for item in SCREEN_CATALOG
             if item["page"] == "actualizar-correo-intec"
         )
-        self.assertEqual(screen["group"], "Actualizaciones")
+        self.assertEqual(screen["group"], "Actualización")
         self.assertIn("correo institucional", screen["description"].lower())
 
 

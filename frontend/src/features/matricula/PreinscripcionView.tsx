@@ -6,6 +6,7 @@ import {
   createScholarshipConfiguration,
   approvePreinscriptionCarnetPhoto,
   createPreinscription,
+  downloadScholarshipContract,
   fetchAcademicEnrollmentDetail,
   fetchAcademicEnrollmentPensum,
   fetchPreinscriptionCarnetPhoto,
@@ -13,8 +14,11 @@ import {
   fetchPreinscriptionScholarshipStatus,
   fetchPendingPreinscriptionScholarships,
   fetchScholarshipBeneficiaries,
+  fetchScholarshipContractCandidates,
+  fetchScholarshipContractHistory,
   fetchScholarshipConfigurations,
   fetchPreinscriptions,
+  generateScholarshipContracts,
   previewAcademicEnrollment,
   rejectPreinscriptionCarnetPhoto,
   registerPreinscriptionCabecera,
@@ -23,6 +27,7 @@ import {
   updatePreinscriptionDocuments,
   updatePreinscriptionFollowup,
   updateScholarshipConfiguration,
+  uploadScholarshipContractToExpedient,
   uploadPreinscriptionCarnetPhoto,
   uploadPreinscriptionDocument,
   validatePreinscriptionCedula,
@@ -45,6 +50,9 @@ import type {
   PreinscriptionScholarshipStatus,
   PreinscriptionStage,
   ScholarshipBeneficiaryItem,
+  ScholarshipContractCandidateItem,
+  ScholarshipContractHistoryItem,
+  ScholarshipContractPeriodOption,
   ScholarshipConfigurationItem,
   ScholarshipConfigurationPayload,
 } from '../../types/app'
@@ -140,6 +148,18 @@ function isIntecScholarship(value?: string): boolean {
   return !isMintelScholarship(value) && (normalized === 'INTEC' || normalized.startsWith('BECA INTEC'))
 }
 
+function isEnglishCareer(code?: string, name?: string): boolean {
+  const normalizedCode = String(code || '').trim().toUpperCase()
+  const normalizedName = String(name || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+  return normalizedCode === '12' || normalizedName.includes('INGL') || normalizedName.includes('IDIOMA')
+}
+
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('es-EC', {
     minimumFractionDigits: 2,
@@ -160,6 +180,17 @@ function documentStatus(item: PreinscriptionItem): string {
   const total = item.documentos?.total_cargados ?? 0
   const required = item.documentos?.total_requeridos ?? 3
   return `${total}/${required}`
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export function PreinscripcionView({
@@ -262,6 +293,23 @@ export function PreinscripcionView({
     valorTotal: 0,
     porcentajePromedio: 0,
   })
+  const [scholarshipContractCandidates, setScholarshipContractCandidates] = useState<ScholarshipContractCandidateItem[]>([])
+  const [scholarshipContractTypes, setScholarshipContractTypes] = useState<string[]>([])
+  const [scholarshipContractType, setScholarshipContractType] = useState('')
+  const [scholarshipContractPeriods, setScholarshipContractPeriods] = useState<ScholarshipContractPeriodOption[]>([])
+  const [scholarshipContractPeriod, setScholarshipContractPeriod] = useState('')
+  const [scholarshipContractQuery, setScholarshipContractQuery] = useState('')
+  const [selectedScholarshipContractIds, setSelectedScholarshipContractIds] = useState<number[]>([])
+  const [scholarshipContractsLoading, setScholarshipContractsLoading] = useState(false)
+  const [scholarshipContractsGenerating, setScholarshipContractsGenerating] = useState(false)
+  const [scholarshipContractsError, setScholarshipContractsError] = useState('')
+  const [scholarshipContractsMessage, setScholarshipContractsMessage] = useState('')
+  const [scholarshipContractHistory, setScholarshipContractHistory] = useState<ScholarshipContractHistoryItem[]>([])
+  const [scholarshipContractHistoryQuery, setScholarshipContractHistoryQuery] = useState('')
+  const [scholarshipContractHistoryLoading, setScholarshipContractHistoryLoading] = useState(false)
+  const [scholarshipContractUploadItem, setScholarshipContractUploadItem] = useState<ScholarshipContractHistoryItem | null>(null)
+  const [scholarshipContractUploadFile, setScholarshipContractUploadFile] = useState<File | null>(null)
+  const [scholarshipContractUploading, setScholarshipContractUploading] = useState(false)
   const [scholarshipConfigurations, setScholarshipConfigurations] = useState<ScholarshipConfigurationItem[]>([])
   const [scholarshipConfigurationLoading, setScholarshipConfigurationLoading] = useState(false)
   const [scholarshipConfigurationSaving, setScholarshipConfigurationSaving] = useState(false)
@@ -317,10 +365,25 @@ export function PreinscripcionView({
   const isAdmissionsRole = normalizedRole === 'ADMISIONES'
   const canManageAcademicEnrollment = academicEnrollmentRoles.has(normalizedRole)
   const canApproveScholarship = scholarshipApprovalRoles.has(normalizedRole)
-  const isScholarshipAdminStage = activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados'
+  const isScholarshipAdminStage = activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados' || activeStage === 'contratos-becas'
+  const selectedEnrollmentCareer = selectedItem?.codcarrera || selectedItem?.cabecera?.cod_anio_basica || ''
+  const paymentCareerCode = activeStage === 'registro' ? createValues.codcarrera || '' : selectedEnrollmentCareer || createValues.codcarrera || ''
+  const paymentCareer = useMemo(
+    () => (catalog?.carreras || []).find((career) => career.cod_anio_basica === paymentCareerCode),
+    [catalog?.carreras, paymentCareerCode],
+  )
+  const scholarshipExcludedForEnglish = useMemo(
+    () => isEnglishCareer(
+      paymentCareerCode || selectedItem?.codcarrera,
+      paymentCareer?.nombre_basica || selectedItem?.carrera,
+    ),
+    [paymentCareer?.nombre_basica, paymentCareerCode, selectedItem?.carrera, selectedItem?.codcarrera],
+  )
   const scholarshipSelectionIsEmpty = isNoScholarship(cabeceraValues.tipo_beca)
   const scholarshipNeedsApproval = Boolean(
-    scholarshipStatus?.requiere_aprobacion && !scholarshipStatus?.puede_continuar,
+    !scholarshipExcludedForEnglish
+      && scholarshipStatus?.requiere_aprobacion
+      && !scholarshipStatus?.puede_continuar,
   )
   const userRecordCount = totals.usuario_actual ?? totals.mis_registros ?? data?.total ?? 0
   const hasCabecera = Boolean(selectedItem?.en_cabecera_matricula)
@@ -329,7 +392,6 @@ export function PreinscripcionView({
   const selectedStudentName = selectedItem?.apellidos_nombre || [selectedItem?.apellido1, selectedItem?.apellido2, selectedItem?.nombre1, selectedItem?.nombre2].filter(Boolean).join(' ')
   const selectedStudentCedula = selectedItem?.cedula || ''
   const convenioUrl = selectedItem?.documentos?.urlconvenio || ''
-  const selectedEnrollmentCareer = selectedItem?.codcarrera || selectedItem?.cabecera?.cod_anio_basica || ''
   const selectedEnrollmentPeriod = selectedItem?.codperiodo || selectedItem?.cabecera?.codigo_periodo || ''
   const requiredDocumentCount = selectedItem?.documentos?.total_requeridos ?? 3
   const uploadedDocumentCount = selectedItem?.documentos?.total_cargados ?? 0
@@ -395,6 +457,8 @@ export function PreinscripcionView({
   const loadPendingScholarshipsEffect = useEffectEvent(loadPendingScholarships)
   const loadScholarshipConfigurationsEffect = useEffectEvent(loadScholarshipConfigurations)
   const loadScholarshipBeneficiariesEffect = useEffectEvent(loadScholarshipBeneficiaries)
+  const loadScholarshipContractCandidatesEffect = useEffectEvent(loadScholarshipContractCandidates)
+  const loadScholarshipContractHistoryEffect = useEffectEvent(loadScholarshipContractHistory)
 
   useEffect(() => {
     if (isAdmissionsRole && activeStage === 'seguimiento') {
@@ -405,7 +469,7 @@ export function PreinscripcionView({
       onStageChange('cabecera')
       return
     }
-    if ((activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados') && !canApproveScholarship) {
+    if ((activeStage === 'becas' || activeStage === 'gestion-becas' || activeStage === 'becados' || activeStage === 'contratos-becas') && !canApproveScholarship) {
       onStageChange('registro')
     }
   }, [activeStage, canApproveScholarship, canManageAcademicEnrollment, isAdmissionsRole, onStageChange])
@@ -429,11 +493,6 @@ export function PreinscripcionView({
     createCedulaClean.length === 10 &&
     cedulaValidation?.cedula === createCedulaClean &&
     cedulaValidation.exists
-  const paymentCareerCode = activeStage === 'registro' ? createValues.codcarrera || '' : selectedEnrollmentCareer || createValues.codcarrera || ''
-  const paymentCareer = useMemo(
-    () => (catalog?.carreras || []).find((career) => career.cod_anio_basica === paymentCareerCode),
-    [catalog?.carreras, paymentCareerCode],
-  )
   const isGastronomyCareer = useMemo(() => {
     const normalized = String(paymentCareer?.nombre_basica || '')
       .normalize('NFD')
@@ -463,8 +522,11 @@ export function PreinscripcionView({
     const academicTotal = academicSemesterCost * selectedSemesters
     const enrollmentTotal = enrollmentCost * selectedSemesters
     const total = academicTotal + enrollmentTotal
-    const porcentajeBeca = Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100)
-    const scholarshipAppliesOnlyToTuition = isIntecScholarship(cabeceraValues.tipo_beca)
+    const porcentajeBeca = scholarshipExcludedForEnglish
+      ? 0
+      : Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100)
+    const scholarshipAppliesOnlyToTuition =
+      !scholarshipExcludedForEnglish && isIntecScholarship(cabeceraValues.tipo_beca)
     const scholarshipBase = scholarshipAppliesOnlyToTuition ? academicTotal : total
     const beca = Number((scholarshipBase * porcentajeBeca / 100).toFixed(2))
     const descuento = Math.max(toNumber(cabeceraValues.descuento), 0)
@@ -487,7 +549,7 @@ export function PreinscripcionView({
       subjectCount: subjectsPerSemester * selectedSemesters,
       scholarshipAppliesOnlyToTuition,
     }
-  }, [cabeceraValues, isGastronomyCareer, selectedSemesterCount])
+  }, [cabeceraValues, isGastronomyCareer, scholarshipExcludedForEnglish, selectedSemesterCount])
   const scholarshipOptions = catalog?.becas || []
   const selectedScholarshipOption = scholarshipOptions.find((option) => option.value === cabeceraValues.tipo_beca)
   const selectedScholarshipIsMintel = isMintelScholarship(cabeceraValues.tipo_beca)
@@ -738,6 +800,22 @@ export function PreinscripcionView({
   }, [selectedItem])
 
   useEffect(() => {
+    if (!scholarshipExcludedForEnglish) return
+    setScholarshipStatus(null)
+    setCabeceraValues((current) => {
+      if (!current.tipo_beca && toNumber(current.porcentaje_beca) === 0 && !current.motivo_beca) {
+        return current
+      }
+      return {
+        ...current,
+        tipo_beca: '',
+        porcentaje_beca: '0',
+        motivo_beca: '',
+      }
+    })
+  }, [scholarshipExcludedForEnglish, paymentCareerCode, selectedItem?.num])
+
+  useEffect(() => {
     if (activeStage === 'materias') {
       void loadEnrollmentDataEffect()
     }
@@ -758,6 +836,15 @@ export function PreinscripcionView({
   useEffect(() => {
     if (activeStage === 'becados' && canApproveScholarship) {
       void loadScholarshipBeneficiariesEffect()
+    }
+  }, [activeStage, canApproveScholarship])
+
+  useEffect(() => {
+    if (activeStage === 'contratos-becas' && canApproveScholarship) {
+      void Promise.all([
+        loadScholarshipContractCandidatesEffect('', '', ''),
+        loadScholarshipContractHistoryEffect(''),
+      ])
     }
   }, [activeStage, canApproveScholarship])
 
@@ -880,11 +967,11 @@ export function PreinscripcionView({
       setCabeceraError('Seleccione una inscripción.')
       return
     }
-    if (scholarshipNeedsApproval) {
+    if (!scholarshipExcludedForEnglish && scholarshipNeedsApproval) {
       setCabeceraError('La beca superior al 15% está pendiente de aprobación.')
       return
     }
-    if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
+    if (!scholarshipExcludedForEnglish && !scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
       setCabeceraError('Ingrese el porcentaje otorgado para la beca seleccionada.')
       return
     }
@@ -901,8 +988,8 @@ export function PreinscripcionView({
         semestres_convenio: cabeceraValues.semestres_convenio,
         control_matricula: toNumber(cabeceraValues.control_matricula, 1),
         num_cuotas: Math.max(Math.round(toNumber(cabeceraValues.num_cuotas, 1)), 1),
-        tipo_beca: scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
-        porcentaje_beca: scholarshipSelectionIsEmpty
+        tipo_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
+        porcentaje_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty
           ? 0
           : Math.min(Math.max(toNumber(cabeceraValues.porcentaje_beca), 0), 100),
         descuento: toNumber(cabeceraValues.descuento),
@@ -943,6 +1030,7 @@ export function PreinscripcionView({
   }
 
   function renderScholarshipSelector() {
+    if (scholarshipExcludedForEnglish) return null
     return (
       <label>
         <span>Tipo de beca</span>
@@ -959,6 +1047,7 @@ export function PreinscripcionView({
   }
 
   function renderScholarshipPercentageInput() {
+    if (scholarshipExcludedForEnglish) return null
     return (
       <label>
         <span>% beca</span>
@@ -1324,11 +1413,11 @@ export function PreinscripcionView({
       setCreateError('Seleccione modalidad y jornada.')
       return
     }
-    if (!scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
+    if (!scholarshipExcludedForEnglish && !scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
       setCreateError('Ingrese el porcentaje otorgado para la beca seleccionada.')
       return
     }
-    if (paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold && !cabeceraValues.motivo_beca.trim()) {
+    if (!scholarshipExcludedForEnglish && paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold && !cabeceraValues.motivo_beca.trim()) {
       setCreateError('Las becas mayores al 15% requieren un motivo para solicitar aprobación.')
       return
     }
@@ -1345,10 +1434,10 @@ export function PreinscripcionView({
         nombres: createValues.nombres?.trim(),
         codmodalida: toNumber(String(createValues.codmodalida), 1),
         codjornada: toNumber(String(createValues.codjornada), 0),
-        tipo_beca: scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
-        porcentaje_beca: scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.porcentajeBeca,
-        valor_beca: scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.beca,
-        motivo_beca: cabeceraValues.motivo_beca.trim(),
+        tipo_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty ? '' : cabeceraValues.tipo_beca,
+        porcentaje_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.porcentajeBeca,
+        valor_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty ? 0 : paymentPlanPreview.beca,
+        motivo_beca: scholarshipExcludedForEnglish ? '' : cabeceraValues.motivo_beca.trim(),
         semestres_convenio: cabeceraValues.semestres_convenio,
       })
       if (response.item) {
@@ -1372,7 +1461,7 @@ export function PreinscripcionView({
         estado: response.finanzas?.beca_estado || (requiresApproval ? 'SOLICITADA' : 'SIN_BECA'),
         requiere_aprobacion: requiresApproval,
         puede_continuar: canContinue,
-        tipo_beca: scholarshipSelectionIsEmpty ? 'Sin beca' : cabeceraValues.tipo_beca,
+        tipo_beca: scholarshipExcludedForEnglish || scholarshipSelectionIsEmpty ? 'Sin beca' : cabeceraValues.tipo_beca,
       })
       setCreateValues((current) => ({
         ...current,
@@ -1397,7 +1486,7 @@ export function PreinscripcionView({
   }
 
   async function openPreinscriptionStage(nextStage: PreinscriptionStage) {
-    if (nextStage !== 'registro' && nextStage !== 'inscritos' && nextStage !== 'becas' && nextStage !== 'gestion-becas' && nextStage !== 'becados' && scholarshipNeedsApproval) {
+    if (nextStage !== 'registro' && nextStage !== 'inscritos' && nextStage !== 'becas' && nextStage !== 'gestion-becas' && nextStage !== 'becados' && nextStage !== 'contratos-becas' && scholarshipNeedsApproval) {
       setCabeceraError('La beca superior al 15% debe ser aprobada antes de continuar.')
       return
     }
@@ -1420,6 +1509,12 @@ export function PreinscripcionView({
     }
     if (nextStage === 'becados') {
       await loadScholarshipBeneficiaries()
+    }
+    if (nextStage === 'contratos-becas') {
+      await Promise.all([
+        loadScholarshipContractCandidates('', '', ''),
+        loadScholarshipContractHistory(''),
+      ])
     }
   }
 
@@ -1541,6 +1636,177 @@ export function PreinscripcionView({
       )
     } finally {
       setScholarshipBeneficiariesLoading(false)
+    }
+  }
+
+  async function loadScholarshipContractCandidates(
+    queryValue = scholarshipContractQuery,
+    typeValue = scholarshipContractType,
+    periodValue = scholarshipContractPeriod,
+  ) {
+    if (!canApproveScholarship) return
+    setScholarshipContractsLoading(true)
+    setScholarshipContractsError('')
+    try {
+      const response = await fetchScholarshipContractCandidates(queryValue, typeValue, periodValue)
+      const items = typeValue && periodValue ? response.items || [] : []
+      setScholarshipContractCandidates(items)
+      setScholarshipContractPeriods(response.periodos || [])
+      if (response.tipos_beca?.length) {
+        setScholarshipContractTypes(response.tipos_beca)
+      }
+      setSelectedScholarshipContractIds((current) => {
+        const visibleIds = new Set(items.map((item) => item.beca_id))
+        return current.filter((itemId) => visibleIds.has(itemId))
+      })
+    } catch (requestError) {
+      setScholarshipContractCandidates([])
+      setSelectedScholarshipContractIds([])
+      setScholarshipContractsError(
+        requestError instanceof Error ? requestError.message : 'No se pudieron consultar los estudiantes elegibles',
+      )
+    } finally {
+      setScholarshipContractsLoading(false)
+    }
+  }
+
+  async function loadScholarshipContractHistory(queryValue = scholarshipContractHistoryQuery) {
+    if (!canApproveScholarship) return
+    setScholarshipContractHistoryLoading(true)
+    setScholarshipContractsError('')
+    try {
+      const response = await fetchScholarshipContractHistory(queryValue)
+      setScholarshipContractHistory(response.items || [])
+    } catch (requestError) {
+      setScholarshipContractHistory([])
+      setScholarshipContractsError(
+        requestError instanceof Error ? requestError.message : 'No se pudo consultar el historial de contratos',
+      )
+    } finally {
+      setScholarshipContractHistoryLoading(false)
+    }
+  }
+
+  function toggleScholarshipContractCandidate(item: ScholarshipContractCandidateItem) {
+    if (!scholarshipContractType || !scholarshipContractPeriod) return
+    setSelectedScholarshipContractIds((current) => (
+      current.includes(item.beca_id)
+        ? current.filter((itemId) => itemId !== item.beca_id)
+        : [...current, item.beca_id]
+    ))
+  }
+
+  function toggleAllScholarshipContractCandidates() {
+    const candidateIds = scholarshipContractCandidates.map((item) => item.beca_id)
+    const allSelected = candidateIds.length > 0 && candidateIds.every((itemId) => selectedScholarshipContractIds.includes(itemId))
+    setSelectedScholarshipContractIds(allSelected ? [] : candidateIds)
+  }
+
+  async function generateSelectedScholarshipContracts() {
+    if (!scholarshipContractType) {
+      setScholarshipContractsError('Seleccione un tipo de beca antes de generar los contratos.')
+      return
+    }
+    if (!scholarshipContractPeriod) {
+      setScholarshipContractsError('Seleccione el período académico de la beca antes de generar los contratos.')
+      return
+    }
+    if (!selectedScholarshipContractIds.length) {
+      setScholarshipContractsError('Seleccione al menos un estudiante activo con esa beca.')
+      return
+    }
+    setScholarshipContractsGenerating(true)
+    setScholarshipContractsError('')
+    setScholarshipContractsMessage('')
+    try {
+      const blob = await generateScholarshipContracts(selectedScholarshipContractIds, scholarshipContractPeriod)
+      const dateText = new Date().toISOString().slice(0, 10)
+      const filename = selectedScholarshipContractIds.length === 1
+        ? `contrato-beca-${dateText}.pdf`
+        : `contratos-beca-${dateText}.zip`
+      downloadBlob(blob, filename)
+      const total = selectedScholarshipContractIds.length
+      setScholarshipContractsMessage(`${total} contrato(s) de beca generado(s) y registrado(s) correctamente.`)
+      setSelectedScholarshipContractIds([])
+      await Promise.all([
+        loadScholarshipContractCandidates(
+          scholarshipContractQuery,
+          scholarshipContractType,
+          scholarshipContractPeriod,
+        ),
+        loadScholarshipContractHistory(''),
+      ])
+    } catch (requestError) {
+      setScholarshipContractsError(
+        requestError instanceof Error ? requestError.message : 'No se pudieron generar los contratos de beca',
+      )
+    } finally {
+      setScholarshipContractsGenerating(false)
+    }
+  }
+
+  async function downloadGeneratedScholarshipContract(item: ScholarshipContractHistoryItem) {
+    setScholarshipContractsError('')
+    try {
+      const blob = await downloadScholarshipContract(item.contrato_id)
+      downloadBlob(blob, item.nombre_archivo || `${item.numero_contrato}.pdf`)
+    } catch (requestError) {
+      setScholarshipContractsError(
+        requestError instanceof Error ? requestError.message : 'No se pudo descargar el contrato de beca',
+      )
+    }
+  }
+
+  function openScholarshipContractUpload(item: ScholarshipContractHistoryItem) {
+    setScholarshipContractUploadItem(item)
+    setScholarshipContractUploadFile(null)
+    setScholarshipContractsError('')
+    setScholarshipContractsMessage('')
+  }
+
+  function closeScholarshipContractUpload() {
+    if (scholarshipContractUploading) return
+    setScholarshipContractUploadItem(null)
+    setScholarshipContractUploadFile(null)
+  }
+
+  async function uploadSignedScholarshipContract() {
+    if (!scholarshipContractUploadItem || !scholarshipContractUploadFile) {
+      setScholarshipContractsError('Seleccione el contrato firmado en formato PDF.')
+      return
+    }
+    const selectedFile = scholarshipContractUploadFile
+    if (!selectedFile.name.toLowerCase().endsWith('.pdf') || selectedFile.size <= 0) {
+      setScholarshipContractsError('El contrato firmado debe ser un archivo PDF válido.')
+      return
+    }
+    if (selectedFile.size > 20 * 1024 * 1024) {
+      setScholarshipContractsError('El contrato firmado no puede superar los 20 MB.')
+      return
+    }
+
+    setScholarshipContractUploading(true)
+    setScholarshipContractsError('')
+    setScholarshipContractsMessage('')
+    try {
+      const response = await uploadScholarshipContractToExpedient(
+        scholarshipContractUploadItem.contrato_id,
+        selectedFile,
+      )
+      setScholarshipContractsMessage(
+        `El contrato ${response.numero_contrato} se archivó en el expediente estudiantil.`,
+      )
+      setScholarshipContractUploadItem(null)
+      setScholarshipContractUploadFile(null)
+      await loadScholarshipContractHistory(scholarshipContractHistoryQuery)
+    } catch (requestError) {
+      setScholarshipContractsError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'No se pudo archivar el contrato firmado en el expediente estudiantil.',
+      )
+    } finally {
+      setScholarshipContractUploading(false)
     }
   }
 
@@ -1680,15 +1946,15 @@ export function PreinscripcionView({
       <header className="student-hero">
         <div>
           <p className="eyebrow">{isScholarshipAdminStage ? 'Bienestar estudiantil' : 'Admisiones'}</p>
-          <h1>{isScholarshipAdminStage ? 'Gestión y aprobación de becas' : 'Inscripción y matrícula'}</h1>
+          <h1>{activeStage === 'contratos-becas' ? 'Contratos de beca' : isScholarshipAdminStage ? 'Gestión y aprobación de becas' : 'Inscripción y matrícula'}</h1>
           <div className="student-user-pill preinscripcion-advisor-pill">
             <span>{isScholarshipAdminStage ? 'Responsable' : 'Asesor'}</span>
             <strong>{displayName || 'Usuario actual'}</strong>
           </div>
         </div>
         <div className="student-user-pill">
-          <span>{activeStage === 'becas' ? 'Solicitudes pendientes' : activeStage === 'gestion-becas' ? 'Becas configuradas' : activeStage === 'becados' ? 'Estudiantes becados' : 'Mis registros'}</span>
-          <strong>{activeStage === 'becas' ? pendingScholarships.length : activeStage === 'gestion-becas' ? scholarshipConfigurations.length : activeStage === 'becados' ? scholarshipBeneficiarySummary.total : userRecordCount}</strong>
+          <span>{activeStage === 'becas' ? 'Solicitudes pendientes' : activeStage === 'gestion-becas' ? 'Becas configuradas' : activeStage === 'becados' ? 'Estudiantes becados' : activeStage === 'contratos-becas' ? 'Elegibles seleccionados' : 'Mis registros'}</span>
+          <strong>{activeStage === 'becas' ? pendingScholarships.length : activeStage === 'gestion-becas' ? scholarshipConfigurations.length : activeStage === 'becados' ? scholarshipBeneficiarySummary.total : activeStage === 'contratos-becas' ? selectedScholarshipContractIds.length : userRecordCount}</strong>
         </div>
       </header>
 
@@ -1896,7 +2162,7 @@ export function PreinscripcionView({
 
           <div className="preinscripcion-beca-panel">
             <div>
-              <span>Beca del registro previo</span>
+              <span>{scholarshipExcludedForEnglish ? 'Convenio del registro previo' : 'Beca del registro previo'}</span>
               <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
               <small>
                 {paymentPlanPreview.subjectCount} materias: {formatMoney(paymentPlanPreview.academicTotal)} + matrícula {formatMoney(paymentPlanPreview.enrollmentTotal)}.
@@ -1908,15 +2174,17 @@ export function PreinscripcionView({
             {renderPaymentScopeSelector()}
             {renderScholarshipSelector()}
             {renderScholarshipPercentageInput()}
-            <label className="preinscripcion-beca-panel__reason">
-              <span>Motivo o referencia</span>
-              <input
-                value={cabeceraValues.motivo_beca}
-                maxLength={1000}
-                placeholder={paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? 'Obligatorio para solicitar aprobación' : 'Opcional'}
-                onChange={(event) => setCabeceraValues((current) => ({ ...current, motivo_beca: event.target.value }))}
-              />
-            </label>
+            {!scholarshipExcludedForEnglish ? (
+              <label className="preinscripcion-beca-panel__reason">
+                <span>Motivo o referencia</span>
+                <input
+                  value={cabeceraValues.motivo_beca}
+                  maxLength={1000}
+                  placeholder={paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? 'Obligatorio para solicitar aprobación' : 'Opcional'}
+                  onChange={(event) => setCabeceraValues((current) => ({ ...current, motivo_beca: event.target.value }))}
+                />
+              </label>
+            ) : null}
             {paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? (
               <div className={`preinscripcion-beca-approval ${scholarshipStatus?.puede_continuar ? 'preinscripcion-beca-approval--approved' : ''}`}>
                 <span>{scholarshipStatusLoading ? 'Consultando aprobación' : scholarshipStatus?.puede_continuar ? 'Beca aprobada' : 'Requiere aprobación'}</span>
@@ -2107,6 +2375,247 @@ export function PreinscripcionView({
               </tbody>
             </table>
           </div>
+        </article>
+        ) : null}
+
+        {activeStage === 'contratos-becas' && canApproveScholarship ? (
+        <article className="student-card student-card--wide matricula-panel scholarship-contracts">
+          <div className="section-title">
+            <div>
+              <span>Formalización del beneficio</span>
+              <h2>Generación de contratos de beca</h2>
+              <p>Seleccione una beca y un período académico, genere el contrato y archive posteriormente su versión firmada en el expediente estudiantil.</p>
+            </div>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void Promise.all([
+                loadScholarshipContractCandidates(
+                  scholarshipContractQuery,
+                  scholarshipContractType,
+                  scholarshipContractPeriod,
+                ),
+                loadScholarshipContractHistory(scholarshipContractHistoryQuery),
+              ])}
+              disabled={scholarshipContractsLoading || scholarshipContractHistoryLoading}
+            >
+              {scholarshipContractsLoading || scholarshipContractHistoryLoading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          <div className="scholarship-contracts__steps" aria-label="Flujo de generación de contratos">
+            <div className={scholarshipContractType ? 'is-complete' : 'is-active'}>
+              <b>1</b><span><strong>Seleccionar beca</strong><small>Un tipo por operación</small></span>
+            </div>
+            <div className={scholarshipContractPeriod ? 'is-complete' : scholarshipContractType ? 'is-active' : ''}>
+              <b>2</b><span><strong>Seleccionar período</strong><small>Requisito del contrato</small></span>
+            </div>
+            <div className={selectedScholarshipContractIds.length ? 'is-complete' : scholarshipContractPeriod ? 'is-active' : ''}>
+              <b>3</b><span><strong>Elegir estudiantes</strong><small>Solo estado activo (A)</small></span>
+            </div>
+            <div className={selectedScholarshipContractIds.length ? 'is-active' : ''}>
+              <b>4</b><span><strong>Generar y archivar</strong><small>PDF firmado en expediente</small></span>
+            </div>
+          </div>
+
+          <div className="scholarship-contracts__filters">
+            <label>
+              <span>Tipo de beca</span>
+              <select
+                value={scholarshipContractType}
+                onChange={(event) => {
+                  const nextType = event.target.value
+                  setScholarshipContractType(nextType)
+                  setScholarshipContractPeriod('')
+                  setScholarshipContractPeriods([])
+                  setSelectedScholarshipContractIds([])
+                  setScholarshipContractsMessage('')
+                  void loadScholarshipContractCandidates(scholarshipContractQuery, nextType, '')
+                }}
+              >
+                <option value="">Seleccione una beca</option>
+                {scholarshipContractTypes.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Período académico</span>
+              <select
+                value={scholarshipContractPeriod}
+                disabled={!scholarshipContractType || scholarshipContractsLoading}
+                onChange={(event) => {
+                  const nextPeriod = event.target.value
+                  setScholarshipContractPeriod(nextPeriod)
+                  setSelectedScholarshipContractIds([])
+                  setScholarshipContractsMessage('')
+                  void loadScholarshipContractCandidates(
+                    scholarshipContractQuery,
+                    scholarshipContractType,
+                    nextPeriod,
+                  )
+                }}
+              >
+                <option value="">Seleccione un período</option>
+                {scholarshipContractPeriods.map((item) => (
+                  <option key={item.codigo_periodo} value={item.codigo_periodo}>
+                    {item.periodo} · {item.total} estudiante(s)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Buscar estudiante</span>
+              <input
+                value={scholarshipContractQuery}
+                placeholder="Nombre, cédula, carrera o período"
+                onChange={(event) => setScholarshipContractQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void loadScholarshipContractCandidates()
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => void loadScholarshipContractCandidates()}
+              disabled={scholarshipContractsLoading || !scholarshipContractType || !scholarshipContractPeriod}
+            >
+              Buscar
+            </button>
+          </div>
+
+          {scholarshipContractsError ? <p className="form-error">{scholarshipContractsError}</p> : null}
+          {scholarshipContractsMessage ? <p className="form-success">{scholarshipContractsMessage}</p> : null}
+
+          <div className="scholarship-contracts__selection-bar">
+            <div>
+              <span>Estudiantes elegibles</span>
+              <strong>{scholarshipContractCandidates.length}</strong>
+              <small>Con beca vigente, matrícula registrada y estado A.</small>
+            </div>
+            <div>
+              <span>Seleccionados</span>
+              <strong>{selectedScholarshipContractIds.length}</strong>
+              <small>
+                {scholarshipContractType && scholarshipContractPeriod
+                  ? `${scholarshipContractType} · ${scholarshipContractPeriod}`
+                  : 'Seleccione primero la beca y el período.'}
+              </small>
+            </div>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={toggleAllScholarshipContractCandidates}
+              disabled={!scholarshipContractType || !scholarshipContractPeriod || !scholarshipContractCandidates.length}
+            >
+              {scholarshipContractCandidates.length > 0 && scholarshipContractCandidates.every((item) => selectedScholarshipContractIds.includes(item.beca_id))
+                ? 'Quitar selección'
+                : 'Seleccionar visibles'}
+            </button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => void generateSelectedScholarshipContracts()}
+              disabled={scholarshipContractsGenerating || !scholarshipContractPeriod || !selectedScholarshipContractIds.length}
+            >
+              {scholarshipContractsGenerating ? 'Generando...' : `Generar ${selectedScholarshipContractIds.length || ''} contrato(s)`}
+            </button>
+          </div>
+
+          <div className="table-scroll scholarship-contracts__table">
+            <table className="matricula-table">
+              <thead>
+                <tr>
+                  <th aria-label="Seleccionar"><input type="checkbox" checked={scholarshipContractCandidates.length > 0 && scholarshipContractCandidates.every((item) => selectedScholarshipContractIds.includes(item.beca_id))} onChange={toggleAllScholarshipContractCandidates} disabled={!scholarshipContractType || !scholarshipContractPeriod || !scholarshipContractCandidates.length} /></th>
+                  <th>Estudiante</th>
+                  <th>Cédula</th>
+                  <th>Carrera</th>
+                  <th>Período</th>
+                  <th>Beca</th>
+                  <th>Beneficio</th>
+                  <th>Contratos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scholarshipContractCandidates.map((item) => (
+                  <tr key={`${item.beca_id}-${item.codigo_estud}`} className={selectedScholarshipContractIds.includes(item.beca_id) ? 'is-selected' : ''}>
+                    <td><input type="checkbox" checked={selectedScholarshipContractIds.includes(item.beca_id)} onChange={() => toggleScholarshipContractCandidate(item)} disabled={!scholarshipContractType || !scholarshipContractPeriod} /></td>
+                    <td><strong>{item.estudiante}</strong><small>Código {item.codigo_estud || '-'}</small></td>
+                    <td>{item.cedula || '-'}</td>
+                    <td>{item.carrera || item.codigo_carrera || '-'}</td>
+                    <td>{item.periodo || item.codigo_periodo || '-'}</td>
+                    <td><strong>{item.tipo_beca}</strong><small>Estudiante activo</small></td>
+                    <td><strong>{item.porcentaje_beca.toLocaleString('es-EC')}%</strong><small>${item.valor_beca.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small></td>
+                    <td>{item.contratos_generados ? <><strong>{item.contratos_generados}</strong><small>Último: {item.ultima_generacion || '-'}</small></> : 'Sin generar'}</td>
+                  </tr>
+                ))}
+                {!scholarshipContractsLoading && scholarshipContractCandidates.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="preinscripcion-scholarship-approval__empty">
+                      {!scholarshipContractType
+                        ? 'Seleccione un tipo de beca para consultar sus períodos.'
+                        : !scholarshipContractPeriod
+                          ? 'Seleccione el período académico al que pertenece la beca.'
+                          : 'No existen estudiantes activos con esa beca, período y filtros actuales.'}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          <section className="scholarship-contracts__history" aria-label="Historial de contratos de beca">
+            <div className="section-title">
+              <div><span>Trazabilidad</span><h3>Historial de contratos generados</h3></div>
+              <div className="scholarship-contracts__history-search">
+                <input
+                  value={scholarshipContractHistoryQuery}
+                  placeholder="Buscar contrato o estudiante"
+                  onChange={(event) => setScholarshipContractHistoryQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void loadScholarshipContractHistory()
+                  }}
+                />
+                <button type="button" className="ghost-button" onClick={() => void loadScholarshipContractHistory()} disabled={scholarshipContractHistoryLoading}>Buscar</button>
+              </div>
+            </div>
+            <div className="table-scroll">
+              <table className="matricula-table">
+                <thead><tr><th>Contrato</th><th>Estudiante</th><th>Beca</th><th>Período</th><th>Generación</th><th>Expediente</th><th>Acciones</th></tr></thead>
+                <tbody>
+                  {scholarshipContractHistory.map((item) => (
+                    <tr key={item.contrato_id}>
+                      <td><strong>{item.numero_contrato}</strong><small>{item.estado}</small></td>
+                      <td><strong>{item.estudiante}</strong><small>{item.cedula}</small></td>
+                      <td>{item.tipo_beca} · {item.porcentaje_beca.toLocaleString('es-EC')}%</td>
+                      <td>{item.periodo || item.codigo_periodo || '-'}</td>
+                      <td><strong>{item.fecha_generacion || item.fecha_contrato}</strong><small>{item.usuario_generacion}</small></td>
+                      <td>
+                        <strong>{item.estado_expediente || 'Pendiente de carga'}</strong>
+                        <small>{item.nombre_archivo_firmado || 'Sin contrato firmado'}</small>
+                      </td>
+                      <td>
+                        <div className="scholarship-contracts__history-actions">
+                          <button type="button" className="ghost-button" onClick={() => void downloadGeneratedScholarshipContract(item)}>Descargar</button>
+                          <button type="button" className="ghost-button" onClick={() => openScholarshipContractUpload(item)}>
+                            {item.expediente_documento_id ? 'Actualizar firmado' : 'Subir firmado'}
+                          </button>
+                          {item.expediente_url ? (
+                            <a className="ghost-button" href={item.expediente_url} target="_blank" rel="noreferrer">Abrir expediente</a>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!scholarshipContractHistoryLoading && scholarshipContractHistory.length === 0 ? (
+                    <tr><td colSpan={7} className="preinscripcion-scholarship-approval__empty">Todavía no existen contratos de beca generados.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </article>
         ) : null}
 
@@ -3444,6 +3953,88 @@ export function PreinscripcionView({
         ) : null}
       </section>
       </>
+      ) : null}
+
+      {scholarshipContractUploadItem ? (
+        <div
+          className="matricula-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="scholarship-contract-upload-title"
+        >
+          <article className="matricula-modal scholarship-contract-upload-modal">
+            <div className="matricula-modal-head">
+              <div className="matricula-modal-title">
+                <span>Expediente estudiantil</span>
+                <h3 id="scholarship-contract-upload-title">Contrato de beca firmado</h3>
+              </div>
+              <button
+                type="button"
+                className="matricula-modal-close"
+                onClick={closeScholarshipContractUpload}
+                disabled={scholarshipContractUploading}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="scholarship-contract-upload-modal__summary">
+              <div>
+                <span>Contrato</span>
+                <strong>{scholarshipContractUploadItem.numero_contrato}</strong>
+              </div>
+              <div>
+                <span>Estudiante</span>
+                <strong>{scholarshipContractUploadItem.estudiante}</strong>
+                <small>{scholarshipContractUploadItem.cedula || 'Sin identificación'}</small>
+              </div>
+              <div>
+                <span>Período académico</span>
+                <strong>
+                  {scholarshipContractUploadItem.periodo
+                    || scholarshipContractUploadItem.codigo_periodo
+                    || 'Sin período'}
+                </strong>
+              </div>
+            </div>
+
+            <label className="scholarship-contract-upload-modal__file">
+              <span>Archivo PDF firmado</span>
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                disabled={scholarshipContractUploading}
+                onChange={(event) => {
+                  setScholarshipContractUploadFile(event.target.files?.[0] || null)
+                  setScholarshipContractsError('')
+                }}
+              />
+              <small>Máximo 20 MB. Una nueva carga reemplaza la versión firmada anterior del contrato.</small>
+            </label>
+
+            <div className="scholarship-contract-upload-modal__destination">
+              <strong>Destino del expediente</strong>
+              <span>
+                Becas / {scholarshipContractUploadItem.periodo
+                  || scholarshipContractUploadItem.codigo_periodo
+                  || 'Período'} / Contrato de beca
+              </span>
+            </div>
+
+            {scholarshipContractsError ? <p className="form-error">{scholarshipContractsError}</p> : null}
+
+            <div className="scholarship-contract-upload-modal__actions">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => void uploadSignedScholarshipContract()}
+                disabled={!scholarshipContractUploadFile || scholarshipContractUploading}
+              >
+                {scholarshipContractUploading ? 'Archivando...' : 'Archivar contrato firmado'}
+              </button>
+            </div>
+          </article>
+        </div>
       ) : null}
 
       {studentSelectorOpen ? (

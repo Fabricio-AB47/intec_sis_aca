@@ -15,6 +15,11 @@ type ActualizarDatosEstudianteViewProps = {
   displayName: string
 }
 
+type DataUpdateProfileMatch = {
+  target: LegacyDataUpdateTarget
+  person: LegacyDataUpdatePerson
+}
+
 const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
   {
     title: 'Identificación',
@@ -368,7 +373,10 @@ function optionsWithCurrentValue(
 }
 
 function normalizeDocument(value: string | number | null | undefined): string {
-  return valueText(value).replace(/\D/g, '')
+  return valueText(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
 }
 
 function pickLegacyMatch(
@@ -377,9 +385,13 @@ function pickLegacyMatch(
 ): LegacyDataUpdatePerson | null {
   const normalizedQuery = normalizeDocument(query)
   const source = rows || []
-  if (!source.length) return null
-  if (!normalizedQuery) return source[0]
-  return source.find((person) => normalizeDocument(person.cedula) === normalizedQuery) || source[0]
+  if (!source.length || !normalizedQuery) return null
+  return source.find((person) => {
+    const normalizedDocument = normalizeDocument(person.cedula)
+    if (normalizedDocument === normalizedQuery) return true
+    if (!/^\d+$/.test(normalizedDocument) || !/^\d+$/.test(normalizedQuery)) return false
+    return normalizedDocument.replace(/^0+/, '') === normalizedQuery.replace(/^0+/, '')
+  }) || null
 }
 
 function buildChangedFields(
@@ -476,6 +488,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<LegacyDataUpdatePerson | null>(null)
   const [detail, setDetail] = useState<LegacyDataUpdateDetailResponse | null>(null)
+  const [profileMatches, setProfileMatches] = useState<DataUpdateProfileMatch[]>([])
   const [formFields, setFormFields] = useState<Record<string, string | number | null>>({})
   const [originalFields, setOriginalFields] = useState<Record<string, string | number | null>>({})
   const [loading, setLoading] = useState(false)
@@ -508,23 +521,35 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
     setError('')
     setMessage('')
     setSelected(null)
+    setProfileMatches([])
     setDetail(null)
     setFormFields({})
     setOriginalFields({})
     try {
-      const studentPayload = await searchLegacyDataUpdate('estudiantes', cleanQuery)
+      const [studentPayload, teacherPayload] = await Promise.all([
+        searchLegacyDataUpdate('estudiantes', cleanQuery),
+        searchLegacyDataUpdate('docentes', cleanQuery),
+      ])
       const student = pickLegacyMatch(studentPayload.rows, cleanQuery)
-      if (student) {
-        setTarget('estudiantes')
-        await loadPerson(student, 'estudiantes')
+      const teacher = pickLegacyMatch(teacherPayload.rows, cleanQuery)
+
+      if (student && teacher) {
+        setProfileMatches([
+          { target: 'estudiantes', person: student },
+          { target: 'docentes', person: teacher },
+        ])
         return
       }
 
-      const teacherPayload = await searchLegacyDataUpdate('docentes', cleanQuery)
-      const teacher = pickLegacyMatch(teacherPayload.rows, cleanQuery)
-      if (teacher) {
-        setTarget('docentes')
-        await loadPerson(teacher, 'docentes')
+      const directMatch: DataUpdateProfileMatch | null = student
+        ? { target: 'estudiantes', person: student }
+        : teacher
+          ? { target: 'docentes', person: teacher }
+          : null
+
+      if (directMatch) {
+        setTarget(directMatch.target)
+        await loadPerson(directMatch.person, directMatch.target)
         return
       }
 
@@ -550,6 +575,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
       setOriginalFields(fields)
     } catch (requestError) {
       setError(handleError(requestError, 'Error cargando datos para actualización.'))
+      setSelected(null)
       setDetail(null)
       setFormFields({})
       setOriginalFields({})
@@ -597,11 +623,21 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
     setMessage('')
   }
 
+  function closeProfileSelector() {
+    setProfileMatches([])
+  }
+
+  function selectProfile(match: DataUpdateProfileMatch) {
+    setProfileMatches([])
+    setTarget(match.target)
+    void loadPerson(match.person, match.target)
+  }
+
   return (
     <>
       <header className="student-topbar">
         <div>
-          <p className="eyebrow">Actualizar_Datos legacy</p>
+          <p className="eyebrow">Actualización</p>
           <h1>Actualización de datos</h1>
           <p className="report-description">
             Edita solo la información que debe completar la persona. Los datos de matrícula, jornada, becas y campos repetitivos se toman del sistema.
@@ -612,17 +648,20 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
           <div className="student-user-pill">
             <div>
               <strong>{displayName}</strong>
-              <span>Estudiante y docente</span>
+              <span>Estudiantes y docentes</span>
             </div>
           </div>
         </div>
       </header>
 
-      <section className="student-grid student-grid--content senescyt-update-grid">
-        <article className="student-card senescyt-update-search">
+      <section className="data-update-workspace">
+        <article className="student-card data-update-search-card">
           <div className="card-head">
-            <h3>Ingrese su número de cédula o pasaporte</h3>
-            <span>{selected ? `${selected.tipo === 'docente' ? 'Docente' : 'Estudiante'} encontrado` : 'Búsqueda única'}</span>
+            <div>
+              <p className="eyebrow">Consulta unificada</p>
+              <h3>Ingrese su número de cédula o pasaporte</h3>
+            </div>
+            <span>{selected ? `${selected.tipo === 'docente' ? 'Docente' : 'Estudiante'} encontrado` : 'Estudiante o docente'}</span>
           </div>
 
           <form
@@ -650,10 +689,60 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
           {error ? <p className="form-error">{error}</p> : null}
           {message ? <p className="form-success">{message}</p> : null}
 
-          {!selected && !error ? <p className="form-success">Ingrese el documento y presione buscar para abrir el formulario correspondiente.</p> : null}
+          {!selected && !error ? <p className="data-update-search-help">Se verificará la identificación en los registros de estudiantes y docentes.</p> : null}
         </article>
 
       </section>
+
+      {profileMatches.length > 1 ? (
+        <div className="senescyt-update-subscreen-backdrop data-update-profile-backdrop" role="presentation">
+          <section
+            className="data-update-profile-selector"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="data-update-profile-title"
+          >
+            <header className="data-update-profile-selector__head">
+              <div>
+                <span>Identificación con más de un perfil</span>
+                <h2 id="data-update-profile-title">Seleccione la información que desea actualizar</h2>
+              </div>
+              <button type="button" onClick={closeProfileSelector}>Cerrar</button>
+            </header>
+
+            <div className="data-update-profile-selector__body">
+              <p>La persona está registrada como estudiante y docente. Elija el formulario que desea completar.</p>
+              <div className="data-update-profile-options">
+                {profileMatches.map((match) => {
+                  const isTeacher = match.target === 'docentes'
+                  return (
+                    <button
+                      type="button"
+                      className="data-update-profile-option"
+                      key={`${match.target}-${match.person.id}`}
+                      onClick={() => selectProfile(match)}
+                    >
+                      <span className="data-update-profile-option__mark" aria-hidden="true">
+                        {isTeacher ? 'D' : 'E'}
+                      </span>
+                      <span className="data-update-profile-option__content">
+                        <strong>{isTeacher ? 'Docente' : 'Estudiante'}</strong>
+                        <b>{match.person.nombre}</b>
+                        <small>
+                          {isTeacher
+                            ? match.person.correo || match.person.carrera || 'Registro docente'
+                            : match.person.carrera || match.person.correo || 'Registro estudiantil'}
+                        </small>
+                      </span>
+                      <span className="data-update-profile-option__action">Seleccionar</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {selected ? (
         <div className="senescyt-update-subscreen-backdrop" role="presentation">
