@@ -139,7 +139,6 @@ export function InformeCumplimientoView({ displayName }: InformeCumplimientoView
 
   useEffect(() => {
     // La consulta remota debe repetirse cuando cambian filtros o paginación.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadDocuments(appliedQuery)
   }, [appliedQuery, loadDocuments])
 

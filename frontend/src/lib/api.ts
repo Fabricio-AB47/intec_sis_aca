@@ -394,10 +394,14 @@ export function invalidateMoodleGradeAlertCache() {
 
 let currentSessionRequest: Promise<UserSession | null> | null = null
 const screenAccessRequests = new Map<boolean, Promise<ScreenAccessResponse>>()
+const SCREEN_ACCESS_CACHE_MS = 30_000
+const SCREEN_ACCESS_TIMEOUT_MS = 45_000
+const screenAccessCache = new Map<boolean, { expiresAt: number; value: ScreenAccessResponse }>()
 
 function clearAuthReadRequests() {
   currentSessionRequest = null
   screenAccessRequests.clear()
+  screenAccessCache.clear()
 }
 
 export async function loginRequest(login: string, password: string): Promise<UserSession> {
@@ -448,12 +452,38 @@ export async function getCurrentSession(): Promise<UserSession | null> {
 }
 
 function screenAccessRequest(includeAll: boolean): Promise<ScreenAccessResponse> {
+  const cached = screenAccessCache.get(includeAll)
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value)
+  if (cached) screenAccessCache.delete(includeAll)
+
   const activeRequest = screenAccessRequests.get(includeAll)
   if (activeRequest) return activeRequest
 
-  const pending = request<ScreenAccessResponse>(
-    `/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`,
-  )
+  const pending = (async () => {
+    const controller = new AbortController()
+    const timeout = globalThis.setTimeout(() => controller.abort(), SCREEN_ACCESS_TIMEOUT_MS)
+    try {
+      const response = await request<ScreenAccessResponse>(
+        `/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`,
+        { signal: controller.signal },
+      )
+      screenAccessCache.set(includeAll, {
+        expiresAt: Date.now() + SCREEN_ACCESS_CACHE_MS,
+        value: response,
+      })
+      return response
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new ApiError(
+          'La validación de pantallas agotó el tiempo de espera. Intente nuevamente.',
+          408,
+        )
+      }
+      throw error
+    } finally {
+      globalThis.clearTimeout(timeout)
+    }
+  })()
   screenAccessRequests.set(includeAll, pending)
   pending.then(
     () => {

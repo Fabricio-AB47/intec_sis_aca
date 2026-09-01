@@ -3,6 +3,7 @@ from __future__ import annotations
 import unicodedata
 from datetime import datetime, timezone
 from threading import Lock
+from time import monotonic
 from typing import Any, Iterable
 
 import pyodbc
@@ -16,6 +17,9 @@ class ScreenAccessUnavailableError(RuntimeError):
 
 _catalog_bootstrap_lock = Lock()
 _catalog_bootstrapped = False
+_access_payload_cache_lock = Lock()
+_access_payload_cache: dict[tuple[str, bool], tuple[float, dict[str, Any]]] = {}
+_ACCESS_PAYLOAD_CACHE_SECONDS = 120.0
 
 
 _SCREEN_GROUP_ALIASES = {
@@ -998,6 +1002,11 @@ def _ensure_screen_catalog_ready() -> None:
         _catalog_bootstrapped = True
 
 
+def warm_screen_access_catalog() -> None:
+    """Prepares the permission catalog before the backend is declared ready."""
+    _ensure_screen_catalog_ready()
+
+
 def _as_iso(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -1113,19 +1122,37 @@ def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]
     if current_role not in valid_roles:
         raise ValueError('El tipo de usuario no forma parte del catálogo de accesos.')
 
+    cache_key = (current_role, include_all)
+    if not include_all:
+        with _access_payload_cache_lock:
+            cached = _access_payload_cache.get(cache_key)
+            if cached and cached[0] > monotonic():
+                return cached[1]
+            if cached:
+                _access_payload_cache.pop(cache_key, None)
+
     requested_roles = [item["value"] for item in ROLE_CATALOG] if include_all else [current_role]
     _ensure_screen_catalog_ready()
     with get_integration_control_connection() as conn:
         cursor = conn.cursor()
         roles = _role_payloads(cursor, requested_roles)
 
-    return {
+    payload = {
         "source": "INTEC_INTEGRACION_CONTROL.cfg",
         "synchronized_at": datetime.now(timezone.utc).isoformat(),
         "current_role": current_role,
-        "screens": list(ASSIGNABLE_SCREEN_CATALOG),
+        # El catálogo completo solo es necesario en la pantalla administrativa.
+        # La navegación normal usa únicamente la asignación del rol autenticado.
+        "screens": list(ASSIGNABLE_SCREEN_CATALOG) if include_all else [],
         "roles": roles,
     }
+    if not include_all:
+        with _access_payload_cache_lock:
+            _access_payload_cache[cache_key] = (
+                monotonic() + _ACCESS_PAYLOAD_CACHE_SECONDS,
+                payload,
+            )
+    return payload
 
 
 def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> dict[str, Any]:
@@ -1196,4 +1223,6 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
             )
         role_payload = _role_payloads(cursor, [role_code])[0]
         conn.commit()
+    with _access_payload_cache_lock:
+        _access_payload_cache.clear()
     return role_payload

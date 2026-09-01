@@ -609,7 +609,9 @@ export function StudentLayout({
   const isAdministrator = isAdministratorRole(normalizedRole)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
-  const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(() => new Set())
+  const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
+    () => new Set(['solicitudes']),
+  )
 
   useEffect(() => {
     const syncMobileState = () => {
@@ -2452,19 +2454,6 @@ export function StudentLayout({
     : buildAssignedMenuGroups(roleScopedMenuGroups, navigationCatalogGroups, screenAccessPages)
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
-  const requestsMenuVisible = visibleMenuGroups.some((group) => group.key === 'solicitudes')
-
-  useEffect(() => {
-    if (!requestsMenuVisible) return
-
-    setOpenMenuGroups((current) => {
-      if (current.has('solicitudes')) return current
-      const next = new Set(current)
-      next.add('solicitudes')
-      return next
-    })
-  }, [requestsMenuVisible])
-
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
   const brand = roleBrandMap[normalizedRole] ?? {
     initials: initialsFromTitle(fallbackBrandTitle),

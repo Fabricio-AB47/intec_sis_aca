@@ -36,7 +36,7 @@ function Get-BackendListener {
 }
 
 function Wait-BackendReady {
-    param([int]$TimeoutSeconds = 45)
+    param([int]$TimeoutSeconds = 60)
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
@@ -44,9 +44,9 @@ function Wait-BackendReady {
         if ($activeListener) {
             try {
                 $response = Invoke-WebRequest `
-                    -Uri "http://127.0.0.1:$port/health" `
+                    -Uri "http://127.0.0.1:$port/health/ready" `
                     -UseBasicParsing `
-                    -TimeoutSec 2
+                    -TimeoutSec 40
                 if ($response.StatusCode -eq 200) {
                     return $activeListener
                 }
