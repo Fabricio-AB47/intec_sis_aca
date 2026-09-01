@@ -15,6 +15,7 @@ import type {
   MoodleUsersResponse,
 } from '../../types/app'
 import { MoodleResourcesPanel } from './MoodleResourcesPanel'
+import { MoodleEvaluationDatesPanel } from './MoodleEvaluationDatesPanel'
 import { MoodleGradeSyncPanel } from './MoodleGradeSyncPanel'
 import { MoodleGradeAlertsPanel } from './MoodleGradeAlertsPanel'
 
@@ -274,6 +275,8 @@ export function MoodleView({
               ? 'Consulta y control de cuentas'
               : activeTab === 'alerts'
                 ? 'Seguimiento de calificaciones'
+                : activeTab === 'evaluation-dates'
+                  ? 'Programación de evaluaciones'
                 : 'Consulta administrativa'}
           </span>
         </div>
@@ -305,6 +308,15 @@ export function MoodleView({
             onClick={() => selectTab('status')}
           >
             Estado
+          </button>
+        )}
+        {availableSections.includes('evaluation-dates') && (
+          <button
+            type="button"
+            className={activeTab === 'evaluation-dates' ? 'is-active' : ''}
+            onClick={() => selectTab('evaluation-dates')}
+          >
+            Fechas de evaluaciones
           </button>
         )}
         {availableSections.includes('resources') && (
@@ -792,6 +804,8 @@ export function MoodleView({
       {activeTab === 'resources' && (
         <MoodleResourcesPanel initialCourseId={resourceCourseId} />
       )}
+
+      {activeTab === 'evaluation-dates' && <MoodleEvaluationDatesPanel />}
 
       {activeTab === 'grades' && <MoodleGradeSyncPanel />}
 

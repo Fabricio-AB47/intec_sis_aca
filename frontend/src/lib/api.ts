@@ -2,6 +2,11 @@ import type {
   AdminGradeCourseSelection,
   AdminGradeStudentsResponse,
   AdminGradeTeachersResponse,
+  CareerChangeActionResponse,
+  CareerChangeCatalogResponse,
+  CareerChangePreviewResponse,
+  CareerChangeRequestDetail,
+  CareerChangeRequestsResponse,
   AcademicEnrollmentCareersResponse,
   AcademicEnrollmentCatalogResponse,
   AcademicEnrollmentCohortResponse,
@@ -60,6 +65,7 @@ import type {
   DashboardMatriculaTrendStudentsResponse,
   DocumentExpedientContext,
   DocumentExpedientFinalizeResponse,
+  DocumentExpedientPrepareResponse,
   DocumentExpedientStudentSearchResponse,
   DocumentExpedientUploadSessionResponse,
   ExcelSqlCrossResponse,
@@ -98,8 +104,11 @@ import type {
   LegacyReportsCatalogResponse,
   LegacyReportResponse,
   ModernizedLegacyReportsCatalogResponse,
+  MoodleCourseEvaluationsResponse,
   MoodleCourseResourcesResponse,
   MoodleCoursesResponse,
+  MoodleEvaluationDateUpdate,
+  MoodleEvaluationDatesUpdateResponse,
   MoodleGradeApplyResponse,
   MoodleGradeAlertResponse,
   MoodleGradeCatalogResponse,
@@ -142,6 +151,9 @@ import type {
   PracticasPeriodoDesignacionesResponse,
   PracticasPeriodosResponse,
   PracticasProcessCode,
+  PracticasReviewDecision,
+  PracticasReviewDetailResponse,
+  PracticasReviewResponse,
   PracticasResponsableProgressResponse,
   PracticasStudentResponse,
   PreinscriptionCabeceraPayload,
@@ -172,7 +184,9 @@ import type {
   ScholarshipConfigurationSaveResponse,
   ScholarshipBeneficiaryListResponse,
   ScholarshipContractCandidateListResponse,
+  ScholarshipContractFormat,
   ScholarshipContractHistoryResponse,
+  ScholarshipContractTemplate,
   ScholarshipContractUploadResponse,
   ScreenAccessResponse,
   ScreenAccessRole,
@@ -610,6 +624,11 @@ export async function fetchMoodleStatus(): Promise<MoodleStatusResponse> {
     moodle_version: response.moodle_version ?? '',
     user_is_site_admin: Boolean(response.user_is_site_admin),
     user_status_updates_enabled: Boolean(response.user_status_updates_enabled),
+    section_updates_enabled: Boolean(response.section_updates_enabled),
+    evaluation_date_updates_enabled: Boolean(response.evaluation_date_updates_enabled),
+    evaluation_date_update_function: response.evaluation_date_update_function ?? '',
+    evaluation_date_update_function_available: Boolean(response.evaluation_date_update_function_available),
+    evaluation_date_update_reason: response.evaluation_date_update_reason ?? '',
     functions_count: Number(response.functions_count ?? 0),
     required_functions: Array.isArray(response.required_functions)
       ? response.required_functions
@@ -2149,12 +2168,36 @@ export async function fetchScholarshipBeneficiaries(
   )
 }
 
+export async function fetchMoodleCourseEvaluations(
+  courseId: number,
+  refresh = false,
+): Promise<MoodleCourseEvaluationsResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleCourseEvaluationsResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/evaluations?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function updateMoodleCourseEvaluationDates(
+  courseId: number,
+  updates: MoodleEvaluationDateUpdate[],
+): Promise<MoodleEvaluationDatesUpdateResponse> {
+  return request<MoodleEvaluationDatesUpdateResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/evaluation-dates`,
+    {
+      method: 'PATCH',
+      body: { updates },
+    },
+  )
+}
+
 export async function fetchScholarshipContractCandidates(
   query = '',
   scholarshipType = '',
   academicPeriod = ''
 ): Promise<ScholarshipContractCandidateListResponse> {
-  const params = new URLSearchParams({ limit: '1000' })
+  const params = new URLSearchParams()
   if (query.trim()) params.set('query', query.trim())
   if (scholarshipType.trim()) params.set('tipo_beca', scholarshipType.trim())
   if (academicPeriod.trim()) params.set('codigo_periodo', academicPeriod.trim())
@@ -2163,13 +2206,26 @@ export async function fetchScholarshipContractCandidates(
   )
 }
 
+export async function fetchScholarshipContractTemplate(): Promise<ScholarshipContractTemplate> {
+  return request<ScholarshipContractTemplate>(
+    '/api/students/preinscripcion/becas/contratos/plantilla'
+  )
+}
+
 export async function generateScholarshipContracts(
   becaIds: number[],
-  academicPeriod: string
+  academicPeriod: string,
+  contractFormat: ScholarshipContractFormat,
+  template: ScholarshipContractTemplate,
 ): Promise<Blob> {
   return request<Blob>('/api/students/preinscripcion/becas/contratos/generar', {
     method: 'POST',
-    body: { beca_ids: becaIds, codigo_periodo: academicPeriod },
+    body: {
+      beca_ids: becaIds,
+      codigo_periodo: academicPeriod,
+      formato_contrato: contractFormat,
+      plantilla: template,
+    },
     responseType: 'blob',
   })
 }
@@ -3811,6 +3867,28 @@ export async function fetchPracticasResponsableAvance(
   return request<PracticasResponsableProgressResponse>(`/api/practicas/responsable/avance?${params.toString()}`)
 }
 
+export async function fetchPracticasReviewDetail(
+  expedienteId: number,
+): Promise<PracticasReviewDetailResponse> {
+  return request<PracticasReviewDetailResponse>(`/api/practicas/responsable/expedientes/${expedienteId}`)
+}
+
+export async function reviewPracticasExpediente(
+  expedienteId: number,
+  payload: {
+    tipo_proceso_codigo: PracticasProcessCode
+    decision: PracticasReviewDecision
+    horas_verificadas: number
+    documentos_corroborados: boolean
+    observacion?: string | null
+  },
+): Promise<PracticasReviewResponse> {
+  return request<PracticasReviewResponse>(`/api/practicas/responsable/expedientes/${expedienteId}/revision`, {
+    method: 'POST',
+    body: payload,
+  })
+}
+
 export async function createPracticasResponsable(payload: {
   tipo_proceso_codigo: PracticasProcessCode
   expediente_id?: number | null
@@ -4376,6 +4454,21 @@ export async function fetchDocumentExpedientContext(identification = ''): Promis
   return request<DocumentExpedientContext>(`/api/document-expedients/context${suffix}`)
 }
 
+export async function prepareDocumentExpedient(payload: {
+  identification: string
+  moduleCode: string
+  originId: string
+}): Promise<DocumentExpedientPrepareResponse> {
+  return request<DocumentExpedientPrepareResponse>('/api/document-expedients/prepare', {
+    method: 'POST',
+    body: {
+      identification: payload.identification,
+      module_code: payload.moduleCode,
+      origin_id: payload.originId,
+    },
+  })
+}
+
 export async function searchDocumentExpedientStudents(search: string): Promise<DocumentExpedientStudentSearchResponse> {
   const params = new URLSearchParams({ search: search.trim() })
   return request<DocumentExpedientStudentSearchResponse>(`/api/document-expedients/students?${params.toString()}`)
@@ -4414,4 +4507,67 @@ export function documentExpedientFileUrl(
   action: 'open' | 'download',
 ): string {
   return resolveApiPath(`/api/document-expedients/files/${documentGraphId}/${action}`)
+}
+
+export async function fetchCareerChangeCatalog(query = ''): Promise<CareerChangeCatalogResponse> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('query', query.trim())
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return request<CareerChangeCatalogResponse>(`/api/requests/career-change/catalog${suffix}`)
+}
+
+export async function previewCareerChange(payload: {
+  codigo_estud: number
+  carrera_destino: number
+}): Promise<CareerChangePreviewResponse> {
+  return request<CareerChangePreviewResponse>('/api/requests/career-change/preview', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function createCareerChangeRequest(formData: FormData): Promise<CareerChangeActionResponse> {
+  return request<CareerChangeActionResponse>('/api/requests/career-change', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function fetchCareerChangeRequests(params: {
+  query?: string
+  state?: string
+  limit?: number
+} = {}): Promise<CareerChangeRequestsResponse> {
+  const query = new URLSearchParams()
+  if (params.query?.trim()) query.set('query', params.query.trim())
+  if (params.state?.trim()) query.set('state', params.state.trim())
+  query.set('limit', String(params.limit ?? 100))
+  return request<CareerChangeRequestsResponse>(`/api/requests/career-change?${query.toString()}`)
+}
+
+export async function fetchCareerChangeRequestDetail(requestId: number): Promise<CareerChangeRequestDetail> {
+  return request<CareerChangeRequestDetail>(`/api/requests/career-change/${requestId}`)
+}
+
+export async function decideCareerChangeRequest(
+  requestId: number,
+  decision: 'APROBADA' | 'RECHAZADA',
+  observacion: string,
+): Promise<CareerChangeActionResponse> {
+  return request<CareerChangeActionResponse>(`/api/requests/career-change/${requestId}/decision`, {
+    method: 'POST',
+    body: { decision, observacion },
+  })
+}
+
+export async function applyCareerChangeRequest(requestId: number): Promise<CareerChangeActionResponse> {
+  return request<CareerChangeActionResponse>(`/api/requests/career-change/${requestId}/apply`, {
+    method: 'POST',
+  })
+}
+
+export async function restoreCareerChangeBackup(requestId: number): Promise<CareerChangeActionResponse> {
+  return request<CareerChangeActionResponse>(`/api/requests/career-change/${requestId}/restore`, {
+    method: 'POST',
+  })
 }

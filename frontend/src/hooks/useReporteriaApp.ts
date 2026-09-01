@@ -64,6 +64,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'matricula',
   'matricula-acad',
   'matricula-docente',
+  'solicitudes-cambio-carrera',
   'estado-docente',
   'actualizar-datos-estudiante',
   'actualizar-correo-intec',
@@ -98,6 +99,7 @@ const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'carnet-institucional',
 ])
 const SECRETARIA_ALLOWED_PAGES = new Set<Page>([
+  'solicitudes-cambio-carrera',
   'practicas-institucionales',
   'fecha-grado',
   'senescyt-estudiantes',
@@ -217,7 +219,7 @@ function enrollmentMode(value: string | null): AcademicEnrollmentMode {
 }
 
 function moodleSection(value: string | null): MoodleSection {
-  return ['alerts', 'status', 'users', 'courses', 'resources', 'grades'].includes(value || '')
+  return ['alerts', 'status', 'users', 'courses', 'resources', 'evaluation-dates', 'grades'].includes(value || '')
     ? value as MoodleSection
     : 'status'
 }
@@ -1171,6 +1173,9 @@ export function useReporteriaApp() {
   const openMatriculaDocentePage = () => {
     activateAssignedScreen('matricula-docente')
   }
+  const openCareerChangeRequestsPage = () => {
+    activateAssignedScreen('solicitudes-cambio-carrera')
+  }
   const openEstadoDocentePage = () => {
     activateAssignedScreen('estado-docente')
   }
@@ -1383,6 +1388,7 @@ export function useReporteriaApp() {
     openMatriculaPage,
     openMatriculaAcadPage,
     openMatriculaDocentePage,
+    openCareerChangeRequestsPage,
     openEstadoDocentePage,
     openSenescytEstudiantesPage,
     openActualizarDatosEstudiantePage,

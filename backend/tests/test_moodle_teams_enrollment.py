@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from app.routers.teams import (
     _MOODLE_TEAMS_FIXED_OWNER,
+    MoodleTeamsCourseRequest,
     TeamCreateClassroomRequest,
     _build_moodle_teams_graph_preview,
     _classify_moodle_course_users,
@@ -102,6 +103,19 @@ class MoodleTeamsClassificationTests(unittest.TestCase):
         )
 
         self.assertEqual(name, "Programación Web Paralelo A")
+
+    def test_team_name_accepts_exactly_256_characters(self) -> None:
+        long_name = "A" * 256
+
+        payload = MoodleTeamsCourseRequest(course_id=91, team_display_name=long_name)
+        normalized = _moodle_course_team_name({"id": 91}, payload.team_display_name)
+
+        self.assertEqual(normalized, long_name)
+        self.assertEqual(len(normalized), 256)
+
+    def test_team_name_rejects_more_than_256_characters(self) -> None:
+        with self.assertRaises(ValueError):
+            MoodleTeamsCourseRequest(course_id=91, team_display_name="A" * 257)
 
     def test_preview_marks_a_missing_team_as_a_new_education_class(self) -> None:
         users = [

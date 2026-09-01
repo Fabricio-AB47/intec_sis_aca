@@ -9,7 +9,9 @@ import {
   fetchPracticasPeriodoDesignaciones,
   fetchPracticasPeriodos,
   fetchPracticasResponsableAvance,
+  fetchPracticasReviewDetail,
   fetchPracticasStudent,
+  reviewPracticasExpediente,
   savePracticasPeriodoDesignacion,
   searchAcademicEnrollmentTeachers,
   uploadPracticasAutorizacion,
@@ -24,9 +26,12 @@ import type {
   PracticasProcessCode,
   PracticasPeriodoDesignacionItem,
   PracticasPeriodoItem,
+  PracticasReviewDecision,
+  PracticasReviewDetailResponse,
   PracticasResponsableProgressResponse,
   PracticasStudentResponse,
 } from '../../types/app'
+import { ExpedientesDocumentalesView } from '../expedientes/ExpedientesDocumentalesView'
 
 type PracticasInstitucionalesViewProps = {
   displayName: string
@@ -108,6 +113,16 @@ export function PracticasInstitucionalesView({
   const [selectedPeriod, setSelectedPeriod] = useState('')
   const [selectedSourcePeriod, setSelectedSourcePeriod] = useState('')
   const [selectedStudents, setSelectedStudents] = useState<number[]>([])
+  const [documentExpedient, setDocumentExpedient] = useState<{
+    identification: string
+    process: PracticasProcessCode
+  } | null>(null)
+  const [reviewDetail, setReviewDetail] = useState<PracticasReviewDetailResponse | null>(null)
+  const [reviewHours, setReviewHours] = useState('')
+  const [reviewCorroborated, setReviewCorroborated] = useState(false)
+  const [reviewObservation, setReviewObservation] = useState('')
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [reviewError, setReviewError] = useState('')
   const [responsableForm, setResponsableForm] = useState({
     nombre_responsable: '',
     cedula_responsable: '',
@@ -198,6 +213,95 @@ export function PracticasInstitucionalesView({
     if (!isResponsible && !isAdmin) return
     const payload = await fetchPracticasResponsableAvance(selectedProcess)
     setResponsableProgress(payload)
+  }
+
+  async function openReview(expedienteId: number) {
+    setReviewLoading(true)
+    setReviewError('')
+    setError('')
+    setMessage('')
+    try {
+      const payload = await fetchPracticasReviewDetail(expedienteId)
+      const currentHours = Math.max(
+        Number(payload.HorasReconocidas || 0),
+        Number(payload.HorasAsistenciaValidadas || 0),
+      )
+      setReviewDetail(payload)
+      setReviewHours(currentHours > 0 ? String(currentHours) : '')
+      setReviewCorroborated(false)
+      setReviewObservation('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo abrir el expediente para revisión.')
+    } finally {
+      setReviewLoading(false)
+    }
+  }
+
+  function closeReview() {
+    if (reviewLoading) return
+    setReviewDetail(null)
+    setReviewHours('')
+    setReviewCorroborated(false)
+    setReviewObservation('')
+    setReviewError('')
+  }
+
+  async function submitReview(decision: PracticasReviewDecision) {
+    if (!reviewDetail) return
+    const hours = Number(reviewHours.replace(',', '.'))
+    const observation = reviewObservation.trim()
+    if (!Number.isFinite(hours) || hours < 0) {
+      setReviewError('Ingrese una cantidad válida de horas verificadas.')
+      return
+    }
+    if ((decision === 'OBSERVAR' || decision === 'RECHAZAR') && !observation) {
+      setReviewError('Registre el motivo de la observación o del rechazo.')
+      return
+    }
+    if (decision === 'APROBAR') {
+      if (!reviewDetail.DocumentosCompletos) {
+        setReviewError('No se puede aprobar mientras existan documentos obligatorios pendientes.')
+        return
+      }
+      if (hours < Number(reviewDetail.HorasRequeridas || 0)) {
+        setReviewError(`Debe corroborar al menos ${reviewDetail.HorasRequeridas} horas.`)
+        return
+      }
+      if (!reviewCorroborated) {
+        setReviewError('Confirme que revisó los documentos y las horas del estudiante.')
+        return
+      }
+    }
+
+    setReviewLoading(true)
+    setReviewError('')
+    setError('')
+    setMessage('')
+    try {
+      const response = await reviewPracticasExpediente(reviewDetail.ExpedienteId, {
+        tipo_proceso_codigo: reviewDetail.TipoProcesoCodigo,
+        decision,
+        horas_verificadas: hours,
+        documentos_corroborados: reviewCorroborated,
+        observacion: observation || null,
+      })
+      const titulationMessage = response.titulacion?.sincronizado
+        ? ' El requisito ya se refleja en Titulación.'
+        : response.titulacion?.motivo
+          ? ` ${response.titulacion.motivo}`
+          : ''
+      setMessage(`${response.message}${titulationMessage}`)
+      setReviewDetail(null)
+      setReviewHours('')
+      setReviewCorroborated(false)
+      setReviewObservation('')
+      await loadResponsibleProgress()
+      if (isAdmin) await loadAdmin()
+    } catch (apiError) {
+      setReviewError(apiError instanceof Error ? apiError.message : 'No se pudo registrar la revisión docente.')
+    } finally {
+      setReviewLoading(false)
+    }
   }
 
   async function searchTeachers() {
@@ -435,6 +539,20 @@ export function PracticasInstitucionalesView({
     }
   }
 
+  function openDocumentExpedient(item: PracticasExpedienteItem) {
+    const identification = String(item.Cedula_Est || '').trim()
+    if (!identification) {
+      setError('El expediente no tiene una cédula estudiantil válida para abrir la carpeta documental.')
+      return
+    }
+    setError('')
+    setMessage('')
+    setDocumentExpedient({
+      identification,
+      process: item.TipoProcesoCodigo === 'VIN' ? 'VIN' : 'PPF',
+    })
+  }
+
   return (
     <section className="portal-student-page practicas-page">
       <header className="portal-student-hero practicas-hero">
@@ -454,6 +572,7 @@ export function PracticasInstitucionalesView({
                 setSelectedProcess(item.code)
                 setSelectedStudents([])
                 setAdminElegibles([])
+                closeReview()
               }}
             >
               {item.short}
@@ -500,7 +619,7 @@ export function PracticasInstitucionalesView({
         <section className="student-card student-card--wide matricula-panel">
           <div className="section-title">
             <span>Responsable</span>
-            <strong>Avance de prácticas preprofesionales</strong>
+            <strong>Corroboración y aprobación de {processLabel(selectedProcess).toLowerCase()}</strong>
           </div>
 
           <section className="practicas-progress-card">
@@ -532,9 +651,11 @@ export function PracticasInstitucionalesView({
                   <th>Estudiante</th>
                   <th>Carrera</th>
                   <th>Período</th>
-                  <th>Carta</th>
-                  <th>Certificado</th>
+                  <th>Estado</th>
+                  <th>Horas</th>
+                  <th>Documentos</th>
                   <th>Avance</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -547,18 +668,40 @@ export function PracticasInstitucionalesView({
                     </td>
                     <td>{valueOrDash(item.Carrera)}</td>
                     <td>{valueOrDash(item.CodigoPeriodo)}</td>
-                    <td>{valueOrDash(item.CartaCompromisoEstado || 'Pendiente')}</td>
-                    <td>{valueOrDash(item.CertificadoEstado || 'Pendiente')}</td>
+                    <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
+                    <td>
+                      <strong>{Number(item.HorasReconocidas || 0).toFixed(2)} / {Number(item.HorasRequeridas || (selectedProcess === 'PPF' ? 240 : 60)).toFixed(0)}</strong>
+                      <small>Horas corroboradas</small>
+                    </td>
+                    <td>
+                      <strong>{item.TotalDocumentos || 0} / {item.DocumentosRequeridos || 0}</strong>
+                      <small>{item.DocumentosValidados || 0} validado(s)</small>
+                    </td>
                     <td>
                       <div className="practicas-mini-progress">
                         <span style={{ width: `${percentValue(item.Avance)}%` }} />
                       </div>
                       <small>{percentValue(item.Avance).toFixed(2)}%</small>
                     </td>
+                    <td>
+                      <div className="practicas-row-actions">
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          onClick={() => void openReview(item.ExpedienteId)}
+                          disabled={reviewLoading || saving}
+                        >
+                          Revisar
+                        </button>
+                        <button type="button" className="ghost-button" onClick={() => openDocumentExpedient(item)} disabled={saving}>
+                          Expediente
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={7}>No existen expedientes asignados al responsable para este proceso.</td>
+                    <td colSpan={9}>No existen expedientes asignados al responsable para este proceso.</td>
                   </tr>
                 )}
               </tbody>
@@ -648,8 +791,12 @@ export function PracticasInstitucionalesView({
                       ) : 'No aplica'}
                     </td>
                     <td>
-                      {item.TipoProcesoCodigo === 'PPF' ? (
-                        <div className="practicas-row-actions">
+                      <div className="practicas-row-actions">
+                        <button type="button" className="secondary-action" onClick={() => openDocumentExpedient(item)} disabled={saving}>
+                          Expediente
+                        </button>
+                        {item.TipoProcesoCodigo === 'PPF' ? (
+                          <>
                           <button type="button" className="secondary-action" onClick={() => void downloadCarta(item)} disabled={saving}>
                             Descargar carta
                           </button>
@@ -677,8 +824,9 @@ export function PracticasInstitucionalesView({
                               disabled={saving}
                             />
                           </label>
-                        </div>
-                      ) : '-'}
+                          </>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 )) : (
@@ -879,6 +1027,7 @@ export function PracticasInstitucionalesView({
                   <th>Período</th>
                   <th>Estado</th>
                   <th>Responsable</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -893,10 +1042,15 @@ export function PracticasInstitucionalesView({
                     <td>{valueOrDash(item.CodigoPeriodo)}</td>
                     <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
                     <td>{valueOrDash(item.DocenteTutor || item.NombreResponsable)}</td>
+                    <td>
+                      <button type="button" className="secondary-action" onClick={() => openDocumentExpedient(item)} disabled={saving}>
+                        Expediente
+                      </button>
+                    </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={6}>No existen expedientes para el filtro seleccionado.</td>
+                    <td colSpan={7}>No existen expedientes para el filtro seleccionado.</td>
                   </tr>
                 )}
               </tbody>
@@ -904,6 +1058,150 @@ export function PracticasInstitucionalesView({
           </div>
         </section>
       )}
+
+      {reviewDetail ? (
+        <div className="practicas-expedient-overlay" role="presentation">
+          <section className="practicas-review-dialog" role="dialog" aria-modal="true" aria-labelledby="practicas-review-title">
+            <header className="practicas-review-dialog__header">
+              <div>
+                <span>Revisión docente</span>
+                <h2 id="practicas-review-title">{valueOrDash(reviewDetail.Apellidos_nombre)}</h2>
+                <p>
+                  {processLabel(reviewDetail.TipoProcesoCodigo)} · {valueOrDash(reviewDetail.Carrera)} ·
+                  período {valueOrDash(reviewDetail.Periodo || reviewDetail.CodigoPeriodo)}
+                </p>
+              </div>
+              <button type="button" className="secondary-action" onClick={closeReview} disabled={reviewLoading}>
+                Cerrar
+              </button>
+            </header>
+
+            <div className="practicas-review-summary">
+              <article>
+                <span>Expediente</span>
+                <strong>{valueOrDash(reviewDetail.CodigoExpediente || reviewDetail.ExpedienteId)}</strong>
+              </article>
+              <article>
+                <span>Estado</span>
+                <strong className={statusClass(reviewDetail.EstadoCodigo)}>{valueOrDash(reviewDetail.EstadoExpediente || reviewDetail.EstadoCodigo)}</strong>
+              </article>
+              <article>
+                <span>Horas requeridas</span>
+                <strong>{Number(reviewDetail.HorasRequeridas || 0).toFixed(0)}</strong>
+              </article>
+              <article>
+                <span>Documentos</span>
+                <strong>{reviewDetail.DocumentosDetalle.filter((item) => item.Cargado).length} / {reviewDetail.DocumentosDetalle.length}</strong>
+              </article>
+            </div>
+
+            <section className="practicas-review-documents">
+              <div className="section-title section-title--inline">
+                <span>Corroboración</span>
+                <strong>Documentos obligatorios</strong>
+              </div>
+              <div className="practicas-review-documents__list">
+                {reviewDetail.DocumentosDetalle.map((document) => (
+                  <article key={document.Codigo} className={document.Cargado ? 'is-loaded' : 'is-missing'}>
+                    <div>
+                      <strong>{valueOrDash(document.Nombre || document.Codigo)}</strong>
+                      <small>{valueOrDash(document.NombreArchivo || 'Sin archivo cargado')}</small>
+                    </div>
+                    <span className={statusClass(document.Validado ? 'VALIDADO' : document.Cargado ? 'PENDIENTE' : 'RECHAZADO')}>
+                      {document.Validado ? 'Validado' : document.Cargado ? 'Por corroborar' : 'Pendiente'}
+                    </span>
+                    {document.UrlArchivo ? (
+                      <a className="ghost-button" href={document.UrlArchivo} target="_blank" rel="noreferrer">
+                        Ver
+                      </a>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <div className="practicas-review-form">
+              <label>
+                <span>Horas verificadas</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="0.5"
+                  value={reviewHours}
+                  onChange={(event) => setReviewHours(event.target.value)}
+                  disabled={reviewLoading}
+                  placeholder={`Mínimo ${reviewDetail.HorasRequeridas}`}
+                />
+                <small>Se registran como horas reconocidas y de asistencia validadas.</small>
+              </label>
+              <label>
+                <span>Observación o justificación</span>
+                <textarea
+                  value={reviewObservation}
+                  onChange={(event) => setReviewObservation(event.target.value)}
+                  disabled={reviewLoading}
+                  rows={4}
+                  placeholder="Obligatoria al observar o rechazar."
+                />
+              </label>
+              <label className="practicas-review-corroboration">
+                <input
+                  type="checkbox"
+                  checked={reviewCorroborated}
+                  onChange={(event) => setReviewCorroborated(event.target.checked)}
+                  disabled={reviewLoading}
+                />
+                <span>Confirmo que revisé los documentos, las horas y la correspondencia del estudiante, carrera y período.</span>
+              </label>
+            </div>
+
+            {reviewError ? <p className="form-error practicas-review-error">{reviewError}</p> : null}
+            <footer className="practicas-review-actions">
+              <button type="button" className="ghost-button" onClick={() => void submitReview('OBSERVAR')} disabled={reviewLoading}>
+                Observar
+              </button>
+              <button
+                type="button"
+                className="secondary-action practicas-review-reject"
+                onClick={() => void submitReview('RECHAZAR')}
+                disabled={reviewLoading || !reviewDetail.PuedeAprobar}
+              >
+                Rechazar
+              </button>
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => void submitReview('APROBAR')}
+                disabled={
+                  reviewLoading
+                  || !reviewDetail.PuedeAprobar
+                  || !reviewDetail.DocumentosCompletos
+                  || !reviewCorroborated
+                  || Number(reviewHours.replace(',', '.')) < Number(reviewDetail.HorasRequeridas || 0)
+                }
+              >
+                {reviewLoading ? 'Guardando...' : 'Aprobar y habilitar Titulación'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {documentExpedient ? (
+        <div className="practicas-expedient-overlay" role="presentation">
+          <div className="practicas-expedient-dialog" role="dialog" aria-modal="true" aria-label="Expediente documental de prácticas">
+            <ExpedientesDocumentalesView
+              displayName={displayName}
+              role={role}
+              initialIdentification={documentExpedient.identification}
+              moduleFilter={[documentExpedient.process === 'PPF' ? 'PRACTICAS' : 'VINCULACION']}
+              embedded
+              onClose={() => setDocumentExpedient(null)}
+            />
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

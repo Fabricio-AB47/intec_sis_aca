@@ -1,0 +1,645 @@
+.career-change-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  color: #19233f;
+}
+
+.career-change-hero,
+.career-change-section {
+  border: 1px solid rgba(199, 198, 198, 0.82);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 8px 22px rgba(28, 36, 58, 0.06);
+}
+
+.career-change-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px;
+}
+
+.career-change-eyebrow,
+.career-change-modal header span {
+  display: block;
+  margin-bottom: 8px;
+  color: #68718c;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.career-change-hero h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.career-change-hero p,
+.career-change-section__heading p,
+.career-change-modal header p {
+  margin: 8px 0 0;
+  color: #4c5874;
+}
+
+.career-change-hero aside {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 190px;
+  padding: 14px;
+  border: 1px solid #cfd7dd;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.career-change-hero aside span {
+  color: #68718c;
+  font-size: 0.8rem;
+}
+
+.career-change-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #c9d7dc;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.career-change-tabs button {
+  min-height: 46px;
+  border: 0;
+  border-right: 1px solid #c9d7dc;
+  border-radius: 0;
+  background: #fff;
+  color: #35415d;
+  font-weight: 800;
+}
+
+.career-change-tabs button:last-child { border-right: 0; }
+
+.career-change-tabs button.is-active {
+  background: #e8f3f5;
+  box-shadow: inset 0 -3px 0 #178497;
+  color: #0b6574;
+}
+
+.career-change-alert,
+.career-change-toast,
+.career-change-loading-overlay {
+  padding: 12px 14px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.career-change-alert--error {
+  border: 1px solid #efaaa5;
+  background: #fff0ef;
+  color: #9e231d;
+}
+
+.career-change-toast {
+  position: fixed;
+  z-index: 1300;
+  top: 24px;
+  left: 50%;
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid #9fd3b7;
+  background: #e8f7ee;
+  box-shadow: 0 14px 36px rgba(20, 70, 42, 0.18);
+  color: #17653b;
+  transform: translateX(-50%);
+}
+
+.career-change-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.career-change-section { padding: 18px; }
+
+.career-change-section__heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.career-change-section__heading > span {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: #168071;
+  color: #fff;
+  font-weight: 900;
+}
+
+.career-change-section__heading h2 {
+  margin: 2px 0 0;
+  font-size: 1.18rem;
+  letter-spacing: 0;
+}
+
+.career-change-section__heading p { font-size: 0.86rem; }
+
+.career-change-search-row,
+.career-change-fields,
+.career-change-history-controls {
+  display: grid;
+  align-items: end;
+  gap: 12px;
+}
+
+.career-change-search-row { grid-template-columns: minmax(260px, 1fr) auto; }
+.career-change-fields--destination { grid-template-columns: repeat(2, minmax(220px, 1fr)) auto; }
+.career-change-fields--support { grid-template-columns: minmax(320px, 1.4fr) minmax(280px, 0.8fr); }
+.career-change-history-controls { grid-template-columns: minmax(280px, 1fr) minmax(180px, 0.35fr) auto; margin-bottom: 14px; }
+
+.career-change-page label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  color: #4a5673;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.career-change-page input,
+.career-change-page select,
+.career-change-page textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #bfd2da;
+  border-radius: 7px;
+  background: #fff;
+  color: #19233f;
+  font: inherit;
+  font-size: 0.94rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.career-change-page textarea { min-height: 102px; resize: vertical; }
+
+.career-change-page input:focus,
+.career-change-page select:focus,
+.career-change-page textarea:focus {
+  border-color: #168497;
+  box-shadow: 0 0 0 3px rgba(22, 132, 151, 0.12);
+  outline: none;
+}
+
+.career-change-page input[type='checkbox'] {
+  width: 18px;
+  min-height: 18px;
+  accent-color: #168071;
+}
+
+.career-change-page input[type='file'] {
+  padding: 7px;
+}
+
+.career-change-page label small,
+.career-change-table-wrap small,
+.career-change-detail-grid small {
+  display: block;
+  margin-top: 4px;
+  color: #68718c;
+  font-size: 0.75rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.career-change-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid #c3d0d7;
+  border-radius: 7px;
+  background: #f7fafb;
+  color: #19233f;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.career-change-button:hover:not(:disabled),
+.career-change-button:focus-visible:not(:disabled) {
+  border-color: #178497;
+  background: #edf7f8;
+  transform: translateY(-1px);
+}
+
+.career-change-button--primary {
+  border-color: #8f2a25;
+  background: linear-gradient(110deg, #a31d17 0%, #a75955 52%, #8dbbc7 100%);
+  color: #fff;
+}
+
+.career-change-button--danger {
+  border-color: #b03029;
+  background: #fff0ef;
+  color: #9e231d;
+}
+
+.career-change-button:disabled {
+  border-color: #d4d9df;
+  background: #edf0f4;
+  color: #a7b1bf;
+  cursor: not-allowed;
+}
+
+.career-change-student-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.career-change-student-results button {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #d1d9de;
+  border-radius: 7px;
+  background: #fff;
+  color: #19233f;
+  text-align: left;
+}
+
+.career-change-student-results button span {
+  color: #63708a;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.career-change-student-results button.is-selected {
+  border-color: #168497;
+  background: #eaf5f6;
+  box-shadow: inset 4px 0 0 #168497;
+}
+
+.career-change-selected-student,
+.career-change-summary,
+.career-change-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 14px;
+  border: 1px solid #c9d8de;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.career-change-selected-student > div,
+.career-change-summary > div,
+.career-change-detail-grid > div {
+  display: flex;
+  min-width: 0;
+  min-height: 76px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px;
+  border-right: 1px solid #d5dfe3;
+  background: #f8fbfc;
+}
+
+.career-change-selected-student > div:last-child,
+.career-change-summary > div:last-child { border-right: 0; }
+
+.career-change-selected-student span,
+.career-change-summary span,
+.career-change-detail-grid span {
+  color: #68718c;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.career-change-selected-student strong,
+.career-change-detail-grid strong { overflow-wrap: anywhere; }
+.career-change-summary strong { font-size: 1.55rem; }
+
+.career-change-table-wrap {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid #c9d8de;
+  border-radius: 7px;
+}
+
+.career-change-table-wrap table {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: collapse;
+}
+
+.career-change-table-wrap th,
+.career-change-table-wrap td {
+  padding: 11px 12px;
+  border-right: 1px solid #d4dde1;
+  border-bottom: 1px solid #d4dde1;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.career-change-table-wrap th:last-child,
+.career-change-table-wrap td:last-child { border-right: 0; }
+.career-change-table-wrap tbody tr:last-child td { border-bottom: 0; }
+
+.career-change-table-wrap th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #eaf3f5;
+  color: #19233f;
+  font-size: 0.73rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.career-change-table-wrap td {
+  background: #fff;
+  font-size: 0.86rem;
+}
+
+.career-change-table-wrap tbody tr:nth-child(even) td { background: #f8fafb; }
+.career-change-table-wrap td > strong,
+.career-change-table-wrap td > span { display: block; }
+
+.career-change-empty {
+  padding: 28px !important;
+  color: #68718c;
+  font-weight: 700;
+  text-align: center !important;
+}
+
+.career-change-match,
+.career-change-state {
+  display: inline-flex !important;
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.career-change-match--codigo_exacto,
+.career-change-match--nombre_exacto,
+.career-change-state--aprobada,
+.career-change-state--aplicada,
+.career-change-state--disponible,
+.career-change-state--restaurado {
+  background: #dcf3e4;
+  color: #12653b;
+}
+
+.career-change-match--nombre_similar,
+.career-change-state--pendiente {
+  background: #fff0cf;
+  color: #865807;
+}
+
+.career-change-state--rechazada {
+  background: #ffe1df;
+  color: #9e231d;
+}
+
+.career-change-unmatched {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e2c98c;
+  border-radius: 7px;
+  background: #fff9e9;
+}
+
+.career-change-unmatched summary { color: #704d06; font-weight: 800; cursor: pointer; }
+.career-change-unmatched div { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.career-change-unmatched div span { padding: 6px 8px; border: 1px solid #ead7a8; border-radius: 5px; background: #fff; font-size: 0.78rem; }
+
+.career-change-submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #d9e0e3;
+}
+
+.career-change-submit-row span { margin-right: auto; color: #5c6881; font-weight: 700; }
+
+.career-change-loading-overlay {
+  position: fixed;
+  z-index: 1250;
+  right: 20px;
+  bottom: 20px;
+  border: 1px solid #abd1d9;
+  background: #edf7f8;
+  color: #0b6574;
+}
+
+.career-change-modal-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(18, 25, 43, 0.58);
+}
+
+.career-change-modal {
+  display: flex;
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 44px);
+  max-height: calc(100dvh - 44px);
+  flex-direction: column;
+  border: 1px solid #c7d1d7;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 22px 60px rgba(12, 21, 39, 0.25);
+  overflow: hidden;
+}
+
+.career-change-modal > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #d5dde1;
+  background: #f9fbfc;
+}
+
+.career-change-modal h2 { margin: 0; font-size: 1.35rem; }
+.career-change-modal__body { display: flex; flex-direction: column; gap: 14px; padding: 18px; overflow-y: auto; }
+.career-change-detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 0; }
+.career-change-detail-grid > div:nth-child(3n) { border-right: 0; }
+.career-change-detail-grid > div:nth-child(-n + 3) { border-bottom: 1px solid #d5dfe3; }
+
+.career-change-detail-block,
+.career-change-review-box,
+.career-change-apply-box,
+.career-change-backup-box {
+  padding: 14px;
+  border: 1px solid #cfdbe0;
+  border-radius: 7px;
+  background: #fbfcfd;
+}
+
+.career-change-detail-block > div,
+.career-change-apply-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.career-change-detail-block h3,
+.career-change-review-box h3 { margin: 0; font-size: 1rem; }
+.career-change-detail-block > h3 { margin-bottom: 12px; }
+.career-change-detail-block p { margin: 12px 0 0; line-height: 1.55; white-space: pre-wrap; }
+
+.career-change-review-box > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.career-change-apply-box > div { display: flex; flex-direction: column; gap: 5px; }
+.career-change-apply-box > div span { color: #59647d; font-size: 0.84rem; }
+
+.career-change-backup-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-color: #a9cfd3;
+  background: #f5fbfb;
+}
+
+.career-change-backup-box__heading,
+.career-change-restore-confirmation,
+.career-change-restore-confirmation > div:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.career-change-backup-box__heading > div,
+.career-change-restore-confirmation > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.career-change-backup-box__heading span,
+.career-change-restore-confirmation span {
+  color: #59647d;
+  font-size: 0.84rem;
+}
+
+.career-change-backup-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid #c8dade;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.career-change-backup-summary > div {
+  display: flex;
+  min-width: 0;
+  min-height: 72px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 11px;
+  border-right: 1px solid #d4e0e3;
+  background: #fff;
+}
+
+.career-change-backup-summary > div:last-child { border-right: 0; }
+.career-change-backup-summary span { color: #68718c; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; }
+.career-change-backup-summary strong { overflow-wrap: anywhere; }
+
+.career-change-restore-confirmation {
+  padding: 12px;
+  border: 1px solid #e0bf75;
+  border-radius: 7px;
+  background: #fff8e8;
+}
+
+@media (max-width: 1100px) {
+  .career-change-fields--destination { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .career-change-fields--destination .career-change-button { grid-column: 1 / -1; }
+  .career-change-selected-student,
+  .career-change-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .career-change-selected-student > div:nth-child(2),
+  .career-change-summary > div:nth-child(2) { border-right: 0; }
+  .career-change-selected-student > div:nth-child(-n + 2),
+  .career-change-summary > div:nth-child(-n + 2) { border-bottom: 1px solid #d5dfe3; }
+}
+
+@media (max-width: 720px) {
+  .career-change-page { padding: 6px; }
+  .career-change-hero { align-items: stretch; flex-direction: column; padding: 18px; }
+  .career-change-hero aside { min-width: 0; }
+  .career-change-tabs { grid-template-columns: 1fr; }
+  .career-change-tabs button { border-right: 0; border-bottom: 1px solid #c9d7dc; }
+  .career-change-tabs button:last-child { border-bottom: 0; }
+  .career-change-section { padding: 14px; }
+  .career-change-search-row,
+  .career-change-fields--destination,
+  .career-change-fields--support,
+  .career-change-history-controls { grid-template-columns: 1fr; }
+  .career-change-fields--destination .career-change-button { grid-column: auto; }
+  .career-change-selected-student,
+  .career-change-summary,
+  .career-change-detail-grid { grid-template-columns: 1fr; }
+  .career-change-selected-student > div,
+  .career-change-summary > div,
+  .career-change-detail-grid > div { border-right: 0; border-bottom: 1px solid #d5dfe3; }
+  .career-change-selected-student > div:last-child,
+  .career-change-summary > div:last-child,
+  .career-change-detail-grid > div:last-child { border-bottom: 0; }
+  .career-change-submit-row,
+  .career-change-detail-block > div,
+  .career-change-apply-box,
+  .career-change-backup-box__heading,
+  .career-change-restore-confirmation { align-items: stretch; flex-direction: column; }
+  .career-change-backup-summary { grid-template-columns: 1fr; }
+  .career-change-backup-summary > div { border-right: 0; border-bottom: 1px solid #d4e0e3; }
+  .career-change-backup-summary > div:last-child { border-bottom: 0; }
+  .career-change-submit-row .career-change-button,
+  .career-change-review-box .career-change-button,
+  .career-change-apply-box .career-change-button,
+  .career-change-backup-box .career-change-button { width: 100%; }
+  .career-change-modal-backdrop { padding: 8px; }
+  .career-change-modal { max-height: calc(100dvh - 16px); }
+  .career-change-modal > header { align-items: stretch; flex-direction: column; }
+  .career-change-review-box > div { flex-direction: column-reverse; }
+}

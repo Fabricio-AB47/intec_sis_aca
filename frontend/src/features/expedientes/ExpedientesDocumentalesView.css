@@ -9,6 +9,41 @@
   align-items: center;
 }
 
+.document-expedients-page--embedded {
+  gap: 12px;
+  padding: 14px;
+  background: #f4f6f7;
+}
+
+.document-expedient-embedded-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #cfd8de;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.document-expedient-embedded-header h2,
+.document-expedient-embedded-header p {
+  margin: 0;
+}
+
+.document-expedient-embedded-header h2 {
+  margin-top: 3px;
+  color: #14213d;
+  font-size: 1.35rem;
+}
+
+.document-expedient-embedded-header .report-description {
+  margin-top: 5px;
+}
+
 .document-expedient-search,
 .document-expedient-module,
 .document-expedient-empty {
@@ -187,6 +222,31 @@
   font-weight: 700;
 }
 
+.document-expedient-folder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #d8e0e5;
+  background: #eef8f6;
+}
+
+.document-expedient-folder-actions > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.document-expedient-folder-actions strong {
+  color: #14213d;
+  font-size: 0.88rem;
+}
+
+.document-expedient-folder-actions small {
+  color: #5f6d7f;
+}
+
 .document-expedient-status {
   display: inline-flex;
   align-items: center;
@@ -352,6 +412,26 @@
   font-size: 1.05rem;
 }
 
+.practicas-expedient-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2400;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(16, 25, 43, 0.58);
+}
+
+.practicas-expedient-dialog {
+  width: min(1500px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid #c9d4dc;
+  border-radius: 8px;
+  background: #f4f6f7;
+  box-shadow: 0 22px 54px rgba(12, 24, 43, 0.24);
+}
+
 @media (max-width: 1050px) {
   .document-expedient-student-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -386,4 +466,22 @@
   .document-expedient-module__header { align-items: flex-start; flex-direction: column; }
   .document-expedient-module__state { justify-items: start; }
   .document-expedient-upload { padding: 14px; }
+  .document-expedient-embedded-header,
+  .document-expedient-folder-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .document-expedient-embedded-header .secondary-action,
+  .document-expedient-folder-actions .secondary-action,
+  .document-expedient-folder-actions .ghost-button {
+    width: 100%;
+  }
+  .practicas-expedient-overlay { padding: 0; }
+  .practicas-expedient-dialog {
+    width: 100%;
+    max-height: 100vh;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
 }

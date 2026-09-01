@@ -11,16 +11,13 @@ from app.routers.document_expedients import (
 
 
 class DocumentExpedientAccessTests(unittest.TestCase):
-    def test_student_is_rejected(self) -> None:
+    def test_student_is_accepted_for_own_expedient(self) -> None:
         student = SessionUser(login="estudiante@intec.edu.ec", rol="ESTUDIANTE")
 
-        with self.assertRaises(HTTPException) as context:
-            _ACCESS(student)
-
-        self.assertEqual(context.exception.status_code, 403)
+        self.assertIs(_ACCESS(student), student)
 
     def test_authorized_profiles_are_accepted(self) -> None:
-        for role in ("ACADEMICO", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR"):
+        for role in ("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR"):
             with self.subTest(role=role):
                 user = SessionUser(login="usuario@intec.edu.ec", rol=role)
                 self.assertIs(_ACCESS(user), user)

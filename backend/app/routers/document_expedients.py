@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 import re
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from app.services.db import (
     get_connection,
     get_expedient_connection,
     get_finance_connection,
+    get_integration_control_connection,
     get_practices_connection,
     get_titulation_connection,
 )
@@ -40,7 +42,7 @@ from app.services.graph_documents import (
 
 router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients"])
 
-_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_ACCESS = require_roles("ESTUDIANTE", "ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _REVIEW_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
@@ -53,6 +55,7 @@ _MODULE_NAMES = {
     "PRACTICAS": "Prácticas preprofesionales",
     "VINCULACION": "Vinculación con la sociedad",
     "BECAS": "Becas",
+    "SOLICITUDES": "Solicitudes",
     "FACTURACION": "Facturas",
 }
 _SCHOLARSHIP_DOCUMENT_TYPES = [
@@ -61,6 +64,9 @@ _SCHOLARSHIP_DOCUMENT_TYPES = [
 _INVOICE_DOCUMENT_TYPES = [
     {"code": "FACTURA_XML", "name": "Factura electrónica (XML)"},
     {"code": "RIDE_FACTURA", "name": "RIDE de la factura (PDF)"},
+]
+_CAREER_CHANGE_DOCUMENT_TYPES = [
+    {"code": "RESPALDO_CAMBIO_CARRERA", "name": "Respaldo de cambio de carrera"},
 ]
 _INVOICE_FILE_EXTENSIONS = {
     "FACTURA_XML": ".xml",
@@ -82,6 +88,12 @@ class DocumentFinalizePayload(BaseModel):
     upload_id: UUID
 
 
+class DocumentPreparePayload(BaseModel):
+    identification: str = Field(default="", max_length=30)
+    module_code: str = Field(min_length=1, max_length=40)
+    origin_id: str = Field(min_length=1, max_length=100)
+
+
 def _clean(value: Any) -> str:
     return str(value or "").strip()
 
@@ -100,6 +112,41 @@ def _iso(value: Any) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _has_practice_object(cursor: pyodbc.Cursor, name: str) -> bool:
+    cursor.execute("SELECT CASE WHEN OBJECT_ID(?) IS NULL THEN 0 ELSE 1 END", name)
+    row = cursor.fetchone()
+    return bool(row and row[0])
+
+
+def _use_legacy_practices_schema(cursor: pyodbc.Cursor) -> bool:
+    legacy_ready = all(
+        _has_practice_object(cursor, object_name)
+        for object_name in (
+            "cat.tipo_proceso",
+            "cat.tipo_documento_practica",
+            "pp.expediente_practica",
+            "pp.responsable_proceso",
+        )
+    )
+    modern_ready = all(
+        _has_practice_object(cursor, object_name)
+        for object_name in (
+            "cat.TipoProceso",
+            "cat.TipoDocumento",
+            "exp.Expediente",
+            "resp.ResponsableProceso",
+        )
+    )
+    if modern_ready:
+        return False
+    if legacy_ready:
+        return True
+    raise RuntimeError(
+        "La base de prácticas no contiene una estructura operativa completa "
+        "(pp.* ni exp./resp.*)."
+    )
 
 
 def _student_profile(current_user: SessionUser, requested_identification: str = "") -> dict[str, Any]:
@@ -189,16 +236,30 @@ def _titulation_document_types() -> list[dict[str, str]]:
 def _practice_document_types(process_code: str) -> list[dict[str, str]]:
     with get_practices_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT TD.Codigo, TD.Nombre
-            FROM cat.TipoDocumento TD
-            INNER JOIN cat.TipoProceso TP ON TP.TipoProcesoId = TD.TipoProcesoId
-            WHERE TP.Codigo = ? AND TD.Activo = 1
-            ORDER BY TD.Orden, TD.Nombre
-            """,
-            process_code,
-        )
+        if _use_legacy_practices_schema(cursor):
+            cursor.execute(
+                """
+                SELECT TD.codigo, TD.nombre
+                FROM cat.tipo_documento_practica TD
+                WHERE TD.activo = 1
+                  AND ((? = 'PPF' AND ISNULL(TD.aplica_practicas, 0) = 1)
+                    OR (? = 'VIN' AND ISNULL(TD.aplica_vinculacion, 0) = 1))
+                ORDER BY TD.orden, TD.nombre
+                """,
+                process_code,
+                process_code,
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT TD.Codigo, TD.Nombre
+                FROM cat.TipoDocumento TD
+                INNER JOIN cat.TipoProceso TP ON TP.TipoProcesoId = TD.TipoProcesoId
+                WHERE TP.Codigo = ? AND TD.Activo = 1
+                ORDER BY TD.Orden, TD.Nombre
+                """,
+                process_code,
+            )
         return [{"code": _clean(row[0]), "name": _clean(row[1])} for row in cursor.fetchall()]
 
 
@@ -281,6 +342,55 @@ def _scholarship_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _career_change_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    student_code = int(profile["code"])
+    document = _identification(profile.get("identification"))
+    try:
+        with get_integration_control_connection() as conn:
+            cursor = conn.cursor()
+            if not cursor.execute(
+                "SELECT OBJECT_ID(N'sol.SolicitudCambioCarrera', N'U')"
+            ).fetchval():
+                return []
+            cursor.execute(
+                """
+                SELECT
+                    IdSolicitud, Estado, CarreraDestinoNombre,
+                    CodigoPeriodoDestino, PeriodoDestinoNombre
+                FROM sol.SolicitudCambioCarrera
+                WHERE CodigoEstud = ?
+                   OR REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(Cedula)), '-', ''), ' ', ''), '.', '') = ?
+                ORDER BY FechaCreacion DESC, IdSolicitud DESC
+                """,
+                student_code,
+                document,
+            )
+            rows = cursor.fetchall()
+    except (RuntimeError, pyodbc.Error):
+        return []
+
+    return [
+        {
+            "module_code": "SOLICITUDES",
+            "module_name": _MODULE_NAMES["SOLICITUDES"],
+            "origin_id": str(row.IdSolicitud),
+            "domain_expedient_id": int(row.IdSolicitud),
+            "expedient_code": f"CAMBIO-CARRERA-{row.IdSolicitud}",
+            "status": _clean(row.Estado),
+            "base_origin": "INTEC_INTEGRACION_CONTROL",
+            "schema_origin": "sol",
+            "table_origin": "SolicitudCambioCarrera",
+            "period_code": _clean(row.CodigoPeriodoDestino),
+            "period_name": _clean(row.PeriodoDestinoNombre),
+            "reference": _clean(row.CarreraDestinoNombre),
+            "document_types": [dict(item) for item in _CAREER_CHANGE_DOCUMENT_TYPES],
+            "upload_enabled": False,
+            "upload_message": "El respaldo se carga desde Solicitudes > Cambio de carrera.",
+        }
+        for row in rows
+    ]
+
+
 def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     expedients: list[dict[str, Any]] = []
     document = profile["identification"]
@@ -359,24 +469,43 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     try:
         with get_practices_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT E.ExpedienteId, E.CodigoExpediente, TP.Codigo AS TipoProceso,
-                       EE.Codigo AS EstadoCodigo, EE.Nombre AS EstadoNombre
-                FROM exp.Expediente E
-                INNER JOIN cat.TipoProceso TP ON TP.TipoProcesoId = E.TipoProcesoId
-                INNER JOIN cat.EstadoExpediente EE ON EE.EstadoExpedienteId = E.EstadoExpedienteId
-                WHERE TRY_CONVERT(BIGINT, E.CodigoEstud) = ? AND E.Activo = 1
-                  AND TP.Codigo IN ('PPF', 'VIN')
-                ORDER BY E.ExpedienteId DESC
-                """,
-                profile["code"],
-            )
+            legacy_schema = _use_legacy_practices_schema(cursor)
+            if legacy_schema:
+                cursor.execute(
+                    """
+                    SELECT
+                        V.expediente_id AS ExpedienteId,
+                        V.codigo_expediente AS CodigoExpediente,
+                        V.tipo_proceso_codigo AS TipoProceso,
+                        V.estado_codigo AS EstadoCodigo,
+                        V.estado_expediente AS EstadoNombre
+                    FROM pp.vw_admin_expedientes_control V
+                    WHERE TRY_CONVERT(BIGINT, V.codigo_estud) = ?
+                      AND V.tipo_proceso_codigo IN ('PPF', 'VIN')
+                    ORDER BY V.expediente_id DESC
+                    """,
+                    profile["code"],
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT E.ExpedienteId, E.CodigoExpediente, TP.Codigo AS TipoProceso,
+                           EE.Codigo AS EstadoCodigo, EE.Nombre AS EstadoNombre
+                    FROM exp.Expediente E
+                    INNER JOIN cat.TipoProceso TP ON TP.TipoProcesoId = E.TipoProcesoId
+                    INNER JOIN cat.EstadoExpediente EE ON EE.EstadoExpedienteId = E.EstadoExpedienteId
+                    WHERE TRY_CONVERT(BIGINT, E.CodigoEstud) = ? AND E.Activo = 1
+                      AND TP.Codigo IN ('PPF', 'VIN')
+                    ORDER BY E.ExpedienteId DESC
+                    """,
+                    profile["code"],
+                )
+            practice_rows = cursor.fetchall()
             type_cache = {
                 "PPF": _practice_document_types("PPF"),
                 "VIN": _practice_document_types("VIN"),
             }
-            for row in cursor.fetchall():
+            for row in practice_rows:
                 is_practice = _clean(row.TipoProceso).upper() == "PPF"
                 module = "PRACTICAS" if is_practice else "VINCULACION"
                 expedients.append(
@@ -388,8 +517,8 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                         "expedient_code": _clean(row.CodigoExpediente) or f"{row.TipoProceso}-{row.ExpedienteId}",
                         "status": _clean(row.EstadoNombre) or _clean(row.EstadoCodigo),
                         "base_origin": "INTEC_PRACTICAS_PREPROFESIONALES",
-                        "schema_origin": "exp",
-                        "table_origin": "Expediente",
+                        "schema_origin": "pp" if legacy_schema else "exp",
+                        "table_origin": "expediente_practica" if legacy_schema else "Expediente",
                         "document_types": type_cache[_clean(row.TipoProceso).upper()],
                         "upload_enabled": True,
                         "upload_message": "",
@@ -399,6 +528,7 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
         pass
 
     expedients.extend(_scholarship_expedients(profile))
+    expedients.extend(_career_change_expedients(profile))
     expedients.append(_invoice_expedient(profile))
     return expedients
 
@@ -584,6 +714,58 @@ def _register_domain_document(
         process = "PPF" if module == "PRACTICAS" else "VIN"
         with get_practices_connection() as conn:
             cursor = conn.cursor()
+            if _use_legacy_practices_schema(cursor):
+                extension = Path(name).suffix.lower().lstrip(".")
+                cursor.execute(
+                    """
+                    EXEC pp.sp_registrar_documento
+                        @expediente_id = ?,
+                        @tipo_documento_codigo = ?,
+                        @nombre_archivo = ?,
+                        @ruta_archivo = ?,
+                        @extension = ?,
+                        @mime_type = ?,
+                        @hash_archivo = NULL,
+                        @tamanio_bytes = ?,
+                        @numero_paginas = NULL,
+                        @fecha_documento = NULL,
+                        @firmado = 0,
+                        @validado = 0,
+                        @observacion = ?,
+                        @usuario_registro = ?
+                    """,
+                    origin_id,
+                    type_code,
+                    name,
+                    web_url,
+                    extension,
+                    content_type or "application/octet-stream",
+                    size,
+                    "Archivo almacenado y trazado mediante INTEC_GRAPH_INTEGRACION.",
+                    audit_user,
+                )
+                row = cursor.fetchone()
+                document_id = int(getattr(row, "documento_id", 0) or 0) if row else 0
+                if not document_id:
+                    cursor.execute(
+                        """
+                        SELECT TOP (1) DP.documento_id
+                        FROM pp.documento_practica DP
+                        INNER JOIN cat.tipo_documento_practica TD
+                          ON TD.tipo_documento_id = DP.tipo_documento_id
+                        WHERE DP.expediente_id = ? AND TD.codigo = ?
+                        ORDER BY DP.fecha_registro DESC, DP.documento_id DESC
+                        """,
+                        origin_id,
+                        type_code,
+                    )
+                    stored = cursor.fetchone()
+                    document_id = int(stored[0]) if stored else 0
+                if not document_id:
+                    raise RuntimeError("La base de prácticas no confirmó el documento registrado.")
+                conn.commit()
+                return document_id
+
             cursor.execute(
                 """
                 SELECT TD.TipoDocumentoId
@@ -707,6 +889,54 @@ def expedient_context(
     if _role(current_user.rol) == "ESTUDIANTE" and identification and _identification(identification) != _identification(current_user.cedula):
         raise HTTPException(status_code=403, detail="El estudiante solo puede consultar su propio expediente.")
     return _context_payload(_student_profile(current_user, identification), current_user.rol)
+
+
+@router.post("/prepare")
+def prepare_document_expedient(
+    payload: DocumentPreparePayload,
+    current_user: Annotated[SessionUser, Depends(_ACCESS)],
+) -> dict[str, Any]:
+    is_student = _role(current_user.rol) == "ESTUDIANTE"
+    if is_student and payload.identification and _identification(payload.identification) != _identification(current_user.cedula):
+        raise HTTPException(status_code=403, detail="El estudiante solo puede preparar su propio expediente.")
+    module_code = _clean(payload.module_code).upper()
+    if module_code not in {"PRACTICAS", "VINCULACION"}:
+        raise HTTPException(status_code=400, detail="Este proceso solo prepara expedientes de prácticas o vinculación.")
+
+    profile = _student_profile(current_user, payload.identification)
+    expedient = _validate_origin(profile, module_code, payload.origin_id)
+    try:
+        graph_expedient = prepare_expedient(
+            module_code=expedient["module_code"],
+            identification=profile["identification"],
+            student_code=profile["code"],
+            student_name=profile["name"],
+            student_email=profile["email"],
+            base_origin=expedient["base_origin"],
+            schema_origin=expedient["schema_origin"],
+            table_origin=expedient["table_origin"],
+            origin_id=expedient["origin_id"],
+            expedient_code=expedient["expedient_code"],
+            audit_user=current_user.login,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Microsoft Graph no pudo preparar el expediente: {exc}") from exc
+    except (RuntimeError, ValueError, pyodbc.Error) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo preparar el expediente documental: {exc}") from exc
+
+    return {
+        "ok": True,
+        "expedient_graph_id": int(graph_expedient["expedient_graph_id"]),
+        "folder_path": _clean(graph_expedient.get("folder_path")),
+        "folder_item_id": _clean(graph_expedient.get("folder_item_id")),
+        "web_url": _clean(graph_expedient.get("web_url")),
+        "student_folder_reused": bool(graph_expedient.get("student_folder_reused")),
+        "message": (
+            "Expediente vinculado con la carpeta existente del estudiante en Microsoft 365."
+            if graph_expedient.get("student_folder_reused")
+            else "Expediente creado correctamente en Microsoft 365."
+        ),
+    }
 
 
 @router.post("/upload-session")

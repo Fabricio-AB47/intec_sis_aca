@@ -21,6 +21,8 @@ type MoodleTeamsEnrollmentData = NonNullable<MoodleTeamsEnrollmentResponse['enro
 type MoodleTeamsEnrollmentItem = NonNullable<MoodleTeamsEnrollmentData['items']>[number]
   & Partial<MoodleTeamsParticipant>
 
+const TEAM_DISPLAY_NAME_MAX_LENGTH = 256
+
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) return error.message
   return 'No se pudo completar la matrícula Moodle-Teams.'
@@ -318,6 +320,10 @@ export function MoodleTeamsEnrollmentView({ displayName }: MoodleTeamsEnrollment
   const handleEnroll = async () => {
     const confirmedTeamName = teamDisplayName.trim()
     if (!selectedCourseId || !preview?.can_execute || selectedStudentIds.length === 0 || !confirmedTeamName) return
+    if (confirmedTeamName.length > TEAM_DISPLAY_NAME_MAX_LENGTH) {
+      setPreviewError(`El nombre del aula admite hasta ${TEAM_DISPLAY_NAME_MAX_LENGTH} caracteres.`)
+      return
+    }
     setEnrollLoading(true)
     setPreviewError('')
     try {
@@ -421,6 +427,7 @@ export function MoodleTeamsEnrollmentView({ displayName }: MoodleTeamsEnrollment
             <input
               type="search"
               value={query}
+              maxLength={TEAM_DISPLAY_NAME_MAX_LENGTH}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Nombre, nombre corto, código o ID"
             />
@@ -706,13 +713,13 @@ export function MoodleTeamsEnrollmentView({ displayName }: MoodleTeamsEnrollment
               <input
                 type="text"
                 value={teamDisplayName}
-                maxLength={256}
+                maxLength={TEAM_DISPLAY_NAME_MAX_LENGTH}
                 autoFocus
                 required
                 aria-invalid={!teamDisplayName.trim()}
                 onChange={(event) => setTeamDisplayName(event.target.value)}
               />
-              <small>{teamDisplayName.trim().length} de 256 caracteres</small>
+              <small>{teamDisplayName.trim().length} de {TEAM_DISPLAY_NAME_MAX_LENGTH} caracteres</small>
             </label>
             <dl>
               <div><dt>Acción</dt><dd>Crear o sincronizar por nombre</dd></div>

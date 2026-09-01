@@ -50,6 +50,7 @@ READ_FUNCTIONS = frozenset(
 WRITE_FUNCTIONS = frozenset(
     {UPDATE_USERS_FUNCTION, EDIT_SECTION_FUNCTION, UPDATE_INPLACE_EDITABLE_FUNCTION}
 )
+_FUNCTION_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
 
 @dataclass(slots=True)
@@ -116,6 +117,24 @@ class MoodleClient:
             raise MoodleWriteDisabledError(
                 "La actualización de secciones Moodle está deshabilitada"
             )
+        evaluation_function = str(
+            self._settings.moodle_evaluation_dates_function or ""
+        ).strip()
+        if (
+            function == evaluation_function
+            and not self._settings.moodle_evaluation_dates_update_enabled
+        ):
+            raise MoodleWriteDisabledError(
+                "La actualización de fechas de evaluaciones Moodle está deshabilitada"
+            )
+
+    def _evaluation_dates_function(self) -> str:
+        function = str(self._settings.moodle_evaluation_dates_function or "").strip()
+        if not _FUNCTION_NAME_PATTERN.fullmatch(function):
+            raise MoodleConfigurationError(
+                "La función externa para actualizar fechas de evaluaciones no es válida"
+            )
+        return function
 
     async def _post(
         self,
@@ -126,7 +145,12 @@ class MoodleClient:
     ) -> Any:
         if write:
             self._validate_write_access(function)
-            allowed_functions = WRITE_FUNCTIONS
+            allowed_functions = set(WRITE_FUNCTIONS)
+            configured_function = str(
+                self._settings.moodle_evaluation_dates_function or ""
+            ).strip()
+            if _FUNCTION_NAME_PATTERN.fullmatch(configured_function):
+                allowed_functions.add(configured_function)
         else:
             self._validate_read_access()
             allowed_functions = READ_FUNCTIONS
@@ -342,6 +366,27 @@ class MoodleClient:
             raise MoodleInvalidResponseError(
                 "La respuesta del cambio de nombre Moodle no tiene el formato esperado"
             )
+
+    async def update_evaluation_dates(
+        self,
+        course_id: int,
+        updates: list[dict[str, Any]],
+    ) -> Any:
+        parameters: dict[str, Any] = {"courseid": int(course_id)}
+        for index, update in enumerate(updates):
+            for key, value in update.items():
+                parameters[f"updates[{index}][{key}]"] = value
+
+        payload = await self._post(
+            self._evaluation_dates_function(),
+            parameters,
+            write=True,
+        )
+        if payload is not None and not isinstance(payload, (dict, list)):
+            raise MoodleInvalidResponseError(
+                "La respuesta de la actualización de fechas Moodle no tiene el formato esperado"
+            )
+        return payload
 
     def _authenticated_file_url(self, file_url: str) -> str:
         self._validate_read_access()

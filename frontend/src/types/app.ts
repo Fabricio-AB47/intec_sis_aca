@@ -71,6 +71,7 @@ export type Page =
   | 'matricula'
   | 'matricula-acad'
   | 'matricula-docente'
+  | 'solicitudes-cambio-carrera'
   | 'estado-docente'
   | 'senescyt-estudiantes'
   | 'actualizar-datos-estudiante'
@@ -115,6 +116,159 @@ export type Page =
   | 'portal-docente-contratos'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
+
+export type CareerChangeCatalogStudent = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  estado: string
+  carrera: number | null
+  carrera_nombre: string
+}
+
+export type CareerChangeCareer = {
+  codigo: number
+  nombre: string
+}
+
+export type CareerChangePeriod = {
+  codigo: number
+  nombre: string
+  fecha_inicio?: string | null
+  fecha_fin?: string | null
+}
+
+export type CareerChangeCatalogResponse = {
+  students: CareerChangeCatalogStudent[]
+  careers: CareerChangeCareer[]
+  periods: CareerChangePeriod[]
+  states: string[]
+}
+
+export type CareerChangeSubject = {
+  codigo_materia: number
+  codigo_comun: string
+  nombre: string
+  nivel: number | null
+  creditos: number
+}
+
+export type CareerChangeSourceSubject = CareerChangeSubject & {
+  carrera: number | null
+  periodo: number | null
+  periodo_nombre: string
+  nota_final: number | null
+}
+
+export type CareerChangeMatch = {
+  source: CareerChangeSourceSubject
+  target: CareerChangeSubject
+  tipo_coincidencia: 'CODIGO_EXACTO' | 'NOMBRE_EXACTO' | 'NOMBRE_SIMILAR'
+  similitud: number
+  seleccion_recomendada: boolean
+}
+
+export type CareerChangePreviewResponse = {
+  student: {
+    codigo_estud: number
+    cedula: string
+    estudiante: string
+    estado: string
+    carrera_origen: number
+    carrera_origen_nombre: string
+    periodo_origen: number | null
+  }
+  target_career: CareerChangeCareer
+  matches: CareerChangeMatch[]
+  unmatched_targets: CareerChangeSubject[]
+  unused_approved_sources: Array<CareerChangeSubject & {
+    nota_final: number | null
+    periodo: number | null
+    periodo_nombre: string
+  }>
+  summary: {
+    aprobadas_origen: number
+    equivalencias_exactas: number
+    equivalencias_similares: number
+    materias_destino_sin_equivalencia: number
+  }
+}
+
+export type CareerChangeRequestItem = {
+  id: number
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  carrera_origen: number
+  carrera_origen_nombre: string
+  carrera_destino: number
+  carrera_destino_nombre: string
+  codigo_periodo_destino: number
+  periodo_destino_nombre: string
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'APLICADA'
+  motivo: string
+  archivo_nombre: string
+  archivo_url: string
+  expediente_documento_id?: number | null
+  archivo_en_expediente?: boolean
+  estado_expediente?: string
+  creado_por: string
+  fecha_creacion: string | null
+  revisado_por: string
+  fecha_revision: string | null
+  observacion_revision: string
+  aplicado_por: string
+  fecha_aplicacion: string | null
+  equivalencias: number
+  respaldo_estado: '' | 'DISPONIBLE' | 'RESTAURADO'
+  respaldo_cabeceras: number
+  respaldo_materias: number
+  fecha_respaldo: string | null
+  restauraciones: number
+  fecha_ultima_restauracion: string | null
+}
+
+export type CareerChangeStoredEquivalence = {
+  id: number
+  materia_origen: number
+  codigo_comun_origen: string
+  nombre_materia_origen: string
+  periodo_origen: number | null
+  periodo_origen_nombre: string
+  nota_final: number | null
+  materia_destino: number
+  codigo_comun_destino: string
+  nombre_materia_destino: string
+  nivel_destino: number | null
+  creditos_destino: number | null
+  tipo_coincidencia: string
+  similitud: number
+  seleccionada: boolean
+}
+
+export type CareerChangeRequestDetail = CareerChangeRequestItem & {
+  equivalences: CareerChangeStoredEquivalence[]
+}
+
+export type CareerChangeRequestsResponse = {
+  total: number
+  items: CareerChangeRequestItem[]
+}
+
+export type CareerChangeActionResponse = {
+  ok: boolean
+  message: string
+  estado: string
+  id?: number
+  equivalencias_seleccionadas?: number
+  inserted?: number
+  existing_skipped?: number
+  respaldo_cabeceras?: number
+  respaldo_materias?: number
+  cabeceras_restauradas?: number
+  materias_restauradas?: number
+  existentes_omitidos?: number
+}
 
 export type IntegrationHistoryPage<T> = {
   items: T[]
@@ -263,6 +417,11 @@ export type MoodleStatusResponse = {
   moodle_version: string
   user_is_site_admin: boolean
   user_status_updates_enabled: boolean
+  section_updates_enabled: boolean
+  evaluation_date_updates_enabled: boolean
+  evaluation_date_update_function: string
+  evaluation_date_update_function_available: boolean
+  evaluation_date_update_reason: string
   functions_count: number
   required_functions: string[]
   missing_required_functions: string[]
@@ -421,6 +580,79 @@ export type MoodleCourseResourcesResponse = {
     visibility_updates_enabled: boolean
     full_edit_in_moodle: boolean
   }
+}
+
+export type MoodleEvaluationDates = {
+  allowsubmissionsfromdate: number
+  duedate: number
+  cutoffdate: number
+  timeopen: number
+  timeclose: number
+}
+
+export type MoodleEvaluationActivity = {
+  cmid: number
+  instance: number
+  modname: 'assign' | 'quiz'
+  type_label: string
+  name: string
+  url: string
+  section_id: number
+  section_number: number
+  section_name: string
+  visible: boolean
+  uservisible: boolean
+  scope: 'simuladores' | 'evaluaciones' | 'sin_clasificar'
+  scope_label: string
+  partial: number
+  partial_label: string
+  programmable: boolean
+  dates: MoodleEvaluationDates
+}
+
+export type MoodleEvaluationDateManagement = {
+  enabled: boolean
+  configured: boolean
+  function: string
+  function_available: boolean
+  reason: string
+}
+
+export type MoodleCourseEvaluationsResponse = {
+  course: MoodleCourse
+  activities: MoodleEvaluationActivity[]
+  totals: {
+    activities: number
+    assignments: number
+    quizzes: number
+    with_dates: number
+    programmable: number
+    unclassified: number
+    simulators: number
+    evaluations: number
+  }
+  source: MoodleSource
+  date_management: MoodleEvaluationDateManagement
+}
+
+export type MoodleEvaluationDateUpdate = {
+  cmid: number
+  modname: 'assign' | 'quiz'
+  instance: number
+  allowsubmissionsfromdate?: number
+  duedate?: number
+  cutoffdate?: number
+  timeopen?: number
+  timeclose?: number
+}
+
+export type MoodleEvaluationDatesUpdateResponse = {
+  ok: boolean
+  changed: boolean
+  message: string
+  updated_count: number
+  activities: MoodleEvaluationActivity[]
+  audit_records: number
 }
 
 export type MoodleGradePeriodOption = {
@@ -1091,8 +1323,25 @@ export type DocumentExpedientFinalizeResponse = {
   message: string
 }
 
+export type DocumentExpedientPrepareResponse = {
+  ok: boolean
+  expedient_graph_id: number
+  folder_path: string
+  folder_item_id: string
+  web_url: string
+  student_folder_reused: boolean
+  message: string
+}
+
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
-export type MoodleSection = 'alerts' | 'status' | 'users' | 'courses' | 'resources' | 'grades'
+export type MoodleSection =
+  | 'alerts'
+  | 'status'
+  | 'users'
+  | 'courses'
+  | 'resources'
+  | 'evaluation-dates'
+  | 'grades'
 export type PreinscriptionStage = 'registro' | 'inscritos' | 'becas' | 'gestion-becas' | 'becados' | 'contratos-becas' | 'seguimiento' | 'cabecera' | 'materias' | 'documentos'
 export type MatriculaTipo = 'R' | 'H' | 'E'
 
@@ -1684,6 +1933,14 @@ export type PracticasResponsableProgressItem = PracticasExpedienteItem & {
   DocumentosValidados?: number
   DocumentosPendientes?: number
   DocumentosRequeridos?: number
+  DocumentosDetalle?: PracticasReviewDocumentItem[]
+  EstadoCodigo?: string | null
+  HorasRequeridas?: number | null
+  HorasReconocidas?: number | null
+  HorasAsistenciaValidadas?: number | null
+  PuedeValidarDocumentos?: boolean | number | null
+  PuedeAprobar?: boolean | number | null
+  ListoParaAprobar?: boolean
   Avance?: number
 }
 
@@ -1698,6 +1955,63 @@ export type PracticasResponsableProgressResponse = {
     documentos_pendientes?: number
   }
   items: PracticasResponsableProgressItem[]
+}
+
+export type PracticasReviewDocumentItem = {
+  TipoDocumentoId?: number | null
+  Codigo: string
+  Nombre?: string | null
+  DocumentoId?: number | null
+  NombreArchivo?: string | null
+  RutaArchivo?: string | null
+  UrlArchivo?: string | null
+  EstadoCodigo?: string | null
+  EstadoNombre?: string | null
+  Cargado?: boolean
+  Validado?: boolean
+  FechaValidacion?: string | null
+}
+
+export type PracticasReviewDetailResponse = {
+  ExpedienteId: number
+  CodigoExpediente?: string | null
+  CodigoEstud?: number | null
+  Cedula_Est?: string | null
+  Apellidos_nombre?: string | null
+  CodigoCarrera?: string | null
+  Carrera?: string | null
+  CodigoPeriodo?: string | null
+  Periodo?: string | null
+  TipoProcesoCodigo: PracticasProcessCode
+  TipoProceso?: string | null
+  EstadoCodigo?: string | null
+  EstadoExpediente?: string | null
+  HorasRequeridas: number
+  HorasReconocidas: number
+  HorasAsistenciaValidadas?: number
+  DocumentosDetalle: PracticasReviewDocumentItem[]
+  DocumentosFaltantes: string[]
+  DocumentosCompletos: boolean
+  ListoParaAprobar: boolean
+  PuedeAprobar: boolean
+  Responsable?: Record<string, unknown> | null
+  UltimaRevision?: Record<string, unknown> | null
+}
+
+export type PracticasReviewDecision = 'APROBAR' | 'OBSERVAR' | 'RECHAZAR'
+
+export type PracticasReviewResponse = {
+  ok: boolean
+  message: string
+  decision: PracticasReviewDecision
+  estado: string
+  responsable?: Record<string, unknown> | null
+  titulacion?: {
+    sincronizado?: boolean
+    pendiente?: boolean
+    motivo?: string
+    expedientes_titulacion?: number
+  }
 }
 
 export type TeacherEvaluationQuestion = {
@@ -4883,6 +5197,59 @@ export type ScholarshipContractCandidateListResponse = {
   detail?: string
 }
 
+export type ScholarshipContractFormat = 'INSTITUCIONAL' | 'PROGRAMA'
+
+export type ScholarshipContractProjectionItem = {
+  rubro: string
+  periodicidad: string
+}
+
+export type ScholarshipContractClause = {
+  titulo: string
+  contenido: string
+}
+
+export type ScholarshipContractTemplate = {
+  titulo_contrato: string
+  fecha_contrato: string | null
+  ciudad: string
+  resolucion: string
+  rector_tratamiento: string
+  rector_nombre: string
+  rector_titulo: string
+  correo_notificaciones: string
+  programa: string
+  pais: string
+  institucion_educacion: string
+  auspiciante: string
+  nivel_estudios: string
+  fecha_inicio_estudios: string | null
+  fecha_fin_estudios: string | null
+  fecha_inicio_financiamiento: string | null
+  fecha_fin_financiamiento: string | null
+  duracion_estudios: string
+  duracion_financiamiento: string
+  periodo_pago: string
+  proyeccion: ScholarshipContractProjectionItem[]
+  introduccion_institucional?: string
+  clausulas_institucionales?: ScholarshipContractClause[]
+  introduccion_programa?: string
+  clausulas_programa?: ScholarshipContractClause[]
+  titulo_tabla_datos: string
+  titulo_tabla_proyeccion: string
+  firma_rector_tratamiento: string
+  firma_rector_nombre: string
+  firma_rector_titulo: string
+  firma_rector_etiqueta: string
+  firma_becario_tratamiento: string
+  firma_becario_etiqueta: string
+  color_cabecera_tabla: string
+  color_celda_etiqueta: string
+  color_cabecera_interior: string
+  color_celda_valor: string
+  color_borde_tabla: string
+}
+
 export type ScholarshipContractHistoryItem = {
   contrato_id: number
   beca_id: number
@@ -4899,6 +5266,8 @@ export type ScholarshipContractHistoryItem = {
   valor_beca: number
   numero_contrato: string
   fecha_contrato: string
+  formato_contrato: ScholarshipContractFormat
+  plantilla: Partial<ScholarshipContractTemplate>
   nombre_archivo: string
   hash_sha256: string
   estado: string

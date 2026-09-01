@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from uuid import UUID
 
 import httpx
@@ -25,6 +25,7 @@ GRAPH_MODULE_FOLDERS = {
     "TITULACION": "TITULACION",
     "PRACTICAS": "PRACTICAS PREPROFESIONALES",
     "VINCULACION": "VINCULACION CON LA SOCIEDAD",
+    "SOLICITUDES": "SOLICITUDES",
     "FACTURACION": "FACTURAS",
 }
 GRAPH_EXPEDIENT_TYPES = {
@@ -47,6 +48,10 @@ GRAPH_EXPEDIENT_TYPES = {
     "VINCULACION": (
         "Vinculación con la sociedad",
         "Documentos del expediente de vinculación con la sociedad.",
+    ),
+    "SOLICITUDES": (
+        "Solicitudes",
+        "Respaldos y documentos de solicitudes académicas del estudiante.",
     ),
     "FACTURACION": (
         "Facturación",
@@ -82,6 +87,23 @@ def safe_folder_part(
     return (normalized or fallback)[:max_length].rstrip(" .")
 
 
+def _student_root_from_folder_path(path: str, identification: str) -> str:
+    """Return the stable student root only when the path belongs to the identity."""
+    document = re.sub(r"\D+", "", identification)
+    parts = [
+        part.strip()
+        for part in clean(path).replace("\\", "/").split("/")
+        if part.strip()
+    ]
+    if not document or len(parts) < 2:
+        return ""
+    if parts[0].casefold() != GRAPH_DOCUMENT_ROOT.casefold():
+        return ""
+    if not parts[1].casefold().endswith(f" - {document}".casefold()):
+        return ""
+    return "/".join(parts[:2])
+
+
 def build_expedient_folder_path(
     *,
     module_code: str,
@@ -90,6 +112,7 @@ def build_expedient_folder_path(
     student_name: str,
     origin_id: str | int,
     expedient_code: str = "",
+    student_root_path: str = "",
 ) -> str:
     module = clean(module_code).upper()
     document = re.sub(r"\D+", "", identification)
@@ -98,18 +121,21 @@ def build_expedient_folder_path(
     if not document:
         raise ValueError('La identificación del estudiante es obligatoria.')
 
-    fallback_name = f"ESTUDIANTE {student_code or document}"
-    available_name_length = max(20, 100 - len(document) - 3)
-    normalized_name = safe_folder_part(
-        student_name,
-        fallback_name,
-        max_length=available_name_length,
-    )
-    student_folder = safe_folder_part(
-        f"{normalized_name} - {document}",
-        document,
-        max_length=100,
-    )
+    student_root = _student_root_from_folder_path(student_root_path, document)
+    if not student_root:
+        fallback_name = f"ESTUDIANTE {student_code or document}"
+        available_name_length = max(20, 100 - len(document) - 3)
+        normalized_name = safe_folder_part(
+            student_name,
+            fallback_name,
+            max_length=available_name_length,
+        )
+        student_folder = safe_folder_part(
+            f"{normalized_name} - {document}",
+            document,
+            max_length=100,
+        )
+        student_root = f"{GRAPH_DOCUMENT_ROOT}/{student_folder}"
 
     origin = safe_folder_part(str(origin_id), "SIN-ID", max_length=30)
     case_code = safe_folder_part(
@@ -122,14 +148,7 @@ def build_expedient_folder_path(
         f"CASO {origin}",
         max_length=85,
     )
-    return "/".join(
-        [
-            GRAPH_DOCUMENT_ROOT,
-            student_folder,
-            GRAPH_MODULE_FOLDERS[module],
-            case_folder,
-        ]
-    )
+    return "/".join([student_root, GRAPH_MODULE_FOLDERS[module], case_folder])
 
 
 def graph_owner_upn() -> str:
@@ -184,6 +203,53 @@ def ensure_folder(path: str) -> dict[str, Any]:
             item = response.json()
             parent_id = clean(item.get("id")) or parent_id
     return item
+
+
+def _find_graph_student_root(identification: str) -> dict[str, Any] | None:
+    """Recover an existing student folder even when its database link is missing."""
+    document = re.sub(r"\D+", "", identification)
+    if not document:
+        return None
+
+    search_url = f"{_item_path_url(GRAPH_DOCUMENT_ROOT)}:/search(q='{document}')"
+    params: dict[str, str] | None = {
+        "$select": "id,name,folder,parentReference,webUrl,createdDateTime,lastModifiedDateTime",
+        "$top": "200",
+    }
+    matches: list[dict[str, Any]] = []
+    with httpx.Client(timeout=30.0) as client:
+        while search_url:
+            response = client.get(search_url, headers=_auth_headers(), params=params)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            payload = response.json()
+            for item in payload.get("value") or []:
+                if not isinstance(item, dict) or not isinstance(item.get("folder"), dict):
+                    continue
+                name = clean(item.get("name"))
+                candidate = f"{GRAPH_DOCUMENT_ROOT}/{name}"
+                if not _student_root_from_folder_path(candidate, document):
+                    continue
+                parent_path = unquote(
+                    clean((item.get("parentReference") or {}).get("path"))
+                ).rstrip("/")
+                expected_parent = f"/drive/root:/{GRAPH_DOCUMENT_ROOT}".casefold()
+                if not parent_path.casefold().endswith(expected_parent):
+                    continue
+                matches.append({**item, "path": candidate})
+            search_url = clean(payload.get("@odata.nextLink"))
+            params = None
+
+    if not matches:
+        return None
+    matches.sort(
+        key=lambda item: (
+            clean(item.get("createdDateTime")),
+            clean(item.get("name")).casefold(),
+        )
+    )
+    return matches[0]
 
 
 def create_upload_session(path: str) -> dict[str, Any]:
@@ -369,6 +435,31 @@ def _ensure_person(
     return int(cursor.fetchone()[0])
 
 
+def _find_registered_student_root_path(cursor: Any, identification: str) -> str:
+    document = re.sub(r"\D+", "", identification)
+    if not document:
+        return ""
+    cursor.execute(
+        """
+        SELECT TOP (25) RutaCarpeta
+        FROM doc.ExpedienteGraph
+        WHERE Activo = 1
+          AND REPLACE(
+                REPLACE(REPLACE(LTRIM(RTRIM(NumeroIdentificacion)), '-', ''), ' ', ''),
+                '.', ''
+              ) = ?
+          AND NULLIF(LTRIM(RTRIM(RutaCarpeta)), N'') IS NOT NULL
+        ORDER BY FechaActualizacion DESC, ExpedienteGraphId DESC
+        """,
+        document,
+    )
+    for row in cursor.fetchall():
+        candidate = _student_root_from_folder_path(clean(row[0]), document)
+        if candidate:
+            return candidate
+    return ""
+
+
 def prepare_expedient(
     *,
     module_code: str,
@@ -385,6 +476,22 @@ def prepare_expedient(
 ) -> dict[str, Any]:
     module = clean(module_code).upper()
     document = re.sub(r"\D+", "", identification)
+    if module not in GRAPH_MODULE_FOLDERS:
+        raise ValueError('Módulo documental no permitido.')
+    if not document:
+        raise ValueError('La identificación del estudiante es obligatoria.')
+
+    with get_graph_database_connection() as conn:
+        cursor = conn.cursor()
+        _assert_schema(cursor)
+        student_root_path = _find_registered_student_root_path(cursor, document)
+
+    graph_student_root = None
+    if not student_root_path:
+        graph_student_root = _find_graph_student_root(document)
+        student_root_path = clean((graph_student_root or {}).get("path"))
+    student_folder_reused = bool(student_root_path)
+
     folder_path = build_expedient_folder_path(
         module_code=module,
         identification=document,
@@ -392,6 +499,7 @@ def prepare_expedient(
         student_name=student_name,
         origin_id=origin_id,
         expedient_code=expedient_code,
+        student_root_path=student_root_path,
     )
     folder_item = ensure_folder(folder_path)
     drive_id = clean((folder_item.get("parentReference") or {}).get("driveId"))
@@ -504,7 +612,12 @@ def prepare_expedient(
             VALUES('EXPEDIENTE_DOCUMENTAL', ?, 'PREPARAR_CARPETA', ?, ?)
             """,
             expedient_id,
-            folder_path,
+            (
+                "REUTILIZAR_CARPETA_ESTUDIANTE"
+                if student_folder_reused
+                else "CREAR_CARPETA_ESTUDIANTE"
+            )
+            + f" | {folder_path}",
             audit_user,
         )
         conn.commit()
@@ -515,6 +628,7 @@ def prepare_expedient(
         "folder_item_id": clean(folder_item.get("id")),
         "drive_id": drive_id,
         "web_url": clean(folder_item.get("webUrl")),
+        "student_folder_reused": student_folder_reused,
     }
 
 

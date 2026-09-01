@@ -18,6 +18,7 @@ from app.integrations.moodle.exceptions import (
     MoodleConnectionError,
     MoodleCourseNotFoundError,
     MoodleDisabledError,
+    MoodleEvaluationDateUpdateError,
     MoodleFullScanDisabledError,
     MoodleFunctionNotAllowedError,
     MoodleInvalidResponseError,
@@ -43,6 +44,7 @@ _MOODLE_COURSES_ACCESS = require_any_screen_access("moodle/courses", "moodle-tea
 _MOODLE_RESOURCES_ACCESS = require_screen_access("moodle/resources")
 _MOODLE_GRADES_ACCESS = require_screen_access("moodle/grades")
 _MOODLE_ALERTS_ACCESS = require_screen_access("moodle/alerts")
+_MOODLE_EVALUATION_DATES_ACCESS = require_screen_access("moodle/evaluation-dates")
 
 
 class MoodleUserStatusPayload(BaseModel):
@@ -69,6 +71,49 @@ class MoodleSectionNamePayload(BaseModel):
         if not clean_value:
             raise ValueError("El nombre de la sección es obligatorio")
         return clean_value
+
+
+class MoodleEvaluationDateUpdatePayload(BaseModel):
+    cmid: int = Field(ge=1)
+    modname: Literal["assign", "quiz"]
+    instance: int = Field(ge=1)
+    allowsubmissionsfromdate: int | None = Field(default=None, ge=0, le=4_102_444_799)
+    duedate: int | None = Field(default=None, ge=0, le=4_102_444_799)
+    cutoffdate: int | None = Field(default=None, ge=0, le=4_102_444_799)
+    timeopen: int | None = Field(default=None, ge=0, le=4_102_444_799)
+    timeclose: int | None = Field(default=None, ge=0, le=4_102_444_799)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_module_dates(self) -> "MoodleEvaluationDateUpdatePayload":
+        assign_fields = (
+            self.allowsubmissionsfromdate,
+            self.duedate,
+            self.cutoffdate,
+        )
+        quiz_fields = (self.timeopen, self.timeclose)
+        if self.modname == "assign" and any(value is not None for value in quiz_fields):
+            raise ValueError("Una tarea no admite fechas propias de cuestionarios")
+        if self.modname == "quiz" and any(value is not None for value in assign_fields):
+            raise ValueError("Un cuestionario no admite fechas propias de tareas")
+        relevant_fields = assign_fields if self.modname == "assign" else quiz_fields
+        if not any(value is not None for value in relevant_fields):
+            raise ValueError("Incluya al menos una fecha para actualizar")
+        return self
+
+
+class MoodleEvaluationDatesPayload(BaseModel):
+    updates: list[MoodleEvaluationDateUpdatePayload] = Field(min_length=1, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_unique_modules(self) -> "MoodleEvaluationDatesPayload":
+        module_ids = [item.cmid for item in self.updates]
+        if len(module_ids) != len(set(module_ids)):
+            raise ValueError("Cada evaluación puede incluirse una sola vez")
+        return self
 
 
 class MoodleGradeSelectionPayload(BaseModel):
@@ -120,7 +165,10 @@ def _raise_http_error(exc: Exception) -> None:
         ),
     ):
         status_code = status.HTTP_404_NOT_FOUND
-    elif isinstance(exc, (MoodleSectionUpdateError, MoodleGradeSyncError)):
+    elif isinstance(
+        exc,
+        (MoodleSectionUpdateError, MoodleEvaluationDateUpdateError, MoodleGradeSyncError),
+    ):
         status_code = status.HTTP_409_CONFLICT
     elif isinstance(
         exc,
@@ -220,7 +268,7 @@ async def moodle_courses(
     _request: Request,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
-    search: Annotated[str | None, Query(max_length=200)] = None,
+    search: Annotated[str | None, Query(max_length=256)] = None,
     visibility: Literal["all", "visible", "hidden"] = "all",
     category_id: Annotated[int | None, Query(ge=0)] = None,
     refresh: bool = False,
@@ -250,6 +298,39 @@ async def moodle_course_resources(
 ):
     try:
         return await service.get_course_resources(course_id, refresh=refresh)
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/courses/{course_id}/evaluations")
+async def moodle_course_evaluations(
+    course_id: Annotated[int, Path(ge=1)],
+    _request: Request,
+    refresh: bool = False,
+    _user: SessionUser = Depends(_MOODLE_EVALUATION_DATES_ACCESS),
+    service: MoodleReadService = Depends(get_moodle_read_service),
+):
+    try:
+        return await service.get_course_evaluations(course_id, refresh=refresh)
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.patch("/courses/{course_id}/evaluation-dates")
+async def update_moodle_course_evaluation_dates(
+    course_id: Annotated[int, Path(ge=1)],
+    payload: MoodleEvaluationDatesPayload,
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_EVALUATION_DATES_ACCESS),
+    service: MoodleReadService = Depends(get_moodle_read_service),
+):
+    try:
+        return await service.update_course_evaluation_dates(
+            course_id,
+            [item.model_dump(exclude_none=True) for item in payload.updates],
+            actor=_user.login,
+            actor_id=_user.id_usuario,
+        )
     except Exception as exc:
         _raise_http_error(exc)
 
@@ -435,11 +516,14 @@ async def moodle_course_resource_file(
 __all__ = [
     "_MOODLE_ALERTS_ACCESS",
     "_MOODLE_COURSES_ACCESS",
+    "_MOODLE_EVALUATION_DATES_ACCESS",
     "_MOODLE_GRADES_ACCESS",
     "_MOODLE_RESOURCES_ACCESS",
     "_MOODLE_STATUS_ACCESS",
     "_MOODLE_USERS_ACCESS",
     "MoodleSectionNamePayload",
+    "MoodleEvaluationDateUpdatePayload",
+    "MoodleEvaluationDatesPayload",
     "MoodleSectionVisibilityPayload",
     "MoodleGradeSelectionPayload",
     "get_moodle_grade_alert_service",

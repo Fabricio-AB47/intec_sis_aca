@@ -6,6 +6,9 @@ from uuid import uuid4
 from app.services.graph_documents import (
     GRAPH_DOCUMENT_ROOT,
     _ensure_person,
+    _find_graph_student_root,
+    _find_registered_student_root_path,
+    _student_root_from_folder_path,
     build_expedient_folder_path,
     complete_upload_session,
     prepare_expedient,
@@ -42,6 +45,7 @@ class GraphDocumentPathTests(unittest.TestCase):
             "TITULACION": "TITULACION",
             "PRACTICAS": "PRACTICAS PREPROFESIONALES",
             "VINCULACION": "VINCULACION CON LA SOCIEDAD",
+            "SOLICITUDES": "SOLICITUDES",
             "FACTURACION": "FACTURAS",
         }
         for module, folder in expected_folders.items():
@@ -55,6 +59,104 @@ class GraphDocumentPathTests(unittest.TestCase):
                     expedient_code=f"{module}-9",
                 )
                 self.assertIn(f"/{folder}/", path)
+
+    def test_reuses_registered_student_root_when_the_name_changes(self) -> None:
+        existing_root = (
+            "EXPEDIENTES ESTUDIANTILES/"
+            "NOMBRE REGISTRADO ORIGINAL - 1724036536"
+        )
+
+        path = build_expedient_folder_path(
+            module_code="BECAS",
+            identification="1724036536",
+            student_code=123,
+            student_name="NOMBRE ACTUALIZADO",
+            origin_id="123-1060",
+            expedient_code="BECA-1060",
+            student_root_path=existing_root,
+        )
+
+        self.assertEqual(
+            path,
+            f"{existing_root}/BECAS/CASO 123-1060 - BECA-1060",
+        )
+        self.assertNotIn("NOMBRE ACTUALIZADO", path)
+
+    def test_student_root_requires_the_same_identification(self) -> None:
+        path = (
+            "EXPEDIENTES ESTUDIANTILES/ESTUDIANTE PRUEBA - 0102030405/"
+            "BECAS/CASO 1 - BECA-1"
+        )
+
+        self.assertEqual(
+            _student_root_from_folder_path(path, "0102030405"),
+            "EXPEDIENTES ESTUDIANTILES/ESTUDIANTE PRUEBA - 0102030405",
+        )
+        self.assertEqual(_student_root_from_folder_path(path, "9999999999"), "")
+        self.assertEqual(
+            _student_root_from_folder_path(
+                "OTRA RAIZ/ESTUDIANTE - 0102030405",
+                "0102030405",
+            ),
+            "",
+        )
+
+    def test_finds_registered_root_by_identification(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            (
+                "EXPEDIENTES ESTUDIANTILES/ESTUDIANTE ANTERIOR - 0102030405/"
+                "IDIOMAS/CASO 1 - INGLES",
+            )
+        ]
+
+        result = _find_registered_student_root_path(cursor, "010-203-0405")
+
+        self.assertEqual(
+            result,
+            "EXPEDIENTES ESTUDIANTILES/ESTUDIANTE ANTERIOR - 0102030405",
+        )
+        self.assertEqual(cursor.execute.call_args.args[-1], "0102030405")
+
+    @patch(
+        "app.services.graph_documents._auth_headers",
+        return_value={"Authorization": "Bearer test"},
+    )
+    @patch(
+        "app.services.graph_documents._item_path_url",
+        return_value="https://graph.example/root",
+    )
+    @patch("app.services.graph_documents.httpx.Client")
+    def test_recovers_unlinked_student_root_from_onedrive(
+        self,
+        client_factory: MagicMock,
+        _item_path: MagicMock,
+        _headers: MagicMock,
+    ) -> None:
+        client = client_factory.return_value.__enter__.return_value
+        response = client.get.return_value
+        response.status_code = 200
+        response.json.return_value = {
+            "value": [
+                {
+                    "id": "folder-1",
+                    "name": "NOMBRE HISTÓRICO - 0102030405",
+                    "folder": {"childCount": 2},
+                    "parentReference": {
+                        "path": "/drive/root:/EXPEDIENTES%20ESTUDIANTILES"
+                    },
+                    "createdDateTime": "2026-01-01T00:00:00Z",
+                }
+            ]
+        }
+
+        result = _find_graph_student_root("0102030405")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result["path"],
+            "EXPEDIENTES ESTUDIANTILES/NOMBRE HISTÓRICO - 0102030405",
+        )
 
     def test_folder_sanitization_preserves_names_and_removes_graph_separators(self) -> None:
         self.assertEqual(

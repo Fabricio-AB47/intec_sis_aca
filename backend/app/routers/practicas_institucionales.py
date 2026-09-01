@@ -17,7 +17,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.security import SessionUser, require_roles
-from app.services.db import get_connection, get_practices_connection
+from app.services.db import get_connection, get_practices_connection, get_titulation_connection
 
 router = APIRouter(prefix="/api/practicas", tags=["practicas-institucionales"])
 
@@ -27,7 +27,15 @@ _MAX_UPLOAD_SIZE = 12 * 1024 * 1024
 
 _ADMIN_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE", "SECRETARIA")
 _STUDENT_ACCESS = require_roles("ESTUDIANTE", "ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE")
-_RESPONSIBLE_ACCESS = require_roles("DOCENTE", "ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE")
+_RESPONSIBLE_ACCESS = require_roles(
+    "DOCENTE",
+    "ADMINISTRADOR",
+    "ACADEMICO",
+    "RECTOR",
+    "VICERRECTOR",
+    "SOPORTE",
+    "SECRETARIA",
+)
 _ALL_ACCESS = require_roles(
     "ADMINISTRADOR",
     "ACADEMICO",
@@ -43,6 +51,31 @@ PROCESS_LABELS = {
     "PPF": "Prácticas preprofesionales",
     "VIN": "Vinculación con la sociedad",
 }
+
+_PROCESS_REQUIREMENTS = {
+    "PPF": {
+        "hours": 240.0,
+        "documents": (
+            "CARTA_COMPROMISO",
+            "REGISTRO_ASISTENCIA",
+            "REGISTRO_ACTIVIDADES",
+            "EVALUACION_CUALITATIVA",
+            "CEDULA_ESTUDIANTE",
+        ),
+    },
+    "VIN": {
+        "hours": 60.0,
+        "documents": (
+            "ANEXO_1_GUION",
+            "ANEXO_2_CESION_DERECHOS",
+            "VIDEO_VINCULACION",
+            "EVIDENCIA_VINCULACION",
+        ),
+    },
+}
+
+_COMPLETION_STATES = {"APROBADO", "VALIDADO", "FINALIZADO", "CERRADO"}
+_ADMIN_ROLES = {"ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE", "SECRETARIA"}
 
 
 class CreateExpedientePayload(BaseModel):
@@ -83,6 +116,14 @@ class AutorizacionPracticaPayload(BaseModel):
     tipo_proceso_codigo: str = Field(pattern="^(PPF|VIN)$")
     codigo_estud: int
     codigo_periodo: str = Field(min_length=1, max_length=50)
+
+
+class ExpedienteReviewPayload(BaseModel):
+    tipo_proceso_codigo: str = Field(pattern="^(PPF|VIN)$")
+    decision: str = Field(pattern="^(APROBAR|OBSERVAR|RECHAZAR)$")
+    horas_verificadas: float = Field(ge=0, le=10000)
+    documentos_corroborados: bool = False
+    observacion: str | None = Field(default=None, max_length=1000)
 
 
 def _clean(value: Any) -> str:
@@ -247,6 +288,144 @@ def _process_code(value: str) -> str:
     return code
 
 
+def _process_requirements(process_code: str) -> dict[str, Any]:
+    process = _process_code(process_code)
+    return _PROCESS_REQUIREMENTS[process]
+
+
+def _required_hours(process_code: str) -> float:
+    return float(_process_requirements(process_code)["hours"])
+
+
+def _required_document_codes(process_code: str) -> tuple[str, ...]:
+    return tuple(_process_requirements(process_code)["documents"])
+
+
+def _catalog_state_id(cursor: pyodbc.Cursor, table_name: str, id_column: str, code: str) -> int:
+    if table_name not in {"cat.estado_expediente", "cat.estado_documento"}:
+        raise RuntimeError("Catálogo de estado no permitido.")
+    if id_column not in {"estado_expediente_id", "estado_documento_id"}:
+        raise RuntimeError("Identificador de estado no permitido.")
+    cursor.execute(
+        f"SELECT {id_column} FROM {table_name} WHERE codigo = ?",
+        code,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=500, detail=f"No existe el estado requerido {code}.")
+    return int(row[0])
+
+
+def _required_documents_status(
+    cursor: pyodbc.Cursor,
+    expediente_id: int,
+    process_code: str,
+) -> list[dict[str, Any]]:
+    required_codes = _required_document_codes(process_code)
+    placeholders = ",".join("?" for _ in required_codes)
+    cursor.execute(
+        f"""
+        SELECT
+            td.tipo_documento_id AS TipoDocumentoId,
+            td.codigo AS Codigo,
+            td.nombre AS Nombre,
+            latest.documento_id AS DocumentoId,
+            latest.nombre_archivo AS NombreArchivo,
+            latest.ruta_archivo AS RutaArchivo,
+            latest.url_archivo AS UrlArchivo,
+            latest.validado AS Validado,
+            latest.fecha_validacion AS FechaValidacion,
+            latest.estado_codigo AS EstadoCodigo,
+            latest.estado_nombre AS EstadoNombre
+        FROM cat.tipo_documento_practica td
+        OUTER APPLY (
+            SELECT TOP (1)
+                dp.documento_id,
+                dp.nombre_archivo,
+                dp.ruta_archivo,
+                dp.url_archivo,
+                dp.validado,
+                dp.fecha_validacion,
+                ed.codigo AS estado_codigo,
+                ed.nombre AS estado_nombre
+            FROM pp.documento_practica dp
+            INNER JOIN cat.estado_documento ed
+                ON ed.estado_documento_id = dp.estado_documento_id
+            WHERE dp.expediente_id = ?
+              AND dp.tipo_documento_id = td.tipo_documento_id
+              AND ed.codigo <> 'ANULADO'
+            ORDER BY dp.fecha_registro DESC, dp.documento_id DESC
+        ) latest
+        WHERE td.codigo IN ({placeholders})
+          AND td.activo = 1
+        ORDER BY td.orden, td.tipo_documento_id
+        """,
+        expediente_id,
+        *required_codes,
+    )
+    documents = _fetch_all(cursor)
+    by_code = {_clean(item.get("Codigo")).upper(): item for item in documents}
+    # Mantiene el orden funcional aunque un catálogo obligatorio haya sido desactivado por error.
+    result: list[dict[str, Any]] = []
+    for code in required_codes:
+        item = by_code.get(code, {"Codigo": code, "Nombre": code.replace("_", " ").title()})
+        state = _clean(item.get("EstadoCodigo")).upper()
+        item["Cargado"] = bool(item.get("DocumentoId")) and state not in {"RECHAZADO", "ANULADO"}
+        item["Validado"] = bool(item.get("Validado")) and state == "VALIDADO"
+        result.append(item)
+    return result
+
+
+def _responsible_assignment(
+    cursor: pyodbc.Cursor,
+    expediente_id: int,
+    current_user: SessionUser,
+    *,
+    require_approval: bool,
+) -> dict[str, Any]:
+    params: list[Any] = [expediente_id]
+    identity_filters: list[str] = []
+    if current_user.rol not in _ADMIN_ROLES:
+        if current_user.cedula:
+            identity_filters.append("LTRIM(RTRIM(rp.cedula_ruc)) = ?")
+            params.append(_clean(current_user.cedula))
+        for email in {_clean(current_user.email).lower(), _clean(current_user.login).lower()} - {""}:
+            identity_filters.append("LOWER(LTRIM(RTRIM(rp.correo))) = ?")
+            params.append(email)
+        if current_user.codigo_doc is not None:
+            identity_filters.append("TRY_CONVERT(bigint, rp.codigo_referencia) = ?")
+            params.append(int(current_user.codigo_doc))
+        if not identity_filters:
+            raise HTTPException(status_code=403, detail="La sesión docente no tiene una identidad verificable.")
+
+    permission_filter = "rp.puede_aprobar = 1" if require_approval else "rp.puede_validar_documentos = 1"
+    identity_sql = "" if current_user.rol in _ADMIN_ROLES else f"AND ({' OR '.join(identity_filters)})"
+    cursor.execute(
+        f"""
+        SELECT TOP (1)
+            rp.responsable_proceso_id AS ResponsableProcesoId,
+            rp.nombres AS NombreResponsable,
+            rp.correo AS CorreoResponsable,
+            rp.puede_validar_documentos AS PuedeValidarDocumentos,
+            rp.puede_aprobar AS PuedeAprobar
+        FROM pp.responsable_proceso rp
+        WHERE rp.expediente_id = ?
+          AND rp.activo = 1
+          AND {permission_filter}
+          {identity_sql}
+        ORDER BY rp.principal DESC, rp.responsable_proceso_id DESC
+        """,
+        *params,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=403,
+            detail="El expediente no está asignado a este docente o no tiene permiso para revisarlo.",
+        )
+    return _row_dict(cursor, row)
+
+
 def _student_code(current_user: SessionUser, requested_code: int | None = None) -> int:
     if current_user.rol == "ESTUDIANTE":
         if current_user.codigo_estud is None:
@@ -323,15 +502,306 @@ def _fetch_legacy_expediente(cursor: pyodbc.Cursor, expediente_id: int) -> Any:
             e.periodo_snapshot,
             e.semestre,
             e.semestre_numero,
+            e.horas_requeridas,
+            e.horas_reconocidas,
+            e.horas_asistencia_validadas,
+            e.fecha_inicio,
+            e.fecha_fin,
+            e.estado_expediente_id,
+            ee.codigo AS estado_expediente_codigo,
+            ee.nombre AS estado_expediente,
             tp.codigo AS tipo_proceso_codigo,
             tp.nombre AS tipo_proceso
         FROM pp.expediente_practica e
         INNER JOIN cat.tipo_proceso tp ON tp.tipo_proceso_id = e.tipo_proceso_id
+        INNER JOIN cat.estado_expediente ee ON ee.estado_expediente_id = e.estado_expediente_id
         WHERE e.expediente_id = ?
         """,
         expediente_id,
     )
     return cursor.fetchone()
+
+
+def _normalized_document(value: Any) -> str:
+    return "".join(char for char in _clean(value).upper() if char.isalnum())
+
+
+def _review_validation_errors(
+    decision: str,
+    hours: float,
+    required_hours: float,
+    documents: list[dict[str, Any]],
+    documents_corroborated: bool,
+    observation: str | None,
+) -> list[str]:
+    normalized_decision = _clean(decision).upper()
+    errors: list[str] = []
+    if normalized_decision in {"OBSERVAR", "RECHAZAR"} and not _clean(observation):
+        errors.append("Debe registrar el motivo de la decisión.")
+    if normalized_decision != "APROBAR":
+        return errors
+
+    missing = [_clean(item.get("Nombre") or item.get("Codigo")) for item in documents if not item.get("Cargado")]
+    if missing:
+        errors.append(f"Faltan documentos obligatorios: {', '.join(missing)}.")
+    if hours < required_hours:
+        errors.append(f"Las horas verificadas deben ser al menos {required_hours:g}.")
+    if not documents_corroborated:
+        errors.append("Debe corroborar expresamente los documentos antes de aprobar.")
+    return errors
+
+
+def _legacy_review_detail(
+    cursor: pyodbc.Cursor,
+    expediente_id: int,
+    current_user: SessionUser,
+) -> dict[str, Any]:
+    row = _fetch_legacy_expediente(cursor, expediente_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No existe el expediente solicitado.")
+    expediente = _row_dict(cursor, row)
+    process_code = _process_code(expediente.get("tipo_proceso_codigo"))
+    assignment = _responsible_assignment(cursor, expediente_id, current_user, require_approval=False)
+    documents = _required_documents_status(cursor, expediente_id, process_code)
+    required_hours = _required_hours(process_code)
+    recognized_hours = float(expediente.get("horas_reconocidas") or 0)
+
+    cursor.execute(
+        """
+        SELECT TOP (1)
+            revision_id AS RevisionId,
+            fecha_revision AS FechaRevision,
+            revisor_usuario AS RevisorUsuario,
+            resultado AS Resultado,
+            observacion AS Observacion,
+            accion_requerida AS AccionRequerida
+        FROM pp.revision_documental_practica
+        WHERE expediente_id = ?
+          AND documento_id IS NULL
+        ORDER BY fecha_revision DESC, revision_id DESC
+        """,
+        expediente_id,
+    )
+    latest_review_row = cursor.fetchone()
+    latest_review = _row_dict(cursor, latest_review_row) if latest_review_row else None
+    missing = [item["Codigo"] for item in documents if not item.get("Cargado")]
+    all_loaded = not missing
+    can_approve = bool(assignment.get("PuedeAprobar"))
+    return {
+        "ExpedienteId": int(expediente["expediente_id"]),
+        "CodigoExpediente": expediente.get("codigo_expediente"),
+        "CodigoEstud": expediente.get("codigo_estud"),
+        "Cedula_Est": expediente.get("cedula_est"),
+        "Apellidos_nombre": expediente.get("estudiante_snapshot"),
+        "CodigoCarrera": expediente.get("cod_anio_basica"),
+        "Carrera": expediente.get("carrera_snapshot"),
+        "CodigoPeriodo": expediente.get("codigo_periodo"),
+        "Periodo": expediente.get("periodo_snapshot"),
+        "TipoProcesoCodigo": process_code,
+        "TipoProceso": expediente.get("tipo_proceso"),
+        "EstadoCodigo": expediente.get("estado_expediente_codigo"),
+        "EstadoExpediente": expediente.get("estado_expediente"),
+        "HorasRequeridas": required_hours,
+        "HorasReconocidas": recognized_hours,
+        "HorasAsistenciaValidadas": float(expediente.get("horas_asistencia_validadas") or 0),
+        "DocumentosDetalle": documents,
+        "DocumentosFaltantes": missing,
+        "DocumentosCompletos": all_loaded,
+        "ListoParaAprobar": all_loaded and recognized_hours >= required_hours,
+        "PuedeAprobar": can_approve,
+        "Responsable": assignment,
+        "UltimaRevision": latest_review,
+    }
+
+
+def _sync_titulacion_completion(expediente_id: int, process_code: str, usuario: str) -> dict[str, Any]:
+    """Refleja una aprobación ya confirmada sin crear expedientes de titulación ambiguos."""
+    with get_practices_connection() as practices_conn:
+        practices_cursor = practices_conn.cursor()
+        row = _fetch_legacy_expediente(practices_cursor, expediente_id)
+        if not row:
+            return {"sincronizado": False, "motivo": "Expediente de prácticas no encontrado."}
+        source = _row_dict(practices_cursor, row)
+        documents = _required_documents_status(practices_cursor, expediente_id, process_code)
+
+    state = _clean(source.get("estado_expediente_codigo")).upper()
+    required_hours = _required_hours(process_code)
+    recognized_hours = float(source.get("horas_reconocidas") or 0)
+    documents_complete = all(item.get("Validado") for item in documents)
+    completed = state in _COMPLETION_STATES and recognized_hours >= required_hours and documents_complete
+    if not completed:
+        return {"sincronizado": False, "motivo": "El expediente aún no cumple todos los requisitos aprobados."}
+
+    document = _normalized_document(source.get("cedula_est"))
+    career = _clean(source.get("cod_anio_basica"))
+    if not document:
+        return {"sincronizado": False, "motivo": "El expediente no tiene identificación estudiantil válida."}
+
+    with get_titulation_connection() as titulation_conn:
+        cursor = titulation_conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                E.ExpedienteId,
+                CONVERT(nvarchar(50), E.CodAnioBasica) AS CodAnioBasica
+            FROM tit.ExpedienteTitulacion E
+            INNER JOIN core.EstudianteRef ER ON ER.EstudianteRefId = E.EstudianteRefId
+            WHERE UPPER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), ER.NumeroIdentificacion))), '-', ''), ' ', ''), '.', '')) = ?
+            ORDER BY E.ExpedienteId DESC
+            """,
+            document,
+        )
+        candidates = _fetch_all(cursor)
+        exact = [item for item in candidates if _clean(item.get("CodAnioBasica")) == career]
+        targets = exact or (candidates if len(candidates) == 1 else [])
+        if not targets:
+            return {
+                "sincronizado": False,
+                "pendiente": True,
+                "motivo": "La aprobación quedó registrada; se enlazará cuando exista un expediente de titulación inequívoco.",
+            }
+
+        for target in targets:
+            titulation_id = int(target["ExpedienteId"])
+            cursor.execute(
+                """
+                UPDATE vinc.EnlaceExpedientePracticas
+                SET Activo = 0,
+                    FechaSincronizacion = SYSDATETIME()
+                WHERE ExpedienteId = ?
+                  AND TipoProcesoCodigo = ?
+                """,
+                titulation_id,
+                process_code,
+            )
+            cursor.execute(
+                """
+                SELECT TOP (1) EnlaceId
+                FROM vinc.EnlaceExpedientePracticas
+                WHERE ExpedienteId = ?
+                  AND TipoProcesoCodigo = ?
+                  AND ExpedientePracticasId = ?
+                ORDER BY EnlaceId DESC
+                """,
+                titulation_id,
+                process_code,
+                expediente_id,
+            )
+            link = cursor.fetchone()
+            link_values = (
+                source.get("codigo_expediente"),
+                source.get("codigo_estud"),
+                career or None,
+                _clean(source.get("codigo_periodo")) or None,
+                state,
+                recognized_hours,
+                required_hours,
+                source.get("fecha_inicio"),
+                source.get("fecha_fin"),
+                usuario,
+                f"Aprobación docente del expediente {source.get('codigo_expediente') or expediente_id}.",
+            )
+            if link:
+                cursor.execute(
+                    """
+                    UPDATE vinc.EnlaceExpedientePracticas
+                    SET CodigoExpedientePracticas = ?, CodigoEstud = ?, CodigoCarrera = ?, CodigoPeriodo = ?,
+                        EstadoPracticasCodigo = ?, TotalHorasReconocidas = ?, HorasMinimasRequeridas = ?,
+                        CumpleHoras = 1, DocumentosCompletos = 1, ExpedienteCerrado = 1, Reconocido = 1,
+                        FechaInicioProceso = ?, FechaFinProceso = ?, Fuente = 'INTEC_PRACTICAS_PREPROFESIONALES',
+                        FechaReconocimiento = SYSDATETIME(), UsuarioReconocimiento = ?, Observacion = ?,
+                        Activo = 1, FechaSincronizacion = SYSDATETIME()
+                    WHERE EnlaceId = ?
+                    """,
+                    *link_values,
+                    int(link.EnlaceId),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO vinc.EnlaceExpedientePracticas (
+                        ExpedienteId, TipoProcesoCodigo, ExpedientePracticasId, CodigoExpedientePracticas,
+                        CodigoEstud, CodigoCarrera, CodigoPeriodo, EstadoPracticasCodigo,
+                        TotalHorasReconocidas, HorasMinimasRequeridas, CumpleHoras, DocumentosCompletos,
+                        ExpedienteCerrado, Reconocido, FechaInicioProceso, FechaFinProceso, Fuente,
+                        FechaReconocimiento, UsuarioReconocimiento, Observacion, Activo, FechaSincronizacion
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?, ?,
+                              'INTEC_PRACTICAS_PREPROFESIONALES', SYSDATETIME(), ?, ?, 1, SYSDATETIME())
+                    """,
+                    titulation_id,
+                    process_code,
+                    expediente_id,
+                    *link_values,
+                )
+
+            cursor.execute(
+                "SELECT CumplimientoId FROM vinc.CumplimientoPracticasVinculacion WHERE ExpedienteId = ?",
+                titulation_id,
+            )
+            fulfillment = cursor.fetchone()
+            if fulfillment:
+                if process_code == "PPF":
+                    cursor.execute(
+                        """
+                        UPDATE vinc.CumplimientoPracticasVinculacion
+                        SET TotalHorasPracticasPreprofesionales = ?, TienePracticasPreprofesionales = 1,
+                            CumplePracticasPreprofesionales = 1, UltimaFechaPracticas = COALESCE(?, CONVERT(date, SYSDATETIME())),
+                            FuenteSincronizacion = 'APROBACION_DOCENTE', Observacion = ?, FechaSincronizacion = SYSDATETIME()
+                        WHERE ExpedienteId = ?
+                        """,
+                        recognized_hours,
+                        source.get("fecha_fin"),
+                        link_values[-1],
+                        titulation_id,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE vinc.CumplimientoPracticasVinculacion
+                        SET TotalHorasVinculacion = ?, TieneVinculacion = 1, CumpleVinculacion = 1,
+                            UltimaFechaVinculacion = COALESCE(?, CONVERT(date, SYSDATETIME())),
+                            FuenteSincronizacion = 'APROBACION_DOCENTE', Observacion = ?, FechaSincronizacion = SYSDATETIME()
+                        WHERE ExpedienteId = ?
+                        """,
+                        recognized_hours,
+                        source.get("fecha_fin"),
+                        link_values[-1],
+                        titulation_id,
+                    )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO vinc.CumplimientoPracticasVinculacion (
+                        ExpedienteId, TotalHorasPracticasPreprofesionales, TotalHorasVinculacion,
+                        TienePracticasPreprofesionales, TieneVinculacion,
+                        CumplePracticasPreprofesionales, CumpleVinculacion,
+                        UltimaFechaPracticas, UltimaFechaVinculacion,
+                        FuenteSincronizacion, Observacion, FechaSincronizacion
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'APROBACION_DOCENTE', ?, SYSDATETIME())
+                    """,
+                    titulation_id,
+                    recognized_hours if process_code == "PPF" else 0,
+                    recognized_hours if process_code == "VIN" else 0,
+                    1 if process_code == "PPF" else 0,
+                    1 if process_code == "VIN" else 0,
+                    1 if process_code == "PPF" else 0,
+                    1 if process_code == "VIN" else 0,
+                    source.get("fecha_fin") if process_code == "PPF" else None,
+                    source.get("fecha_fin") if process_code == "VIN" else None,
+                    link_values[-1],
+                )
+            flag = "PracticasPreprofesionalesCumple" if process_code == "PPF" else "VinculacionCumple"
+            cursor.execute(
+                f"""
+                UPDATE tit.ExpedienteTitulacion
+                SET {flag} = 1, FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ?
+                WHERE ExpedienteId = ?
+                """,
+                usuario,
+                titulation_id,
+            )
+        titulation_conn.commit()
+    return {"sincronizado": True, "expedientes_titulacion": len(targets)}
 
 
 def _register_responsable_for_expediente(
@@ -480,10 +950,11 @@ def _ensure_expediente_for_source(
             codigo_expediente, codigo_estud, cedula_est, cod_anio_basica, codigo_periodo,
             codigo_periodo_origen, estudiante_snapshot, carrera_snapshot, periodo_snapshot,
             periodo_origen_snapshot, estado_expediente_id,
-            tipo_proceso_id, semestre, semestre_numero, observacion, usuario_registro
+            tipo_proceso_id, semestre, semestre_numero, horas_requeridas,
+            observacion, usuario_registro
         )
         OUTPUT INSERTED.expediente_id AS ExpedienteId
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         code,
         int(source.codigo_estud),
@@ -499,6 +970,7 @@ def _ensure_expediente_for_source(
         tipo_proceso_id,
         str(source.semestre_numero or ""),
         int(source.semestre_numero or 3),
+        _required_hours(process_code),
         observacion,
         usuario,
     )
@@ -880,10 +1352,11 @@ def create_student_expediente(
                     INSERT INTO pp.expediente_practica (
                         codigo_expediente, codigo_estud, cedula_est, cod_anio_basica, codigo_periodo,
                         estudiante_snapshot, carrera_snapshot, periodo_snapshot, estado_expediente_id,
-                        tipo_proceso_id, semestre, semestre_numero, observacion, usuario_registro
+                        tipo_proceso_id, semestre, semestre_numero, horas_requeridas,
+                        observacion, usuario_registro
                     )
                     OUTPUT INSERTED.expediente_id AS ExpedienteId, INSERTED.codigo_expediente AS CodigoExpediente
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     code,
                     int(source.codigo_estud),
@@ -897,6 +1370,7 @@ def create_student_expediente(
                     tipo_proceso_id,
                     str(source.semestre_numero or ""),
                     int(source.semestre_numero or 3),
+                    _required_hours(process_code),
                     payload.observacion,
                     current_user.login,
                 )
@@ -1759,37 +2233,24 @@ def responsable_progress(
     tipo_proceso: str = Query(default="PPF", max_length=10),
 ) -> dict[str, Any]:
     process = _process_code(tipo_proceso)
-    is_admin = current_user.rol in {"ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE"}
+    is_admin = current_user.rol in _ADMIN_ROLES
     try:
         with get_practices_connection() as conn:
             cursor = conn.cursor()
             if not _use_legacy_schema(cursor):
                 return {"summary": {}, "items": []}
 
-            cursor.execute(
-                """
-                SELECT COUNT(*) AS total_requeridos
-                FROM cat.tipo_documento_practica td
-                WHERE td.activo = 1
-                  AND (
-                        (? = 'PPF' AND td.aplica_practicas = 1 AND td.obligatorio_practicas = 1)
-                     OR (? = 'VIN' AND td.aplica_vinculacion = 1 AND td.obligatorio_vinculacion = 1)
-                  )
-                """,
-                process,
-                process,
-            )
-            required_count = int((cursor.fetchone() or [0])[0] or 0)
+            required_count = len(_required_document_codes(process))
 
             params: list[Any] = [process]
             user_filters: list[str] = []
             if not is_admin:
                 if current_user.cedula:
-                    user_filters.append("rp.cedula_ruc = ?")
-                    params.append(current_user.cedula)
-                if current_user.email:
-                    user_filters.append("rp.correo = ?")
-                    params.append(current_user.email)
+                    user_filters.append("LTRIM(RTRIM(rp.cedula_ruc)) = ?")
+                    params.append(_clean(current_user.cedula))
+                for email in {_clean(current_user.email).lower(), _clean(current_user.login).lower()} - {""}:
+                    user_filters.append("LOWER(LTRIM(RTRIM(rp.correo))) = ?")
+                    params.append(email)
                 if current_user.codigo_doc is not None:
                     user_filters.append("TRY_CONVERT(varchar(50), rp.codigo_referencia) = ?")
                     params.append(str(current_user.codigo_doc))
@@ -1819,18 +2280,19 @@ def responsable_progress(
                     v.codigo_periodo AS CodigoPeriodo,
                     v.periodo_snapshot AS Periodo,
                     v.estado_expediente AS EstadoExpediente,
+                    ee.codigo AS EstadoCodigo,
                     v.responsable_principal AS NombreResponsable,
-                    ISNULL(v.total_documentos, 0) AS TotalDocumentos,
                     ISNULL(v.documentos_firmados, 0) AS DocumentosFirmados,
-                    ISNULL(v.documentos_validados, 0) AS DocumentosValidados,
-                    CASE
-                        WHEN ? > ISNULL(v.documentos_validados, 0)
-                        THEN ? - ISNULL(v.documentos_validados, 0)
-                        ELSE 0
-                    END AS DocumentosPendientes,
+                    e.horas_requeridas AS HorasRequeridas,
+                    e.horas_reconocidas AS HorasReconocidas,
+                    e.horas_asistencia_validadas AS HorasAsistenciaValidadas,
+                    rp.puede_validar_documentos AS PuedeValidarDocumentos,
+                    rp.puede_aprobar AS PuedeAprobar,
                     carta.estado_nombre AS CartaCompromisoEstado,
                     certificado.estado_nombre AS CertificadoEstado
                 FROM pp.vw_admin_expedientes_control v
+                INNER JOIN pp.expediente_practica e ON e.expediente_id = v.expediente_id
+                INNER JOIN cat.estado_expediente ee ON ee.estado_expediente_id = e.estado_expediente_id
                 INNER JOIN pp.responsable_proceso rp ON rp.responsable_proceso_id = v.responsable_proceso_id
                 {_latest_carta_select("v")}
                 {_latest_certificado_select("v")}
@@ -1839,16 +2301,22 @@ def responsable_progress(
                   {where_user}
                 ORDER BY v.periodo_snapshot DESC, v.estudiante_snapshot
                 """,
-                required_count,
-                required_count,
                 *params,
             )
             items = _fetch_all(cursor)
-
-        for item in items:
-            validados = int(item.get("DocumentosValidados") or 0)
-            item["DocumentosRequeridos"] = required_count
-            item["Avance"] = round((validados / max(required_count, 1)) * 100, 2)
+            for item in items:
+                documents = _required_documents_status(cursor, int(item["ExpedienteId"]), process)
+                loaded = sum(1 for document in documents if document.get("Cargado"))
+                validated = sum(1 for document in documents if document.get("Validado"))
+                recognized_hours = float(item.get("HorasReconocidas") or 0)
+                required_hours = _required_hours(process)
+                item["TotalDocumentos"] = loaded
+                item["DocumentosValidados"] = validated
+                item["DocumentosPendientes"] = max(required_count - loaded, 0)
+                item["DocumentosRequeridos"] = required_count
+                item["DocumentosDetalle"] = documents
+                item["ListoParaAprobar"] = loaded == required_count and recognized_hours >= required_hours
+                item["Avance"] = round((validated / max(required_count, 1)) * 100, 2)
 
         total_required = required_count * len(items)
         total_validated = sum(int(item.get("DocumentosValidados") or 0) for item in items)
@@ -1866,6 +2334,241 @@ def responsable_progress(
         return {"summary": summary, "items": items}
     except (pyodbc.Error, RuntimeError) as exc:
         raise _db_error(exc, "No se pudo consultar el avance del responsable") from exc
+
+
+@router.get("/responsable/expedientes/{expediente_id}")
+def responsable_expediente_detail(
+    expediente_id: int,
+    current_user: Annotated[SessionUser, Depends(_RESPONSIBLE_ACCESS)],
+) -> dict[str, Any]:
+    try:
+        with get_practices_connection() as conn:
+            cursor = conn.cursor()
+            if not _use_legacy_schema(cursor):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La revisión docente está disponible para la estructura vigente de prácticas.",
+                )
+            return _legacy_review_detail(cursor, expediente_id, current_user)
+    except HTTPException:
+        raise
+    except (pyodbc.Error, RuntimeError) as exc:
+        raise _db_error(exc, "No se pudo consultar el expediente para revisión") from exc
+
+
+@router.post("/responsable/expedientes/{expediente_id}/revision")
+def review_responsable_expediente(
+    expediente_id: int,
+    payload: ExpedienteReviewPayload,
+    current_user: Annotated[SessionUser, Depends(_RESPONSIBLE_ACCESS)],
+) -> dict[str, Any]:
+    process = _process_code(payload.tipo_proceso_codigo)
+    decision = _clean(payload.decision).upper()
+    observation = _clean(payload.observacion)
+    state_by_decision = {
+        "APROBAR": "APROBADO",
+        "OBSERVAR": "OBSERVADO",
+        "RECHAZAR": "REPROBADO",
+    }
+    review_result = {
+        "APROBAR": "VALIDADO",
+        "OBSERVAR": "OBSERVADO",
+        "RECHAZAR": "RECHAZADO",
+    }
+
+    try:
+        with get_practices_connection() as conn:
+            cursor = conn.cursor()
+            if not _use_legacy_schema(cursor):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La revisión docente está disponible para la estructura vigente de prácticas.",
+                )
+
+            expediente_row = _fetch_legacy_expediente(cursor, expediente_id)
+            if not expediente_row:
+                raise HTTPException(status_code=404, detail="No existe el expediente solicitado.")
+            expediente = _row_dict(cursor, expediente_row)
+            expediente_process = _process_code(expediente.get("tipo_proceso_codigo"))
+            if expediente_process != process:
+                raise HTTPException(status_code=400, detail="El proceso indicado no corresponde al expediente.")
+
+            current_state = _clean(expediente.get("estado_expediente_codigo")).upper()
+            if current_state in {"ANULADO", "CERRADO"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No se puede revisar un expediente con estado {current_state.lower()}.",
+                )
+
+            assignment = _responsible_assignment(
+                cursor,
+                expediente_id,
+                current_user,
+                require_approval=decision in {"APROBAR", "RECHAZAR"},
+            )
+            documents = _required_documents_status(cursor, expediente_id, process)
+            required_hours = _required_hours(process)
+            validation_errors = _review_validation_errors(
+                decision,
+                float(payload.horas_verificadas),
+                required_hours,
+                documents,
+                payload.documentos_corroborados,
+                observation,
+            )
+            if validation_errors:
+                raise HTTPException(status_code=400, detail=" ".join(validation_errors))
+
+            new_state_code = state_by_decision[decision]
+            new_state_id = _catalog_state_id(
+                cursor,
+                "cat.estado_expediente",
+                "estado_expediente_id",
+                new_state_code,
+            )
+
+            if decision == "APROBAR":
+                validated_document_state_id = _catalog_state_id(
+                    cursor,
+                    "cat.estado_documento",
+                    "estado_documento_id",
+                    "VALIDADO",
+                )
+                for document in documents:
+                    document_id = document.get("DocumentoId")
+                    if not document_id:
+                        continue
+                    cursor.execute(
+                        """
+                        UPDATE pp.documento_practica
+                        SET estado_documento_id = ?,
+                            validado = 1,
+                            fecha_validacion = SYSDATETIME(),
+                            usuario_valida = ?,
+                            observacion = COALESCE(NULLIF(?, ''), observacion)
+                        WHERE documento_id = ?
+                        """,
+                        validated_document_state_id,
+                        current_user.login,
+                        observation,
+                        int(document_id),
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO pp.revision_documental_practica (
+                            expediente_id, documento_id, revisor_usuario, resultado,
+                            observacion, accion_requerida
+                        ) VALUES (?, ?, ?, 'VALIDADO', ?, NULL)
+                        """,
+                        expediente_id,
+                        int(document_id),
+                        current_user.login,
+                        observation or "Documento obligatorio corroborado para la aprobación del proceso.",
+                    )
+
+            cursor.execute(
+                """
+                INSERT INTO pp.revision_documental_practica (
+                    expediente_id, documento_id, revisor_usuario, resultado,
+                    observacion, accion_requerida
+                ) VALUES (?, NULL, ?, ?, ?, ?)
+                """,
+                expediente_id,
+                current_user.login,
+                review_result[decision],
+                observation or (
+                    "El responsable corroboró horas y documentos obligatorios."
+                    if decision == "APROBAR"
+                    else None
+                ),
+                observation if decision in {"OBSERVAR", "RECHAZAR"} else None,
+            )
+            cursor.execute(
+                """
+                UPDATE pp.expediente_practica
+                SET horas_requeridas = ?,
+                    horas_reconocidas = ?,
+                    horas_asistencia_validadas = ?,
+                    estado_expediente_id = ?,
+                    fecha_fin = CASE WHEN ? = 'APROBAR' THEN COALESCE(fecha_fin, CONVERT(date, SYSDATETIME())) ELSE fecha_fin END,
+                    observacion = COALESCE(NULLIF(?, ''), observacion),
+                    usuario_modifica = ?,
+                    fecha_modifica = SYSDATETIME()
+                WHERE expediente_id = ?
+                """,
+                required_hours,
+                float(payload.horas_verificadas),
+                float(payload.horas_verificadas),
+                new_state_id,
+                decision,
+                observation,
+                current_user.login,
+                expediente_id,
+            )
+            if int(expediente.get("estado_expediente_id") or 0) != new_state_id:
+                cursor.execute(
+                    """
+                    INSERT INTO pp.historial_estado_expediente (
+                        expediente_id, estado_anterior_id, estado_nuevo_id,
+                        motivo, usuario_registro
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    expediente_id,
+                    expediente.get("estado_expediente_id"),
+                    new_state_id,
+                    observation or f"Decisión docente: {decision.lower()}.",
+                    current_user.login,
+                )
+            conn.commit()
+
+        if decision == "APROBAR":
+            try:
+                titulation_sync = _sync_titulacion_completion(
+                    expediente_id,
+                    process,
+                    current_user.login,
+                )
+            except (pyodbc.Error, RuntimeError):
+                # La aprobación pertenece a la base de prácticas y ya fue confirmada.
+                # Titulación también consulta este cumplimiento como respaldo, por lo
+                # que una indisponibilidad temporal no debe deshacer la decisión docente.
+                titulation_sync = {
+                    "sincronizado": False,
+                    "pendiente": True,
+                    "motivo": (
+                        "La aprobación quedó registrada; la actualización directa en "
+                        "Titulación quedó pendiente y se conciliará desde el expediente aprobado."
+                    ),
+                }
+        else:
+            titulation_sync = {
+                "sincronizado": False,
+                "motivo": "La decisión no habilita el requisito de Titulación.",
+            }
+        return {
+            "ok": True,
+            "message": {
+                "APROBAR": "Expediente aprobado y requisito institucional corroborado.",
+                "OBSERVAR": "Expediente observado; el estudiante debe corregir la documentación indicada.",
+                "RECHAZAR": "Expediente rechazado con la justificación registrada.",
+            }[decision],
+            "decision": decision,
+            "estado": new_state_code,
+            "responsable": assignment,
+            "titulacion": titulation_sync,
+        }
+    except HTTPException:
+        try:
+            conn.rollback()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        raise
+    except (pyodbc.Error, RuntimeError) as exc:
+        try:
+            conn.rollback()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        raise _db_error(exc, "No se pudo registrar la revisión docente") from exc
 
 
 @router.post("/admin/responsables")

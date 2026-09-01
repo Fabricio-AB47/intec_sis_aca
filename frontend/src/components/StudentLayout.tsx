@@ -40,6 +40,7 @@ type StudentLayoutProps = {
   onOpenMatricula: () => void
   onOpenMatriculaAcad: (mode?: AcademicEnrollmentMode) => void
   onOpenMatriculaDocente: () => void
+  onOpenCareerChangeRequests: () => void
   onOpenEstadoDocente: () => void
   onOpenSenescytEstudiantes: () => void
   onOpenActualizarDatosEstudiante: () => void
@@ -138,6 +139,7 @@ const academicPages = new Set<Page>([
   'matricula',
   'matricula-acad',
   'matricula-docente',
+  'solicitudes-cambio-carrera',
   'estado-docente',
   'actualizar-datos-estudiante',
   'actualizar-correo-intec',
@@ -197,7 +199,7 @@ const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
 const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
+const secretaryPages = new Set<Page>(['solicitudes-cambio-carrera', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -376,8 +378,9 @@ function groupIconName(groupKey: string): GroupIconName {
     'actualizacion-estados': 'status',
     'admision-matriculas': 'matricula',
     matriculacion: 'matricula',
+    admisiones: 'admission',
     becas: 'briefcase',
-    'admision-proceso': 'admission',
+    'admision-consultas': 'admission',
     migracion: 'matricula',
     certificados: 'certificate',
     'portal-estudiante': 'student',
@@ -393,6 +396,7 @@ function groupIconName(groupKey: string): GroupIconName {
     calificaciones: 'academic',
     'datos-senecyt': 'report',
     auditoria: 'report',
+    solicitudes: 'academic',
     integraciones: 'integration',
     moodle: 'integration',
     'admision-integraciones': 'integration',
@@ -563,6 +567,7 @@ export function StudentLayout({
   onOpenMatricula,
   onOpenMatriculaAcad,
   onOpenMatriculaDocente,
+  onOpenCareerChangeRequests,
   onOpenEstadoDocente,
   onOpenSenescytEstudiantes,
   onOpenActualizarDatosEstudiante,
@@ -644,53 +649,62 @@ export function StudentLayout({
   const preinscriptionFlowItems: NavItem[] = [
     {
       label: 'Inscripción',
-      description: 'Registrar nuevo aspirante.',
+      description: 'Registrar los datos iniciales de un nuevo aspirante.',
       page: 'preinscripcion',
       preinscriptionStage: 'registro',
-      category: 'Ingreso',
+      category: '1. Inscripción',
       action: () => onOpenPreinscripcion('registro'),
     },
     {
-      label: 'Inscritos',
-      description: 'Buscar y seleccionar estudiantes inscritos.',
+      label: 'Estudiantes inscritos',
+      description: 'Buscar y seleccionar aspirantes registrados para continuar el proceso.',
       page: 'preinscripcion',
       preinscriptionStage: 'inscritos',
-      category: 'Ingreso',
+      category: '1. Inscripción',
       action: () => onOpenPreinscripcion('inscritos'),
     },
     {
-      label: 'Cabecera matrícula',
-      description: 'Generar matrícula en cabecera, pago y convenio.',
-      page: 'preinscripcion',
-      preinscriptionStage: 'cabecera',
-      category: 'Matrícula',
-      action: () => onOpenPreinscripcion('cabecera'),
-    },
-    {
-      label: 'Documentos',
-      description: 'Cargar documentos del estudiante.',
+      label: 'Subida de documentos',
+      description: 'Cargar y validar los documentos requeridos del estudiante.',
       page: 'preinscripcion',
       preinscriptionStage: 'documentos',
-      category: 'Matrícula',
+      category: '2. Documentación',
       action: () => onOpenPreinscripcion('documentos'),
     },
     {
-      label: 'Matricular primer nivel',
-      description: 'Matricular materias del primer nivel.',
-      page: 'preinscripcion',
-      preinscriptionStage: 'materias',
-      category: 'Matrícula',
-      action: () => onOpenPreinscripcion('materias'),
-    },
-    {
-      label: 'Seguimiento',
-      description: 'Contacto, avance y cierre.',
+      label: 'Seguimiento del estudiante',
+      description: 'Registrar contactos, avance, novedades y cierre de la admisión.',
       page: 'preinscripcion',
       preinscriptionStage: 'seguimiento',
-      category: 'Cierre',
+      category: '3. Seguimiento',
       action: () => onOpenPreinscripcion('seguimiento'),
     },
+    {
+      label: 'Preparar primera matrícula',
+      description: 'Generar la cabecera, los valores, el pago y el convenio de matrícula.',
+      page: 'preinscripcion',
+      preinscriptionStage: 'cabecera',
+      category: '4. Primera matrícula',
+      action: () => onOpenPreinscripcion('cabecera'),
+    },
+    {
+      label: 'Primera matrícula',
+      description: 'Matricular las materias habilitadas del primer nivel.',
+      page: 'preinscripcion',
+      preinscriptionStage: 'materias',
+      category: '4. Primera matrícula',
+      action: () => onOpenPreinscripcion('materias'),
+    },
   ]
+  const admissionsMenuGroup: NavGroup = {
+    key: 'admisiones',
+    title: 'Admisiones',
+    summary: 'Inscripción, documentos, seguimiento y primera matrícula',
+    items: preinscriptionFlowItems,
+  }
+  const salesPreinscriptionFlowItems = preinscriptionFlowItems.filter((item) =>
+    item.preinscriptionStage === 'registro' || item.preinscriptionStage === 'documentos',
+  )
   const auditMenuGroup: NavGroup = {
     key: 'auditoria',
     title: 'Auditoría',
@@ -789,6 +803,19 @@ export function StudentLayout({
       },
     ],
   }
+  const requestsMenuGroup: NavGroup = {
+    key: 'solicitudes',
+    title: 'Solicitudes',
+    summary: 'Trámites y decisiones académicas',
+    items: [
+      {
+        label: 'Cambio de carrera',
+        description: 'Comparar equivalencias, adjuntar el respaldo y gestionar el cambio de carrera.',
+        page: 'solicitudes-cambio-carrera',
+        action: onOpenCareerChangeRequests,
+      },
+    ],
+  }
   const scholarshipMenuGroup: NavGroup = {
     key: 'becas',
     title: 'Becas',
@@ -856,25 +883,6 @@ export function StudentLayout({
       },
     ],
   }
-  const salesPreinscriptionFlowItems: NavItem[] = [
-    {
-      label: 'Paso 1: Inscribir',
-      description: 'Registrar al estudiante o seleccionarlo desde inscritos.',
-      page: 'preinscripcion',
-      preinscriptionStage: 'registro',
-      category: 'Proceso regular',
-      action: () => onOpenPreinscripcion('registro'),
-    },
-    {
-      label: 'Paso 2: Matricular y documentar',
-      description: 'Generar cabecera, convenio de pago y subir documentos.',
-      page: 'preinscripcion',
-      preinscriptionStage: 'documentos',
-      category: 'Proceso regular',
-      action: () => onOpenPreinscripcion('documentos'),
-    },
-  ]
-
   const academicLifecycleItems: NavItem[] = [
     {
       label: 'Sistema académico',
@@ -955,9 +963,8 @@ export function StudentLayout({
     {
       key: 'matriculacion',
       title: 'Matrícula',
-      summary: 'Aspirantes, estudiantes, matrícula y pagos',
+      summary: 'Estudiantes, matrícula académica y pagos',
       items: [
-        ...preinscriptionFlowItems,
         {
           label: 'Aspirantes y asesores',
           description: 'Gestión directa de inscripciones.',
@@ -1651,6 +1658,13 @@ export function StudentLayout({
         action: () => onOpenMoodle('status'),
       },
       {
+        label: 'Fechas de evaluaciones',
+        description: 'Editar apertura, entrega y cierre de tareas y cuestionarios.',
+        page: 'moodle',
+        moodleSection: 'evaluation-dates',
+        action: () => onOpenMoodle('evaluation-dates'),
+      },
+      {
         label: 'Recursos por curso',
         description: 'Consultar secciones, actividades, enlaces y archivos de cada curso.',
         page: 'moodle',
@@ -1694,12 +1708,12 @@ export function StudentLayout({
         },
       ],
     },
+    admissionsMenuGroup,
     {
-      key: 'admision-proceso',
-      title: 'Admisiones',
-      summary: 'Inscripción, matrícula y estudiantes',
+      key: 'admision-consultas',
+      title: 'Consultas de admisión',
+      summary: 'Inscripciones, facturación y estudiantes',
       items: [
-        ...salesPreinscriptionFlowItems,
         {
           label: 'Inscripciones registradas',
           description: 'Revisar, buscar y seleccionar estudiantes inscritos.',
@@ -2391,21 +2405,23 @@ export function StudentLayout({
       : normalizedRole === 'ADMISIONES'
         ? admissionsMenuGroups
           : normalizedRole === 'SECRETARIA'
-          ? [updatesMenuGroup, ...secretaryMenuGroups, documentExpedientsMenuGroup]
+          ? [requestsMenuGroup, updatesMenuGroup, ...secretaryMenuGroups, documentExpedientsMenuGroup]
           : academicRoles.has(normalizedRole)
-            ? [updatesMenuGroup, enrollmentMenuGroup, certificateMenuGroup, ...academicMenuGroups, moodleMenuGroup, documentExpedientsMenuGroup]
+            ? [admissionsMenuGroup, requestsMenuGroup, updatesMenuGroup, enrollmentMenuGroup, certificateMenuGroup, ...academicMenuGroups, moodleMenuGroup, documentExpedientsMenuGroup]
             : dashboardOnlyRoles.has(normalizedRole)
               ? executiveMenuGroups
               : normalizedRole === 'FINANCIERO'
                 ? financialMenuGroups
-                : [auditMenuGroup, updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, moodleMenuGroup, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
+                : [admissionsMenuGroup, auditMenuGroup, requestsMenuGroup, updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, moodleMenuGroup, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
 
   const roleScopedMenuGroups = roleMenuGroups
     .filter((group) => isAdministrator || group.key !== 'flujo-academico')
 
   const navigationCatalogGroups = [
+    admissionsMenuGroup,
     auditMenuGroup,
     certificateMenuGroup,
+    requestsMenuGroup,
     ...roleScopedMenuGroups,
     ...adminMenuGroups,
     ...admissionsMenuGroups,
@@ -2433,9 +2449,22 @@ export function StudentLayout({
           }))
           .filter((group) => group.items.length > 0),
       )
-    : buildAssignedMenuGroups([], navigationCatalogGroups, screenAccessPages)
+    : buildAssignedMenuGroups(roleScopedMenuGroups, navigationCatalogGroups, screenAccessPages)
 
   const visibleMenuGroups = sortNavGroups(menuGroups)
+  const requestsMenuVisible = visibleMenuGroups.some((group) => group.key === 'solicitudes')
+
+  useEffect(() => {
+    if (!requestsMenuVisible) return
+
+    setOpenMenuGroups((current) => {
+      if (current.has('solicitudes')) return current
+      const next = new Set(current)
+      next.add('solicitudes')
+      return next
+    })
+  }, [requestsMenuVisible])
+
   const fallbackBrandTitle = titleFromRole(normalizedRole || 'INTEC')
   const brand = roleBrandMap[normalizedRole] ?? {
     initials: initialsFromTitle(fallbackBrandTitle),

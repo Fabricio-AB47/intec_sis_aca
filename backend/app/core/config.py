@@ -140,6 +140,14 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("MOODLE_SECTION_UPDATES_ENABLED"),
     )
+    moodle_evaluation_dates_update_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MOODLE_EVALUATION_DATES_UPDATE_ENABLED"),
+    )
+    moodle_evaluation_dates_function: str = Field(
+        default="local_sisaca_bulk_update_evaluation_dates",
+        validation_alias=AliasChoices("MOODLE_EVALUATION_DATES_FUNCTION"),
+    )
     moodle_timeout_seconds: float = Field(
         default=60,
         gt=0,

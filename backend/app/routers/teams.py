@@ -121,6 +121,7 @@ _GRAPH_TEAM_RETRY_STATUS_CODES = {404, 409, 429, 500, 502, 503, 504}
 _TEAM_CREATION_LOCK = Lock()
 _TEAM_CREATION_IN_PROGRESS: set[str] = set()
 _TEAM_ADDITIONAL_ADMIN_TABLE = "dbo.TEAMS_ADMINISTRADOR_ADICIONAL"
+_TEAM_DISPLAY_NAME_MAX_LENGTH = 256
 _ECUADOR_TIMEZONE_NAME = "America/Guayaquil"
 _ECUADOR_TIMEZONE = timezone(timedelta(hours=-5), name="ECT")
 _GRAPH_TIMEZONE_OFFSETS = {
@@ -148,7 +149,7 @@ class TeamManualEmailEnrollmentRequest(BaseModel):
 
 
 class TeamCreateClassroomRequest(BaseModel):
-    display_name: str
+    display_name: str = Field(min_length=1, max_length=_TEAM_DISPLAY_NAME_MAX_LENGTH)
     courses: list[str]
     teacher_user_ids: list[str]
     visibility: str = "private"
@@ -159,7 +160,7 @@ class MoodleTeamsCourseRequest(BaseModel):
     course_id: int = Field(ge=1)
     refresh: bool = False
     selected_moodle_user_ids: list[int] = Field(default_factory=list)
-    team_display_name: str | None = Field(default=None, max_length=256)
+    team_display_name: str | None = Field(default=None, max_length=_TEAM_DISPLAY_NAME_MAX_LENGTH)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -2041,6 +2042,20 @@ def _team_id_url_value(team_id: str) -> str:
 
 def _normalize_team_display_name(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _validated_team_display_name(value: Any) -> str:
+    display_name = _normalize_team_display_name(
+        "".join(character if character.isprintable() else " " for character in str(value or ""))
+    )
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Debe indicar el nombre del aula")
+    if len(display_name) > _TEAM_DISPLAY_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El nombre del aula admite hasta {_TEAM_DISPLAY_NAME_MAX_LENGTH} caracteres",
+        )
+    return display_name
 
 
 def _reserve_team_creation_slot(display_name: str) -> str:
@@ -4801,6 +4816,29 @@ def _ensure_teachers_are_team_owners(team_id: str, resolved_teachers: list[dict[
 def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> bool:
     table_exists = cursor.execute("SELECT OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'U')").fetchval()
     if table_exists:
+        current_length = cursor.execute(
+            """
+            SELECT c.max_length
+            FROM sys.columns AS c
+            WHERE c.object_id = OBJECT_ID('dbo.TEAMS_ADMINISTRADOR_ADICIONAL')
+              AND c.name = 'team_display_name'
+            """
+        ).fetchval()
+        if current_length is not None and int(current_length) < (_TEAM_DISPLAY_NAME_MAX_LENGTH * 2):
+            can_alter = cursor.execute(
+                "SELECT HAS_PERMS_BY_NAME('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'OBJECT', 'ALTER')"
+            ).fetchval()
+            if int(can_alter or 0) != 1:
+                logger.warning(
+                    "La columna %s.team_display_name admite menos de %s caracteres y no se puede ampliar.",
+                    _TEAM_ADDITIONAL_ADMIN_TABLE,
+                    _TEAM_DISPLAY_NAME_MAX_LENGTH,
+                )
+                return False
+            cursor.execute(
+                f"ALTER TABLE {_TEAM_ADDITIONAL_ADMIN_TABLE} "
+                f"ALTER COLUMN team_display_name nvarchar({_TEAM_DISPLAY_NAME_MAX_LENGTH}) NULL"
+            )
         return True
 
     can_create = cursor.execute("SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE')").fetchval()
@@ -4816,7 +4854,7 @@ def _ensure_team_additional_admin_table(cursor: pyodbc.Cursor) -> bool:
         CREATE TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL(
             id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TEAMS_ADMINISTRADOR_ADICIONAL PRIMARY KEY,
             team_id nvarchar(120) NOT NULL,
-            team_display_name nvarchar(255) NULL,
+            team_display_name nvarchar(256) NULL,
             graph_user_id nvarchar(120) NOT NULL,
             display_name nvarchar(255) NULL,
             mail nvarchar(255) NULL,
@@ -5195,7 +5233,9 @@ def _moodle_course_team_name(
     )
     if not clean_name:
         raise HTTPException(status_code=409, detail="El curso Moodle no tiene un nombre válido para crear el aula")
-    return clean_name[:256]
+    if requested_name is not None:
+        return _validated_team_display_name(clean_name)
+    return clean_name[:_TEAM_DISPLAY_NAME_MAX_LENGTH]
 
 
 def _moodle_team_candidate(user: dict[str, Any], *, role: str) -> dict[str, Any]:
@@ -5642,9 +5682,7 @@ def _execute_moodle_teams_enrollment(preview: dict[str, Any]) -> dict[str, Any]:
 def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -> dict[str, Any]:
     courses = _normalize_items(payload.courses)
     teacher_inputs = _normalize_items(payload.teacher_user_ids)
-
-    if not payload.display_name.strip():
-        raise HTTPException(status_code=400, detail='Debe indicar el nombre del aula')
+    display_name = _validated_team_display_name(payload.display_name)
 
     if not courses:
         raise HTTPException(status_code=400, detail='Debe indicar al menos un curso')
@@ -5678,7 +5716,7 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
     primary_teacher = resolved_teachers[0]
     create_body: dict[str, Any] = {
         "template@odata.bind": "https://graph.microsoft.com/v1.0/teamsTemplates('educationClass')",
-        "displayName": payload.display_name.strip(),
+        "displayName": display_name,
         "description": full_description,
         "members": [
             {
@@ -5689,9 +5727,9 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
         ],
     }
 
-    creation_key = _reserve_team_creation_slot(payload.display_name)
+    creation_key = _reserve_team_creation_slot(display_name)
     try:
-        existing_team = _existing_classroom_team(payload.display_name.strip())
+        existing_team = _existing_classroom_team(display_name)
         team_already_existed = existing_team is not None
         team_details: dict[str, Any] = existing_team or {}
 
@@ -5720,7 +5758,7 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
         owner_results = _ensure_teachers_are_team_owners(team_id, resolved_teachers)
         admin_save_result = _save_team_additional_admins(
             team_id=team_id,
-            team_display_name=payload.display_name.strip(),
+            team_display_name=display_name,
             resolved_teachers=resolved_teachers,
         )
 
@@ -5734,7 +5772,7 @@ def _create_classroom_and_assign_teachers(payload: TeamCreateClassroomRequest) -
             "team_id": team_id,
             "team_already_existed": team_already_existed,
             "created_new": not team_already_existed,
-            "team_display_name": str(team_details.get("displayName") or payload.display_name).strip(),
+            "team_display_name": str(team_details.get("displayName") or display_name).strip(),
             "team_web_url": str(team_details.get("webUrl") or "").strip() or None,
             "team_template": "educationClass",
             "teacher_count": len(resolved_teachers),

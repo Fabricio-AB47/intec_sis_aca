@@ -34,6 +34,8 @@ def moodle_settings(**overrides: object) -> SimpleNamespace:
         "moodle_writes_enabled": True,
         "moodle_user_status_update_enabled": True,
         "moodle_section_updates_enabled": True,
+        "moodle_evaluation_dates_update_enabled": True,
+        "moodle_evaluation_dates_function": "local_sisaca_bulk_update_evaluation_dates",
         "moodle_timeout_seconds": 5,
         "moodle_verify_tls": True,
         "moodle_full_user_scan_enabled": True,
@@ -329,6 +331,63 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
                     30,
                     course_format="topics",
                     name="Unidad actualizada",
+                )
+        finally:
+            await http_client.aclose()
+
+        self.assertFalse(called)
+
+    async def test_evaluation_dates_use_configured_external_function(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"))
+            self.assertEqual(
+                form["wsfunction"],
+                ["local_sisaca_bulk_update_evaluation_dates"],
+            )
+            self.assertEqual(form["courseid"], ["12"])
+            self.assertEqual(form["updates[0][cmid]"], ["45"])
+            self.assertEqual(form["updates[0][modname]"], ["quiz"])
+            self.assertEqual(form["updates[0][instance]"], ["71"])
+            self.assertEqual(form["updates[0][timeopen]"], ["1000"])
+            self.assertEqual(form["updates[0][timeclose]"], ["2000"])
+            return json_response(request, {"updated": 1})
+
+        client, http_client = await self._client(handler)
+        try:
+            result = await client.update_evaluation_dates(
+                12,
+                [
+                    {
+                        "cmid": 45,
+                        "modname": "quiz",
+                        "instance": 71,
+                        "timeopen": 1000,
+                        "timeclose": 2000,
+                    }
+                ],
+            )
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(result, {"updated": 1})
+
+    async def test_evaluation_dates_require_dedicated_flag(self) -> None:
+        called = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return json_response(request, {})
+
+        client, http_client = await self._client(
+            handler,
+            moodle_evaluation_dates_update_enabled=False,
+        )
+        try:
+            with self.assertRaises(MoodleWriteDisabledError):
+                await client.update_evaluation_dates(
+                    12,
+                    [{"cmid": 45, "modname": "quiz", "instance": 71}],
                 )
         finally:
             await http_client.aclose()

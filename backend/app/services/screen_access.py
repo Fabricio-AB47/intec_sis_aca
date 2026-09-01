@@ -92,6 +92,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
         "Asignación individual o masiva de docentes activos por materia, período y estudiantes.",
         "Matrícula",
     ),
+    _screen(
+        "solicitudes-cambio-carrera",
+        "Cambio de carrera",
+        "Solicitud, equivalencias académicas, documento de respaldo y aprobación del cambio de carrera.",
+        "Solicitudes",
+    ),
     _screen("estado-docente", "Estado docente", "Activación, inactivación y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Actualización"),
     _screen(
@@ -180,12 +186,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
 
 
 PREINSCRIPTION_FLOW_CATALOG: tuple[dict[str, str], ...] = (
-    _flow("preinscripcion", "registro", "Inscripción", "Inscripción / Flujo"),
-    _flow("preinscripcion", "inscritos", "Estudiantes inscritos", "Inscripción / Flujo"),
-    _flow("preinscripcion", "cabecera", "Cabecera de matrícula", "Inscripción / Matrícula"),
-    _flow("preinscripcion", "documentos", "Documentos de matrícula", "Inscripción / Matrícula"),
-    _flow("preinscripcion", "materias", "Matricular primer nivel", "Inscripción / Matrícula"),
-    _flow("preinscripcion", "seguimiento", "Seguimiento de inscripción", "Inscripción / Seguimiento"),
+    _flow("preinscripcion", "registro", "Inscripción", "Admisiones"),
+    _flow("preinscripcion", "inscritos", "Estudiantes inscritos", "Admisiones"),
+    _flow("preinscripcion", "documentos", "Subida de documentos", "Admisiones"),
+    _flow("preinscripcion", "seguimiento", "Seguimiento del estudiante", "Admisiones"),
+    _flow("preinscripcion", "cabecera", "Preparar primera matrícula", "Admisiones"),
+    _flow("preinscripcion", "materias", "Primera matrícula", "Admisiones"),
     _flow("preinscripcion", "gestion-becas", "Gestión de becas", "Inscripción / Becas"),
     _flow("preinscripcion", "becas", "Aprobaciones de becas", "Inscripción / Becas"),
     _flow("preinscripcion", "becados", "Listado de becados", "Inscripción / Becas"),
@@ -279,6 +285,12 @@ TITLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
 MOODLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("moodle", "alerts", "Alertas de calificación", "Moodle"),
     _flow("moodle", "courses", "Cursos", "Moodle"),
+    _flow(
+        "moodle",
+        "evaluation-dates",
+        "Fechas de evaluaciones",
+        "Moodle",
+    ),
     _flow("moodle", "resources", "Recursos por curso", "Moodle"),
     _flow("moodle", "grades", "Migración de notas", "Moodle"),
     _flow("moodle", "status", "Estado de la integración", "Moodle"),
@@ -339,7 +351,8 @@ def _combine_pages(*collections: Iterable[str]) -> tuple[str, ...]:
 
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
-    "matricula-docente", "estado-docente", "actualizar-datos-estudiante",
+    "matricula-docente", "solicitudes-cambio-carrera",
+    "estado-docente", "actualizar-datos-estudiante",
     "actualizar-correo-intec",
     "reportes-individuales", "admin-notas-asignatura", "reporteria-integral",
     "gestion-sisacademico", "periodo-academico",
@@ -391,6 +404,13 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
     "SISTEMA_MIGRACION",
 )
 
+# Pantallas independientes incorporadas después de que los perfiles ya fueron
+# configurados. La migración solo actúa sobre filas creadas automáticamente por
+# el catálogo, por lo que una decisión posterior del administrador se conserva.
+_NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "solicitudes-cambio-carrera": ("ACADEMICO", "SECRETARIA"),
+}
+
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "ADMINISTRADOR": ALL_PAGES,
     "ACADEMICO": _combine_pages(
@@ -430,6 +450,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
             "practicas-institucionales", "fecha-grado",
             "senescyt-estudiantes", "titulacion", "titulacion-proceso",
             "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
+            "solicitudes-cambio-carrera",
         ),
         _flow_codes("titulos-registrados"),
     ),
@@ -469,6 +490,7 @@ _SPLIT_SCREEN_MIGRATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "moodle/alerts",
             "moodle/courses",
+            "moodle/evaluation-dates",
             "moodle/resources",
             "moodle/grades",
             "moodle/status",
@@ -749,6 +771,35 @@ def _materialize_role_screen_matrix(cursor: Any) -> None:
     )
 
 
+def _migrate_new_screen_default_assignments(cursor: Any) -> None:
+    """Activa una pantalla nueva sin sobrescribir asignaciones manuales."""
+    for page, roles in _NEW_SCREEN_DEFAULT_ASSIGNMENTS.items():
+        for role in roles:
+            cursor.execute(
+                """
+                MERGE cfg.AccesoPantallaRol AS target
+                USING
+                (
+                    SELECT ? AS RolCodigo, ? AS PantallaCodigo
+                ) AS source
+                   ON target.RolCodigo = source.RolCodigo
+                  AND target.PantallaCodigo = source.PantallaCodigo
+                WHEN MATCHED
+                 AND target.Activo = 0
+                 AND target.UsuarioActualizacion = N'SISTEMA_CATALOGO' THEN
+                    UPDATE SET
+                        target.Activo = 1,
+                        target.FechaActualizacion = SYSDATETIME(),
+                        target.UsuarioActualizacion = N'SISTEMA_SOLICITUDES_V1'
+                WHEN NOT MATCHED THEN
+                    INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
+                    VALUES (source.RolCodigo, source.PantallaCodigo, 1, N'SISTEMA_SOLICITUDES_V1');
+                """,
+                role,
+                page,
+            )
+
+
 def _initialize_role_assignments(cursor: Any) -> None:
     """Materializa una sola vez la configuración inicial de cada perfil."""
     cursor.execute("SELECT DISTINCT RolCodigo FROM cfg.AccesoPantallaRol")
@@ -925,6 +976,7 @@ def _synchronize_screen_catalog(cursor: Any) -> None:
         _migrate_split_screen_assignments(cursor)
         _migrate_flow_screen_assignments(cursor)
         _materialize_role_screen_matrix(cursor)
+    _migrate_new_screen_default_assignments(cursor)
     _deactivate_non_admin_automatic_moodle_assignments(cursor)
     _ensure_mandatory_moodle_alert_assignments(cursor)
     _deactivate_container_assignments(cursor)

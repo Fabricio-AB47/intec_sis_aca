@@ -1639,6 +1639,880 @@
   white-space: nowrap;
 }
 
+/* Programación de fechas para tareas y cuestionarios de Moodle. */
+.moodle-evaluation-dates .moodle-section__heading p {
+  margin: 7px 0 0;
+  color: #46536c;
+}
+
+.moodle-evaluation-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) auto minmax(360px, 1.4fr);
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #f4f9fa;
+}
+
+.moodle-evaluation-toolbar label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-evaluation-toolbar label > span,
+.moodle-evaluation-fields label > span {
+  color: #647087;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-evaluation-toolbar input,
+.moodle-evaluation-toolbar select,
+.moodle-evaluation-fields input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #172541;
+  font: inherit;
+}
+
+.moodle-evaluation-toolbar input:focus,
+.moodle-evaluation-toolbar select:focus,
+.moodle-evaluation-fields input:focus {
+  border-color: #13808a;
+  outline: 3px solid rgba(19, 128, 138, 0.12);
+}
+
+.moodle-evaluation-toolbar small,
+.moodle-evaluation-fields small,
+.moodle-evaluation-row__heading small {
+  color: #68748a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-evaluation-summary {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) repeat(4, minmax(120px, 0.7fr));
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid #cbd7dc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.moodle-evaluation-summary > div {
+  display: grid;
+  min-width: 0;
+  min-height: 78px;
+  align-content: center;
+  gap: 5px;
+  padding: 12px 14px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-evaluation-summary > div:last-child {
+  border-right: 0;
+}
+
+.moodle-evaluation-summary span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-evaluation-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+}
+
+.moodle-evaluation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.moodle-evaluation-row {
+  overflow: hidden;
+  border: 1px solid #ccd9de;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.moodle-evaluation-row.is-selected {
+  border-color: #67aeb5;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-evaluation-row__heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-evaluation-row__heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.moodle-evaluation-row__heading strong {
+  overflow-wrap: anywhere;
+}
+
+.moodle-evaluation-row__selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.moodle-evaluation-row__selector input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #13808a;
+}
+
+.moodle-evaluation-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.moodle-evaluation-fields label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-evaluation-fields input:disabled {
+  background: #eef2f4;
+  color: #7b8799;
+}
+
+.moodle-evaluation-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -6px 16px rgba(18, 32, 63, 0.07);
+}
+
+.moodle-evaluation-actions > span {
+  color: #526078;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.moodle-evaluation-review {
+  display: grid;
+  max-height: 340px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.moodle-evaluation-review > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #d8e0e4;
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.moodle-evaluation-review span {
+  color: #526078;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+  .moodle-evaluation-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .moodle-evaluation-toolbar label:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .moodle-evaluation-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .moodle-evaluation-summary > div {
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-evaluation-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .moodle-evaluation-dates {
+    padding: 14px;
+  }
+
+  .moodle-evaluation-dates .moodle-section__heading,
+  .moodle-evaluation-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-evaluation-dates .moodle-section__heading .moodle-button,
+  .moodle-evaluation-actions .moodle-button {
+    width: 100%;
+  }
+
+  .moodle-evaluation-toolbar,
+  .moodle-evaluation-summary,
+  .moodle-evaluation-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-evaluation-toolbar label:last-child {
+    grid-column: auto;
+  }
+
+  .moodle-evaluation-row__heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .moodle-evaluation-row__selector {
+    grid-column: 1 / -1;
+  }
+
+  .moodle-evaluation-summary > div {
+    border-right: 0;
+  }
+}
+
+.moodle-evaluation-course-selection,
+.moodle-common-schedule,
+.moodle-course-analysis {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.moodle-evaluation-course-selection__heading,
+.moodle-common-schedule__heading,
+.moodle-course-analysis__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-evaluation-course-selection__heading > div,
+.moodle-common-schedule__heading > div,
+.moodle-course-analysis__heading > div {
+  min-width: 0;
+}
+
+.moodle-evaluation-course-selection__heading span,
+.moodle-common-schedule__heading span,
+.moodle-course-analysis__heading span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.moodle-evaluation-course-selection__heading h3,
+.moodle-common-schedule__heading h3,
+.moodle-course-analysis__heading h3 {
+  margin: 3px 0 0;
+  color: #172541;
+  font-size: 18px;
+}
+
+.moodle-common-schedule__heading p {
+  max-width: 560px;
+  margin: 0;
+  color: #526078;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.moodle-evaluation-course-search {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto auto;
+  align-items: end;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.moodle-evaluation-course-search label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-evaluation-course-search label > span,
+.moodle-common-schedule__row label > span {
+  color: #647087;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-evaluation-course-search input,
+.moodle-common-schedule__row input[type='datetime-local'] {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0d6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172541;
+  font: inherit;
+}
+
+.moodle-evaluation-course-search input:focus,
+.moodle-common-schedule__row input[type='datetime-local']:focus {
+  border-color: #13808a;
+  outline: 3px solid rgba(19, 128, 138, 0.12);
+}
+
+.moodle-evaluation-course-search small {
+  color: #68748a;
+  font-size: 12px;
+}
+
+.moodle-evaluation-course-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 330px;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 0 16px 14px;
+}
+
+.moodle-evaluation-course-list > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 68px;
+  padding: 11px 12px;
+  border: 1px solid #d5dde1;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.moodle-evaluation-course-list > label:hover {
+  border-color: #8cb8be;
+  background: #f8fbfc;
+}
+
+.moodle-evaluation-course-list > label.is-selected {
+  border-color: #68adb4;
+  background: #eaf6f5;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-evaluation-course-list input,
+.moodle-common-schedule__toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: #13808a;
+}
+
+.moodle-evaluation-course-list span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.moodle-evaluation-course-list strong,
+.moodle-evaluation-course-list small {
+  overflow-wrap: anywhere;
+}
+
+.moodle-evaluation-course-list small {
+  color: #647087;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-evaluation-selection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-evaluation-selection-actions > span {
+  color: #526078;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.moodle-common-schedule__group + .moodle-common-schedule__group {
+  border-top: 1px solid #d8e0e4;
+}
+
+.moodle-common-schedule__group > h4 {
+  margin: 0;
+  padding: 11px 16px;
+  background: #eef5f7;
+  color: #172541;
+  font-size: 15px;
+}
+
+.moodle-common-schedule__rows {
+  display: grid;
+}
+
+.moodle-common-schedule__row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) repeat(2, minmax(230px, 1fr));
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid #e1e6e9;
+  background: #ffffff;
+}
+
+.moodle-common-schedule__row:first-child {
+  border-top: 0;
+}
+
+.moodle-common-schedule__row.is-enabled {
+  background: #f1f9f8;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-common-schedule__row > label:not(.moodle-common-schedule__toggle) {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-common-schedule__row input:disabled {
+  cursor: not-allowed;
+  background: #eef2f4;
+  color: #7b8799;
+}
+
+.moodle-common-schedule__toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.moodle-common-schedule__toggle > span {
+  display: grid;
+  gap: 4px;
+}
+
+.moodle-common-schedule__toggle strong {
+  color: #172541;
+  font-size: 15px;
+}
+
+.moodle-common-schedule__toggle small {
+  color: #647087;
+  font-size: 12px;
+}
+
+.moodle-course-analysis__table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.moodle-course-analysis table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+}
+
+.moodle-course-analysis th,
+.moodle-course-analysis td {
+  padding: 10px 11px;
+  border-right: 1px solid #d8e0e4;
+  border-bottom: 1px solid #d8e0e4;
+  color: #172541;
+  font-size: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.moodle-course-analysis th:last-child,
+.moodle-course-analysis td:last-child {
+  border-right: 0;
+}
+
+.moodle-course-analysis th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eaf3f5;
+  font-weight: 900;
+}
+
+.moodle-course-analysis td:not(:first-child) {
+  text-align: center;
+}
+
+.moodle-course-analysis td > strong,
+.moodle-course-analysis td > small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-course-analysis td > small {
+  margin-top: 4px;
+  color: #647087;
+}
+
+.moodle-course-analysis details {
+  min-width: 150px;
+  text-align: left;
+}
+
+.moodle-course-analysis summary {
+  color: #0b6670;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.moodle-course-analysis__details {
+  display: grid;
+  max-height: 280px;
+  gap: 6px;
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.moodle-course-analysis__details > div {
+  display: grid;
+  min-width: 240px;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid #d8e0e4;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.moodle-course-analysis__details span,
+.moodle-course-analysis__details small {
+  color: #647087;
+  line-height: 1.35;
+}
+
+.moodle-course-analysis__note {
+  margin: 0;
+  padding: 10px 16px;
+  background: #fff8e9;
+  color: #755017;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.moodle-evaluation-save-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 4px solid #13808a;
+  background: #eef7f8;
+  color: #172541;
+  font-weight: 800;
+}
+
+.moodle-evaluation-confirm {
+  width: min(720px, 100%);
+}
+
+@media (max-width: 1050px) {
+  .moodle-evaluation-course-search {
+    grid-template-columns: minmax(0, 1fr) repeat(2, auto);
+  }
+
+  .moodle-evaluation-course-search button:last-child {
+    grid-column: 2 / -1;
+  }
+
+  .moodle-common-schedule__row {
+    grid-template-columns: minmax(190px, 0.7fr) repeat(2, minmax(190px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .moodle-evaluation-course-selection__heading,
+  .moodle-common-schedule__heading,
+  .moodle-course-analysis__heading,
+  .moodle-evaluation-selection-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-common-schedule__heading p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .moodle-evaluation-course-search,
+  .moodle-evaluation-course-list,
+  .moodle-common-schedule__row {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-evaluation-course-search button,
+  .moodle-evaluation-course-search button:last-child,
+  .moodle-evaluation-selection-actions .moodle-button {
+    grid-column: auto;
+    width: 100%;
+  }
+
+  .moodle-evaluation-course-list {
+    max-height: 390px;
+  }
+
+  .moodle-common-schedule__row {
+    align-items: stretch;
+  }
+}
+
+.practicas-review-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  width: min(1120px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(16, 25, 43, 0.28);
+}
+
+.practicas-review-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line-strong);
+  background: linear-gradient(135deg, #ffffff, rgba(141, 187, 199, 0.12));
+}
+
+.practicas-review-dialog__header > div {
+  min-width: 0;
+}
+
+.practicas-review-dialog__header span,
+.practicas-review-summary span,
+.practicas-review-form label > span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.practicas-review-dialog__header h2 {
+  margin: 5px 0 4px;
+  color: var(--ink);
+  font-size: clamp(1.2rem, 2.5vw, 1.7rem);
+  overflow-wrap: anywhere;
+}
+
+.practicas-review-dialog__header p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.practicas-review-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-review-summary article {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px 18px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.practicas-review-summary article:last-child {
+  border-right: 0;
+}
+
+.practicas-review-summary strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.practicas-review-documents {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px;
+}
+
+.practicas-review-documents__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 10px;
+}
+
+.practicas-review-documents__list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid #b8352e;
+  border-radius: 8px;
+  background: #fffafa;
+}
+
+.practicas-review-documents__list article.is-loaded {
+  border-left-color: #17866b;
+  background: #f3fbf8;
+}
+
+.practicas-review-documents__list article > div {
+  min-width: 0;
+}
+
+.practicas-review-documents__list strong,
+.practicas-review-documents__list small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-review-documents__list small {
+  margin-top: 4px;
+  color: var(--ink-soft);
+}
+
+.practicas-review-documents__list .ghost-button {
+  grid-column: 1 / -1;
+  width: fit-content;
+}
+
+.practicas-review-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px 22px;
+  border-top: 1px solid var(--line-strong);
+  background: #f8fbfc;
+}
+
+.practicas-review-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.practicas-review-form input[type="number"],
+.practicas-review-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.practicas-review-form textarea {
+  resize: vertical;
+}
+
+.practicas-review-form small {
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.practicas-review-corroboration {
+  grid-column: 1 / -1;
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px !important;
+  padding: 12px 14px;
+  border: 1px solid rgba(23, 134, 107, 0.35);
+  border-radius: 8px;
+  background: rgba(23, 134, 107, 0.08);
+}
+
+.practicas-review-corroboration input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.practicas-review-corroboration span {
+  color: var(--ink) !important;
+  font-size: 0.88rem !important;
+  letter-spacing: 0 !important;
+  line-height: 1.45;
+  text-transform: none !important;
+}
+
+.practicas-review-error {
+  margin: 0 22px 14px;
+}
+
+.practicas-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 22px 20px;
+  background: #f8fbfc;
+}
+
+.practicas-review-actions button {
+  min-height: 42px;
+}
+
+.practicas-review-reject {
+  border-color: rgba(147, 25, 19, 0.45) !important;
+  color: var(--rojo) !important;
+}
+
 @media (max-width: 1100px) {
   .practicas-admin-card .practicas-responsable-form > label:nth-of-type(1),
   .practicas-admin-card .practicas-responsable-form > label:nth-of-type(2),
@@ -1703,6 +2577,60 @@
 
   .practicas-authorization-button {
     grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .practicas-expedient-overlay:has(.practicas-review-dialog) {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .practicas-review-dialog {
+    width: 100%;
+    max-height: 100vh;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .practicas-review-dialog__header,
+  .practicas-review-form,
+  .practicas-review-documents {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .practicas-review-dialog__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .practicas-review-dialog__header .secondary-action {
+    width: 100%;
+  }
+
+  .practicas-review-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-review-summary article:nth-child(2) {
+    border-right: 0;
+  }
+
+  .practicas-review-summary article:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-review-form {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-review-actions {
+    display: grid;
+    padding: 0 14px 14px;
+  }
+
+  .practicas-review-actions button {
     width: 100%;
   }
 }
@@ -7204,6 +8132,12 @@
   gap: 18px;
   border-bottom: 1px solid #d4dbe1;
   padding-bottom: 15px;
+}
+
+.moodle-teams-result-modal__head > div,
+.moodle-teams-result-modal__head p {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .moodle-teams-result-modal__head > div {
@@ -34784,6 +35718,101 @@ body .student-sidebar .logout-button {
   color: #65708a;
 }
 
+.scholarship-contracts__template-selector {
+  margin: 0 0 16px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.65);
+  border-radius: 8px;
+  background: #f5fafb;
+}
+
+.scholarship-contracts__template-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scholarship-contracts__template-heading > div {
+  min-width: 0;
+}
+
+.scholarship-contracts__template-heading span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contracts__template-heading h3 {
+  margin: 3px 0 0;
+  color: #111a3a;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.scholarship-contracts__template-heading .ghost-button {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.scholarship-contracts__format-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scholarship-contracts__format-options label {
+  min-width: 0;
+  min-height: 72px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid #cbd6dd;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.scholarship-contracts__format-options label:hover {
+  border-color: #78b9c3;
+}
+
+.scholarship-contracts__format-options label.is-selected {
+  border-color: #16879a;
+  background: #eaf6f7;
+  box-shadow: inset 3px 0 0 #16879a;
+}
+
+.scholarship-contracts__format-options input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  flex: 0 0 18px;
+  accent-color: #16879a;
+}
+
+.scholarship-contracts__format-options span,
+.scholarship-contracts__format-options strong,
+.scholarship-contracts__format-options small {
+  display: block;
+}
+
+.scholarship-contracts__format-options strong {
+  color: #111a3a;
+  line-height: 1.25;
+}
+
+.scholarship-contracts__format-options small {
+  margin-top: 4px;
+  color: #65708a;
+  line-height: 1.35;
+}
+
 .scholarship-contracts__filters {
   padding: 14px;
   display: grid;
@@ -35020,6 +36049,594 @@ body .student-sidebar .logout-button {
   justify-content: flex-end;
 }
 
+.scholarship-contract-review-modal {
+  width: min(1180px, calc(100vw - 32px));
+  max-height: min(920px, calc(100vh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scholarship-contract-review-modal__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid #cfdae1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.scholarship-contract-review-modal__summary > div,
+.scholarship-contract-review-modal__traceability > div {
+  min-width: 0;
+  padding: 13px 15px;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.scholarship-contract-review-modal__summary > div {
+  background: #f8fafb;
+  border-right: 1px solid #cfdae1;
+}
+
+.scholarship-contract-review-modal__summary > div:last-child {
+  border-right: 0;
+}
+
+.scholarship-contract-review-modal__summary span,
+.scholarship-contract-review-modal__traceability span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-review-modal__summary strong,
+.scholarship-contract-review-modal__summary small,
+.scholarship-contract-review-modal__traceability strong,
+.scholarship-contract-review-modal__traceability small {
+  overflow-wrap: anywhere;
+}
+
+.scholarship-contract-review-modal__summary small,
+.scholarship-contract-review-modal__traceability small {
+  color: #65708a;
+}
+
+.scholarship-contract-review-modal__traceability {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(141, 187, 199, 0.65);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eef7f8;
+}
+
+.scholarship-contract-review-modal__traceability > div {
+  border-right: 1px solid rgba(141, 187, 199, 0.55);
+}
+
+.scholarship-contract-review-modal__traceability > div:last-child {
+  border-right: 0;
+}
+
+.scholarship-contract-review-modal__destination {
+  margin-top: 12px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid #16879a;
+  background: #eef7f8;
+}
+
+.scholarship-contract-review-modal__destination span {
+  color: #4d5775;
+  overflow-wrap: anywhere;
+}
+
+.scholarship-contract-review-modal__preview {
+  margin-top: 12px;
+  min-height: 440px;
+  border: 1px solid #cfdae1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eef1f3;
+}
+
+.scholarship-contract-review-modal__preview iframe {
+  width: 100%;
+  height: min(58vh, 650px);
+  min-height: 440px;
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+.scholarship-contract-review-modal__preview-state {
+  min-height: 440px;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #5f6b85;
+  font-weight: 800;
+  text-align: center;
+}
+
+.scholarship-contract-review-modal__preview .form-error {
+  margin: 14px;
+}
+
+.scholarship-contract-review-modal__actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.scholarship-contract-review-modal__actions .ghost-button,
+.scholarship-contract-review-modal__actions .primary-action {
+  width: auto;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.scholarship-contract-template-modal {
+  width: min(1120px, calc(100vw - 32px));
+  max-height: min(900px, calc(100vh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scholarship-contract-template-modal__intro {
+  margin: 0;
+  padding: 11px 14px;
+  border-left: 3px solid #16879a;
+  background: #eef7f8;
+  color: #4d5775;
+  line-height: 1.45;
+}
+
+.scholarship-contract-template-modal__status {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid #b9dce2;
+  border-radius: 8px;
+  background: #f2fafb;
+  color: #126a79;
+  font-weight: 800;
+}
+
+.scholarship-contract-template-modal__section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #d6e0e5;
+}
+
+.scholarship-contract-template-modal__section h4 {
+  margin: 0 0 12px;
+  color: #111a3a;
+  font-size: 17px;
+}
+
+.scholarship-contract-template-modal__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scholarship-contract-template-modal__grid label,
+.scholarship-contract-template-modal__projection label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.scholarship-contract-template-modal__grid label.is-wide {
+  grid-column: span 2;
+}
+
+.scholarship-contract-template-modal__grid label > span,
+.scholarship-contract-template-modal__projection label > span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__grid input,
+.scholarship-contract-template-modal__grid textarea,
+.scholarship-contract-template-modal__projection input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cbd6dd;
+  border-radius: 8px;
+  background: #fff;
+  color: #111a3a;
+  font: inherit;
+}
+
+.scholarship-contract-template-modal__grid textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.scholarship-contract-template-modal__grid input:focus,
+.scholarship-contract-template-modal__grid textarea:focus,
+.scholarship-contract-template-modal__projection input:focus {
+  border-color: #16879a;
+  outline: 2px solid rgba(22, 135, 154, 0.16);
+  outline-offset: 1px;
+}
+
+.scholarship-contract-template-modal__grid small {
+  color: #65708a;
+  line-height: 1.35;
+}
+
+.scholarship-contract-template-modal__color-control {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.scholarship-contract-template-modal__color-control input[type="color"] {
+  width: 52px;
+  min-width: 52px;
+  height: 44px;
+  min-height: 44px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.scholarship-contract-template-modal__signature-preview {
+  margin-top: 12px;
+  min-height: 112px;
+  padding: 14px 18px;
+  display: grid;
+  justify-items: center;
+  align-content: end;
+  gap: 5px;
+  border: 1px solid #cbd6dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #111a3a;
+  text-align: center;
+}
+
+.scholarship-contract-template-modal__signature-preview > span {
+  align-self: start;
+  justify-self: start;
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__signature-line {
+  width: min(420px, 100%);
+  margin-top: 12px;
+  border-top: 1px solid #263238;
+}
+
+.scholarship-contract-template-modal__signature-preview strong {
+  overflow-wrap: anywhere;
+}
+
+.scholarship-contract-template-modal__signature-preview small {
+  color: #5f6b85;
+  font-weight: 800;
+}
+
+.scholarship-contract-template-modal__table-preview {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #7b858d;
+  border-radius: 6px;
+}
+
+.scholarship-contract-template-modal__table-preview > * {
+  min-height: 42px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  border-right: 1px solid;
+  border-color: inherit;
+  color: #111a3a;
+}
+
+.scholarship-contract-template-modal__table-preview > :first-child {
+  grid-column: 1 / -1;
+  justify-content: center;
+  border-right: 0;
+  border-bottom: 1px solid;
+  border-color: inherit;
+  color: #fff;
+}
+
+.scholarship-contract-template-modal__table-preview > :last-child {
+  border-right: 0;
+  background: #fff;
+}
+
+.scholarship-contract-template-modal__section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scholarship-contract-template-modal__section-head h4 {
+  margin-bottom: 3px;
+}
+
+.scholarship-contract-template-modal__section-head p {
+  margin: 0;
+  color: #65708a;
+}
+
+.scholarship-contract-template-modal__section-head .ghost-button {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.scholarship-contract-template-modal__clause-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.scholarship-contract-template-modal__clause-toolbar > span {
+  color: #65708a;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.scholarship-contract-template-modal__tokens {
+  margin-top: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  border: 1px solid #c8dde2;
+  border-radius: 8px;
+  background: #f3f9fa;
+  color: #485470;
+}
+
+.scholarship-contract-template-modal__tokens strong {
+  margin-right: 2px;
+  color: #111a3a;
+}
+
+.scholarship-contract-template-modal__tokens code {
+  padding: 3px 6px;
+  border: 1px solid #b8d4da;
+  border-radius: 4px;
+  background: #fff;
+  color: #0b7182;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.scholarship-contract-template-modal__introduction,
+.scholarship-contract-template-modal__clause label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.scholarship-contract-template-modal__introduction {
+  margin-top: 12px;
+}
+
+.scholarship-contract-template-modal__introduction > span,
+.scholarship-contract-template-modal__clause label > span {
+  color: #5f6b85;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__introduction textarea,
+.scholarship-contract-template-modal__clause input,
+.scholarship-contract-template-modal__clause textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cbd6dd;
+  border-radius: 8px;
+  background: #fff;
+  color: #111a3a;
+  font: inherit;
+}
+
+.scholarship-contract-template-modal__introduction textarea,
+.scholarship-contract-template-modal__clause textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.scholarship-contract-template-modal__introduction textarea:focus,
+.scholarship-contract-template-modal__clause input:focus,
+.scholarship-contract-template-modal__clause textarea:focus {
+  border-color: #16879a;
+  outline: 2px solid rgba(22, 135, 154, 0.16);
+  outline-offset: 1px;
+}
+
+.scholarship-contract-template-modal__clauses {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.scholarship-contract-template-modal__clause {
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.55fr) minmax(0, 1.45fr);
+  gap: 12px;
+  border: 1px solid #d4dde2;
+  border-left: 3px solid #16879a;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.scholarship-contract-template-modal__clause-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scholarship-contract-template-modal__clause-head > strong {
+  color: #111a3a;
+}
+
+.scholarship-contract-template-modal__clause-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.scholarship-contract-template-modal__clause-position {
+  display: grid;
+  gap: 3px;
+}
+
+.scholarship-contract-template-modal__clause-position > span {
+  color: #65708a;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__clause-position select {
+  width: 78px;
+  min-height: 36px;
+  padding: 5px 28px 5px 9px;
+  border: 1px solid #c5d1d8;
+  border-radius: 6px;
+  background: #fff;
+  color: #111a3a;
+  font: inherit;
+  font-weight: 800;
+}
+
+.scholarship-contract-template-modal__clause-icon-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #c5d1d8;
+  border-radius: 6px;
+  background: #f7fafb;
+  color: #111a3a;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scholarship-contract-template-modal__clause-icon-button:hover:not(:disabled),
+.scholarship-contract-template-modal__clause-icon-button:focus-visible {
+  border-color: #16879a;
+  background: #eaf5f6;
+  outline: none;
+}
+
+.scholarship-contract-template-modal__clause-icon-button.is-danger {
+  color: #a5211c;
+}
+
+.scholarship-contract-template-modal__clause-icon-button.is-danger:hover:not(:disabled),
+.scholarship-contract-template-modal__clause-icon-button.is-danger:focus-visible {
+  border-color: #c75b55;
+  background: #fff0ef;
+}
+
+.scholarship-contract-template-modal__clause-icon-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.scholarship-contract-template-modal__projection {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.scholarship-contract-template-modal__projection > div {
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 32px minmax(180px, 0.8fr) minmax(280px, 1.4fr) auto;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid #d6e0e5;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.scholarship-contract-template-modal__projection > div > span {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #16879a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.scholarship-contract-template-modal__projection .ghost-button {
+  width: auto;
+  min-height: 44px;
+}
+
+.scholarship-contract-template-modal__automatic {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid #17865e;
+  background: #edf8f2;
+  color: #17613d;
+}
+
+.scholarship-contract-template-modal__actions {
+  position: sticky;
+  bottom: 0;
+  margin: 18px -20px -20px;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #d6e0e5;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(6px);
+}
+
+.scholarship-contract-template-modal__actions .ghost-button,
+.scholarship-contract-template-modal__actions .primary-action {
+  width: auto;
+}
+
 .scholarship-contracts__history td small {
   margin-top: 3px;
   color: #65708a;
@@ -35040,6 +36657,35 @@ body .student-sidebar .logout-button {
 
   .scholarship-contracts__selection-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scholarship-contract-template-modal__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scholarship-contract-review-modal__summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scholarship-contract-review-modal__summary > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .scholarship-contract-review-modal__summary > div:nth-child(-n + 2) {
+    border-bottom: 1px solid #cfdae1;
+  }
+
+  .scholarship-contract-template-modal__projection > div {
+    grid-template-columns: 32px minmax(160px, 0.8fr) minmax(220px, 1.2fr);
+  }
+
+  .scholarship-contract-template-modal__clause {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-contract-template-modal__projection .ghost-button {
+    grid-column: 2 / -1;
+    justify-self: end;
   }
 }
 
@@ -35086,8 +36732,124 @@ body .student-sidebar .logout-button {
   .scholarship-contracts__steps,
   .scholarship-contracts__filters,
   .scholarship-contracts__selection-bar,
-  .scholarship-contracts__history-search {
+  .scholarship-contracts__history-search,
+  .scholarship-contracts__format-options,
+  .scholarship-contract-template-modal__grid {
     grid-template-columns: 1fr;
+  }
+
+  .scholarship-contracts__template-heading,
+  .scholarship-contract-template-modal__section-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scholarship-contracts__template-heading .ghost-button,
+  .scholarship-contract-template-modal__section-head .ghost-button {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__table-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-contract-template-modal__table-preview > * {
+    border-right: 0;
+    border-bottom: 1px solid #7b858d;
+  }
+
+  .scholarship-contract-template-modal__table-preview > :last-child {
+    border-bottom: 0;
+  }
+
+  .scholarship-contract-template-modal__clause-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scholarship-contract-template-modal__clause-actions,
+  .scholarship-contract-template-modal__clause-toolbar {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__clause-actions {
+    justify-content: flex-start;
+  }
+
+  .scholarship-contract-template-modal__clause-position {
+    flex: 1 1 110px;
+  }
+
+  .scholarship-contract-template-modal__clause-position select {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__clause-toolbar {
+    justify-content: flex-start;
+  }
+
+  .scholarship-contract-template-modal__clause-toolbar .ghost-button {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__grid label.is-wide {
+    grid-column: auto;
+  }
+
+  .scholarship-contract-template-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .scholarship-contract-review-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .scholarship-contract-review-modal__summary,
+  .scholarship-contract-review-modal__traceability {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-contract-review-modal__summary > div,
+  .scholarship-contract-review-modal__summary > div:nth-child(2),
+  .scholarship-contract-review-modal__traceability > div {
+    border-right: 0;
+    border-bottom: 1px solid #cfdae1;
+  }
+
+  .scholarship-contract-review-modal__summary > div:last-child,
+  .scholarship-contract-review-modal__traceability > div:last-child {
+    border-bottom: 0;
+  }
+
+  .scholarship-contract-review-modal__preview,
+  .scholarship-contract-review-modal__preview iframe,
+  .scholarship-contract-review-modal__preview-state {
+    min-height: 360px;
+  }
+
+  .scholarship-contract-review-modal__actions,
+  .scholarship-contract-review-modal__actions .ghost-button,
+  .scholarship-contract-review-modal__actions .primary-action {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__projection > div {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .scholarship-contract-template-modal__projection > div > span {
+    grid-row: 1;
+  }
+
+  .scholarship-contract-template-modal__projection label,
+  .scholarship-contract-template-modal__projection .ghost-button {
+    grid-column: 1 / -1;
+  }
+
+  .scholarship-contract-template-modal__projection .ghost-button {
+    width: 100%;
   }
 
   .scholarship-contracts__steps > div {
@@ -35128,6 +36890,19 @@ body .student-sidebar .logout-button {
 
   .scholarship-contract-upload-modal__actions,
   .scholarship-contract-upload-modal__actions .primary-action {
+    width: 100%;
+  }
+
+  .scholarship-contract-template-modal__actions {
+    margin-right: -12px;
+    margin-left: -12px;
+    padding-right: 12px;
+    padding-left: 12px;
+    flex-direction: column-reverse;
+  }
+
+  .scholarship-contract-template-modal__actions .ghost-button,
+  .scholarship-contract-template-modal__actions .primary-action {
     width: 100%;
   }
 }
@@ -41275,6 +43050,230 @@ body .student-sidebar .logout-button {
 
   .moodle-confirm-dialog__actions {
     padding: 12px;
+  }
+}
+
+/* Registro previo guiado: mantiene el formulario compacto y ordenado por etapa. */
+.preinscripcion-registration-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid #c6dce2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.preinscripcion-registration-steps button {
+  min-width: 0;
+  min-height: 72px;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  color: #4d5775;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preinscripcion-registration-steps button + button {
+  border-left: 1px solid #d8e4e8;
+}
+
+.preinscripcion-registration-steps button > span {
+  grid-row: 1 / 3;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8eef1;
+  color: #59637b;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.preinscripcion-registration-steps button strong {
+  min-width: 0;
+  color: #17213c;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.preinscripcion-registration-steps button small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #68728b;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.preinscripcion-registration-steps button.is-active {
+  box-shadow: inset 0 -3px #157f8f;
+  background: #eef8fa;
+}
+
+.preinscripcion-registration-steps button.is-active > span {
+  background: #157f8f;
+  color: #ffffff;
+}
+
+.preinscripcion-registration-steps button.is-complete {
+  background: #f1f8f5;
+}
+
+.preinscripcion-registration-steps button.is-complete > span {
+  background: #18845f;
+  color: #ffffff;
+}
+
+.preinscripcion-registration-steps button:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.preinscripcion-registration-steps button:disabled strong,
+.preinscripcion-registration-steps button:disabled small {
+  color: #7b8498;
+}
+
+.preinscripcion-register-form label.preinscripcion-field--3 {
+  grid-column: span 3;
+}
+
+.preinscripcion-register-form label.preinscripcion-field--4 {
+  grid-column: span 4;
+}
+
+.preinscripcion-register-form label.preinscripcion-field--6 {
+  grid-column: span 6;
+}
+
+.preinscripcion-field-success {
+  color: #0c6b48;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.preinscripcion-register-actions {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+.preinscripcion-register-actions--split {
+  justify-content: space-between;
+}
+
+.preinscripcion-registration-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #cbdce2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.preinscripcion-registration-summary > div {
+  min-width: 0;
+  padding: 13px 14px;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.preinscripcion-registration-summary > div + div {
+  border-left: 1px solid #d9e3e7;
+}
+
+.preinscripcion-registration-summary dt {
+  color: #68728b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.preinscripcion-registration-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #17213c;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.preinscripcion-registration-summary small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #59637b;
+  line-height: 1.35;
+}
+
+@media (max-width: 980px) {
+  .preinscripcion-register-form label.preinscripcion-field--3,
+  .preinscripcion-register-form label.preinscripcion-field--4,
+  .preinscripcion-register-form label.preinscripcion-field--6 {
+    grid-column: span 3;
+  }
+
+  .preinscripcion-registration-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preinscripcion-registration-summary > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .preinscripcion-registration-summary > div:nth-child(n + 3) {
+    border-top: 1px solid #d9e3e7;
+  }
+}
+
+@media (max-width: 680px) {
+  .preinscripcion-registration-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .preinscripcion-registration-steps button {
+    min-height: 62px;
+  }
+
+  .preinscripcion-registration-steps button + button {
+    border-top: 1px solid #d8e4e8;
+    border-left: 0;
+  }
+
+  .preinscripcion-register-form label.preinscripcion-field--3,
+  .preinscripcion-register-form label.preinscripcion-field--4,
+  .preinscripcion-register-form label.preinscripcion-field--6 {
+    grid-column: auto;
+  }
+
+  .preinscripcion-registration-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .preinscripcion-registration-summary > div + div,
+  .preinscripcion-registration-summary > div:nth-child(3) {
+    border-top: 1px solid #d9e3e7;
+    border-left: 0;
+  }
+
+  .preinscripcion-register-actions,
+  .preinscripcion-register-actions--split {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .preinscripcion-register-actions button {
+    width: 100%;
   }
 }
 

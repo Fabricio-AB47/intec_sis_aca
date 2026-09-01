@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
 import {
   approvePreinscriptionScholarship,
@@ -16,6 +16,7 @@ import {
   fetchScholarshipBeneficiaries,
   fetchScholarshipContractCandidates,
   fetchScholarshipContractHistory,
+  fetchScholarshipContractTemplate,
   fetchScholarshipConfigurations,
   fetchPreinscriptions,
   generateScholarshipContracts,
@@ -51,8 +52,11 @@ import type {
   PreinscriptionStage,
   ScholarshipBeneficiaryItem,
   ScholarshipContractCandidateItem,
+  ScholarshipContractClause,
+  ScholarshipContractFormat,
   ScholarshipContractHistoryItem,
   ScholarshipContractPeriodOption,
+  ScholarshipContractTemplate,
   ScholarshipConfigurationItem,
   ScholarshipConfigurationPayload,
 } from '../../types/app'
@@ -84,6 +88,18 @@ type AdmissionJourneyStep = {
   matches: PreinscriptionStage[]
 }
 
+type RegistrationStep = 1 | 2 | 3
+
+const registrationSteps: Array<{
+  step: RegistrationStep
+  label: string
+  detail: string
+}> = [
+  { step: 1, label: 'Identificación', detail: 'Datos personales y contacto' },
+  { step: 2, label: 'Oferta académica', detail: 'Carrera, período y modalidad' },
+  { step: 3, label: 'Financiamiento', detail: 'Beca, convenio y confirmación' },
+]
+
 const academicEnrollmentRoles = new Set(['ADMINISTRADOR', 'ADMINISTRACION', 'ADMIN', 'SOPORTE', 'ACADEMICO', 'BIENESTAR', 'ADMISIONES'])
 const scholarshipApprovalRoles = new Set(['ADMINISTRADOR', 'BIENESTAR'])
 const scholarshipApprovalThreshold = 15
@@ -91,6 +107,57 @@ const academicSemesterCost = 750
 const standardEnrollmentCost = 75
 const gastronomyEnrollmentCost = 100
 const subjectsPerSemester = 6
+const scholarshipContractClauseLimit = 50
+
+function createDefaultScholarshipContractTemplate(): ScholarshipContractTemplate {
+  return {
+    titulo_contrato: 'CONTRATO DE BECA',
+    fecha_contrato: null,
+    ciudad: 'Quito, D.M.',
+    resolucion: 'Resolución No. 002-CR-INTEC-2024, de 19 de diciembre de 2024',
+    rector_tratamiento: 'Ingeniero',
+    rector_nombre: 'JAIME RODER ORTEGA PEREIRA',
+    rector_titulo: 'MGT.',
+    correo_notificaciones: 'dir.bienestar@intec.edu.ec',
+    programa: 'Programa de acceso a la educación superior tecnológica por medio de becas y ayudas económicas para la población de escasos recursos y vulnerable del Ecuador, en coordinación con el sector empresarial ecuatoriano, para estudiar en el INTEC',
+    pais: 'Ecuador',
+    institucion_educacion: 'Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento (INTEC)',
+    auspiciante: 'INTEC',
+    nivel_estudios: 'Tecnólogo Superior',
+    fecha_inicio_estudios: null,
+    fecha_fin_estudios: null,
+    fecha_inicio_financiamiento: null,
+    fecha_fin_financiamiento: null,
+    duracion_estudios: 'Durante el período académico adjudicado',
+    duracion_financiamiento: 'Durante el período académico adjudicado',
+    periodo_pago: 'TOTAL',
+    proyeccion: [],
+    titulo_tabla_datos: 'DATOS BECA',
+    titulo_tabla_proyeccion: 'PROYECCIÓN DE LA BECA',
+    firma_rector_tratamiento: 'Ing.',
+    firma_rector_nombre: 'JAIME RODER ORTEGA PEREIRA',
+    firma_rector_titulo: 'MGT.',
+    firma_rector_etiqueta: 'RECTOR',
+    firma_becario_tratamiento: 'Sr.(a)(ita):',
+    firma_becario_etiqueta: 'BECARIO/A',
+    color_cabecera_tabla: '#B64D5B',
+    color_celda_etiqueta: '#EDDBDA',
+    color_cabecera_interior: '#F1F1F7',
+    color_celda_valor: '#FFFFFF',
+    color_borde_tabla: '#4A4A4A',
+  }
+}
+
+function scholarshipContractColor(value: string, fallback: string): string {
+  return /^#[0-9A-Fa-f]{6}$/.test(value) ? value : fallback
+}
+
+function scholarshipContractRectorSignature(template: ScholarshipContractTemplate): string {
+  const treatment = template.firma_rector_tratamiento.trim() || 'Ing.'
+  const name = (template.firma_rector_nombre.trim() || 'JAIME RODER ORTEGA PEREIRA').toUpperCase()
+  const title = template.firma_rector_titulo.trim() || 'MGT.'
+  return `${treatment} ${name}${title ? `, ${title}` : ''}`
+}
 
 function normalizeRoleKey(role?: string) {
   return String(role || '')
@@ -193,6 +260,24 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+function formatScholarshipContractDateTime(value: string): string {
+  const normalizedValue = String(value || '').trim()
+  if (!normalizedValue) return 'No registrado'
+  const date = new Date(normalizedValue)
+  if (Number.isNaN(date.getTime())) return normalizedValue
+  return new Intl.DateTimeFormat('es-EC', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function scholarshipContractExpedientPath(item: ScholarshipContractHistoryItem): string {
+  const student = [item.estudiante || 'ESTUDIANTE', item.cedula].filter(Boolean).join(' - ')
+  const period = item.codigo_periodo || 'SIN-PERIODO'
+  const origin = `${item.codigo_estud || item.cedula || item.contrato_id}-${period}`
+  return `EXPEDIENTES ESTUDIANTILES / ${student} / BECAS / CASO ${origin} - BECA-${period} / CONTRATO DE BECA`
+}
+
 export function PreinscripcionView({
   displayName,
   role = '',
@@ -275,6 +360,7 @@ export function PreinscripcionView({
   const [createLoading, setCreateLoading] = useState(false)
   const [createError, setCreateError] = useState('')
   const [createMessage, setCreateMessage] = useState('')
+  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>(1)
   const [scholarshipStatus, setScholarshipStatus] = useState<PreinscriptionScholarshipStatus | null>(null)
   const [scholarshipStatusLoading, setScholarshipStatusLoading] = useState(false)
   const [scholarshipApprovalLoading, setScholarshipApprovalLoading] = useState(false)
@@ -307,9 +393,29 @@ export function PreinscripcionView({
   const [scholarshipContractHistory, setScholarshipContractHistory] = useState<ScholarshipContractHistoryItem[]>([])
   const [scholarshipContractHistoryQuery, setScholarshipContractHistoryQuery] = useState('')
   const [scholarshipContractHistoryLoading, setScholarshipContractHistoryLoading] = useState(false)
+  const [scholarshipContractFormat, setScholarshipContractFormat] = useState<ScholarshipContractFormat>('INSTITUCIONAL')
+  const [scholarshipContractTemplate, setScholarshipContractTemplate] = useState<ScholarshipContractTemplate>(
+    createDefaultScholarshipContractTemplate,
+  )
+  const [scholarshipContractTemplateLoaded, setScholarshipContractTemplateLoaded] = useState(false)
+  const [scholarshipContractTemplateLoading, setScholarshipContractTemplateLoading] = useState(false)
+  const [scholarshipContractTemplateError, setScholarshipContractTemplateError] = useState('')
+  const [scholarshipContractTemplateOpen, setScholarshipContractTemplateOpen] = useState(false)
+  const scholarshipContractClauses = scholarshipContractFormat === 'PROGRAMA'
+    ? scholarshipContractTemplate.clausulas_programa || []
+    : scholarshipContractTemplate.clausulas_institucionales || []
+  const scholarshipContractIntroduction = scholarshipContractFormat === 'PROGRAMA'
+    ? scholarshipContractTemplate.introduccion_programa || ''
+    : scholarshipContractTemplate.introduccion_institucional || ''
   const [scholarshipContractUploadItem, setScholarshipContractUploadItem] = useState<ScholarshipContractHistoryItem | null>(null)
   const [scholarshipContractUploadFile, setScholarshipContractUploadFile] = useState<File | null>(null)
   const [scholarshipContractUploading, setScholarshipContractUploading] = useState(false)
+  const [scholarshipContractReviewItem, setScholarshipContractReviewItem] = useState<ScholarshipContractHistoryItem | null>(null)
+  const [scholarshipContractReviewPdfUrl, setScholarshipContractReviewPdfUrl] = useState('')
+  const [scholarshipContractReviewLoading, setScholarshipContractReviewLoading] = useState(false)
+  const [scholarshipContractReviewError, setScholarshipContractReviewError] = useState('')
+  const scholarshipContractReviewRequestRef = useRef(0)
+  const scholarshipContractReviewPdfUrlRef = useRef('')
   const [scholarshipConfigurations, setScholarshipConfigurations] = useState<ScholarshipConfigurationItem[]>([])
   const [scholarshipConfigurationLoading, setScholarshipConfigurationLoading] = useState(false)
   const [scholarshipConfigurationSaving, setScholarshipConfigurationSaving] = useState(false)
@@ -459,6 +565,7 @@ export function PreinscripcionView({
   const loadScholarshipBeneficiariesEffect = useEffectEvent(loadScholarshipBeneficiaries)
   const loadScholarshipContractCandidatesEffect = useEffectEvent(loadScholarshipContractCandidates)
   const loadScholarshipContractHistoryEffect = useEffectEvent(loadScholarshipContractHistory)
+  const loadScholarshipContractTemplateEffect = useEffectEvent(loadScholarshipContractTemplate)
 
   useEffect(() => {
     if (isAdmissionsRole && activeStage === 'seguimiento') {
@@ -489,6 +596,16 @@ export function PreinscripcionView({
     `${createValues.apellidos || ''} ${createValues.nombres || ''}`.trim() ||
     createValues.apellidos_nombre.trim()
   const createCedulaClean = createValues.cedula.replace(/\D+/g, '')
+  const createPeriodName =
+    catalog?.periodos?.find((period) => period.codigo_periodo === createValues.codperiodo)?.detalle_periodo || ''
+  const createCareerName =
+    catalog?.carreras?.find((career) => career.cod_anio_basica === createValues.codcarrera)?.nombre_basica || ''
+  const createProvinceName =
+    catalog?.provincias?.find((province) => province.codprov === createValues.codprov)?.descripcion || ''
+  const createModalityName =
+    catalog?.modalidades?.find((option) => String(option.value) === createModalidadCode)?.label || ''
+  const createScheduleName =
+    catalog?.jornadas?.find((option) => String(option.value) === createJornadaCode)?.label || ''
   const cedulaAlreadyRegistered =
     createCedulaClean.length === 10 &&
     cedulaValidation?.cedula === createCedulaClean &&
@@ -737,6 +854,14 @@ export function PreinscripcionView({
     void loadCatalog()
   }, [])
 
+  useEffect(() => () => {
+    scholarshipContractReviewRequestRef.current += 1
+    if (scholarshipContractReviewPdfUrlRef.current) {
+      URL.revokeObjectURL(scholarshipContractReviewPdfUrlRef.current)
+      scholarshipContractReviewPdfUrlRef.current = ''
+    }
+  }, [])
+
   useEffect(() => {
     const savedTotal = Number(selectedItem?.cabecera?.valor ?? 0)
     const savedBeca = Number(selectedItem?.cabecera?.beca ?? 0)
@@ -844,6 +969,7 @@ export function PreinscripcionView({
       void Promise.all([
         loadScholarshipContractCandidatesEffect('', '', ''),
         loadScholarshipContractHistoryEffect(''),
+        loadScholarshipContractTemplateEffect(),
       ])
     }
   }, [activeStage, canApproveScholarship])
@@ -1376,13 +1502,69 @@ export function PreinscripcionView({
     }
   }
 
+  function validateRegistrationIdentity(): string {
+    if (createCedulaClean.length !== 10) return 'Ingrese un número de cédula de 10 dígitos.'
+    if (!createValues.nombres?.trim()) return 'Ingrese los nombres del aspirante.'
+    if (!createValues.apellidos?.trim()) return 'Ingrese los apellidos del aspirante.'
+    const email = createValues.correo?.trim() || ''
+    if (!email) return 'Ingrese el correo del aspirante.'
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Ingrese un correo electrónico válido.'
+    if (!createValues.telefono?.trim()) return 'Ingrese el teléfono del aspirante.'
+    if (!createValues.codprov) return 'Seleccione la provincia del aspirante.'
+    return ''
+  }
+
+  function validateRegistrationOffer(): string {
+    if (!createValues.codperiodo) return 'Seleccione el período académico.'
+    if (!createValues.codcarrera) return 'Seleccione la carrera.'
+    if (!createValues.codmodalida) return 'Seleccione la modalidad.'
+    if (!createValues.codjornada) return 'Seleccione la jornada.'
+    return ''
+  }
+
+  async function continueRegistration() {
+    setCreateError('')
+    setCreateMessage('')
+    if (registrationStep === 1) {
+      const validationError = validateRegistrationIdentity()
+      if (validationError) {
+        setCreateError(validationError)
+        return
+      }
+      const alreadyRegistered =
+        (cedulaValidation?.cedula === createCedulaClean && cedulaValidation.exists) ||
+        (cedulaValidation?.cedula !== createCedulaClean && (await validateCreateCedula(createCedulaClean)))
+      if (alreadyRegistered) {
+        setCreateError('El estudiante ya se encuentra inscrito.')
+        return
+      }
+      setRegistrationStep(2)
+      return
+    }
+    const validationError = validateRegistrationOffer()
+    if (validationError) {
+      setCreateError(validationError)
+      return
+    }
+    setRegistrationStep(3)
+  }
+
+  function returnToRegistrationStep(step: RegistrationStep) {
+    if (step > registrationStep) return
+    setCreateError('')
+    setCreateMessage('')
+    setRegistrationStep(step)
+  }
+
   async function registerPreinscription() {
     const fullName = createFullName.trim()
     if (!fullName) {
+      setRegistrationStep(1)
       setCreateError('Ingrese nombres y apellidos del estudiante.')
       return
     }
     if (createCedulaClean.length !== 10) {
+      setRegistrationStep(1)
       setCreateError('Ingrese un número de cédula de 10 dígitos.')
       return
     }
@@ -1390,27 +1572,20 @@ export function PreinscripcionView({
       (cedulaValidation?.cedula === createCedulaClean && cedulaValidation.exists) ||
       (cedulaValidation?.cedula !== createCedulaClean && (await validateCreateCedula(createCedulaClean)))
     ) {
-      setCreateError('estudiante inscrito')
+      setRegistrationStep(1)
+      setCreateError('El estudiante ya se encuentra inscrito.')
       return
     }
-    if (!createValues.correo?.trim()) {
-      setCreateError('Ingrese el correo del estudiante.')
+    const identityValidationError = validateRegistrationIdentity()
+    if (identityValidationError) {
+      setRegistrationStep(1)
+      setCreateError(identityValidationError)
       return
     }
-    if (!createValues.telefono?.trim()) {
-      setCreateError('Ingrese el teléfono del estudiante.')
-      return
-    }
-    if (!createValues.codprov) {
-      setCreateError('Seleccione la provincia.')
-      return
-    }
-    if (!createValues.codperiodo || !createValues.codcarrera) {
-      setCreateError('Seleccione período y carrera para registrar la inscripción.')
-      return
-    }
-    if (!createValues.codmodalida || !createValues.codjornada) {
-      setCreateError('Seleccione modalidad y jornada.')
+    const offerValidationError = validateRegistrationOffer()
+    if (offerValidationError) {
+      setRegistrationStep(2)
+      setCreateError(offerValidationError)
       return
     }
     if (!scholarshipExcludedForEnglish && !scholarshipSelectionIsEmpty && paymentPlanPreview.porcentajeBeca <= 0) {
@@ -1472,6 +1647,7 @@ export function PreinscripcionView({
         correo: '',
         telefono: '',
       }))
+      setRegistrationStep(1)
       if (canContinue) onStageChange('documentos')
       setCreateMessage(
         `${response.message || 'Inscripción registrada.'}${
@@ -1514,6 +1690,7 @@ export function PreinscripcionView({
       await Promise.all([
         loadScholarshipContractCandidates('', '', ''),
         loadScholarshipContractHistory(''),
+        loadScholarshipContractTemplate(),
       ])
     }
   }
@@ -1687,6 +1864,25 @@ export function PreinscripcionView({
     }
   }
 
+  async function loadScholarshipContractTemplate(force = false) {
+    if (scholarshipContractTemplateLoaded && !force) return
+    setScholarshipContractTemplateLoading(true)
+    setScholarshipContractTemplateError('')
+    try {
+      const response = await fetchScholarshipContractTemplate()
+      setScholarshipContractTemplate(response)
+      setScholarshipContractTemplateLoaded(true)
+    } catch (requestError) {
+      setScholarshipContractTemplateError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'No se pudo cargar el contenido completo de la plantilla.',
+      )
+    } finally {
+      setScholarshipContractTemplateLoading(false)
+    }
+  }
+
   function toggleScholarshipContractCandidate(item: ScholarshipContractCandidateItem) {
     if (!scholarshipContractType || !scholarshipContractPeriod) return
     setSelectedScholarshipContractIds((current) => (
@@ -1700,6 +1896,115 @@ export function PreinscripcionView({
     const candidateIds = scholarshipContractCandidates.map((item) => item.beca_id)
     const allSelected = candidateIds.length > 0 && candidateIds.every((itemId) => selectedScholarshipContractIds.includes(itemId))
     setSelectedScholarshipContractIds(allSelected ? [] : candidateIds)
+  }
+
+  function updateScholarshipContractTemplate<K extends keyof ScholarshipContractTemplate>(
+    field: K,
+    value: ScholarshipContractTemplate[K],
+  ) {
+    setScholarshipContractTemplate((current) => ({ ...current, [field]: value }))
+  }
+
+  function scholarshipContractClauseField(
+    format: ScholarshipContractFormat = scholarshipContractFormat,
+  ): 'clausulas_institucionales' | 'clausulas_programa' {
+    return format === 'PROGRAMA' ? 'clausulas_programa' : 'clausulas_institucionales'
+  }
+
+  function updateScholarshipContractClause(
+    index: number,
+    field: keyof ScholarshipContractClause,
+    value: string,
+  ) {
+    const clauseField = scholarshipContractClauseField()
+    setScholarshipContractTemplate((current) => {
+      const clauses = [...(current[clauseField] || [])]
+      const clause = clauses[index]
+      if (!clause) return current
+      clauses[index] = { ...clause, [field]: value }
+      return { ...current, [clauseField]: clauses }
+    })
+  }
+
+  function addScholarshipContractClause(afterIndex?: number) {
+    const clauseField = scholarshipContractClauseField()
+    setScholarshipContractTemplate((current) => {
+      const clauses = [...(current[clauseField] || [])]
+      if (clauses.length >= scholarshipContractClauseLimit) return current
+      const insertAt = typeof afterIndex === 'number'
+        ? Math.min(Math.max(afterIndex + 1, 0), clauses.length)
+        : clauses.length
+      clauses.splice(insertAt, 0, { titulo: 'NUEVA CLÁUSULA.-', contenido: '' })
+      return {
+        ...current,
+        [clauseField]: clauses,
+      }
+    })
+  }
+
+  function removeScholarshipContractClause(index: number) {
+    const clauseField = scholarshipContractClauseField()
+    setScholarshipContractTemplate((current) => ({
+      ...current,
+      [clauseField]: (current[clauseField] || []).filter((_, itemIndex) => itemIndex !== index),
+    }))
+  }
+
+  function moveScholarshipContractClause(index: number, direction: -1 | 1) {
+    const clauseField = scholarshipContractClauseField()
+    setScholarshipContractTemplate((current) => {
+      const clauses = [...(current[clauseField] || [])]
+      const nextIndex = index + direction
+      if (nextIndex < 0 || nextIndex >= clauses.length) return current
+      const currentClause = clauses[index]
+      clauses[index] = clauses[nextIndex]
+      clauses[nextIndex] = currentClause
+      return { ...current, [clauseField]: clauses }
+    })
+  }
+
+  function moveScholarshipContractClauseTo(index: number, nextIndex: number) {
+    const clauseField = scholarshipContractClauseField()
+    setScholarshipContractTemplate((current) => {
+      const clauses = [...(current[clauseField] || [])]
+      if (
+        index < 0
+        || index >= clauses.length
+        || nextIndex < 0
+        || nextIndex >= clauses.length
+        || index === nextIndex
+      ) return current
+      const [clause] = clauses.splice(index, 1)
+      clauses.splice(nextIndex, 0, clause)
+      return { ...current, [clauseField]: clauses }
+    })
+  }
+
+  function updateScholarshipContractProjection(
+    index: number,
+    field: 'rubro' | 'periodicidad',
+    value: string,
+  ) {
+    setScholarshipContractTemplate((current) => ({
+      ...current,
+      proyeccion: current.proyeccion.map((item, itemIndex) => (
+        itemIndex === index ? { ...item, [field]: value } : item
+      )),
+    }))
+  }
+
+  function addScholarshipContractProjection() {
+    setScholarshipContractTemplate((current) => ({
+      ...current,
+      proyeccion: [...current.proyeccion, { rubro: '', periodicidad: '' }],
+    }))
+  }
+
+  function removeScholarshipContractProjection(index: number) {
+    setScholarshipContractTemplate((current) => ({
+      ...current,
+      proyeccion: current.proyeccion.filter((_, itemIndex) => itemIndex !== index),
+    }))
   }
 
   async function generateSelectedScholarshipContracts() {
@@ -1719,7 +2024,12 @@ export function PreinscripcionView({
     setScholarshipContractsError('')
     setScholarshipContractsMessage('')
     try {
-      const blob = await generateScholarshipContracts(selectedScholarshipContractIds, scholarshipContractPeriod)
+      const blob = await generateScholarshipContracts(
+        selectedScholarshipContractIds,
+        scholarshipContractPeriod,
+        scholarshipContractFormat,
+        scholarshipContractTemplate,
+      )
       const dateText = new Date().toISOString().slice(0, 10)
       const filename = selectedScholarshipContractIds.length === 1
         ? `contrato-beca-${dateText}.pdf`
@@ -1757,7 +2067,53 @@ export function PreinscripcionView({
     }
   }
 
+  function replaceScholarshipContractReviewPdfUrl(nextUrl: string) {
+    if (scholarshipContractReviewPdfUrlRef.current) {
+      URL.revokeObjectURL(scholarshipContractReviewPdfUrlRef.current)
+    }
+    scholarshipContractReviewPdfUrlRef.current = nextUrl
+    setScholarshipContractReviewPdfUrl(nextUrl)
+  }
+
+  function closeScholarshipContractReview() {
+    scholarshipContractReviewRequestRef.current += 1
+    replaceScholarshipContractReviewPdfUrl('')
+    setScholarshipContractReviewItem(null)
+    setScholarshipContractReviewLoading(false)
+    setScholarshipContractReviewError('')
+  }
+
+  async function openScholarshipContractReview(item: ScholarshipContractHistoryItem) {
+    const requestId = scholarshipContractReviewRequestRef.current + 1
+    scholarshipContractReviewRequestRef.current = requestId
+    replaceScholarshipContractReviewPdfUrl('')
+    setScholarshipContractReviewItem(item)
+    setScholarshipContractReviewLoading(true)
+    setScholarshipContractReviewError('')
+    try {
+      const blob = await downloadScholarshipContract(item.contrato_id)
+      const objectUrl = URL.createObjectURL(blob)
+      if (requestId !== scholarshipContractReviewRequestRef.current) {
+        URL.revokeObjectURL(objectUrl)
+        return
+      }
+      replaceScholarshipContractReviewPdfUrl(objectUrl)
+    } catch (requestError) {
+      if (requestId !== scholarshipContractReviewRequestRef.current) return
+      setScholarshipContractReviewError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'No se pudo cargar la vista previa del contrato de beca.',
+      )
+    } finally {
+      if (requestId === scholarshipContractReviewRequestRef.current) {
+        setScholarshipContractReviewLoading(false)
+      }
+    }
+  }
+
   function openScholarshipContractUpload(item: ScholarshipContractHistoryItem) {
+    closeScholarshipContractReview()
     setScholarshipContractUploadItem(item)
     setScholarshipContractUploadFile(null)
     setScholarshipContractsError('')
@@ -2037,185 +2393,267 @@ export function PreinscripcionView({
             </button>
           </div>
 
+          <nav className="preinscripcion-registration-steps" aria-label="Etapas del registro previo">
+            {registrationSteps.map((item) => {
+              const isActive = registrationStep === item.step
+              const isComplete = registrationStep > item.step
+              return (
+                <button
+                  key={item.step}
+                  type="button"
+                  className={`${isActive ? 'is-active' : ''} ${isComplete ? 'is-complete' : ''}`.trim()}
+                  onClick={() => returnToRegistrationStep(item.step)}
+                  disabled={item.step > registrationStep}
+                  aria-current={isActive ? 'step' : undefined}
+                >
+                  <span>{item.step}</span>
+                  <strong>{item.label}</strong>
+                  <small>{item.detail}</small>
+                </button>
+              )
+            })}
+          </nav>
+
           <div className="preinscripcion-form-intro">
-            <strong>Formulario de inscripción</strong>
-            <span>Registre la inscripción; al guardar continua con matrícula, convenio de pago y documentación.</span>
+            <strong>{registrationSteps[registrationStep - 1].label}</strong>
+            <span>Paso {registrationStep} de {registrationSteps.length}</span>
           </div>
 
-          <div className="matricula-acad-form preinscripcion-register-form">
-            <label>
-              <span>Período</span>
-              <select value={createValues.codperiodo || ''} onChange={(event) => setCreateValues((current) => ({ ...current, codperiodo: event.target.value }))}>
-                <option value="">- Seleccione -</option>
-                {(catalog?.periodos || []).map((period) => (
-                  <option key={period.codigo_periodo} value={period.codigo_periodo}>
-                    {period.detalle_periodo || period.codigo_periodo}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Carrera</span>
-              <select value={createValues.codcarrera || ''} onChange={(event) => setCreateValues((current) => ({ ...current, codcarrera: event.target.value }))}>
-                <option value="">- Seleccione -</option>
-                {(catalog?.carreras || []).map((career) => (
-                  <option key={career.cod_anio_basica} value={career.cod_anio_basica}>
-                    {career.nombre_basica}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Cédula</span>
-              <input
-                value={createValues.cedula}
-                maxLength={10}
-                placeholder="Cédula *"
-                onChange={(event) =>
-                  setCreateValues((current) => ({ ...current, cedula: event.target.value.replace(/\D+/g, '').slice(0, 10) }))
-                }
-              />
-              {cedulaValidationLoading ? (
-                <small className="preinscripcion-field-hint">Validando cédula...</small>
-              ) : cedulaAlreadyRegistered ? (
-                <small className="preinscripcion-field-error">{cedulaValidation?.message || 'estudiante inscrito'}</small>
-              ) : null}
-            </label>
-            <label>
-              <span>Nombres</span>
-              <input
-                value={createValues.nombres || ''}
-                placeholder="Nombres *"
-                onChange={(event) => setCreateValues((current) => ({ ...current, nombres: event.target.value }))}
-              />
-            </label>
-            <label>
-              <span>Apellidos</span>
-              <input
-                value={createValues.apellidos || ''}
-                placeholder="Apellidos *"
-                onChange={(event) => setCreateValues((current) => ({ ...current, apellidos: event.target.value }))}
-              />
-            </label>
-            <label>
-              <span>Correo</span>
-              <input
-                value={createValues.correo || ''}
-                placeholder="Correo *"
-                onChange={(event) => setCreateValues((current) => ({ ...current, correo: event.target.value }))}
-              />
-            </label>
-            <label>
-              <span>Teléfono</span>
-              <input
-                value={createValues.telefono || ''}
-                placeholder="Teléfono *"
-                onChange={(event) => setCreateValues((current) => ({ ...current, telefono: event.target.value }))}
-              />
-            </label>
-            <label>
-              <span>Provincia</span>
-              <select value={createValues.codprov} onChange={(event) => setCreateValues((current) => ({ ...current, codprov: event.target.value }))}>
-                <option value="">- Seleccione -</option>
-                {(catalog?.provincias || []).map((province) => (
-                  <option key={province.codprov} value={province.codprov}>
-                    {province.descripcion}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Modalidad</span>
-              <select
-                value={createModalidadCode}
-                onChange={(event) => {
-                  const nextModalidad = event.target.value
-                  const nextJornada =
-                    (catalog?.jornadas || []).find((option) => !option.modalidad || option.modalidad === nextModalidad)?.value || ''
-                  setCreateValues((current) => ({
-                    ...current,
-                    codmodalida: toNumber(nextModalidad, 0),
-                    codjornada: toNumber(nextJornada, 0),
-                  }))
-                }}
-              >
-                <option value="">- Seleccione -</option>
-                {(catalog?.modalidades || []).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Jornada</span>
-              <select value={createJornadaCode} onChange={(event) => setCreateValues((current) => ({ ...current, codjornada: toNumber(event.target.value, 0) }))}>
-                <option value="">- Seleccione -</option>
-                {jornadaOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          {registrationStep === 1 ? (
+            <>
+              <div className="matricula-acad-form preinscripcion-register-form preinscripcion-register-form--identity">
+                <label className="preinscripcion-field--4">
+                  <span>Cédula</span>
+                  <input
+                    value={createValues.cedula}
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="10 dígitos"
+                    aria-invalid={cedulaAlreadyRegistered}
+                    onChange={(event) =>
+                      setCreateValues((current) => ({ ...current, cedula: event.target.value.replace(/\D+/g, '').slice(0, 10) }))
+                    }
+                  />
+                  {cedulaValidationLoading ? (
+                    <small className="preinscripcion-field-hint">Validando cédula...</small>
+                  ) : cedulaAlreadyRegistered ? (
+                    <small className="preinscripcion-field-error">{cedulaValidation?.message || 'El estudiante ya se encuentra inscrito.'}</small>
+                  ) : createCedulaClean.length === 10 && cedulaValidation?.cedula === createCedulaClean ? (
+                    <small className="preinscripcion-field-success">Cédula disponible para inscripción.</small>
+                  ) : null}
+                </label>
+                <label className="preinscripcion-field--4">
+                  <span>Nombres</span>
+                  <input
+                    value={createValues.nombres || ''}
+                    autoComplete="given-name"
+                    placeholder="Nombres"
+                    onChange={(event) => setCreateValues((current) => ({ ...current, nombres: event.target.value }))}
+                  />
+                </label>
+                <label className="preinscripcion-field--4">
+                  <span>Apellidos</span>
+                  <input
+                    value={createValues.apellidos || ''}
+                    autoComplete="family-name"
+                    placeholder="Apellidos"
+                    onChange={(event) => setCreateValues((current) => ({ ...current, apellidos: event.target.value }))}
+                  />
+                </label>
+                <label className="preinscripcion-field--6">
+                  <span>Correo electrónico</span>
+                  <input
+                    type="email"
+                    value={createValues.correo || ''}
+                    autoComplete="email"
+                    placeholder="correo@ejemplo.com"
+                    onChange={(event) => setCreateValues((current) => ({ ...current, correo: event.target.value }))}
+                  />
+                </label>
+                <label className="preinscripcion-field--3">
+                  <span>Teléfono</span>
+                  <input
+                    value={createValues.telefono || ''}
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="Teléfono"
+                    onChange={(event) => setCreateValues((current) => ({ ...current, telefono: event.target.value }))}
+                  />
+                </label>
+                <label className="preinscripcion-field--3">
+                  <span>Provincia</span>
+                  <select value={createValues.codprov} onChange={(event) => setCreateValues((current) => ({ ...current, codprov: event.target.value }))}>
+                    <option value="">Seleccione</option>
+                    {(catalog?.provincias || []).map((province) => (
+                      <option key={province.codprov} value={province.codprov}>
+                        {province.descripcion}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="matricula-acad-actions preinscripcion-register-actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => void continueRegistration()}
+                  disabled={cedulaValidationLoading || cedulaAlreadyRegistered}
+                >
+                  Continuar a oferta académica
+                </button>
+              </div>
+            </>
+          ) : null}
 
-          <div className="preinscripcion-beca-panel">
-            <div>
-              <span>{scholarshipExcludedForEnglish ? 'Convenio del registro previo' : 'Beca del registro previo'}</span>
-              <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
-              <small>
-                {paymentPlanPreview.subjectCount} materias: {formatMoney(paymentPlanPreview.academicTotal)} + matrícula {formatMoney(paymentPlanPreview.enrollmentTotal)}.
-              </small>
-              {paymentPlanPreview.scholarshipAppliesOnlyToTuition ? (
-                <small>La Beca INTEC se aplica únicamente al arancel; la matrícula se paga completa.</small>
-              ) : null}
-            </div>
-            {renderPaymentScopeSelector()}
-            {renderScholarshipSelector()}
-            {renderScholarshipPercentageInput()}
-            {!scholarshipExcludedForEnglish ? (
-              <label className="preinscripcion-beca-panel__reason">
-                <span>Motivo o referencia</span>
-                <input
-                  value={cabeceraValues.motivo_beca}
-                  maxLength={1000}
-                  placeholder={paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? 'Obligatorio para solicitar aprobación' : 'Opcional'}
-                  onChange={(event) => setCabeceraValues((current) => ({ ...current, motivo_beca: event.target.value }))}
-                />
-              </label>
-            ) : null}
-            {paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? (
-              <div className={`preinscripcion-beca-approval ${scholarshipStatus?.puede_continuar ? 'preinscripcion-beca-approval--approved' : ''}`}>
-                <span>{scholarshipStatusLoading ? 'Consultando aprobación' : scholarshipStatus?.puede_continuar ? 'Beca aprobada' : 'Requiere aprobación'}</span>
-                <strong>Las becas superiores al 15% deben aprobarse antes de continuar con la matrícula.</strong>
-                {selectedItem?.num && scholarshipNeedsApproval && canApproveScholarship ? (
-                  <button type="button" className="ghost-button" onClick={() => void approveSelectedScholarship()} disabled={scholarshipApprovalLoading}>
-                    {scholarshipApprovalLoading ? 'Aprobando...' : 'Aprobar beca'}
-                  </button>
+          {registrationStep === 2 ? (
+            <>
+              <div className="matricula-acad-form preinscripcion-register-form preinscripcion-register-form--offer">
+                <label className="preinscripcion-field--6">
+                  <span>Período académico</span>
+                  <select value={createValues.codperiodo || ''} onChange={(event) => setCreateValues((current) => ({ ...current, codperiodo: event.target.value }))}>
+                    <option value="">Seleccione</option>
+                    {(catalog?.periodos || []).map((period) => (
+                      <option key={period.codigo_periodo} value={period.codigo_periodo}>
+                        {period.detalle_periodo || period.codigo_periodo}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="preinscripcion-field--6">
+                  <span>Carrera</span>
+                  <select value={createValues.codcarrera || ''} onChange={(event) => setCreateValues((current) => ({ ...current, codcarrera: event.target.value }))}>
+                    <option value="">Seleccione</option>
+                    {(catalog?.carreras || []).map((career) => (
+                      <option key={career.cod_anio_basica} value={career.cod_anio_basica}>
+                        {career.nombre_basica}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="preinscripcion-field--6">
+                  <span>Modalidad</span>
+                  <select
+                    value={createModalidadCode}
+                    onChange={(event) => {
+                      const nextModalidad = event.target.value
+                      const nextJornada =
+                        (catalog?.jornadas || []).find((option) => !option.modalidad || option.modalidad === nextModalidad)?.value || ''
+                      setCreateValues((current) => ({
+                        ...current,
+                        codmodalida: toNumber(nextModalidad, 0),
+                        codjornada: toNumber(nextJornada, 0),
+                      }))
+                    }}
+                  >
+                    <option value="">Seleccione</option>
+                    {(catalog?.modalidades || []).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="preinscripcion-field--6">
+                  <span>Jornada</span>
+                  <select value={createJornadaCode} onChange={(event) => setCreateValues((current) => ({ ...current, codjornada: toNumber(event.target.value, 0) }))}>
+                    <option value="">Seleccione</option>
+                    {jornadaOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="matricula-acad-actions preinscripcion-register-actions preinscripcion-register-actions--split">
+                <button type="button" className="ghost-button" onClick={() => returnToRegistrationStep(1)}>
+                  Volver a identificación
+                </button>
+                <button type="button" className="primary-action" onClick={() => void continueRegistration()}>
+                  Continuar a financiamiento
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {registrationStep === 3 ? (
+            <>
+              <dl className="preinscripcion-registration-summary">
+                <div>
+                  <dt>Aspirante</dt>
+                  <dd>{createFullName || '-'}</dd>
+                  <small>Cédula {createCedulaClean || '-'}</small>
+                </div>
+                <div>
+                  <dt>Contacto</dt>
+                  <dd>{createValues.correo || '-'}</dd>
+                  <small>{createValues.telefono || '-'}</small>
+                </div>
+                <div>
+                  <dt>Carrera</dt>
+                  <dd>{createCareerName || '-'}</dd>
+                  <small>{createPeriodName || '-'}</small>
+                </div>
+                <div>
+                  <dt>Modalidad</dt>
+                  <dd>{createModalityName || '-'}</dd>
+                  <small>{createScheduleName || '-'} · {createProvinceName || '-'}</small>
+                </div>
+              </dl>
+
+              <div className="preinscripcion-beca-panel">
+                <div>
+                  <span>{scholarshipExcludedForEnglish ? 'Convenio del registro previo' : 'Beca del registro previo'}</span>
+                  <strong>{paymentPlanPreview.selectedSemesters} semestre(s) · {formatMoney(paymentPlanPreview.total)}</strong>
+                  <small>
+                    {paymentPlanPreview.subjectCount} materias: {formatMoney(paymentPlanPreview.academicTotal)} + matrícula {formatMoney(paymentPlanPreview.enrollmentTotal)}.
+                  </small>
+                  {paymentPlanPreview.scholarshipAppliesOnlyToTuition ? (
+                    <small>La Beca INTEC se aplica únicamente al arancel; la matrícula se paga completa.</small>
+                  ) : null}
+                </div>
+                {renderPaymentScopeSelector()}
+                {renderScholarshipSelector()}
+                {renderScholarshipPercentageInput()}
+                {!scholarshipExcludedForEnglish ? (
+                  <label className="preinscripcion-beca-panel__reason">
+                    <span>Motivo o referencia</span>
+                    <input
+                      value={cabeceraValues.motivo_beca}
+                      maxLength={1000}
+                      placeholder={paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? 'Obligatorio para solicitar aprobación' : 'Opcional'}
+                      onChange={(event) => setCabeceraValues((current) => ({ ...current, motivo_beca: event.target.value }))}
+                    />
+                  </label>
+                ) : null}
+                {paymentPlanPreview.porcentajeBeca > scholarshipApprovalThreshold ? (
+                  <div className={`preinscripcion-beca-approval ${scholarshipStatus?.puede_continuar ? 'preinscripcion-beca-approval--approved' : ''}`}>
+                    <span>{scholarshipStatusLoading ? 'Consultando aprobación' : scholarshipStatus?.puede_continuar ? 'Beca aprobada' : 'Requiere aprobación'}</span>
+                    <strong>Las becas superiores al 15% deben aprobarse antes de continuar con la matrícula.</strong>
+                    {selectedItem?.num && scholarshipNeedsApproval && canApproveScholarship ? (
+                      <button type="button" className="ghost-button" onClick={() => void approveSelectedScholarship()} disabled={scholarshipApprovalLoading}>
+                        {scholarshipApprovalLoading ? 'Aprobando...' : 'Aprobar beca'}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-          </div>
 
-          <div className="matricula-acad-actions">
-            <button
-              type="button"
-              className="primary-action"
-              onClick={() => void registerPreinscription()}
-              disabled={createLoading || cedulaValidationLoading || cedulaAlreadyRegistered}
-            >
-              {createLoading ? 'Registrando...' : 'Registrar'}
-            </button>
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => void openPreinscriptionStage('inscritos')}
-              disabled={loading}
-            >
-              Ver inscritos
-            </button>
-          </div>
+              <div className="matricula-acad-actions preinscripcion-register-actions preinscripcion-register-actions--split">
+                <button type="button" className="ghost-button" onClick={() => returnToRegistrationStep(2)} disabled={createLoading}>
+                  Volver a oferta académica
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => void registerPreinscription()}
+                  disabled={createLoading || cedulaValidationLoading || cedulaAlreadyRegistered}
+                >
+                  {createLoading ? 'Registrando...' : 'Registrar inscripción'}
+                </button>
+              </div>
+            </>
+          ) : null}
           {createError ? <p className="form-error">{createError}</p> : null}
           {createMessage ? <p className="form-success">{createMessage}</p> : null}
         </article>
@@ -2411,12 +2849,59 @@ export function PreinscripcionView({
               <b>2</b><span><strong>Seleccionar período</strong><small>Requisito del contrato</small></span>
             </div>
             <div className={selectedScholarshipContractIds.length ? 'is-complete' : scholarshipContractPeriod ? 'is-active' : ''}>
-              <b>3</b><span><strong>Elegir estudiantes</strong><small>Solo estado activo (A)</small></span>
+              <b>3</b><span><strong>Elegir estudiantes</strong><small>Todos los elegibles, sin límite de cantidad</small></span>
             </div>
             <div className={selectedScholarshipContractIds.length ? 'is-active' : ''}>
               <b>4</b><span><strong>Generar y archivar</strong><small>PDF firmado en expediente</small></span>
             </div>
           </div>
+
+          <section className="scholarship-contracts__template-selector" aria-labelledby="scholarship-contract-format-title">
+            <div className="scholarship-contracts__template-heading">
+              <div>
+                <span>Plantilla del documento</span>
+                <h3 id="scholarship-contract-format-title">Seleccione el tipo de contrato</h3>
+              </div>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setScholarshipContractTemplateOpen(true)
+                  if (!scholarshipContractTemplateLoaded) void loadScholarshipContractTemplate()
+                }}
+              >
+                Editar plantilla
+              </button>
+            </div>
+            <div className="scholarship-contracts__format-options" role="radiogroup" aria-label="Tipo de contrato de beca">
+              <label className={scholarshipContractFormat === 'INSTITUCIONAL' ? 'is-selected' : ''}>
+                <input
+                  type="radio"
+                  name="scholarship-contract-format"
+                  value="INSTITUCIONAL"
+                  checked={scholarshipContractFormat === 'INSTITUCIONAL'}
+                  onChange={() => {
+                    setScholarshipContractFormat('INSTITUCIONAL')
+                    setScholarshipContractsMessage('')
+                  }}
+                />
+                <span><strong>Contrato institucional</strong><small>Formato completo de doce cláusulas y datos de la beca.</small></span>
+              </label>
+              <label className={scholarshipContractFormat === 'PROGRAMA' ? 'is-selected' : ''}>
+                <input
+                  type="radio"
+                  name="scholarship-contract-format"
+                  value="PROGRAMA"
+                  checked={scholarshipContractFormat === 'PROGRAMA'}
+                  onChange={() => {
+                    setScholarshipContractFormat('PROGRAMA')
+                    setScholarshipContractsMessage('')
+                  }}
+                />
+                <span><strong>Contrato de programa</strong><small>Formato con tablas de datos y proyección de la beca.</small></span>
+              </label>
+            </div>
+          </section>
 
           <div className="scholarship-contracts__filters">
             <label>
@@ -2493,7 +2978,7 @@ export function PreinscripcionView({
             <div>
               <span>Estudiantes elegibles</span>
               <strong>{scholarshipContractCandidates.length}</strong>
-              <small>Con beca vigente, matrícula registrada y estado A.</small>
+              <small>Catálogo completo con beca vigente, matrícula registrada y estado A.</small>
             </div>
             <div>
               <span>Seleccionados</span>
@@ -2512,7 +2997,7 @@ export function PreinscripcionView({
             >
               {scholarshipContractCandidates.length > 0 && scholarshipContractCandidates.every((item) => selectedScholarshipContractIds.includes(item.beca_id))
                 ? 'Quitar selección'
-                : 'Seleccionar visibles'}
+                : 'Seleccionar todos'}
             </button>
             <button
               type="button"
@@ -2520,7 +3005,9 @@ export function PreinscripcionView({
               onClick={() => void generateSelectedScholarshipContracts()}
               disabled={scholarshipContractsGenerating || !scholarshipContractPeriod || !selectedScholarshipContractIds.length}
             >
-              {scholarshipContractsGenerating ? 'Generando...' : `Generar ${selectedScholarshipContractIds.length || ''} contrato(s)`}
+              {scholarshipContractsGenerating
+                ? `Generando ${selectedScholarshipContractIds.length} contrato(s)...`
+                : `Generar ${selectedScholarshipContractIds.length || ''} contrato(s) ${scholarshipContractFormat === 'PROGRAMA' ? 'de programa' : 'institucionales'}`}
             </button>
           </div>
 
@@ -2583,11 +3070,12 @@ export function PreinscripcionView({
             </div>
             <div className="table-scroll">
               <table className="matricula-table">
-                <thead><tr><th>Contrato</th><th>Estudiante</th><th>Beca</th><th>Período</th><th>Generación</th><th>Expediente</th><th>Acciones</th></tr></thead>
+                <thead><tr><th>Contrato</th><th>Formato</th><th>Estudiante</th><th>Beca</th><th>Período</th><th>Generación</th><th>Expediente</th><th>Acciones</th></tr></thead>
                 <tbody>
                   {scholarshipContractHistory.map((item) => (
                     <tr key={item.contrato_id}>
                       <td><strong>{item.numero_contrato}</strong><small>{item.estado}</small></td>
+                      <td>{item.formato_contrato === 'PROGRAMA' ? 'Programa' : 'Institucional'}</td>
                       <td><strong>{item.estudiante}</strong><small>{item.cedula}</small></td>
                       <td>{item.tipo_beca} · {item.porcentaje_beca.toLocaleString('es-EC')}%</td>
                       <td>{item.periodo || item.codigo_periodo || '-'}</td>
@@ -2598,6 +3086,7 @@ export function PreinscripcionView({
                       </td>
                       <td>
                         <div className="scholarship-contracts__history-actions">
+                          <button type="button" className="ghost-button" onClick={() => void openScholarshipContractReview(item)}>Revisar</button>
                           <button type="button" className="ghost-button" onClick={() => void downloadGeneratedScholarshipContract(item)}>Descargar</button>
                           <button type="button" className="ghost-button" onClick={() => openScholarshipContractUpload(item)}>
                             {item.expediente_documento_id ? 'Actualizar firmado' : 'Subir firmado'}
@@ -2610,7 +3099,7 @@ export function PreinscripcionView({
                     </tr>
                   ))}
                   {!scholarshipContractHistoryLoading && scholarshipContractHistory.length === 0 ? (
-                    <tr><td colSpan={7} className="preinscripcion-scholarship-approval__empty">Todavía no existen contratos de beca generados.</td></tr>
+                    <tr><td colSpan={8} className="preinscripcion-scholarship-approval__empty">Todavía no existen contratos de beca generados.</td></tr>
                   ) : null}
                 </tbody>
               </table>
@@ -3955,6 +4444,637 @@ export function PreinscripcionView({
       </>
       ) : null}
 
+      {scholarshipContractTemplateOpen ? (
+        <div
+          className="matricula-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="scholarship-contract-template-title"
+        >
+          <article className="matricula-modal scholarship-contract-template-modal">
+            <div className="matricula-modal-head">
+              <div className="matricula-modal-title">
+                <span>Plantilla editable</span>
+                <h3 id="scholarship-contract-template-title">
+                  {scholarshipContractFormat === 'PROGRAMA' ? 'Contrato de programa' : 'Contrato institucional'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="matricula-modal-close"
+                onClick={() => setScholarshipContractTemplateOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <p className="scholarship-contract-template-modal__intro">
+              Los valores se aplicarán a todos los estudiantes seleccionados en esta generación. Los datos personales, la carrera, la beca y el período se completan automáticamente desde el sistema.
+            </p>
+
+            {scholarshipContractTemplateLoading ? (
+              <p className="scholarship-contract-template-modal__status">Cargando el contenido completo de la plantilla...</p>
+            ) : null}
+            {scholarshipContractTemplateError ? (
+              <p className="form-error">{scholarshipContractTemplateError}</p>
+            ) : null}
+
+            <section className="scholarship-contract-template-modal__section" aria-labelledby="contract-template-general-title">
+              <h4 id="contract-template-general-title">Datos generales</h4>
+              <div className="scholarship-contract-template-modal__grid">
+                <label>
+                  <span>Título del documento</span>
+                  <input
+                    value={scholarshipContractTemplate.titulo_contrato}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('titulo_contrato', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Fecha del contrato</span>
+                  <input
+                    type="date"
+                    value={scholarshipContractTemplate.fecha_contrato || ''}
+                    onChange={(event) => updateScholarshipContractTemplate('fecha_contrato', event.target.value || null)}
+                  />
+                  <small>Si queda vacía, se utilizará la fecha de generación.</small>
+                </label>
+                <label>
+                  <span>Ciudad</span>
+                  <input
+                    value={scholarshipContractTemplate.ciudad}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('ciudad', event.target.value)}
+                  />
+                </label>
+                <label className="is-wide">
+                  <span>Resolución institucional</span>
+                  <textarea
+                    value={scholarshipContractTemplate.resolucion}
+                    maxLength={300}
+                    rows={2}
+                    onChange={(event) => updateScholarshipContractTemplate('resolucion', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Tratamiento del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.rector_tratamiento}
+                    maxLength={80}
+                    onChange={(event) => updateScholarshipContractTemplate('rector_tratamiento', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Nombre del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.rector_nombre}
+                    maxLength={200}
+                    onChange={(event) => updateScholarshipContractTemplate('rector_nombre', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Título del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.rector_titulo}
+                    maxLength={40}
+                    onChange={(event) => updateScholarshipContractTemplate('rector_titulo', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Correo para notificaciones</span>
+                  <input
+                    type="email"
+                    value={scholarshipContractTemplate.correo_notificaciones}
+                    maxLength={180}
+                    onChange={(event) => updateScholarshipContractTemplate('correo_notificaciones', event.target.value)}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="scholarship-contract-template-modal__section" aria-labelledby="contract-template-design-title">
+              <h4 id="contract-template-design-title">Tablas y firmas</h4>
+              <div className="scholarship-contract-template-modal__grid">
+                <label>
+                  <span>Título de la tabla de datos</span>
+                  <input
+                    value={scholarshipContractTemplate.titulo_tabla_datos}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('titulo_tabla_datos', event.target.value)}
+                  />
+                </label>
+                {scholarshipContractFormat === 'PROGRAMA' ? (
+                  <label>
+                    <span>Título de la tabla de proyección</span>
+                    <input
+                      value={scholarshipContractTemplate.titulo_tabla_proyeccion}
+                      maxLength={120}
+                      onChange={(event) => updateScholarshipContractTemplate('titulo_tabla_proyeccion', event.target.value)}
+                    />
+                  </label>
+                ) : null}
+                <label>
+                  <span>Tratamiento en la firma del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_rector_tratamiento}
+                    maxLength={80}
+                    placeholder="Ing."
+                    onChange={(event) => updateScholarshipContractTemplate('firma_rector_tratamiento', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Nombre en la firma del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_rector_nombre}
+                    maxLength={200}
+                    onChange={(event) => updateScholarshipContractTemplate('firma_rector_nombre', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Título en la firma del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_rector_titulo}
+                    maxLength={40}
+                    placeholder="MGT."
+                    onChange={(event) => updateScholarshipContractTemplate('firma_rector_titulo', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Etiqueta de la firma del rector</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_rector_etiqueta}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('firma_rector_etiqueta', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Tratamiento del becario</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_becario_tratamiento}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('firma_becario_tratamiento', event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Etiqueta de la firma del becario</span>
+                  <input
+                    value={scholarshipContractTemplate.firma_becario_etiqueta}
+                    maxLength={120}
+                    onChange={(event) => updateScholarshipContractTemplate('firma_becario_etiqueta', event.target.value)}
+                  />
+                </label>
+                <label className="scholarship-contract-template-modal__color-field">
+                  <span>Color de cabeceras</span>
+                  <span className="scholarship-contract-template-modal__color-control">
+                    <input
+                      type="color"
+                      value={scholarshipContractColor(scholarshipContractTemplate.color_cabecera_tabla, '#B64D5B')}
+                      onChange={(event) => updateScholarshipContractTemplate('color_cabecera_tabla', event.target.value.toUpperCase())}
+                    />
+                    <input
+                      value={scholarshipContractTemplate.color_cabecera_tabla}
+                      maxLength={7}
+                      pattern="#[0-9A-Fa-f]{6}"
+                      onChange={(event) => updateScholarshipContractTemplate('color_cabecera_tabla', event.target.value)}
+                    />
+                  </span>
+                </label>
+                <label className="scholarship-contract-template-modal__color-field">
+                  <span>Color interior de etiquetas</span>
+                  <span className="scholarship-contract-template-modal__color-control">
+                    <input
+                      type="color"
+                      value={scholarshipContractColor(scholarshipContractTemplate.color_celda_etiqueta, '#EDDBDA')}
+                      onChange={(event) => updateScholarshipContractTemplate('color_celda_etiqueta', event.target.value.toUpperCase())}
+                    />
+                    <input
+                      value={scholarshipContractTemplate.color_celda_etiqueta}
+                      maxLength={7}
+                      pattern="#[0-9A-Fa-f]{6}"
+                      onChange={(event) => updateScholarshipContractTemplate('color_celda_etiqueta', event.target.value)}
+                    />
+                  </span>
+                </label>
+                <label className="scholarship-contract-template-modal__color-field">
+                  <span>Color de cabecera interior</span>
+                  <span className="scholarship-contract-template-modal__color-control">
+                    <input
+                      type="color"
+                      value={scholarshipContractColor(scholarshipContractTemplate.color_cabecera_interior, '#F1F1F7')}
+                      onChange={(event) => updateScholarshipContractTemplate('color_cabecera_interior', event.target.value.toUpperCase())}
+                    />
+                    <input
+                      value={scholarshipContractTemplate.color_cabecera_interior}
+                      maxLength={7}
+                      pattern="#[0-9A-Fa-f]{6}"
+                      onChange={(event) => updateScholarshipContractTemplate('color_cabecera_interior', event.target.value)}
+                    />
+                  </span>
+                </label>
+                <label className="scholarship-contract-template-modal__color-field">
+                  <span>Color de celdas de información</span>
+                  <span className="scholarship-contract-template-modal__color-control">
+                    <input
+                      type="color"
+                      value={scholarshipContractColor(scholarshipContractTemplate.color_celda_valor, '#FFFFFF')}
+                      onChange={(event) => updateScholarshipContractTemplate('color_celda_valor', event.target.value.toUpperCase())}
+                    />
+                    <input
+                      value={scholarshipContractTemplate.color_celda_valor}
+                      maxLength={7}
+                      pattern="#[0-9A-Fa-f]{6}"
+                      onChange={(event) => updateScholarshipContractTemplate('color_celda_valor', event.target.value)}
+                    />
+                  </span>
+                </label>
+                <label className="scholarship-contract-template-modal__color-field">
+                  <span>Color de bordes</span>
+                  <span className="scholarship-contract-template-modal__color-control">
+                    <input
+                      type="color"
+                      value={scholarshipContractColor(scholarshipContractTemplate.color_borde_tabla, '#4A4A4A')}
+                      onChange={(event) => updateScholarshipContractTemplate('color_borde_tabla', event.target.value.toUpperCase())}
+                    />
+                    <input
+                      value={scholarshipContractTemplate.color_borde_tabla}
+                      maxLength={7}
+                      pattern="#[0-9A-Fa-f]{6}"
+                      onChange={(event) => updateScholarshipContractTemplate('color_borde_tabla', event.target.value)}
+                    />
+                  </span>
+                </label>
+              </div>
+              <div className="scholarship-contract-template-modal__signature-preview" aria-label="Vista previa de la firma del rector">
+                <span>Vista previa de la firma del rector</span>
+                <div className="scholarship-contract-template-modal__signature-line" aria-hidden="true" />
+                <strong>{scholarshipContractRectorSignature(scholarshipContractTemplate)}</strong>
+                <small>{scholarshipContractTemplate.firma_rector_etiqueta.trim() || 'RECTOR'}</small>
+              </div>
+              <div
+                className="scholarship-contract-template-modal__table-preview"
+                aria-label="Vista de colores de la tabla"
+                style={{ borderColor: scholarshipContractColor(scholarshipContractTemplate.color_borde_tabla, '#4A4A4A') }}
+              >
+                <strong style={{ backgroundColor: scholarshipContractColor(scholarshipContractTemplate.color_cabecera_tabla, '#B64D5B') }}>Cabecera principal</strong>
+                <span style={{ backgroundColor: scholarshipContractColor(scholarshipContractTemplate.color_cabecera_interior, '#F1F1F7') }}>Cabecera interior</span>
+                <span style={{ backgroundColor: scholarshipContractColor(scholarshipContractTemplate.color_celda_etiqueta, '#EDDBDA') }}>Etiqueta</span>
+                <span style={{ backgroundColor: scholarshipContractColor(scholarshipContractTemplate.color_celda_valor, '#FFFFFF') }}>Información del contrato</span>
+              </div>
+            </section>
+
+            {scholarshipContractFormat === 'PROGRAMA' ? (
+              <>
+                <section className="scholarship-contract-template-modal__section" aria-labelledby="contract-template-program-title">
+                  <h4 id="contract-template-program-title">Datos del programa</h4>
+                  <div className="scholarship-contract-template-modal__grid">
+                    <label className="is-wide">
+                      <span>Programa</span>
+                      <textarea
+                        value={scholarshipContractTemplate.programa}
+                        maxLength={1500}
+                        rows={4}
+                        onChange={(event) => updateScholarshipContractTemplate('programa', event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>País</span>
+                      <input value={scholarshipContractTemplate.pais} maxLength={100} onChange={(event) => updateScholarshipContractTemplate('pais', event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Auspiciante</span>
+                      <input value={scholarshipContractTemplate.auspiciante} maxLength={200} onChange={(event) => updateScholarshipContractTemplate('auspiciante', event.target.value)} />
+                    </label>
+                    <label className="is-wide">
+                      <span>Institución de educación</span>
+                      <input value={scholarshipContractTemplate.institucion_educacion} maxLength={300} onChange={(event) => updateScholarshipContractTemplate('institucion_educacion', event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Nivel de estudios</span>
+                      <input value={scholarshipContractTemplate.nivel_estudios} maxLength={160} onChange={(event) => updateScholarshipContractTemplate('nivel_estudios', event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Período de pago</span>
+                      <input value={scholarshipContractTemplate.periodo_pago} maxLength={120} onChange={(event) => updateScholarshipContractTemplate('periodo_pago', event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Inicio de estudios</span>
+                      <input type="date" value={scholarshipContractTemplate.fecha_inicio_estudios || ''} onChange={(event) => updateScholarshipContractTemplate('fecha_inicio_estudios', event.target.value || null)} />
+                    </label>
+                    <label>
+                      <span>Fin de estudios</span>
+                      <input type="date" value={scholarshipContractTemplate.fecha_fin_estudios || ''} onChange={(event) => updateScholarshipContractTemplate('fecha_fin_estudios', event.target.value || null)} />
+                    </label>
+                    <label>
+                      <span>Inicio del financiamiento</span>
+                      <input type="date" value={scholarshipContractTemplate.fecha_inicio_financiamiento || ''} onChange={(event) => updateScholarshipContractTemplate('fecha_inicio_financiamiento', event.target.value || null)} />
+                    </label>
+                    <label>
+                      <span>Fin del financiamiento</span>
+                      <input type="date" value={scholarshipContractTemplate.fecha_fin_financiamiento || ''} onChange={(event) => updateScholarshipContractTemplate('fecha_fin_financiamiento', event.target.value || null)} />
+                    </label>
+                    <label>
+                      <span>Duración de estudios</span>
+                      <input value={scholarshipContractTemplate.duracion_estudios} maxLength={250} onChange={(event) => updateScholarshipContractTemplate('duracion_estudios', event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Duración del financiamiento</span>
+                      <input value={scholarshipContractTemplate.duracion_financiamiento} maxLength={250} onChange={(event) => updateScholarshipContractTemplate('duracion_financiamiento', event.target.value)} />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="scholarship-contract-template-modal__section" aria-labelledby="contract-template-projection-title">
+                  <div className="scholarship-contract-template-modal__section-head">
+                    <div>
+                      <h4 id="contract-template-projection-title">Proyección de la beca</h4>
+                      <p>Sin filas personalizadas, el sistema genera automáticamente arancel y matrícula según cada beca.</p>
+                    </div>
+                    <button type="button" className="ghost-button" onClick={addScholarshipContractProjection} disabled={scholarshipContractTemplate.proyeccion.length >= 10}>
+                      Agregar rubro
+                    </button>
+                  </div>
+                  {scholarshipContractTemplate.proyeccion.length ? (
+                    <div className="scholarship-contract-template-modal__projection">
+                      {scholarshipContractTemplate.proyeccion.map((item, index) => (
+                        <div key={`projection-${index}`}>
+                          <span>{index + 1}</span>
+                          <label>
+                            <span>Rubro</span>
+                            <input value={item.rubro} maxLength={200} onChange={(event) => updateScholarshipContractProjection(index, 'rubro', event.target.value)} />
+                          </label>
+                          <label>
+                            <span>Periodicidad del rubro</span>
+                            <input value={item.periodicidad} maxLength={300} onChange={(event) => updateScholarshipContractProjection(index, 'periodicidad', event.target.value)} />
+                          </label>
+                          <button type="button" className="ghost-button" onClick={() => removeScholarshipContractProjection(index)} aria-label={`Quitar rubro ${index + 1}`}>
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="scholarship-contract-template-modal__automatic">Se aplicará la proyección automática de la beca seleccionada.</p>
+                  )}
+                </section>
+              </>
+            ) : null}
+
+            <section className="scholarship-contract-template-modal__section" aria-labelledby="contract-template-content-title">
+              <div className="scholarship-contract-template-modal__section-head">
+                <div>
+                  <h4 id="contract-template-content-title">Contenido completo del contrato</h4>
+                  <p>Edite la introducción y cada cláusula del formato seleccionado. El orden mostrado será el orden del PDF.</p>
+                </div>
+                <div className="scholarship-contract-template-modal__clause-toolbar">
+                  <span>
+                    {scholarshipContractClauses.length} de {scholarshipContractClauseLimit} cláusulas
+                  </span>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => addScholarshipContractClause()}
+                    disabled={scholarshipContractClauses.length >= scholarshipContractClauseLimit || scholarshipContractTemplateLoading}
+                  >
+                    Agregar al final
+                  </button>
+                </div>
+              </div>
+              <div className="scholarship-contract-template-modal__tokens" aria-label="Campos automáticos disponibles">
+                <strong>Campos automáticos:</strong>
+                {['{ESTUDIANTE}', '{CEDULA}', '{CARRERA}', '{BECA}', '{PORCENTAJE_BECA}', '{VALOR_BECA}', '{PERIODO}', '{CONTRATO}', '{FECHA_CONTRATO}', '{CIUDAD}', '{RECTOR}', '{RESOLUCION}', '{AUSPICIANTE}', '{ALCANCE_BECA}'].map((token) => (
+                  <code key={token}>{token}</code>
+                ))}
+              </div>
+              <label className="scholarship-contract-template-modal__introduction">
+                <span>Introducción</span>
+                <textarea
+                  value={scholarshipContractIntroduction}
+                  maxLength={6000}
+                  rows={6}
+                  onChange={(event) => updateScholarshipContractTemplate(
+                    scholarshipContractFormat === 'PROGRAMA'
+                      ? 'introduccion_programa'
+                      : 'introduccion_institucional',
+                    event.target.value,
+                  )}
+                />
+              </label>
+              <div className="scholarship-contract-template-modal__clauses">
+                {scholarshipContractClauses.map((clause, index) => (
+                  <article className="scholarship-contract-template-modal__clause" key={`contract-clause-${index}`}>
+                    <div className="scholarship-contract-template-modal__clause-head">
+                      <strong>Cláusula {index + 1}</strong>
+                      <div className="scholarship-contract-template-modal__clause-actions">
+                        <label className="scholarship-contract-template-modal__clause-position">
+                          <span>Posición</span>
+                          <select
+                            value={index}
+                            aria-label={`Posición de la cláusula ${index + 1}`}
+                            onChange={(event) => moveScholarshipContractClauseTo(index, Number(event.target.value))}
+                          >
+                            {scholarshipContractClauses.map((_, positionIndex) => (
+                              <option key={`contract-clause-position-${positionIndex}`} value={positionIndex}>
+                                {positionIndex + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="scholarship-contract-template-modal__clause-icon-button"
+                          onClick={() => moveScholarshipContractClause(index, -1)}
+                          disabled={index === 0}
+                          aria-label={`Subir la cláusula ${index + 1}`}
+                          title="Subir cláusula"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="scholarship-contract-template-modal__clause-icon-button"
+                          onClick={() => moveScholarshipContractClause(index, 1)}
+                          disabled={index === scholarshipContractClauses.length - 1}
+                          aria-label={`Bajar la cláusula ${index + 1}`}
+                          title="Bajar cláusula"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="scholarship-contract-template-modal__clause-icon-button"
+                          onClick={() => addScholarshipContractClause(index)}
+                          disabled={scholarshipContractClauses.length >= scholarshipContractClauseLimit}
+                          aria-label={`Agregar una cláusula después de la cláusula ${index + 1}`}
+                          title="Agregar después"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          className="scholarship-contract-template-modal__clause-icon-button is-danger"
+                          onClick={() => removeScholarshipContractClause(index)}
+                          aria-label={`Eliminar la cláusula ${index + 1}`}
+                          title="Eliminar cláusula"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <label>
+                      <span>Título</span>
+                      <input
+                        value={clause.titulo}
+                        maxLength={250}
+                        onChange={(event) => updateScholarshipContractClause(index, 'titulo', event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>Contenido</span>
+                      <textarea
+                        value={clause.contenido}
+                        maxLength={6000}
+                        rows={7}
+                        onChange={(event) => updateScholarshipContractClause(index, 'contenido', event.target.value)}
+                      />
+                    </label>
+                  </article>
+                ))}
+                {!scholarshipContractClauses.length && !scholarshipContractTemplateLoading ? (
+                  <p className="scholarship-contract-template-modal__automatic">
+                    No existen cláusulas en la plantilla. Puede restaurar el documento institucional o agregar una nueva cláusula.
+                  </p>
+                ) : null}
+              </div>
+            </section>
+
+            <div className="scholarship-contract-template-modal__actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void loadScholarshipContractTemplate(true)}
+                disabled={scholarshipContractTemplateLoading}
+              >
+                {scholarshipContractTemplateLoading ? 'Restaurando...' : 'Restaurar documento'}
+              </button>
+              <button type="button" className="primary-action" onClick={() => setScholarshipContractTemplateOpen(false)}>
+                Aplicar plantilla
+              </button>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
+      {scholarshipContractReviewItem ? (
+        <div
+          className="matricula-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="scholarship-contract-review-title"
+        >
+          <article className="matricula-modal scholarship-contract-review-modal">
+            <div className="matricula-modal-head">
+              <div className="matricula-modal-title">
+                <span>Historial de contratos</span>
+                <h3 id="scholarship-contract-review-title">
+                  Revisar contrato {scholarshipContractReviewItem.numero_contrato}
+                </h3>
+              </div>
+              <button type="button" className="matricula-modal-close" onClick={closeScholarshipContractReview}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="scholarship-contract-review-modal__summary">
+              <div>
+                <span>Estudiante</span>
+                <strong>{scholarshipContractReviewItem.estudiante}</strong>
+                <small>{scholarshipContractReviewItem.cedula || 'Sin identificación'}</small>
+              </div>
+              <div>
+                <span>Beca</span>
+                <strong>{scholarshipContractReviewItem.tipo_beca}</strong>
+                <small>{scholarshipContractReviewItem.porcentaje_beca.toLocaleString('es-EC')}%</small>
+              </div>
+              <div>
+                <span>Período y carrera</span>
+                <strong>{scholarshipContractReviewItem.periodo || scholarshipContractReviewItem.codigo_periodo || 'Sin período'}</strong>
+                <small>{scholarshipContractReviewItem.carrera || 'Carrera no registrada'}</small>
+              </div>
+              <div>
+                <span>Formato</span>
+                <strong>{scholarshipContractReviewItem.formato_contrato === 'PROGRAMA' ? 'Programa' : 'Institucional'}</strong>
+                <small>{scholarshipContractReviewItem.estado || 'Generado'}</small>
+              </div>
+            </div>
+
+            <section className="scholarship-contract-review-modal__traceability" aria-label="Trazabilidad del contrato">
+              <div>
+                <span>Generado</span>
+                <strong>{formatScholarshipContractDateTime(scholarshipContractReviewItem.fecha_generacion || scholarshipContractReviewItem.fecha_contrato)}</strong>
+                <small>{scholarshipContractReviewItem.usuario_generacion || 'Usuario no registrado'}</small>
+              </div>
+              <div>
+                <span>Expediente</span>
+                <strong>{scholarshipContractReviewItem.estado_expediente || 'Pendiente de carga'}</strong>
+                <small>{scholarshipContractReviewItem.nombre_archivo_firmado || 'Sin contrato firmado'}</small>
+              </div>
+              <div>
+                <span>Última carga firmada</span>
+                <strong>{formatScholarshipContractDateTime(scholarshipContractReviewItem.fecha_carga_expediente)}</strong>
+                <small>{scholarshipContractReviewItem.usuario_carga_expediente || 'Sin responsable de carga'}</small>
+              </div>
+            </section>
+
+            <div className="scholarship-contract-review-modal__destination">
+              <strong>Ubicación del expediente estudiantil</strong>
+              <span>{scholarshipContractExpedientPath(scholarshipContractReviewItem)}</span>
+            </div>
+
+            <section className="scholarship-contract-review-modal__preview" aria-label="Vista previa del contrato generado">
+              {scholarshipContractReviewLoading ? (
+                <div className="scholarship-contract-review-modal__preview-state">Cargando contrato generado...</div>
+              ) : null}
+              {scholarshipContractReviewError ? (
+                <p className="form-error">{scholarshipContractReviewError}</p>
+              ) : null}
+              {scholarshipContractReviewPdfUrl ? (
+                <iframe
+                  src={scholarshipContractReviewPdfUrl}
+                  title={`Contrato de beca ${scholarshipContractReviewItem.numero_contrato}`}
+                />
+              ) : null}
+            </section>
+
+            <div className="scholarship-contract-review-modal__actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void downloadGeneratedScholarshipContract(scholarshipContractReviewItem)}
+              >
+                Descargar generado
+              </button>
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => openScholarshipContractUpload(scholarshipContractReviewItem)}
+              >
+                {scholarshipContractReviewItem.expediente_documento_id ? 'Actualizar firmado' : 'Subir firmado'}
+              </button>
+              {scholarshipContractReviewItem.expediente_url ? (
+                <a
+                  className="ghost-button"
+                  href={scholarshipContractReviewItem.expediente_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Abrir contrato firmado
+                </a>
+              ) : null}
+            </div>
+          </article>
+        </div>
+      ) : null}
+
       {scholarshipContractUploadItem ? (
         <div
           className="matricula-modal-overlay"
@@ -4014,11 +5134,7 @@ export function PreinscripcionView({
 
             <div className="scholarship-contract-upload-modal__destination">
               <strong>Destino del expediente</strong>
-              <span>
-                Becas / {scholarshipContractUploadItem.periodo
-                  || scholarshipContractUploadItem.codigo_periodo
-                  || 'Período'} / Contrato de beca
-              </span>
+              <span>{scholarshipContractExpedientPath(scholarshipContractUploadItem)}</span>
             </div>
 
             {scholarshipContractsError ? <p className="form-error">{scholarshipContractsError}</p> : null}

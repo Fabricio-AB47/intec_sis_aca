@@ -7,6 +7,7 @@ from app.integrations.moodle.exceptions import (
     MoodleCourseNotFoundError,
     MoodleFullScanDisabledError,
     MoodleInstitutionalEmailNotFoundError,
+    MoodleEvaluationDateUpdateError,
     MoodleResourceNotFoundError,
     MoodleResultLimitExceededError,
     MoodleSectionUpdateError,
@@ -23,6 +24,8 @@ def service_settings(**overrides: object) -> SimpleNamespace:
         "moodle_writes_enabled": True,
         "moodle_user_status_update_enabled": True,
         "moodle_section_updates_enabled": True,
+        "moodle_evaluation_dates_update_enabled": True,
+        "moodle_evaluation_dates_function": "local_sisaca_bulk_update_evaluation_dates",
         "moodle_cache_ttl_seconds": 120,
         "moodle_max_user_scan_items": 100,
     }
@@ -40,6 +43,7 @@ class FakeMoodleClient:
         self.status_updates: list[tuple[int, bool]] = []
         self.section_updates: list[tuple[int, int, bool]] = []
         self.section_name_updates: list[tuple[int, str, str]] = []
+        self.evaluation_date_updates: list[tuple[int, list[dict]]] = []
         self.section_visible = True
         self.section_name = "Unidad 1"
         self.opened_files: list[str] = []
@@ -63,6 +67,7 @@ class FakeMoodleClient:
                 {"name": "core_user_update_users"},
                 {"name": "core_course_edit_section"},
                 {"name": "core_update_inplace_editable"},
+                {"name": "local_sisaca_bulk_update_evaluation_dates"},
             ],
             "userprivateaccesskey": "no-debe-salir",
         }
@@ -247,6 +252,13 @@ class FakeMoodleClient:
     ) -> None:
         self.section_name_updates.append((section_id, course_format, name))
         self.section_name = name
+
+    async def update_evaluation_dates(
+        self,
+        course_id: int,
+        updates: list[dict],
+    ) -> None:
+        self.evaluation_date_updates.append((course_id, updates))
 
     async def open_file(self, file_url: str):
         self.opened_files.append(file_url)
@@ -1045,6 +1057,264 @@ class MoodleReadServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_course_cannot_load_resources(self) -> None:
         with self.assertRaises(MoodleCourseNotFoundError):
             await self.service.get_course_resources(999)
+
+    async def test_course_evaluations_include_only_assignments_and_quizzes(self) -> None:
+        original_contents = self.client.get_course_contents
+
+        async def contents_with_evaluations(course_id: int):
+            sections = await original_contents(course_id)
+            sections[0]["modules"].extend(
+                [
+                    {
+                        "id": 45,
+                        "instance": 71,
+                        "name": "Tarea P1",
+                        "modname": "assign",
+                        "visible": 1,
+                        "uservisible": 1,
+                        "dates": [
+                            {
+                                "dataid": "allowsubmissionsfromdate",
+                                "label": "Disponible desde",
+                                "timestamp": 1000,
+                            },
+                            {
+                                "dataid": "duedate",
+                                "label": "Fecha de entrega",
+                                "timestamp": 2000,
+                            },
+                            {
+                                "dataid": "cutoffdate",
+                                "label": "Cierre definitivo",
+                                "timestamp": 3000,
+                            },
+                        ],
+                    },
+                    {
+                        "id": 46,
+                        "instance": 72,
+                        "name": "Cuestionario P1",
+                        "modname": "quiz",
+                        "visible": 1,
+                        "uservisible": 1,
+                        "dates": [
+                            {"dataid": "timeopen", "label": "Apertura", "timestamp": 1100},
+                            {"dataid": "timeclose", "label": "Cierre", "timestamp": 2100},
+                        ],
+                    },
+                ]
+            )
+            return sections
+
+        self.client.get_course_contents = contents_with_evaluations
+        result = await self.service.get_course_evaluations(12, refresh=True)
+
+        self.assertEqual(result["totals"]["activities"], 2)
+        self.assertEqual(result["totals"]["assignments"], 1)
+        self.assertEqual(result["totals"]["quizzes"], 1)
+        self.assertTrue(result["date_management"]["enabled"])
+        activities = {item["modname"]: item for item in result["activities"]}
+        self.assertEqual(activities["assign"]["dates"]["duedate"], 2000)
+        self.assertEqual(activities["quiz"]["dates"]["timeclose"], 2100)
+
+    async def test_course_evaluations_classify_common_dates_by_scope_and_partial(
+        self,
+    ) -> None:
+        async def structured_contents(course_id: int):
+            self.assertEqual(course_id, 12)
+
+            def evaluation_module(cmid: int, instance: int, name: str, modname: str):
+                return {
+                    "id": cmid,
+                    "instance": instance,
+                    "name": name,
+                    "modname": modname,
+                    "visible": 1,
+                    "uservisible": 1,
+                    "dates": [],
+                }
+
+            return [
+                {
+                    "id": 90,
+                    "section": 9,
+                    "name": "Simuladores",
+                    "summary": "Primer parcial",
+                    "modules": [evaluation_module(901, 1901, "Simulador P1", "quiz")],
+                },
+                {
+                    "id": 100,
+                    "section": 10,
+                    "name": "Segundo parcial",
+                    "modules": [evaluation_module(1001, 2001, "Simulador P2", "quiz")],
+                },
+                {
+                    "id": 110,
+                    "section": 11,
+                    "name": "Tercer parcial",
+                    "modules": [evaluation_module(1101, 2101, "Simulador P3", "quiz")],
+                },
+                {
+                    "id": 120,
+                    "section": 12,
+                    "name": "Evaluaciones",
+                    "summary": "Primer parcial",
+                    "modules": [evaluation_module(1201, 2201, "Tarea práctica P1", "assign")],
+                },
+                {
+                    "id": 130,
+                    "section": 13,
+                    "name": "Segundo parcial",
+                    "modules": [evaluation_module(1301, 2301, "Examen P2", "quiz")],
+                },
+                {
+                    "id": 140,
+                    "section": 14,
+                    "name": "Tercer parcial",
+                    "modules": [evaluation_module(1401, 2401, "Tarea práctica P3", "assign")],
+                },
+                {
+                    "id": 150,
+                    "section": 15,
+                    "name": "Examen de Recuperación",
+                    "modules": [evaluation_module(1501, 2501, "Recuperación", "quiz")],
+                },
+            ]
+
+        self.client.get_course_contents = structured_contents
+        result = await self.service.get_course_evaluations(12, refresh=True)
+        activities = {item["cmid"]: item for item in result["activities"]}
+
+        self.assertEqual(result["totals"]["programmable"], 6)
+        self.assertEqual(result["totals"]["unclassified"], 1)
+        self.assertEqual(result["totals"]["simulators"], 3)
+        self.assertEqual(result["totals"]["evaluations"], 3)
+        self.assertEqual(
+            [(activities[cmid]["scope"], activities[cmid]["partial"]) for cmid in (901, 1001, 1101)],
+            [("simuladores", 1), ("simuladores", 2), ("simuladores", 3)],
+        )
+        self.assertEqual(
+            [(activities[cmid]["scope"], activities[cmid]["partial"]) for cmid in (1201, 1301, 1401)],
+            [("evaluaciones", 1), ("evaluaciones", 2), ("evaluaciones", 3)],
+        )
+        self.assertFalse(activities[1501]["programmable"])
+        self.assertEqual(activities[1501]["scope"], "sin_clasificar")
+
+    async def test_evaluation_date_update_validates_scope_and_audits(self) -> None:
+        original_contents = self.client.get_course_contents
+        audit_events: list[tuple[dict, dict, dict]] = []
+
+        async def contents_with_quiz(course_id: int):
+            sections = await original_contents(course_id)
+            sections[0]["name"] = "Evaluaciones"
+            sections[0]["modules"].append(
+                {
+                    "id": 46,
+                    "instance": 72,
+                    "name": "Cuestionario P1",
+                    "modname": "quiz",
+                    "visible": 1,
+                    "uservisible": 1,
+                    "dates": [
+                        {"dataid": "timeopen", "label": "Apertura", "timestamp": 1000},
+                        {"dataid": "timeclose", "label": "Cierre", "timestamp": 2000},
+                    ],
+                }
+            )
+            if self.client.evaluation_date_updates:
+                sections[0]["modules"][-1]["dates"][1]["timestamp"] = 2500
+            return sections
+
+        def audit(before: dict, after: dict, context: dict) -> bool:
+            audit_events.append((before, after, context))
+            return True
+
+        self.client.get_course_contents = contents_with_quiz
+        service = MoodleReadService(
+            service_settings(),
+            client=self.client,
+            evaluation_dates_auditor=audit,
+        )
+        result = await service.update_course_evaluation_dates(
+            12,
+            [
+                {
+                    "cmid": 46,
+                    "modname": "quiz",
+                    "instance": 72,
+                    "timeclose": 2500,
+                }
+            ],
+            actor="admin@intec.edu.ec",
+            actor_id=7,
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["updated_count"], 1)
+        self.assertEqual(result["audit_records"], 1)
+        self.assertEqual(self.client.evaluation_date_updates[0][0], 12)
+        self.assertEqual(
+            self.client.evaluation_date_updates[0][1][0]["timeclose"],
+            2500,
+        )
+        self.assertEqual(audit_events[0][2]["actor_id"], 7)
+
+        with self.assertRaises(MoodleEvaluationDateUpdateError):
+            await service.update_course_evaluation_dates(
+                12,
+                [
+                    {
+                        "cmid": 999,
+                        "modname": "quiz",
+                        "instance": 72,
+                        "timeclose": 2600,
+                    }
+                ],
+                actor="admin@intec.edu.ec",
+                actor_id=7,
+            )
+
+    async def test_evaluation_date_update_rejects_unclassified_activity(
+        self,
+    ) -> None:
+        original_contents = self.client.get_course_contents
+
+        async def contents_with_recovery(course_id: int):
+            sections = await original_contents(course_id)
+            sections[0]["name"] = "Examen de Recuperación"
+            sections[0]["modules"].append(
+                {
+                    "id": 47,
+                    "instance": 73,
+                    "name": "Recuperación",
+                    "modname": "quiz",
+                    "visible": 1,
+                    "uservisible": 1,
+                    "dates": [],
+                }
+            )
+            return sections
+
+        self.client.get_course_contents = contents_with_recovery
+        service = MoodleReadService(service_settings(), client=self.client)
+
+        with self.assertRaises(MoodleEvaluationDateUpdateError):
+            await service.update_course_evaluation_dates(
+                12,
+                [
+                    {
+                        "cmid": 47,
+                        "modname": "quiz",
+                        "instance": 73,
+                        "timeopen": 1000,
+                        "timeclose": 2000,
+                    }
+                ],
+                actor="admin@intec.edu.ec",
+                actor_id=7,
+            )
+
+        self.assertEqual(self.client.evaluation_date_updates, [])
 
     async def test_user_result_limit_is_checked_by_the_service(self) -> None:
         service = MoodleReadService(

@@ -65,6 +65,10 @@ class MoodleSectionUpdateError(MoodleError):
     pass
 
 
+class MoodleEvaluationDateUpdateError(MoodleError):
+    pass
+
+
 class MoodleUserNotConfirmedError(MoodleError):
     pass
 

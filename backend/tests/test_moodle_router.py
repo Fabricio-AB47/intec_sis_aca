@@ -22,6 +22,7 @@ from app.integrations.moodle.exceptions import (
 from app.routers.moodle import (
     _MOODLE_ALERTS_ACCESS,
     _MOODLE_COURSES_ACCESS,
+    _MOODLE_EVALUATION_DATES_ACCESS,
     _MOODLE_GRADES_ACCESS,
     _MOODLE_RESOURCES_ACCESS,
     _MOODLE_STATUS_ACCESS,
@@ -68,6 +69,24 @@ class FakeMoodleService:
             "sections": [{"id": 1, "name": "Unidad 1", "modules": []}],
             "totals": {"sections": 1, "modules": 0, "files": 0, "visible_modules": 0},
             "source": {"cached": False, "moodle_function": "core_course_get_contents"},
+            "received": kwargs,
+        }
+
+    async def get_course_evaluations(self, course_id: int, **kwargs):
+        return {
+            "course": {"id": course_id, "fullname": "Curso"},
+            "activities": [],
+            "totals": {"activities": 0, "assignments": 0, "quizzes": 0, "with_dates": 0},
+            "date_management": {"enabled": False},
+            "received": kwargs,
+        }
+
+    async def update_course_evaluation_dates(self, course_id: int, updates, **kwargs):
+        return {
+            "ok": True,
+            "changed": True,
+            "updated_count": len(updates),
+            "course_id": course_id,
             "received": kwargs,
         }
 
@@ -173,6 +192,7 @@ class MoodleRouterTests(unittest.TestCase):
         app.dependency_overrides[_MOODLE_RESOURCES_ACCESS] = access
         app.dependency_overrides[_MOODLE_GRADES_ACCESS] = access
         app.dependency_overrides[_MOODLE_ALERTS_ACCESS] = access
+        app.dependency_overrides[_MOODLE_EVALUATION_DATES_ACCESS] = access
         app.dependency_overrides[get_moodle_read_service] = lambda: service or FakeMoodleService()
         app.dependency_overrides[get_moodle_grade_sync_service] = (
             lambda: grade_service or FakeMoodleGradeSyncService()
@@ -236,6 +256,48 @@ class MoodleRouterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["course"]["id"], 8)
         self.assertTrue(response.json()["received"]["refresh"])
+
+    def test_course_evaluations_endpoint_and_date_update(self) -> None:
+        with self._client() as client:
+            read_response = client.get("/api/moodle/courses/8/evaluations?refresh=true")
+            write_response = client.patch(
+                "/api/moodle/courses/8/evaluation-dates",
+                json={
+                    "updates": [
+                        {
+                            "cmid": 45,
+                            "modname": "quiz",
+                            "instance": 71,
+                            "timeopen": 1000,
+                            "timeclose": 2000,
+                        }
+                    ]
+                },
+            )
+
+        self.assertEqual(read_response.status_code, 200)
+        self.assertTrue(read_response.json()["received"]["refresh"])
+        self.assertEqual(write_response.status_code, 200)
+        self.assertEqual(write_response.json()["updated_count"], 1)
+        self.assertEqual(write_response.json()["received"]["actor"], "admin@example.edu")
+
+    def test_evaluation_date_update_rejects_module_date_mismatch(self) -> None:
+        with self._client() as client:
+            response = client.patch(
+                "/api/moodle/courses/8/evaluation-dates",
+                json={
+                    "updates": [
+                        {
+                            "cmid": 45,
+                            "modname": "quiz",
+                            "instance": 71,
+                            "duedate": 2000,
+                        }
+                    ]
+                },
+            )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_section_visibility_endpoint_updates_requested_section(self) -> None:
         with self._client() as client:

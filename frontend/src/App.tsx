@@ -53,6 +53,10 @@ const PortalDocentePlanificacionView = lazyView(() => import('./features/portal/
 const PortalDocenteContratosView = lazyView(() => import('./features/portal/PortalDocenteContratosView'), 'PortalDocenteContratosView')
 const PortalEstudianteView = lazyView(() => import('./features/portal/PortalEstudianteView'), 'PortalEstudianteView')
 const PracticasInstitucionalesView = lazyView(() => import('./features/practicas/PracticasInstitucionalesView'), 'PracticasInstitucionalesView')
+const CareerChangeRequestsView = lazyView(
+  () => import('./features/solicitudes/CareerChangeRequestsView'),
+  'CareerChangeRequestsView',
+)
 const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
 const TeamsView = lazyView(() => import('./features/teams/TeamsView'), 'TeamsView')
 const HistoricoIntegracionesView = lazyView(
@@ -70,7 +74,15 @@ const InformeCumplimientoView = lazyView(
 const MoodleView = lazyView(() => import('./features/moodle/MoodleView'), 'MoodleView')
 
 const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos']
-const moodleSections: MoodleSection[] = ['alerts', 'courses', 'resources', 'grades', 'status', 'users']
+const moodleSections: MoodleSection[] = [
+  'alerts',
+  'courses',
+  'evaluation-dates',
+  'resources',
+  'grades',
+  'status',
+  'users',
+]
 const preinscriptionStages: PreinscriptionStage[] = [
   'registro',
   'inscritos',
@@ -265,6 +277,8 @@ function App() {
       )
     } else if (app.activePage === 'matricula-docente') {
       pageContent = <MatriculaDocenteView displayName={app.displayName} />
+    } else if (app.activePage === 'solicitudes-cambio-carrera') {
+      pageContent = <CareerChangeRequestsView displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'estado-docente') {
       pageContent = <EstadoDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'senescyt-estudiantes') {
@@ -567,6 +581,7 @@ function App() {
           onOpenMatricula={app.openMatriculaPage}
           onOpenMatriculaAcad={app.openMatriculaAcadPage}
           onOpenMatriculaDocente={app.openMatriculaDocentePage}
+          onOpenCareerChangeRequests={app.openCareerChangeRequestsPage}
           onOpenEstadoDocente={app.openEstadoDocentePage}
           onOpenSenescytEstudiantes={app.openSenescytEstudiantesPage}
           onOpenActualizarDatosEstudiante={app.openActualizarDatosEstudiantePage}

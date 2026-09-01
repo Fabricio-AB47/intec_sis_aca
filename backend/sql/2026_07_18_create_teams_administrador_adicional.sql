@@ -6,7 +6,7 @@ BEGIN
     CREATE TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL(
         id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TEAMS_ADMINISTRADOR_ADICIONAL PRIMARY KEY,
         team_id nvarchar(120) NOT NULL,
-        team_display_name nvarchar(255) NULL,
+        team_display_name nvarchar(256) NULL,
         graph_user_id nvarchar(120) NOT NULL,
         display_name nvarchar(255) NULL,
         mail nvarchar(255) NULL,
@@ -16,6 +16,13 @@ BEGIN
         creado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_CREADO DEFAULT(SYSDATETIME()),
         actualizado_en datetime2 NOT NULL CONSTRAINT DF_TEAMS_ADMINISTRADOR_ADICIONAL_ACTUALIZADO DEFAULT(SYSDATETIME())
     );
+END;
+GO
+
+IF COL_LENGTH('dbo.TEAMS_ADMINISTRADOR_ADICIONAL', 'team_display_name') < 512
+BEGIN
+    ALTER TABLE dbo.TEAMS_ADMINISTRADOR_ADICIONAL
+        ALTER COLUMN team_display_name nvarchar(256) NULL;
 END;
 GO
 

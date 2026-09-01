@@ -5,6 +5,7 @@ import {
   documentExpedientFileUrl,
   fetchDocumentExpedientContext,
   finalizeDocumentExpedientUpload,
+  prepareDocumentExpedient,
   searchDocumentExpedientStudents,
   uploadGraphFileChunks,
 } from '../../lib/api'
@@ -18,6 +19,10 @@ import './ExpedientesDocumentalesView.css'
 type ExpedientesDocumentalesViewProps = {
   displayName: string
   role: string
+  initialIdentification?: string
+  moduleFilter?: string[]
+  embedded?: boolean
+  onClose?: () => void
 }
 
 type ExpedientSectionProps = {
@@ -29,7 +34,7 @@ type ExpedientSectionProps = {
 
 const MAX_FILE_BYTES = 1024 * 1024 * 1024
 const ACCEPTED_FILES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jpg,.jpeg,.png,.webp,.mp3,.wav,.m4a,.mp4,.mov,.mkv,.webm,.xml'
-const REVIEW_ROLES = new Set(['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA', 'FINANCIERO'])
+const REVIEW_ROLES = new Set(['ADMINISTRADOR', 'ACADEMICO', 'BIENESTAR', 'SECRETARIA', 'FINANCIERO'])
 const INVOICE_FILE_RULES: Record<string, { accept: string; extension: string }> = {
   FACTURA_XML: { accept: '.xml,application/xml,text/xml', extension: '.xml' },
   RIDE_FACTURA: { accept: '.pdf,application/pdf', extension: '.pdf' },
@@ -88,22 +93,47 @@ function ExpedientSection({
   module,
   onReload,
 }: Readonly<ExpedientSectionProps>) {
-  const [documentType, setDocumentType] = useState(module.document_types[0]?.code || '')
+  const defaultDocumentType = module.document_types[0]?.code || ''
+  const [documentType, setDocumentType] = useState(defaultDocumentType)
   const [file, setFile] = useState<File | null>(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const [uploading, setUploading] = useState(false)
+  const [preparing, setPreparing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [folderUrl, setFolderUrl] = useState('')
 
   useEffect(() => {
-    setDocumentType(module.document_types[0]?.code || '')
+    setDocumentType(defaultDocumentType)
     setFile(null)
     setFileInputKey((value) => value + 1)
     setProgress(0)
     setError('')
     setMessage('')
-  }, [module.origin_id, module.document_types])
+    setFolderUrl('')
+  }, [defaultDocumentType, module.origin_id])
+
+  async function prepareFolder() {
+    if (!module.origin_id || !['PRACTICAS', 'VINCULACION'].includes(module.module_code)) return
+    setPreparing(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await prepareDocumentExpedient({
+        identification,
+        moduleCode: module.module_code,
+        originId: module.origin_id,
+      })
+      await onReload()
+      setFolderUrl(result.web_url || '')
+      setMessage(result.message || 'Expediente documental preparado correctamente.')
+    } catch (requestError) {
+      setError(errorMessage(requestError, 'No se pudo preparar el expediente documental.'))
+    } finally {
+      setPreparing(false)
+    }
+  }
 
   function selectFile(selected: File | null) {
     setError('')
@@ -157,8 +187,8 @@ function ExpedientSection({
       setFile(null)
       setFileInputKey((value) => value + 1)
       setProgress(100)
-      setMessage(result.message || 'Documento relacionado correctamente.')
       await onReload()
+      setMessage(result.message || 'Documento relacionado correctamente.')
     } catch (requestError) {
       setError(errorMessage(requestError, 'No se pudo completar la carga documental.'))
     } finally {
@@ -179,6 +209,21 @@ function ExpedientSection({
           <small>{module.documents.length} documento(s)</small>
         </div>
       </header>
+
+      {module.origin_id && ['PRACTICAS', 'VINCULACION'].includes(module.module_code) ? (
+        <div className="document-expedient-folder-actions">
+          <div>
+            <strong>Carpeta documental del proceso</strong>
+            <small>Se reutiliza la carpeta del estudiante identificada por su cédula; no se crean duplicados.</small>
+          </div>
+          <div className="document-expedient-actions">
+            {folderUrl ? <a className="ghost-button" href={folderUrl} target="_blank" rel="noreferrer">Abrir carpeta</a> : null}
+            <button type="button" className="secondary-action" onClick={() => void prepareFolder()} disabled={preparing || uploading}>
+              {preparing ? 'Preparando...' : 'Generar expediente documental'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="document-expedient-table-wrap">
         <table className="document-expedient-table">
@@ -269,13 +314,17 @@ function ExpedientSection({
 export function ExpedientesDocumentalesView({
   displayName,
   role,
+  initialIdentification = '',
+  moduleFilter = [],
+  embedded = false,
+  onClose,
 }: Readonly<ExpedientesDocumentalesViewProps>) {
   const isReviewer = REVIEW_ROLES.has(normalizedRole(role))
   const [context, setContext] = useState<DocumentExpedientContext | null>(null)
   const [selectedIdentification, setSelectedIdentification] = useState('')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<DocumentExpedientStudentSearchItem[]>([])
-  const [loading, setLoading] = useState(!isReviewer)
+  const [loading, setLoading] = useState(Boolean(initialIdentification.trim()) || !isReviewer)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
 
@@ -295,8 +344,12 @@ export function ExpedientesDocumentalesView({
   }, [])
 
   useEffect(() => {
-    if (!isReviewer) void loadContext('')
-  }, [isReviewer, loadContext])
+    if (initialIdentification.trim()) {
+      void loadContext(initialIdentification)
+    } else if (!isReviewer) {
+      void loadContext('')
+    }
+  }, [initialIdentification, isReviewer, loadContext])
 
   async function searchStudents(event: FormEvent) {
     event.preventDefault()
@@ -326,19 +379,25 @@ export function ExpedientesDocumentalesView({
   }
 
   return (
-    <section className="document-expedients-page">
-      <header className="student-topbar document-expedients-hero">
+    <section className={`document-expedients-page${embedded ? ' document-expedients-page--embedded' : ''}`}>
+      <header className={embedded ? 'document-expedient-embedded-header' : 'student-topbar document-expedients-hero'}>
         <div>
-          <p className="eyebrow">Documentos</p>
-          <h2>Expedientes documentales</h2>
+          <p className="eyebrow">{embedded ? 'Expediente del proceso' : 'Documentos'}</p>
+          <h2>{embedded ? 'Documentos de prácticas y vinculación' : 'Expedientes documentales'}</h2>
           <p className="report-description">
-            Archivos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE con trazabilidad en Microsoft 365.
+            {embedded
+              ? 'Cree la carpeta y gestione los documentos del proceso con trazabilidad en Microsoft 365.'
+              : 'Archivos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE con trazabilidad en Microsoft 365.'}
           </p>
         </div>
-        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isReviewer ? 'Gestión documental' : 'Portal estudiante'}</span></div></div>
+        {embedded ? (
+          <button type="button" className="secondary-action" onClick={onClose}>Cerrar</button>
+        ) : (
+          <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isReviewer ? 'Gestión documental' : 'Portal estudiante'}</span></div></div>
+        )}
       </header>
 
-      {isReviewer ? (
+      {isReviewer && !embedded ? (
         <section className="document-expedient-search">
           <form onSubmit={searchStudents}>
             <label>
@@ -379,7 +438,9 @@ export function ExpedientesDocumentalesView({
           </section>
 
           <div className="document-expedient-modules">
-            {context.expedients.map((module) => (
+            {context.expedients
+              .filter((module) => moduleFilter.length === 0 || moduleFilter.includes(module.module_code))
+              .map((module) => (
               <ExpedientSection
                 key={`${module.module_code}-${module.origin_id || 'sin-expediente'}`}
                 identification={selectedIdentification}
@@ -392,7 +453,7 @@ export function ExpedientesDocumentalesView({
         </>
       ) : null}
 
-      {isReviewer && !context && !loading ? (
+      {isReviewer && !context && !loading && !embedded ? (
         <section className="document-expedient-empty">
           <strong>Seleccione un estudiante</strong>
           <span>Busque por nombre, cédula o código para consultar y gestionar sus expedientes.</span>

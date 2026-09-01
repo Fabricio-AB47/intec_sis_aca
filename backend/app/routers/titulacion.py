@@ -14,7 +14,7 @@ import pyodbc
 
 from app.core.security import SessionUser, require_roles
 from app.routers.students import _MATRICULA_ACTUAL_CTE
-from app.services.db import get_connection, get_titulation_connection
+from app.services.db import get_connection, get_practices_connection, get_titulation_connection
 
 router = APIRouter(prefix="/api/titulacion", tags=["titulacion"])
 
@@ -181,6 +181,174 @@ def _row_dict(cursor: pyodbc.Cursor, row: Any) -> dict[str, Any]:
 
 def _fetch_all(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
     return [_row_dict(cursor, row) for row in cursor.fetchall()]
+
+
+def _operational_practices_completion(
+    students: list[tuple[str, str]],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Obtiene cumplimiento aprobado directamente desde prácticas por estudiante y carrera."""
+    documents = sorted({_document(document) for document, _career in students if _document(document)})
+    if not documents:
+        return {}
+
+    expedientes: list[dict[str, Any]] = []
+    try:
+        with get_practices_connection() as conn:
+            cursor = conn.cursor()
+            for start in range(0, len(documents), 800):
+                batch = documents[start : start + 800]
+                placeholders = ",".join("?" for _ in batch)
+                cursor.execute(
+                    f"""
+                    SELECT
+                        e.expediente_id AS ExpedienteId,
+                        REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), e.cedula_est))), '-', ''), ' ', ''), '.', '') AS NumeroIdentificacion,
+                        CONVERT(nvarchar(50), e.cod_anio_basica) AS CodAnioBasica,
+                        tp.codigo AS TipoProcesoCodigo,
+                        ee.codigo AS EstadoCodigo,
+                        ISNULL(e.horas_reconocidas, 0) AS HorasReconocidas,
+                        ISNULL(e.horas_asistencia_validadas, 0) AS HorasAsistenciaValidadas,
+                        e.fecha_fin AS FechaFin
+                    FROM pp.expediente_practica e
+                    INNER JOIN cat.tipo_proceso tp
+                        ON tp.tipo_proceso_id = e.tipo_proceso_id
+                    INNER JOIN cat.estado_expediente ee
+                        ON ee.estado_expediente_id = e.estado_expediente_id
+                    WHERE REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), e.cedula_est))), '-', ''), ' ', ''), '.', '') IN ({placeholders})
+                      AND tp.codigo IN ('PPF', 'VIN')
+                    ORDER BY e.expediente_id DESC
+                    """,
+                    *batch,
+                )
+                expedientes.extend(_fetch_all(cursor))
+
+            expediente_ids = sorted({int(item["ExpedienteId"]) for item in expedientes})
+            document_status: dict[int, dict[str, dict[str, Any]]] = {}
+            for start in range(0, len(expediente_ids), 800):
+                batch_ids = expediente_ids[start : start + 800]
+                placeholders = ",".join("?" for _ in batch_ids)
+                cursor.execute(
+                    f"""
+                    WITH UltimoDocumento AS
+                    (
+                        SELECT
+                            dp.expediente_id AS ExpedienteId,
+                            td.codigo AS TipoDocumentoCodigo,
+                            ed.codigo AS EstadoDocumentoCodigo,
+                            dp.validado AS Validado,
+                            ROW_NUMBER() OVER
+                            (
+                                PARTITION BY dp.expediente_id, dp.tipo_documento_id
+                                ORDER BY dp.fecha_registro DESC, dp.documento_id DESC
+                            ) AS RN
+                        FROM pp.documento_practica dp
+                        INNER JOIN cat.tipo_documento_practica td
+                            ON td.tipo_documento_id = dp.tipo_documento_id
+                        INNER JOIN cat.estado_documento ed
+                            ON ed.estado_documento_id = dp.estado_documento_id
+                        WHERE dp.expediente_id IN ({placeholders})
+                    )
+                    SELECT
+                        ExpedienteId,
+                        TipoDocumentoCodigo,
+                        EstadoDocumentoCodigo,
+                        Validado
+                    FROM UltimoDocumento
+                    WHERE RN = 1
+                    """,
+                    *batch_ids,
+                )
+                for item in _fetch_all(cursor):
+                    expediente_id = int(item["ExpedienteId"])
+                    code = _clean(item.get("TipoDocumentoCodigo")).upper()
+                    document_status.setdefault(expediente_id, {})[code] = item
+    except (pyodbc.Error, RuntimeError):
+        # Titulación conserva su comportamiento histórico si la base complementaria no está disponible.
+        return {}
+
+    requirements = {
+        "PPF": {
+            "hours": _HORAS_REQUERIDAS_PRACTICAS,
+            "documents": {
+                "CARTA_COMPROMISO",
+                "REGISTRO_ASISTENCIA",
+                "REGISTRO_ACTIVIDADES",
+                "EVALUACION_CUALITATIVA",
+                "CEDULA_ESTUDIANTE",
+            },
+        },
+        "VIN": {
+            "hours": _HORAS_REQUERIDAS_VINCULACION,
+            "documents": {
+                "ANEXO_1_GUION",
+                "ANEXO_2_CESION_DERECHOS",
+                "VIDEO_VINCULACION",
+                "EVIDENCIA_VINCULACION",
+            },
+        },
+    }
+    completed_states = {"APROBADO", "VALIDADO", "FINALIZADO", "CERRADO"}
+    result: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for expediente in expedientes:
+        process = _clean(expediente.get("TipoProcesoCodigo")).upper()
+        requirement = requirements.get(process)
+        if not requirement:
+            continue
+        expediente_id = int(expediente["ExpedienteId"])
+        latest_documents = document_status.get(expediente_id, {})
+        validated_codes = {
+            code
+            for code, item in latest_documents.items()
+            if _bool_db(item.get("Validado"))
+            and _clean(item.get("EstadoDocumentoCodigo")).upper() == "VALIDADO"
+        }
+        hours = max(
+            _number(expediente.get("HorasReconocidas")),
+            _number(expediente.get("HorasAsistenciaValidadas")),
+        )
+        complete = (
+            _clean(expediente.get("EstadoCodigo")).upper() in completed_states
+            and hours >= float(requirement["hours"])
+            and set(requirement["documents"]).issubset(validated_codes)
+        )
+        key = (
+            _document(str(expediente.get("NumeroIdentificacion") or "")),
+            _clean(expediente.get("CodAnioBasica")),
+            process,
+        )
+        current = result.get(key)
+        if current is None or (complete, hours, expediente_id) > (
+            bool(current.get("Cumple")),
+            _number(current.get("HorasReconocidas")),
+            int(current.get("ExpedienteId") or 0),
+        ):
+            result[key] = {
+                **expediente,
+                "Cumple": complete,
+                "HorasReconocidas": hours,
+                "DocumentosValidados": len(validated_codes),
+                "DocumentosRequeridos": len(requirement["documents"]),
+            }
+    return result
+
+
+def _matching_operational_completion(
+    completion_map: dict[tuple[str, str, str], dict[str, Any]],
+    document: str,
+    career: str,
+    process: str,
+) -> dict[str, Any] | None:
+    normalized_document = _document(document)
+    normalized_career = _clean(career)
+    exact = completion_map.get((normalized_document, normalized_career, process))
+    if exact:
+        return exact
+    matches = [
+        item
+        for (item_document, _item_career, item_process), item in completion_map.items()
+        if item_document == normalized_document and item_process == process
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _public_url(relative_path: str) -> str:
@@ -673,9 +841,31 @@ def _fetch_expediente(cursor: pyodbc.Cursor, expediente_id: int | None = None, n
     )
     row = cursor.fetchone()
     data = _row_dict(cursor, row) if row else None
-    if data and _number(data.get("TotalHorasVinculacion")) >= _HORAS_REQUERIDAS_VINCULACION:
-        data["VinculacionCumple"] = 1
-        data["CumpleVinculacion"] = 1
+    if data:
+        document = _document(str(data.get("NumeroIdentificacion") or ""))
+        career = _clean(data.get("CodAnioBasica"))
+        operational = _operational_practices_completion([(document, career)])
+        ppf = _matching_operational_completion(operational, document, career, "PPF")
+        vin = _matching_operational_completion(operational, document, career, "VIN")
+        if ppf:
+            data["TotalHorasPracticasPreprofesionales"] = max(
+                _number(data.get("TotalHorasPracticasPreprofesionales")),
+                _number(ppf.get("HorasReconocidas")),
+            )
+            if ppf.get("Cumple"):
+                data["PracticasPreprofesionalesCumple"] = 1
+                data["CumplePracticasPreprofesionales"] = 1
+        if vin:
+            data["TotalHorasVinculacion"] = max(
+                _number(data.get("TotalHorasVinculacion")),
+                _number(vin.get("HorasReconocidas")),
+            )
+            if vin.get("Cumple"):
+                data["VinculacionCumple"] = 1
+                data["CumpleVinculacion"] = 1
+        if _number(data.get("TotalHorasVinculacion")) >= _HORAS_REQUERIDAS_VINCULACION:
+            data["VinculacionCumple"] = 1
+            data["CumpleVinculacion"] = 1
     return data
 
 
@@ -1116,21 +1306,44 @@ def get_titulacion_estudiantes_aptos(
     except (pyodbc.Error, RuntimeError) as exc:
         raise _db_error(exc, "No se pudo consultar estudiantes activos para titulación") from exc
 
+    operational_completion = _operational_practices_completion(
+        [
+            (
+                _document(str(row.get("NumeroIdentificacion") or "")),
+                _clean(row.get("CodAnioBasica")),
+            )
+            for row in base_rows
+        ]
+    )
     items: list[dict[str, Any]] = []
     for row in base_rows:
         document = _document(str(row.get("NumeroIdentificacion") or ""))
         career = _clean(row.get("CodAnioBasica"))
         academic = _academic_status(document, career)
         expediente = expediente_map.get((document, career)) or expediente_map.get((document, ""))
+        ppf = _matching_operational_completion(operational_completion, document, career, "PPF")
+        vin = _matching_operational_completion(operational_completion, document, career, "VIN")
         materias_aprobadas = int(academic.get("materias_aprobadas") or 0)
         total_materias = int(academic.get("total_materias") or 0)
         cumple_malla_24 = materias_aprobadas >= _MATERIAS_REQUERIDAS_TITULACION
         cumple_ingles_avanzado = _bool_db(expediente.get("InglesA2Cumple") if expediente else None)
-        cumple_practicas = _bool_db(expediente.get("PracticasPreprofesionalesCumple") if expediente else None) or _bool_db(expediente.get("CumplePracticasPreprofesionales") if expediente else None)
-        horas_vinculacion = _number(expediente.get("TotalHorasVinculacion") if expediente else 0)
+        cumple_practicas = (
+            _bool_db(expediente.get("PracticasPreprofesionalesCumple") if expediente else None)
+            or _bool_db(expediente.get("CumplePracticasPreprofesionales") if expediente else None)
+            or bool(ppf and ppf.get("Cumple"))
+        )
+        horas_practicas = max(
+            _number(expediente.get("TotalHorasPracticasPreprofesionales") if expediente else 0),
+            _number(ppf.get("HorasReconocidas") if ppf else 0),
+        )
+        horas_vinculacion = max(
+            _number(expediente.get("TotalHorasVinculacion") if expediente else 0),
+            _number(vin.get("HorasReconocidas") if vin else 0),
+        )
         cumple_vinculacion = (
             _bool_db(expediente.get("VinculacionCumple") if expediente else None)
             or _bool_db(expediente.get("CumpleVinculacion") if expediente else None)
+            or bool(vin and vin.get("Cumple"))
             or horas_vinculacion >= _HORAS_REQUERIDAS_VINCULACION
         )
         apto = cumple_malla_24 and cumple_ingles_avanzado and cumple_practicas and cumple_vinculacion
@@ -1157,6 +1370,8 @@ def get_titulacion_estudiantes_aptos(
             "CumpleInglesA2Avanzado": cumple_ingles_avanzado,
             "CumplePracticasPreprofesionales": cumple_practicas,
             "CumpleVinculacion": cumple_vinculacion,
+            "TotalHorasPracticasPreprofesionales": horas_practicas,
+            "TotalHorasVinculacion": horas_vinculacion,
             "AptoTitulacion": apto,
             "Pendientes": pendientes,
             "PromedioAsignaturas": academic.get("promedio_asignaturas"),

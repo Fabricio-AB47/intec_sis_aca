@@ -31,6 +31,7 @@ from app.integrations.moodle.client import (
 from app.integrations.moodle.exceptions import (
     MoodleCourseNotFoundError,
     MoodleError,
+    MoodleEvaluationDateUpdateError,
     MoodleInstitutionalEmailNotFoundError,
     MoodleInstitutionalEmailValidationError,
     MoodleResourceNotFoundError,
@@ -240,6 +241,10 @@ class MoodleReadService:
         | None = None,
         section_auditor: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], bool]
         | None = None,
+        evaluation_dates_auditor: Callable[
+            [dict[str, Any], dict[str, Any], dict[str, Any]], bool
+        ]
+        | None = None,
     ) -> None:
         self._settings = settings
         self._client = client or MoodleClient(settings)
@@ -248,6 +253,9 @@ class MoodleReadService:
         )
         self._status_auditor = status_auditor or self._record_status_audit
         self._section_auditor = section_auditor or self._record_section_audit
+        self._evaluation_dates_auditor = (
+            evaluation_dates_auditor or self._record_evaluation_dates_audit
+        )
         self._users_cache: _CacheEntry | None = None
         self._courses_cache: _CacheEntry | None = None
         self._course_contents_cache: dict[int, _CacheEntry] = {}
@@ -262,6 +270,7 @@ class MoodleReadService:
     async def get_status(self) -> dict[str, Any]:
         payload = await self._client.get_site_info()
         available_functions = self._function_names(payload.get("functions"))
+        date_capability = self._evaluation_dates_capability(payload)
         required_functions = [
             SITE_INFO_FUNCTION,
             USERS_FUNCTION,
@@ -301,6 +310,12 @@ class MoodleReadService:
                 and self._settings.moodle_writes_enabled
                 and self._settings.moodle_section_updates_enabled
             ),
+            "evaluation_date_updates_enabled": date_capability["enabled"],
+            "evaluation_date_update_function": date_capability["function"],
+            "evaluation_date_update_function_available": date_capability[
+                "function_available"
+            ],
+            "evaluation_date_update_reason": date_capability["reason"],
             "functions_count": len(available_functions),
             "required_functions": required_functions,
             "missing_required_functions": [
@@ -1117,6 +1132,63 @@ class MoodleReadService:
             return False
 
     @staticmethod
+    def _record_evaluation_dates_audit(
+        before: dict[str, Any],
+        after: dict[str, Any],
+        context: dict[str, Any],
+    ) -> bool:
+        try:
+            before_dates = before.get("dates") if isinstance(before.get("dates"), dict) else {}
+            after_dates = after.get("dates") if isinstance(after.get("dates"), dict) else {}
+            changed_columns = ",".join(
+                field
+                for field in sorted(set(before_dates) | set(after_dates))
+                if before_dates.get(field) != after_dates.get(field)
+            ) or "dates"
+            with get_integration_control_connection() as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """
+                    EXEC aud.sp_RegistrarCambio
+                        @BaseDatos=?,
+                        @Esquema=?,
+                        @Objeto=?,
+                        @Operacion=?,
+                        @CantidadFilas=?,
+                        @ColumnasAfectadas=?,
+                        @ClavesAfectadas=?,
+                        @DatosAntes=?,
+                        @DatosDespues=?,
+                        @MuestraLimitada=?;
+                    """,
+                    "MOODLE",
+                    "core",
+                    "course_module_dates",
+                    "UPDATE",
+                    1,
+                    changed_columns,
+                    json.dumps(
+                        {
+                            "course_id": context.get("course_id"),
+                            "cmid": before.get("cmid"),
+                            "instance": before.get("instance"),
+                            "actor": context.get("actor"),
+                            "actor_id": context.get("actor_id"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(before_dates, ensure_ascii=False),
+                    json.dumps(after_dates, ensure_ascii=False),
+                    0,
+                )
+                connection.commit()
+                cursor.close()
+            return True
+        except Exception:
+            logger.exception("No se pudo registrar la auditoría de fechas Moodle")
+            return False
+
+    @staticmethod
     def _function_names(value: Any) -> set[str]:
         if not isinstance(value, list):
             return set()
@@ -1669,6 +1741,406 @@ class MoodleReadService:
                 "fetched_at": fetched_at.isoformat(),
                 "moodle_function": moodle_function,
             },
+        }
+
+    def _evaluation_dates_capability(
+        self,
+        site_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        function = _as_text(self._settings.moodle_evaluation_dates_function)
+        function_valid = bool(re.fullmatch(r"[a-z][a-z0-9_]*", function))
+        available_functions = self._function_names(
+            site_info.get("functions") if isinstance(site_info, dict) else None
+        )
+        function_available = bool(function_valid and function in available_functions)
+        configured = bool(
+            self._settings.moodle_enabled
+            and self._settings.moodle_writes_enabled
+            and self._settings.moodle_evaluation_dates_update_enabled
+            and function_valid
+        )
+        enabled = bool(configured and function_available)
+
+        if not self._settings.moodle_enabled:
+            reason = "La integración con Moodle está deshabilitada."
+        elif not self._settings.moodle_writes_enabled:
+            reason = "Las escrituras en Moodle están deshabilitadas."
+        elif not self._settings.moodle_evaluation_dates_update_enabled:
+            reason = "La edición de fechas de evaluaciones está deshabilitada."
+        elif not function_valid:
+            reason = "La función externa de actualización de fechas no está configurada correctamente."
+        elif not function_available:
+            reason = (
+                "El servicio web de Moodle no publica la función externa "
+                f"{function}."
+            )
+        else:
+            reason = "La edición de fechas de evaluaciones está habilitada."
+
+        return {
+            "enabled": enabled,
+            "configured": configured,
+            "function": function,
+            "function_available": function_available,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _module_date_value(
+        module: dict[str, Any],
+        data_ids: set[str],
+        label_patterns: tuple[str, ...],
+    ) -> int:
+        dates = module.get("dates") if isinstance(module.get("dates"), list) else []
+        for date in dates:
+            if not isinstance(date, dict):
+                continue
+            data_id = _search_text(date.get("dataid")).replace(" ", "")
+            if data_id and data_id in data_ids:
+                return max(0, _as_int(date.get("timestamp")))
+        for date in dates:
+            if not isinstance(date, dict):
+                continue
+            label = _search_text(date.get("label"))
+            if label and any(pattern in label for pattern in label_patterns):
+                return max(0, _as_int(date.get("timestamp")))
+        return 0
+
+    @classmethod
+    def _evaluation_activity(
+        cls,
+        section: dict[str, Any],
+        module: dict[str, Any],
+        scope: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        modname = _as_text(module.get("modname")).casefold()
+        dates = {
+            "allowsubmissionsfromdate": 0,
+            "duedate": 0,
+            "cutoffdate": 0,
+            "timeopen": 0,
+            "timeclose": 0,
+        }
+        if modname == "assign":
+            dates["allowsubmissionsfromdate"] = cls._module_date_value(
+                module,
+                {"allowsubmissionsfromdate"},
+                ("disponible desde", "permite entregas desde", "available from"),
+            )
+            dates["duedate"] = cls._module_date_value(
+                module,
+                {"duedate"},
+                ("fecha de entrega", "fecha de vencimiento", "due date"),
+            )
+            dates["cutoffdate"] = cls._module_date_value(
+                module,
+                {"cutoffdate"},
+                ("fecha limite", "cierre definitivo", "cut-off date", "cutoff"),
+            )
+        else:
+            dates["timeopen"] = cls._module_date_value(
+                module,
+                {"timeopen"},
+                ("apertura", "abrir cuestionario", "quiz opens"),
+            )
+            dates["timeclose"] = cls._module_date_value(
+                module,
+                {"timeclose"},
+                ("cierre", "cerrar cuestionario", "quiz closes"),
+            )
+
+        scope = scope or {}
+        return {
+            "cmid": _as_int(module.get("id")),
+            "instance": _as_int(module.get("instance")),
+            "modname": modname,
+            "type_label": "Tarea" if modname == "assign" else "Cuestionario",
+            "name": _as_text(module.get("name")) or "Evaluación sin nombre",
+            "url": _as_text(module.get("url")),
+            "section_id": _as_int(section.get("id")),
+            "section_number": _as_int(section.get("section")),
+            "section_name": _as_text(section.get("name")),
+            "visible": _as_bool(module.get("visible")),
+            "uservisible": _as_bool(module.get("uservisible")),
+            "scope": _as_text(scope.get("scope")) or "sin_clasificar",
+            "scope_label": _as_text(scope.get("scope_label")) or "Sin clasificar",
+            "partial": _as_int(scope.get("partial")),
+            "partial_label": _as_text(scope.get("partial_label")),
+            "programmable": bool(scope.get("programmable")),
+            "dates": dates,
+        }
+
+    @classmethod
+    def _evaluation_section_scopes(
+        cls,
+        sections: list[dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        """Ubica cada sección dentro de Simuladores/Evaluaciones y P1/P2/P3."""
+        scopes: dict[int, dict[str, Any]] = {}
+        active_scope = ""
+
+        for section in sorted(
+            sections,
+            key=lambda item: (_as_int(item.get("section")), _as_int(item.get("id"))),
+        ):
+            section_name = _as_text(section.get("name"))
+            normalized_name = _search_text(section_name)
+            name_tokens = set(re.findall(r"[a-z0-9]+", normalized_name))
+            is_recovery = bool(
+                name_tokens.intersection({"recuperacion", "supletorio", "remedial"})
+            )
+            if is_recovery:
+                active_scope = ""
+                continue
+
+            starts_simulators = any(token.startswith("simulador") for token in name_tokens)
+            starts_evaluations = cls._is_evaluation_section_name(section_name)
+            if starts_simulators:
+                active_scope = "simuladores"
+            elif starts_evaluations:
+                active_scope = "evaluaciones"
+
+            modules = (
+                section.get("modules")
+                if isinstance(section.get("modules"), list)
+                else []
+            )
+            partial, partial_label = _academic_partial_context(
+                section_name,
+                section.get("summary"),
+                *(
+                    module.get("name")
+                    for module in modules
+                    if isinstance(module, dict)
+                    and _as_text(module.get("modname")).casefold()
+                    in {"label", "assign", "quiz"}
+                ),
+            )
+            if partial is None and (starts_simulators or starts_evaluations):
+                # En la plantilla institucional, el bloque principal inicia en P1.
+                partial = 1
+                partial_label = _ACADEMIC_PARTIAL_LABELS[1]
+
+            section_id = _as_int(section.get("id"))
+            if active_scope and partial in _ACADEMIC_PARTIAL_LABELS and section_id > 0:
+                scopes[section_id] = {
+                    "scope": active_scope,
+                    "scope_label": (
+                        "Simuladores" if active_scope == "simuladores" else "Evaluaciones"
+                    ),
+                    "partial": partial,
+                    "partial_label": partial_label or _ACADEMIC_PARTIAL_LABELS[partial],
+                    "programmable": True,
+                }
+                continue
+
+            if not starts_simulators and not starts_evaluations:
+                active_scope = ""
+
+        return scopes
+
+    async def get_course_evaluations(
+        self,
+        course_id: int,
+        *,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        resources, site_info = await asyncio.gather(
+            self.get_course_resources(course_id, refresh=refresh),
+            self._client.get_site_info(),
+        )
+        section_scopes = self._evaluation_section_scopes(resources["sections"])
+        activities = [
+            self._evaluation_activity(
+                section,
+                module,
+                section_scopes.get(_as_int(section.get("id"))),
+            )
+            for section in resources["sections"]
+            for module in section.get("modules", [])
+            if _as_text(module.get("modname")).casefold() in {"assign", "quiz"}
+            and _as_int(module.get("id")) > 0
+            and _as_int(module.get("instance")) > 0
+        ]
+        activities.sort(
+            key=lambda item: (
+                item["section_number"],
+                _search_text(item["name"]),
+                item["cmid"],
+            )
+        )
+        capability = self._evaluation_dates_capability(site_info)
+        return {
+            "course": resources["course"],
+            "activities": activities,
+            "totals": {
+                "activities": len(activities),
+                "assignments": sum(1 for item in activities if item["modname"] == "assign"),
+                "quizzes": sum(1 for item in activities if item["modname"] == "quiz"),
+                "with_dates": sum(
+                    1 for item in activities if any(item["dates"].values())
+                ),
+                "programmable": sum(1 for item in activities if item["programmable"]),
+                "unclassified": sum(1 for item in activities if not item["programmable"]),
+                "simulators": sum(
+                    1 for item in activities if item["scope"] == "simuladores"
+                ),
+                "evaluations": sum(
+                    1 for item in activities if item["scope"] == "evaluaciones"
+                ),
+            },
+            "source": resources["source"],
+            "date_management": capability,
+        }
+
+    @staticmethod
+    def _validate_evaluation_date_order(
+        modname: str,
+        dates: dict[str, int],
+    ) -> None:
+        if modname == "assign":
+            ordered_fields = (
+                ("allowsubmissionsfromdate", "Disponible desde"),
+                ("duedate", "Fecha de entrega"),
+                ("cutoffdate", "Cierre definitivo"),
+            )
+        else:
+            ordered_fields = (
+                ("timeopen", "Apertura"),
+                ("timeclose", "Cierre"),
+            )
+        populated = [
+            (label, dates[field])
+            for field, label in ordered_fields
+            if dates.get(field, 0) > 0
+        ]
+        for (previous_label, previous), (current_label, current) in zip(
+            populated,
+            populated[1:],
+        ):
+            if previous > current:
+                raise MoodleEvaluationDateUpdateError(
+                    f"{previous_label} no puede ser posterior a {current_label}."
+                )
+
+    async def update_course_evaluation_dates(
+        self,
+        course_id: int,
+        updates: list[dict[str, Any]],
+        *,
+        actor: str,
+        actor_id: int | None,
+    ) -> dict[str, Any]:
+        site_info = await self._client.get_site_info()
+        capability = self._evaluation_dates_capability(site_info)
+        if not capability["enabled"]:
+            raise MoodleEvaluationDateUpdateError(capability["reason"])
+
+        current = await self.get_course_evaluations(course_id, refresh=True)
+        current_by_cmid = {item["cmid"]: item for item in current["activities"]}
+        normalized_updates: list[dict[str, Any]] = []
+        audit_changes: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        allowed_by_module = {
+            "assign": {"allowsubmissionsfromdate", "duedate", "cutoffdate"},
+            "quiz": {"timeopen", "timeclose"},
+        }
+
+        for requested in updates:
+            cmid = _as_int(requested.get("cmid"))
+            activity = current_by_cmid.get(cmid)
+            if activity is None:
+                raise MoodleEvaluationDateUpdateError(
+                    f"La evaluación con identificador {cmid} no pertenece al curso."
+                )
+            modname = _as_text(requested.get("modname")).casefold()
+            instance = _as_int(requested.get("instance"))
+            if modname != activity["modname"] or instance != activity["instance"]:
+                raise MoodleEvaluationDateUpdateError(
+                    f"La identidad de la evaluación {cmid} no coincide con Moodle."
+                )
+            if not activity["programmable"]:
+                raise MoodleEvaluationDateUpdateError(
+                    "Solo se pueden actualizar actividades clasificadas en "
+                    "Simuladores o Evaluaciones de P1, P2 o P3."
+                )
+
+            before_dates = dict(activity["dates"])
+            after_dates = dict(before_dates)
+            changed_fields: dict[str, int] = {}
+            for field in allowed_by_module[modname]:
+                if field not in requested:
+                    continue
+                value = _as_int(requested.get(field))
+                if value < 0 or value > 4_102_444_799:
+                    raise MoodleEvaluationDateUpdateError(
+                        "La fecha enviada está fuera del rango permitido."
+                    )
+                after_dates[field] = value
+                if value != before_dates[field]:
+                    changed_fields[field] = value
+
+            self._validate_evaluation_date_order(modname, after_dates)
+            if not changed_fields:
+                continue
+            normalized_updates.append(
+                {
+                    "cmid": cmid,
+                    "modname": modname,
+                    "instance": instance,
+                    **changed_fields,
+                }
+            )
+            audit_changes.append(
+                (
+                    {**activity, "dates": before_dates},
+                    {**activity, "dates": after_dates},
+                )
+            )
+
+        if not normalized_updates:
+            return {
+                "ok": True,
+                "changed": False,
+                "message": "Las evaluaciones ya tienen las fechas seleccionadas.",
+                "updated_count": 0,
+                "activities": current["activities"],
+                "audit_records": 0,
+            }
+
+        await self._client.update_evaluation_dates(course_id, normalized_updates)
+        self._course_contents_cache.pop(course_id, None)
+        refreshed = await self.get_course_evaluations(course_id, refresh=True)
+        audit_records = 0
+        context = {
+            "course_id": course_id,
+            "course_name": _as_text(current["course"].get("fullname")),
+            "actor": _as_text(actor),
+            "actor_id": actor_id,
+        }
+        for before, after in audit_changes:
+            recorded = await asyncio.to_thread(
+                self._evaluation_dates_auditor,
+                before,
+                after,
+                context,
+            )
+            audit_records += int(bool(recorded))
+
+        logger.info(
+            "Fechas de evaluaciones Moodle actualizadas course_id=%s count=%s actor=%s",
+            course_id,
+            len(normalized_updates),
+            _as_text(actor),
+        )
+        return {
+            "ok": True,
+            "changed": True,
+            "message": (
+                f"Se actualizaron {len(normalized_updates)} evaluación(es) en Moodle."
+            ),
+            "updated_count": len(normalized_updates),
+            "activities": refreshed["activities"],
+            "audit_records": audit_records,
         }
 
 

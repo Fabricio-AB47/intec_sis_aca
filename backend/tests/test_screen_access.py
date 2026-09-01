@@ -22,6 +22,7 @@ from app.services.screen_access import (
     _initialize_role_assignments,
     _materialize_role_screen_matrix,
     _migrate_flow_screen_assignments,
+    _migrate_new_screen_default_assignments,
     _migrate_split_screen_assignments,
     _role_screen_matrix_is_complete,
     _role_payloads,
@@ -83,6 +84,17 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertIn("moodle-teams", ALL_PAGES)
         self.assertNotIn("moodle-teams", ADMIN_ONLY_PAGES)
 
+    def test_moodle_evaluation_dates_is_independently_assignable(self) -> None:
+        screen = next(
+            item for item in SCREEN_CATALOG
+            if item["page"] == "moodle/evaluation-dates"
+        )
+
+        self.assertEqual(screen["label"], "Fechas de evaluaciones")
+        self.assertEqual(screen["group"], "Moodle")
+        self.assertEqual(screen["parent_page"], "moodle")
+        self.assertIn("moodle/evaluation-dates", ALL_PAGES)
+
     def test_enrollment_flows_are_independently_assignable(self) -> None:
         enrollment_flows = {
             page
@@ -127,9 +139,6 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         enrollment_pages = {
             "matricula",
             "matricula-docente",
-            "preinscripcion/cabecera",
-            "preinscripcion/documentos",
-            "preinscripcion/materias",
             "matricula-acad/individual",
             "matricula-acad/masiva",
             "matricula-acad/prerrequisitos",
@@ -144,6 +153,21 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             with self.subTest(page=page):
                 screen = next(item for item in SCREEN_CATALOG if item["page"] == page)
                 self.assertEqual(screen["group"], "Matrícula")
+
+    def test_admission_flows_share_one_catalog_group(self) -> None:
+        admission_pages = {
+            "preinscripcion/registro",
+            "preinscripcion/inscritos",
+            "preinscripcion/documentos",
+            "preinscripcion/seguimiento",
+            "preinscripcion/cabecera",
+            "preinscripcion/materias",
+        }
+
+        for page in admission_pages:
+            with self.subTest(page=page):
+                screen = next(item for item in SCREEN_CATALOG if item["page"] == page)
+                self.assertEqual(screen["group"], "Admisiones")
 
     def test_registration_is_an_explicit_assignable_screen(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "preinscripcion")
@@ -362,10 +386,11 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             self.assertNotIn("WHEN MATCHED THEN", statement)
             self.assertEqual(params[2:], ("ESTUDIANTE", "portal-estudiante"))
 
-    def test_moodle_is_exposed_as_six_assignable_subscreens(self) -> None:
+    def test_moodle_is_exposed_as_assignable_subscreens(self) -> None:
         expected = {
             "moodle/alerts",
             "moodle/courses",
+            "moodle/evaluation-dates",
             "moodle/grades",
             "moodle/resources",
             "moodle/status",
@@ -397,6 +422,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_automatic_moodle_grants_are_removed_only_outside_administration(self) -> None:
         optional_pages = {
             "moodle/courses",
+            "moodle/evaluation-dates",
             "moodle/grades",
             "moodle/resources",
             "moodle/status",
@@ -484,6 +510,29 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertIn("WHEN NOT MATCHED THEN INSERT", statement)
         self.assertNotIn("WHEN MATCHED THEN", statement)
         self.assertIn("SISTEMA_CATALOGO", statement)
+
+    def test_new_career_change_screen_is_seeded_without_overwriting_manual_choices(self) -> None:
+        class RecordingCursor:
+            def __init__(self) -> None:
+                self.executions: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, statement: str, *params: object) -> None:
+                self.executions.append((" ".join(statement.split()).upper(), params))
+
+        cursor = RecordingCursor()
+        _migrate_new_screen_default_assignments(cursor)
+
+        self.assertEqual(
+            {params for _, params in cursor.executions},
+            {
+                ("ACADEMICO", "solicitudes-cambio-carrera"),
+                ("SECRETARIA", "solicitudes-cambio-carrera"),
+            },
+        )
+        for statement, _ in cursor.executions:
+            self.assertIn("TARGET.USUARIOACTUALIZACION = N'SISTEMA_CATALOGO'", statement)
+            self.assertIn("SISTEMA_SOLICITUDES_V1", statement)
+            self.assertNotIn("WHEN MATCHED AND TARGET.ACTIVO = 1", statement)
 
     def test_complete_role_screen_matrix_avoids_repeating_migrations(self) -> None:
         class CountRow:

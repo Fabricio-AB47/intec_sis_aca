@@ -44,13 +44,15 @@ Edita `backend/.env` con los datos reales de SQL Server, Microsoft Graph, sesion
 Para iniciar la API:
 
 ```powershell
-fastapi dev app/main.py --host 127.0.0.1 --port 8002
+cd backend
+.\dev.ps1
 ```
 
-Alternativa:
+El script reutiliza la instancia existente cuando `8002` ya responde y evita
+iniciar dos servidores sobre el mismo puerto. Para reiniciar deliberadamente:
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload
+.\dev.ps1 -Restart
 ```
 
 La documentacion queda disponible en:
@@ -59,7 +61,9 @@ La documentacion queda disponible en:
 http://127.0.0.1:8002/docs
 ```
 
-Si aparece `WinError 10013` o puerto ocupado, usa otro puerto y ajusta `VITE_API_TARGET` en el frontend.
+No ejecutes `fastapi dev` una segunda vez si la API ya esta activa. El mensaje
+`WinError 10013` en este escenario indica que otra instancia del backend ya
+ocupa `8002`; `dev.ps1` comprueba y reutiliza esa instancia.
 
 ## Configuracion Frontend
 
