@@ -7,6 +7,11 @@ import type {
   CareerChangePreviewResponse,
   CareerChangeRequestDetail,
   CareerChangeRequestsResponse,
+  ModalityChangeActionResponse,
+  ModalityChangeCatalogResponse,
+  ModalityChangePreviewResponse,
+  ModalityChangeRequestDetail,
+  ModalityChangeRequestsResponse,
   AcademicEnrollmentCareersResponse,
   AcademicEnrollmentCatalogResponse,
   AcademicEnrollmentCohortResponse,
@@ -105,6 +110,9 @@ import type {
   LegacyReportResponse,
   ModernizedLegacyReportsCatalogResponse,
   MoodleCourseEvaluationsResponse,
+  MoodleEditableContentResponse,
+  MoodleEditableContentType,
+  MoodleEditableContentUpdateResponse,
   MoodleCourseResourcesResponse,
   MoodleCoursesResponse,
   MoodleEvaluationDateUpdate,
@@ -148,6 +156,12 @@ import type {
   PracticasCatalogResponse,
   PracticasElegiblesResponse,
   PracticasExpedientesResponse,
+  PracticasOperationsAuditResponse,
+  PracticasOperationsCatalogResponse,
+  PracticasOperationsDashboardResponse,
+  PracticasOperationsDetailResponse,
+  PracticasOperationsNotificationsResponse,
+  PracticasOperationsReconciliationsResponse,
   PracticasPeriodoDesignacionesResponse,
   PracticasPeriodosResponse,
   PracticasProcessCode,
@@ -393,15 +407,29 @@ export function invalidateMoodleGradeAlertCache() {
 }
 
 let currentSessionRequest: Promise<UserSession | null> | null = null
-const screenAccessRequests = new Map<boolean, Promise<ScreenAccessResponse>>()
+type ScreenAccessPendingRequest = {
+  promise: Promise<ScreenAccessResponse>
+  refresh: boolean
+}
+
+const screenAccessRequests = new Map<boolean, ScreenAccessPendingRequest>()
+const screenAccessRequestGenerations = new Map<boolean, number>()
 const SCREEN_ACCESS_CACHE_MS = 30_000
 const SCREEN_ACCESS_TIMEOUT_MS = 45_000
 const screenAccessCache = new Map<boolean, { expiresAt: number; value: ScreenAccessResponse }>()
 
+function invalidateScreenAccessRequests(includeAll?: boolean) {
+  const keys = includeAll === undefined ? [false, true] : [includeAll]
+  keys.forEach((key) => {
+    screenAccessRequestGenerations.set(key, (screenAccessRequestGenerations.get(key) || 0) + 1)
+    screenAccessRequests.delete(key)
+    screenAccessCache.delete(key)
+  })
+}
+
 function clearAuthReadRequests() {
   currentSessionRequest = null
-  screenAccessRequests.clear()
-  screenAccessCache.clear()
+  invalidateScreenAccessRequests()
 }
 
 export async function loginRequest(login: string, password: string): Promise<UserSession> {
@@ -451,26 +479,35 @@ export async function getCurrentSession(): Promise<UserSession | null> {
   return currentSessionRequest
 }
 
-function screenAccessRequest(includeAll: boolean): Promise<ScreenAccessResponse> {
+function screenAccessRequest(includeAll: boolean, refresh: boolean): Promise<ScreenAccessResponse> {
+  const activeRequest = screenAccessRequests.get(includeAll)
+  if (refresh && activeRequest?.refresh) return activeRequest.promise
+
+  if (refresh) invalidateScreenAccessRequests(includeAll)
+
   const cached = screenAccessCache.get(includeAll)
-  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value)
+  if (!refresh && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value)
   if (cached) screenAccessCache.delete(includeAll)
 
-  const activeRequest = screenAccessRequests.get(includeAll)
-  if (activeRequest) return activeRequest
+  const pendingRequest = screenAccessRequests.get(includeAll)
+  if (pendingRequest) return pendingRequest.promise
+
+  const requestGeneration = screenAccessRequestGenerations.get(includeAll) || 0
 
   const pending = (async () => {
     const controller = new AbortController()
     const timeout = globalThis.setTimeout(() => controller.abort(), SCREEN_ACCESS_TIMEOUT_MS)
     try {
       const response = await request<ScreenAccessResponse>(
-        `/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}`,
-        { signal: controller.signal },
+        `/api/auth/screen-access?include_all=${includeAll ? 'true' : 'false'}&refresh=${refresh ? 'true' : 'false'}`,
+        { signal: controller.signal, cache: 'no-store' },
       )
-      screenAccessCache.set(includeAll, {
-        expiresAt: Date.now() + SCREEN_ACCESS_CACHE_MS,
-        value: response,
-      })
+      if ((screenAccessRequestGenerations.get(includeAll) || 0) === requestGeneration) {
+        screenAccessCache.set(includeAll, {
+          expiresAt: Date.now() + SCREEN_ACCESS_CACHE_MS,
+          value: response,
+        })
+      }
       return response
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -484,13 +521,13 @@ function screenAccessRequest(includeAll: boolean): Promise<ScreenAccessResponse>
       globalThis.clearTimeout(timeout)
     }
   })()
-  screenAccessRequests.set(includeAll, pending)
+  screenAccessRequests.set(includeAll, { promise: pending, refresh })
   pending.then(
     () => {
-      if (screenAccessRequests.get(includeAll) === pending) screenAccessRequests.delete(includeAll)
+      if (screenAccessRequests.get(includeAll)?.promise === pending) screenAccessRequests.delete(includeAll)
     },
     () => {
-      if (screenAccessRequests.get(includeAll) === pending) screenAccessRequests.delete(includeAll)
+      if (screenAccessRequests.get(includeAll)?.promise === pending) screenAccessRequests.delete(includeAll)
     },
   )
   return pending
@@ -506,8 +543,11 @@ export async function logoutRequest(): Promise<void> {
   }
 }
 
-export async function fetchScreenAccessAssignments(includeAll = false): Promise<ScreenAccessResponse> {
-  return screenAccessRequest(includeAll)
+export async function fetchScreenAccessAssignments(
+  includeAll = false,
+  options: { refresh?: boolean } = {},
+): Promise<ScreenAccessResponse> {
+  return screenAccessRequest(includeAll, options.refresh === true)
 }
 
 export async function updateScreenAccessAssignment(role: string, pages: string[]): Promise<ScreenAccessRole> {
@@ -712,6 +752,29 @@ export async function fetchMoodleCourseResources(
   return request<MoodleCourseResourcesResponse>(
     `/api/moodle/courses/${encodeURIComponent(String(courseId))}/resources?${params.toString()}`,
     { cache: 'no-store' },
+  )
+}
+
+export async function fetchMoodleEditableContent(
+  courseId: number,
+  refresh = false,
+): Promise<MoodleEditableContentResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleEditableContentResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/editable-content?${params.toString()}`,
+    { cache: 'no-store' },
+  )
+}
+
+export async function updateMoodleEditableContent(
+  courseId: number,
+  targetType: MoodleEditableContentType,
+  targetId: number,
+  payload: { name: string; html: string },
+): Promise<MoodleEditableContentUpdateResponse> {
+  return request<MoodleEditableContentUpdateResponse>(
+    `/api/moodle/courses/${encodeURIComponent(String(courseId))}/editable-content/${encodeURIComponent(targetType)}/${encodeURIComponent(String(targetId))}`,
+    { method: 'PATCH', body: payload },
   )
 }
 
@@ -1622,7 +1685,13 @@ export async function fetchSisAcademicoV1Artifacts(): Promise<SisAcademicoV1Arti
 export async function fetchSisAcademicoRows(
   sectionKey: string,
   query: string = '',
-  options: { limit?: number; periodo?: string } = {}
+  options: {
+    limit?: number
+    periodo?: string
+    page?: number
+    pageSize?: number
+    signal?: AbortSignal
+  } = {}
 ): Promise<SisAcademicoListResponse> {
   const params = new URLSearchParams()
   if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) {
@@ -1631,12 +1700,19 @@ export async function fetchSisAcademicoRows(
   if (options.periodo) {
     params.set('periodo', options.periodo)
   }
+  if (typeof options.page === 'number' && Number.isFinite(options.page) && options.page > 0) {
+    params.set('page', String(Math.trunc(options.page)))
+  }
+  if (typeof options.pageSize === 'number' && Number.isFinite(options.pageSize) && options.pageSize > 0) {
+    params.set('page_size', String(Math.trunc(options.pageSize)))
+  }
   if (query) {
     params.set('query', query)
   }
   const queryString = params.toString()
   return request<SisAcademicoListResponse>(
-    `/api/students/sisacademico/${encodeURIComponent(sectionKey)}${queryString ? `?${queryString}` : ''}`
+    `/api/students/sisacademico/${encodeURIComponent(sectionKey)}${queryString ? `?${queryString}` : ''}`,
+    { signal: options.signal },
   )
 }
 
@@ -3798,7 +3874,7 @@ export async function uploadPracticasCartaCompromiso(
 ): Promise<Record<string, unknown>> {
   const formData = new FormData()
   formData.set('file', file)
-  return request<Record<string, unknown>>(`/api/practicas/student/expedientes/${expedienteId}/carta-compromiso`, {
+  return request<Record<string, unknown>>(`/api/practicas/responsable/expedientes/${expedienteId}/carta-compromiso`, {
     method: 'POST',
     body: formData,
   })
@@ -3810,7 +3886,7 @@ export async function uploadPracticasCertificado(
 ): Promise<Record<string, unknown>> {
   const formData = new FormData()
   formData.set('file', file)
-  return request<Record<string, unknown>>(`/api/practicas/student/expedientes/${expedienteId}/certificado`, {
+  return request<Record<string, unknown>>(`/api/practicas/responsable/expedientes/${expedienteId}/certificado`, {
     method: 'POST',
     body: formData,
   })
@@ -3856,6 +3932,14 @@ export async function fetchPracticasPeriodoDesignaciones(
   return request<PracticasPeriodoDesignacionesResponse>(`/api/practicas/admin/designaciones-periodo?${params.toString()}`)
 }
 
+export async function searchPracticasActiveTeachers(
+  query: string,
+  limit: number = 20,
+): Promise<AcademicTeacherSearchResponse> {
+  const params = new URLSearchParams({ query, limit: String(limit) })
+  return request<AcademicTeacherSearchResponse>(`/api/practicas/admin/docentes-activos?${params.toString()}`)
+}
+
 export async function savePracticasPeriodoDesignacion(payload: {
   tipo_proceso_codigo: PracticasProcessCode
   codigo_periodo: string
@@ -3868,6 +3952,40 @@ export async function savePracticasPeriodoDesignacion(payload: {
   estudiantes: number[]
 }): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>('/api/practicas/admin/designaciones-periodo', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function enrollPracticasStudents(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_periodo: string
+  fecha_inicio_carga: string
+  fecha_fin_carga: string
+  estudiantes: Array<{
+    codigo_estud: number
+    codigo_carrera: string
+    codigo_periodo_origen: string
+  }>
+  observacion?: string | null
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/admin/inscripciones-cumplimiento', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function assignPracticasEnrollmentResponsable(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_periodo: string
+  nombre_responsable: string
+  rol_responsable?: string
+  codigo_docente: string
+  cedula_responsable?: string | null
+  correo_responsable?: string | null
+  expediente_ids: number[]
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/admin/inscripciones-cumplimiento/responsable', {
     method: 'POST',
     body: payload,
   })
@@ -3942,6 +4060,312 @@ export async function assignPracticasResponsable(
     method: 'POST',
     body: { responsable_proceso_id: responsableProcesoId },
   })
+}
+
+export async function fetchPracticasOperationsCatalog(): Promise<PracticasOperationsCatalogResponse> {
+  return request<PracticasOperationsCatalogResponse>('/api/practicas/operaciones/catalogo')
+}
+
+export async function savePracticasOperationsConfiguration(payload: {
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_carrera?: string | null
+  nivel?: string | null
+  codigo_periodo?: string | null
+  horas_requeridas: number
+  documentos_requeridos: number
+  nota_minima_aprobacion: number
+  requiere_evaluacion_docente: boolean
+  requiere_evaluacion_tutor: boolean
+  requiere_autoevaluacion: boolean
+  requiere_resultado_vinculacion: boolean
+  peso_docente: number
+  peso_tutor: number
+  peso_autoevaluacion: number
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/operaciones/configuraciones', {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function fetchPracticasOperationsDashboard(
+  tipoProceso: PracticasProcessCode,
+): Promise<PracticasOperationsDashboardResponse> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso })
+  return request<PracticasOperationsDashboardResponse>(`/api/practicas/operaciones/dashboard?${params.toString()}`)
+}
+
+export async function fetchPracticasOperationsDetail(
+  expedienteId: number,
+): Promise<PracticasOperationsDetailResponse> {
+  return request<PracticasOperationsDetailResponse>(`/api/practicas/operaciones/expedientes/${expedienteId}`)
+}
+
+export async function savePracticasOperationsPlan(
+  expedienteId: number,
+  payload: {
+    entidad_id?: number | null
+    convenio_id?: number | null
+    proyecto_id?: number | null
+    tutor_externo_nombre?: string | null
+    tutor_externo_correo?: string | null
+    tutor_externo_telefono?: string | null
+    objetivo_general?: string | null
+    resultados_aprendizaje?: string | null
+    actividades_planificadas?: string | null
+    fecha_inicio?: string | null
+    fecha_fin?: string | null
+    horas_planificadas: number
+    estado: 'BORRADOR' | 'APROBADO' | 'EN_EJECUCION' | 'FINALIZADO'
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/expedientes/${expedienteId}/plan`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function createPracticasOperationsActivity(
+  expedienteId: number,
+  payload: {
+    fecha_actividad: string
+    descripcion: string
+    horas?: number | null
+    hora_inicio?: string | null
+    hora_fin?: string | null
+    descanso_minutos?: number
+    modalidad?: 'PRESENCIAL' | 'VIRTUAL' | 'HIBRIDA' | null
+    lugar?: string | null
+    evidencia_url?: string | null
+    evidencia_nombre?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/expedientes/${expedienteId}/actividades`, {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function reviewPracticasOperationsActivity(
+  actividadId: number,
+  payload: {
+    estado_revision: 'VALIDADO' | 'OBSERVADO' | 'RECHAZADO'
+    observacion_revision?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/actividades/${actividadId}/revision`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function savePracticasOperationsIndicator(
+  expedienteId: number,
+  payload: {
+    indicador_id?: number | null
+    nombre: string
+    unidad_medida: string
+    meta: number
+    resultado?: number | null
+    evidencia_url?: string | null
+    observacion?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/expedientes/${expedienteId}/indicadores`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function savePracticasOperationsActorEvaluation(
+  expedienteId: number,
+  role: 'DOCENTE_ACADEMICO' | 'TUTOR_EMPRESARIAL' | 'AUTOEVALUACION',
+  payload: {
+    calificacion: number
+    evaluador_nombre?: string | null
+    evaluador_correo?: string | null
+    observacion?: string | null
+    evidencia_url?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/expedientes/${expedienteId}/evaluaciones-actores/${role}`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export async function savePracticasOperationsVinculationResult(
+  expedienteId: number,
+  payload: {
+    beneficiarios_reales: number
+    resumen_impacto: string
+    observacion?: string | null
+    evidencia_url?: string | null
+    validar?: boolean
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/expedientes/${expedienteId}/resultado-vinculacion`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export async function savePracticasOperationsVinculationProduct(
+  expedienteId: number,
+  payload: {
+    producto_id?: number | null
+    nombre: string
+    descripcion?: string | null
+    cantidad: number
+    unidad_medida: string
+    evidencia_url?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/expedientes/${expedienteId}/productos-vinculacion`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export async function reviewPracticasOperationsVinculationProduct(
+  productId: number,
+  payload: {
+    estado_revision: 'VALIDADO' | 'OBSERVADO' | 'RECHAZADO'
+    observacion_revision?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/productos-vinculacion/${productId}/revision`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export async function savePracticasOperationsClosure(
+  expedienteId: number,
+  payload: {
+    supervision_realizada: boolean
+    evaluacion_entidad?: number | null
+    informe_final_validado: boolean
+    acta_aceptacion_validada: boolean
+    certificado_emitido: boolean
+    observacion?: string | null
+    cerrar: boolean
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/expedientes/${expedienteId}/cierre`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function savePracticasOperationsEvaluation(
+  expedienteId: number,
+  payload: {
+    accion: 'ENVIAR_REVISION' | 'DEVOLVER' | 'HABILITAR_CALIFICACION' | 'CALIFICAR'
+    calificacion?: number | null
+    observacion?: string | null
+  },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/expedientes/${expedienteId}/evaluacion`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function reopenPracticasOperationsRecord(
+  expedienteId: number,
+  payload: { motivo: string; confirmar_reversion_titulacion?: boolean },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/expedientes/${expedienteId}/reapertura`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export async function fetchPracticasOperationsNotifications(
+  tipoProceso: PracticasProcessCode,
+): Promise<PracticasOperationsNotificationsResponse> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso, refresh: 'true' })
+  return request<PracticasOperationsNotificationsResponse>(`/api/practicas/operaciones/notificaciones?${params.toString()}`)
+}
+
+export async function readPracticasOperationsNotification(notificationId: number): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/practicas/operaciones/notificaciones/${notificationId}/leer`, {
+    method: 'PUT',
+  })
+}
+
+export async function fetchPracticasOperationsReconciliations(): Promise<PracticasOperationsReconciliationsResponse> {
+  return request<PracticasOperationsReconciliationsResponse>('/api/practicas/operaciones/conciliaciones')
+}
+
+export async function retryPracticasOperationsReconciliation(
+  reconciliationId: number,
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/api/practicas/operaciones/conciliaciones/${reconciliationId}/reintentar`,
+    { method: 'POST' },
+  )
+}
+
+export async function fetchPracticasOperationsAudit(limit = 100): Promise<PracticasOperationsAuditResponse> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  return request<PracticasOperationsAuditResponse>(`/api/practicas/operaciones/auditoria?${params.toString()}`)
+}
+
+export async function downloadPracticasOperationsReport(
+  tipoProceso: PracticasProcessCode,
+  format: 'xlsx' | 'pdf',
+): Promise<Blob> {
+  const params = new URLSearchParams({ tipo_proceso: tipoProceso })
+  return request<Blob>(`/api/practicas/operaciones/reportes/seguimiento.${format}?${params.toString()}`, {
+    responseType: 'blob',
+  })
+}
+
+export async function createPracticasOperationsEntity(payload: {
+  nombre: string
+  ruc?: string | null
+  tipo_entidad?: string | null
+  sector_economico?: string | null
+  direccion?: string | null
+  contacto_nombre?: string | null
+  contacto_correo?: string | null
+  contacto_telefono?: string | null
+  activo?: boolean
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/operaciones/entidades', { method: 'POST', body: payload })
+}
+
+export async function createPracticasOperationsAgreement(payload: {
+  entidad_id: number
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_convenio: string
+  objeto?: string | null
+  fecha_inicio: string
+  fecha_fin: string
+  estado?: string
+  archivo_url?: string | null
+  activo?: boolean
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/operaciones/convenios', { method: 'POST', body: payload })
+}
+
+export async function createPracticasOperationsProject(payload: {
+  entidad_id?: number | null
+  convenio_id?: number | null
+  codigo_proyecto: string
+  nombre: string
+  linea_intervencion: string
+  poblacion_objetivo?: string | null
+  beneficiarios_previstos?: number | null
+  objetivo_general?: string | null
+  fecha_inicio: string
+  fecha_fin: string
+  estado?: string
+  activo?: boolean
+}): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/practicas/operaciones/proyectos', { method: 'POST', body: payload })
 }
 
 export async function fetchTitulacionExpediente(numeroIdentificacion: string): Promise<TitulacionResponse> {
@@ -4598,6 +5022,64 @@ export async function applyCareerChangeRequest(requestId: number): Promise<Caree
 
 export async function restoreCareerChangeBackup(requestId: number): Promise<CareerChangeActionResponse> {
   return request<CareerChangeActionResponse>(`/api/requests/career-change/${requestId}/restore`, {
+    method: 'POST',
+  })
+}
+
+export async function fetchModalityChangeCatalog(query = ''): Promise<ModalityChangeCatalogResponse> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('query', query.trim())
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return request<ModalityChangeCatalogResponse>(`/api/requests/modality-change/catalog${suffix}`)
+}
+
+export async function previewModalityChange(payload: {
+  codigo_estud: number
+  carrera_destino: number
+  codigo_periodo_homologacion: number
+}): Promise<ModalityChangePreviewResponse> {
+  return request<ModalityChangePreviewResponse>('/api/requests/modality-change/preview', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function createModalityChangeRequest(formData: FormData): Promise<ModalityChangeActionResponse> {
+  return request<ModalityChangeActionResponse>('/api/requests/modality-change', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function fetchModalityChangeRequests(params: {
+  query?: string
+  state?: string
+  limit?: number
+} = {}): Promise<ModalityChangeRequestsResponse> {
+  const query = new URLSearchParams()
+  if (params.query?.trim()) query.set('query', params.query.trim())
+  if (params.state?.trim()) query.set('state', params.state.trim())
+  query.set('limit', String(params.limit ?? 100))
+  return request<ModalityChangeRequestsResponse>(`/api/requests/modality-change?${query.toString()}`)
+}
+
+export async function fetchModalityChangeRequestDetail(requestId: number): Promise<ModalityChangeRequestDetail> {
+  return request<ModalityChangeRequestDetail>(`/api/requests/modality-change/${requestId}`)
+}
+
+export async function decideModalityChangeRequest(
+  requestId: number,
+  decision: 'APROBADA' | 'RECHAZADA',
+  observacion: string,
+): Promise<ModalityChangeActionResponse> {
+  return request<ModalityChangeActionResponse>(`/api/requests/modality-change/${requestId}/decision`, {
+    method: 'POST',
+    body: { decision, observacion },
+  })
+}
+
+export async function applyModalityChangeRequest(requestId: number): Promise<ModalityChangeActionResponse> {
+  return request<ModalityChangeActionResponse>(`/api/requests/modality-change/${requestId}/apply`, {
     method: 'POST',
   })
 }

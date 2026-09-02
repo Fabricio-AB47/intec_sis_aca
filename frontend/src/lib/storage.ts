@@ -15,6 +15,8 @@ function isPage(value: string): value is Page {
     value === 'matricula' ||
     value === 'matricula-acad' ||
     value === 'matricula-docente' ||
+    value === 'solicitudes-cambio-carrera' ||
+    value === 'solicitudes-cambio-modalidad' ||
     value === 'estado-docente' ||
     value === 'senescyt-estudiantes' ||
     value === 'actualizar-datos-estudiante' ||

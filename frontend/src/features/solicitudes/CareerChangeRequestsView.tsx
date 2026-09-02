@@ -75,7 +75,7 @@ function matchLabel(type: CareerChangeMatch['tipo_coincidencia']): string {
 function stateLabel(state: string): string {
   const labels: Record<string, string> = {
     PENDIENTE: 'Pendiente',
-    APROBADA: 'Aprobada',
+    APROBADA: 'Aprobada, pendiente de aplicar',
     RECHAZADA: 'Rechazada',
     APLICADA: 'Aplicada',
   }
@@ -333,6 +333,13 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
       await loadRequests()
     } catch (apiError) {
       setActionError(errorMessage(apiError, 'No se pudo registrar la decisión.'))
+      try {
+        const updated = await fetchCareerChangeRequestDetail(detail.id)
+        setDetail(updated)
+        await loadRequests()
+      } catch {
+        // Se conserva el error original; esta actualización solo sincroniza el estado visible.
+      }
     } finally {
       setActionLoading(false)
     }
@@ -742,16 +749,18 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
                   </label>
                   <div>
                     <button type="button" className="career-change-button career-change-button--danger" onClick={() => registerDecision('RECHAZADA')} disabled={actionLoading}>Rechazar</button>
-                    <button type="button" className="career-change-button career-change-button--primary" onClick={() => registerDecision('APROBADA')} disabled={actionLoading}>Aprobar</button>
+                    <button type="button" className="career-change-button career-change-button--primary" onClick={() => registerDecision('APROBADA')} disabled={actionLoading}>
+                      {actionLoading ? 'Procesando...' : 'Aprobar y aplicar cambio'}
+                    </button>
                   </div>
                 </section>
               ) : null}
 
               {canReview && detail.estado === 'APROBADA' ? (
                 <section className="career-change-apply-box">
-                  <div><strong>Aplicar cambio aprobado</strong><span>Se registrará la nueva carrera y se copiarán las equivalencias seleccionadas como materias convalidadas.</span></div>
+                  <div><strong>Aplicación pendiente</strong><span>La aprobación quedó registrada, pero falta completar el reemplazo académico. Puede reintentar sin duplicar registros.</span></div>
                   <button type="button" className="career-change-button career-change-button--primary" onClick={applyApprovedRequest} disabled={actionLoading}>
-                    {actionLoading ? 'Aplicando...' : 'Aplicar cambio de carrera'}
+                    {actionLoading ? 'Aplicando...' : 'Reintentar aplicación'}
                   </button>
                 </section>
               ) : null}
@@ -780,6 +789,7 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
                       <div><span>Materias</span><strong>{formatNumber(detail.respaldo_materias)}</strong></div>
                       <div><span>Fecha del respaldo</span><strong>{formatDate(detail.fecha_respaldo)}</strong></div>
                       <div><span>Recuperaciones</span><strong>{formatNumber(detail.restauraciones)}</strong><small>{formatDate(detail.fecha_ultima_restauracion)}</small></div>
+                      <div><span>Auditoría</span><strong>{detail.auditoria_id ? `#${detail.auditoria_id}` : 'Pendiente'}</strong><small>{detail.auditoria_hash ? `${detail.auditoria_hash.slice(0, 16)}…` : 'Sin hash registrado'}</small></div>
                     </div>
                   ) : null}
 

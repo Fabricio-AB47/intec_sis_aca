@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ApiError, fetchScreenAccessAssignments, updateScreenAccessAssignment } from '../../lib/api'
-import type { Role, ScreenAccessResponse, ScreenAccessRole, ScreenPermissionCode } from '../../types/app'
+import type {
+  Role,
+  ScreenAccessResponse,
+  ScreenAccessRole,
+  ScreenAccessScreen,
+  ScreenPermissionCode,
+} from '../../types/app'
 
 
 type AccessTab = 'roles' | 'summary'
 type AssignmentMap = Partial<Record<Role, ScreenPermissionCode[]>>
-type ScreenSelectionFilter = 'all' | 'assigned' | 'available'
+type ScreenSelectionFilter = 'all' | 'assigned' | 'available' | 'restricted'
+type ScreenCatalogItem = ScreenAccessScreen & { restrictionReason?: string }
 
 const LEGACY_STORAGE_KEY = 'intec:user-type-screen-access:v1'
 const SCREEN_ACCESS_SYNC_KEY = 'intec:screen-access-updated:v2'
@@ -54,10 +61,21 @@ function isPageOrFlowOf(page: ScreenPermissionCode, parent: ScreenPermissionCode
   return page === parent || page.startsWith(`${parent}/`)
 }
 
+function screenRestrictionReason(role: Role | null, page: ScreenPermissionCode) {
+  if (!role) return null
+  if (role !== 'ADMINISTRADOR' && [...ADMIN_ONLY_PAGES].some((parent) => isPageOrFlowOf(page, parent))) {
+    return 'Uso exclusivo del perfil Administrador por seguridad institucional.'
+  }
+  if ([...(ROLE_DENIED_PAGES[role] || [])].some((parent) => isPageOrFlowOf(page, parent))) {
+    return role === 'ESTUDIANTE'
+      ? 'El estudiante consulta sus documentos desde sus módulos propios; este expediente es de gestión administrativa.'
+      : `Esta pantalla no está habilitada para el perfil ${role}.`
+  }
+  return null
+}
+
 function screenAvailableForRole(role: Role | null, page: ScreenPermissionCode) {
-  if (!role) return false
-  if (role !== 'ADMINISTRADOR' && [...ADMIN_ONLY_PAGES].some((parent) => isPageOrFlowOf(page, parent))) return false
-  return ![...(ROLE_DENIED_PAGES[role] || [])].some((parent) => isPageOrFlowOf(page, parent))
+  return Boolean(role) && !screenRestrictionReason(role, page)
 }
 
 function assignmentMap(roles: ScreenAccessRole[]): AssignmentMap {
@@ -92,7 +110,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
     setLoading(true)
     setError('')
     try {
-      const response = await fetchScreenAccessAssignments(true)
+      const response = await fetchScreenAccessAssignments(true, { refresh: true })
       setData(response)
       setAssignments(assignmentMap(response.roles))
     } catch (apiError) {
@@ -131,13 +149,45 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       }),
   [data?.screens, selectedRole])
 
+  const restrictedScreens = useMemo(() =>
+    (data?.screens || [])
+      .map((screen): ScreenCatalogItem => ({
+        ...screen,
+        group: canonicalScreenGroup(screen.page, screen.group),
+        restrictionReason: screenRestrictionReason(selectedRole, screen.page) || undefined,
+      }))
+      .filter((screen) => Boolean(screen.restrictionReason))
+      .toSorted((left, right) => {
+        const groupOrder = SPANISH_COLLATOR.compare(left.group, right.group)
+        if (groupOrder !== 0) return groupOrder
+        const labelOrder = SPANISH_COLLATOR.compare(left.label, right.label)
+        return labelOrder !== 0 ? labelOrder : SPANISH_COLLATOR.compare(left.page, right.page)
+      }),
+  [data?.screens, selectedRole])
+
   const groupedScreens = useMemo(() => {
-    const groups = new Map<string, NonNullable<ScreenAccessResponse['screens']>>()
+    const groups = new Map<string, ScreenCatalogItem[]>()
     const needle = screenQuery.trim().toLocaleLowerCase('es')
     const selectedPageSet = new Set(selectedPages)
-    eligibleScreens
-      .filter((screen) => !needle || `${screen.label} ${screen.description} ${screen.group} ${screen.page}`.toLocaleLowerCase('es').includes(needle))
+    const screens: ScreenCatalogItem[] = screenSelectionFilter === 'restricted'
+      ? restrictedScreens
+      : screenSelectionFilter === 'assigned'
+        ? eligibleScreens.filter((screen) => selectedPageSet.has(screen.page))
+        : screenSelectionFilter === 'available'
+          ? eligibleScreens.filter((screen) => !selectedPageSet.has(screen.page))
+          : [...eligibleScreens, ...restrictedScreens]
+
+    screens
+      .filter((screen) => !needle || [
+        screen.label,
+        screen.description,
+        screen.group,
+        screen.page,
+        screen.parent_page || '',
+        screen.restrictionReason || '',
+      ].join(' ').toLocaleLowerCase('es').includes(needle))
       .filter((screen) => screenSelectionFilter === 'all'
+        || screenSelectionFilter === 'restricted'
         || (screenSelectionFilter === 'assigned' && selectedPageSet.has(screen.page))
         || (screenSelectionFilter === 'available' && !selectedPageSet.has(screen.page)))
       .forEach((screen) => {
@@ -145,11 +195,12 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
       })
     return Array.from(groups.entries())
       .toSorted(([leftGroup], [rightGroup]) => SPANISH_COLLATOR.compare(leftGroup, rightGroup))
-  }, [eligibleScreens, screenQuery, screenSelectionFilter, selectedPages])
+  }, [eligibleScreens, restrictedScreens, screenQuery, screenSelectionFilter, selectedPages])
 
   const visiblePages = groupedScreens.flatMap(([, items]) => items.map((screen) => screen.page))
   const assignedEligibleCount = eligibleScreens.filter((screen) => selectedSet.has(screen.page)).length
   const availableEligibleCount = eligibleScreens.length - assignedEligibleCount
+  const visibleCatalogCount = eligibleScreens.length + restrictedScreens.length
   const assignedPages = new Set(selectedRoleMeta?.pages || [])
   const hasChanges = selectedPages.length !== assignedPages.size || selectedPages.some((page) => !assignedPages.has(page))
   const canSave = Boolean(
@@ -401,7 +452,7 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                     aria-pressed={screenSelectionFilter === 'all'}
                     onClick={() => setScreenSelectionFilter('all')}
                   >
-                    Todas <b>{eligibleScreens.length}</b>
+                    Todas <b>{visibleCatalogCount}</b>
                   </button>
                   <button
                     type="button"
@@ -419,10 +470,21 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   >
                     Disponibles <b>{availableEligibleCount}</b>
                   </button>
+                  <button
+                    type="button"
+                    className={screenSelectionFilter === 'restricted' ? 'is-active is-restricted' : ''}
+                    aria-pressed={screenSelectionFilter === 'restricted'}
+                    onClick={() => setScreenSelectionFilter('restricted')}
+                  >
+                    Restringidas <b>{restrictedScreens.length}</b>
+                  </button>
                 </div>
                 <p>
                   <span className="screen-access-selection-key screen-access-selection-key--assigned">Asignada al perfil</span>
                   <span className="screen-access-selection-key">Disponible para seleccionar</span>
+                  {restrictedScreens.length ? (
+                    <span className="screen-access-selection-key screen-access-selection-key--restricted">Restringida para este perfil</span>
+                  ) : null}
                 </p>
               </div>
 
@@ -443,17 +505,21 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
 
               <div className="screen-access-groups">
                 {groupedScreens.map(([group, items]) => {
-                  const completeGroup = eligibleScreens.filter((screen) => screen.group === group)
-                  const assignedInGroup = completeGroup.filter((screen) => selectedSet.has(screen.page)).length
-                  const isGroupAssigned = completeGroup.length > 0 && assignedInGroup === completeGroup.length
+                  const eligibleGroup = eligibleScreens.filter((screen) => screen.group === group)
+                  const restrictedInGroup = restrictedScreens.filter((screen) => screen.group === group).length
+                  const assignedInGroup = eligibleGroup.filter((screen) => selectedSet.has(screen.page)).length
+                  const isGroupAssigned = eligibleGroup.length > 0 && assignedInGroup === eligibleGroup.length
                   return (
                     <section key={group} className="screen-access-group">
                       <div className="screen-access-group__head">
                         <div>
                           <h4>{group}</h4>
-                          <span>{assignedInGroup} de {completeGroup.length} asignada(s)</span>
+                          <span>
+                            {assignedInGroup} de {eligibleGroup.length} asignada(s)
+                            {restrictedInGroup ? ` · ${restrictedInGroup} restringida(s)` : ''}
+                          </span>
                         </div>
-                        {!selectedRoleMeta.protected ? (
+                        {!selectedRoleMeta.protected && eligibleGroup.length > 0 && screenSelectionFilter !== 'restricted' ? (
                           <button
                             type="button"
                             className="screen-access-group__toggle"
@@ -467,21 +533,30 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                       <div className="screen-access-grid">
                         {items.map((screen) => {
                           const isAssigned = selectedSet.has(screen.page)
+                          const isRestricted = Boolean(screen.restrictionReason)
+                          const itemClassName = [
+                            'screen-access-item',
+                            isAssigned ? 'screen-access-item--checked' : '',
+                            isRestricted ? 'screen-access-item--restricted' : '',
+                          ].filter(Boolean).join(' ')
                           return (
-                            <label key={screen.page} className={isAssigned ? 'screen-access-item screen-access-item--checked' : 'screen-access-item'}>
+                            <label key={screen.page} className={itemClassName}>
                               <input
                                 type="checkbox"
                                 checked={isAssigned}
-                                disabled={saving || selectedRoleMeta.protected}
-                                aria-label={`${isAssigned ? 'Quitar' : 'Asignar'} ${screen.label}`}
+                                disabled={saving || selectedRoleMeta.protected || isRestricted}
+                                aria-label={isRestricted ? `${screen.label}: restringida` : `${isAssigned ? 'Quitar' : 'Asignar'} ${screen.label}`}
                                 onChange={() => togglePage(screen.page)}
                               />
                               <span className="screen-access-item__copy">
-                                <span className={isAssigned ? 'screen-access-item__status is-assigned' : 'screen-access-item__status'}>
-                                  {isAssigned ? 'Asignada' : 'Disponible'}
+                                <span className={isRestricted ? 'screen-access-item__status is-restricted' : isAssigned ? 'screen-access-item__status is-assigned' : 'screen-access-item__status'}>
+                                  {isRestricted ? 'Restringida' : isAssigned ? 'Asignada' : 'Disponible'}
                                 </span>
                                 <strong>{screen.label}</strong>
                                 <small>{screen.description}</small>
+                                {screen.restrictionReason ? (
+                                  <small className="screen-access-item__restriction">{screen.restrictionReason}</small>
+                                ) : null}
                                 <small className="screen-access-item__code">{screen.page}</small>
                               </span>
                             </label>
@@ -492,7 +567,11 @@ export function AsignacionPantallasView({ displayName }: Readonly<{ displayName:
                   )
                 })}
                 {groupedScreens.length === 0 ? (
-                  <p className="screen-access-empty">No hay pantallas que coincidan con la búsqueda.</p>
+                  <p className="screen-access-empty">
+                    {screenSelectionFilter === 'restricted' && restrictedScreens.length === 0
+                      ? 'Este perfil no tiene pantallas restringidas.'
+                      : 'No hay pantallas que coincidan con la búsqueda y el filtro seleccionado.'}
+                  </p>
                 ) : null}
               </div>
             </div>

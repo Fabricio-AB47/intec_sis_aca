@@ -1,19 +1,25 @@
 import unittest
 from datetime import date, datetime, time
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 
+from app.core.security import SessionUser
 from app.routers.career_change_requests import (
+    CareerChangeDecisionPayload,
+    _archive_source_career,
     _archive_supporting_document,
     _build_equivalence_preview,
     _decode_snapshot_data,
+    _legacy_user_code,
     _normalize_subject_name,
     _restore_snapshot_rows,
     _snapshot_row,
     _subject_similarity,
     _validate_pdf_content,
+    _verify_source_career_backup,
+    decide_career_change_request,
 )
 
 
@@ -47,6 +53,22 @@ def target_subject(code: int, common_code: str, name: str) -> dict[str, object]:
 
 
 class CareerChangeEquivalenceTests(unittest.TestCase):
+    def test_uses_internal_user_id_for_legacy_audit_columns(self) -> None:
+        user = SessionUser(
+            login="dir.ca@intec.edu.ec",
+            email="dir.ca@intec.edu.ec",
+            id_usuario=61,
+            rol="ACADEMICO",
+        )
+
+        self.assertEqual(_legacy_user_code(user), "61")
+
+    def test_legacy_audit_fallback_fits_ten_character_columns(self) -> None:
+        user = SessionUser(login="dir.ca@intec.edu.ec", rol="ACADEMICO")
+
+        self.assertEqual(_legacy_user_code(user), "dir.ca@int")
+        self.assertLessEqual(len(_legacy_user_code(user)), 10)
+
     def test_normalizes_accents_and_non_significant_words(self) -> None:
         self.assertEqual(
             _normalize_subject_name("Gestión de la Información"),
@@ -182,6 +204,51 @@ class CareerChangeEquivalenceTests(unittest.TestCase):
 
 
 class CareerChangeBackupTests(unittest.TestCase):
+    def test_archives_source_rows_only_from_the_requested_career(self) -> None:
+        class ArchiveCursor:
+            rowcount = 0
+
+            def __init__(self) -> None:
+                self.executed: list[tuple[str, tuple[object, ...]]] = []
+                self.result: tuple[int, int] | None = None
+
+            def execute(self, statement: str, *parameters: object) -> None:
+                normalized = " ".join(statement.split()).upper()
+                self.executed.append((normalized, parameters))
+                if normalized.startswith("DELETE FROM DBO.CARRERAXESTUD"):
+                    self.rowcount = 12
+                elif normalized.startswith("DELETE FROM DBO.CABECERA_MATRICULA"):
+                    self.rowcount = 2
+                else:
+                    self.rowcount = -1
+                    self.result = (0, 0)
+
+            def fetchone(self) -> tuple[int, int]:
+                assert self.result is not None
+                return self.result
+
+        cursor = ArchiveCursor()
+        result = _archive_source_career(
+            cursor,
+            {"codigo_estud": 955, "carrera_origen": 2, "carrera_destino": 3},
+        )
+
+        self.assertEqual(result["source_headers_archived"], 2)
+        self.assertEqual(result["source_subjects_archived"], 12)
+        delete_calls = [call for call in cursor.executed if call[0].startswith("DELETE")]
+        self.assertEqual([call[1] for call in delete_calls], [(955, 2), (955, 2)])
+
+    @patch("app.routers.career_change_requests._career_record_counts", return_value=(2, 11))
+    def test_rejects_archival_when_source_changed_after_backup(self, _counts_mock: MagicMock) -> None:
+        with self.assertRaises(HTTPException) as context:
+            _verify_source_career_backup(
+                object(),
+                {"codigo_estud": 955, "carrera_origen": 2},
+                {"total_cabeceras": 2, "total_materias": 12, "hash_contenido": "hash"},
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+
     def test_snapshot_preserves_sql_compatible_values(self) -> None:
         original = {
             "codigo_estud": 77,
@@ -285,6 +352,40 @@ class CareerChangeBackupTests(unittest.TestCase):
         self.assertEqual(result["cabeceras_restauradas"], 0)
         self.assertEqual(result["materias_restauradas"], 0)
         self.assertEqual(result["existentes_omitidos"], 2)
+
+
+class CareerChangeDecisionTests(unittest.TestCase):
+    @patch("app.routers.career_change_requests.apply_career_change_request")
+    @patch("app.routers.career_change_requests.get_integration_control_connection")
+    @patch("app.routers.career_change_requests._ensure_schema")
+    def test_approval_applies_the_change_in_the_same_action(
+        self,
+        _ensure_schema_mock: MagicMock,
+        connection_factory_mock: MagicMock,
+        apply_mock: MagicMock,
+    ) -> None:
+        cursor = MagicMock()
+        cursor.rowcount = 1
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        connection_factory_mock.return_value.__enter__.return_value = connection
+        apply_mock.return_value = {
+            "ok": True,
+            "message": "El cambio de carrera se aplicó.",
+            "estado": "APLICADA",
+        }
+        user = SessionUser(login="academico", id_usuario=61, rol="ACADEMICO")
+
+        result = decide_career_change_request(
+            45,
+            CareerChangeDecisionPayload(decision="APROBADA", observacion="Revisión correcta"),
+            user,
+        )
+
+        apply_mock.assert_called_once_with(45, user)
+        connection.commit.assert_called_once()
+        self.assertEqual(result["estado"], "APLICADA")
+        self.assertIn("aprobada", result["message"].lower())
 
 
 if __name__ == "__main__":

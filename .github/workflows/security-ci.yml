@@ -22,14 +22,19 @@ jobs:
       AUTH_LEGACY_PLAINTEXT_ENABLED: "false"
     steps:
       - name: Obtener código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
+      - name: Instalar bibliotecas nativas
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libcairo2-dev pkg-config
 
       - name: Instalar dependencias
         run: |
@@ -49,10 +54,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Obtener código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm

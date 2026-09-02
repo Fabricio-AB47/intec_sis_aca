@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 import re
 from typing import Annotated, Any
@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
+from app.routers.practicas_institucionales import _responsible_assignment
 from app.services.db import (
     get_connection,
     get_expedient_connection,
@@ -42,7 +43,7 @@ from app.services.graph_documents import (
 
 router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients"])
 
-_ACCESS = require_roles("ESTUDIANTE", "ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_ACCESS = require_roles("ESTUDIANTE", "DOCENTE", "ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _REVIEW_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
@@ -112,6 +113,113 @@ def _iso(value: Any) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _date_value(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = _clean(value)[:10]
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _iso_date(value: Any) -> str | None:
+    parsed = _date_value(value)
+    return parsed.isoformat() if parsed else None
+
+
+def _ensure_document_upload_window(
+    expedient: dict[str, Any],
+    enforce_window: bool,
+    today: date | None = None,
+) -> None:
+    if not enforce_window or expedient.get("module_code") not in {"PRACTICAS", "VINCULACION"}:
+        return
+    start = _date_value(expedient.get("upload_start"))
+    end = _date_value(expedient.get("upload_end"))
+    if not start or not end:
+        raise HTTPException(
+            status_code=409,
+            detail="Administración debe definir el plazo de carga documental de esta matrícula.",
+        )
+    current = today or date.today()
+    if current < start:
+        raise HTTPException(
+            status_code=409,
+            detail=f"La carga documental se habilitará el {start.isoformat()}.",
+        )
+    if current > end:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El plazo de carga documental finalizó el {end.isoformat()}.",
+        )
+
+
+def _ensure_teacher_practice_access(
+    current_user: SessionUser,
+    expedient: dict[str, Any],
+    *,
+    for_write: bool = False,
+) -> None:
+    if _role(current_user.rol) != "DOCENTE":
+        return
+    module = _clean(expedient.get("module_code")).upper()
+    if module not in {"PRACTICAS", "VINCULACION"}:
+        raise HTTPException(
+            status_code=403,
+            detail="El docente solo puede gestionar documentos de prácticas o vinculación asignadas.",
+        )
+    try:
+        expediente_id = int(_clean(expedient.get("origin_id")))
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="El expediente de prácticas no es válido.") from exc
+    if expediente_id <= 0:
+        raise HTTPException(status_code=403, detail="El expediente de prácticas no es válido.")
+
+    with get_practices_connection() as conn:
+        cursor = conn.cursor()
+        if not _use_legacy_practices_schema(cursor):
+            raise HTTPException(
+                status_code=409,
+                detail="La carga docente requiere una asignación individual vigente en el expediente.",
+            )
+        _responsible_assignment(
+            cursor,
+            expediente_id,
+            current_user,
+            require_approval=False,
+        )
+
+    if for_write and _clean(expedient.get("status")).upper() in {
+        "CERRADO",
+        "FINALIZADO",
+        "ANULADO",
+        "APROBADO",
+        "REPROBADO",
+    }:
+        raise HTTPException(status_code=409, detail="El expediente está cerrado y no admite nuevas cargas.")
+
+
+def _ensure_document_upload_actor(
+    current_user: SessionUser,
+    expedient: dict[str, Any],
+) -> None:
+    normalized_role = _role(current_user.rol)
+    module = _clean(expedient.get("module_code")).upper()
+    if normalized_role == "DOCENTE":
+        _ensure_teacher_practice_access(current_user, expedient, for_write=True)
+        return
+    if module in {"PRACTICAS", "VINCULACION"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el docente responsable activo puede cargar documentos de prácticas o vinculación.",
+        )
 
 
 def _has_practice_object(cursor: pyodbc.Cursor, name: str) -> bool:
@@ -478,8 +586,11 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                         V.codigo_expediente AS CodigoExpediente,
                         V.tipo_proceso_codigo AS TipoProceso,
                         V.estado_codigo AS EstadoCodigo,
-                        V.estado_expediente AS EstadoNombre
+                        V.estado_expediente AS EstadoNombre,
+                        E.fecha_inicio AS FechaInicioCarga,
+                        E.fecha_fin AS FechaFinCarga
                     FROM pp.vw_admin_expedientes_control V
+                    INNER JOIN pp.expediente_practica E ON E.expediente_id = V.expediente_id
                     WHERE TRY_CONVERT(BIGINT, V.codigo_estud) = ?
                       AND V.tipo_proceso_codigo IN ('PPF', 'VIN')
                     ORDER BY V.expediente_id DESC
@@ -490,7 +601,8 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                 cursor.execute(
                     """
                     SELECT E.ExpedienteId, E.CodigoExpediente, TP.Codigo AS TipoProceso,
-                           EE.Codigo AS EstadoCodigo, EE.Nombre AS EstadoNombre
+                           EE.Codigo AS EstadoCodigo, EE.Nombre AS EstadoNombre,
+                           NULL AS FechaInicioCarga, NULL AS FechaFinCarga
                     FROM exp.Expediente E
                     INNER JOIN cat.TipoProceso TP ON TP.TipoProcesoId = E.TipoProcesoId
                     INNER JOIN cat.EstadoExpediente EE ON EE.EstadoExpedienteId = E.EstadoExpedienteId
@@ -522,6 +634,8 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                         "document_types": type_cache[_clean(row.TipoProceso).upper()],
                         "upload_enabled": True,
                         "upload_message": "",
+                        "upload_start": _iso_date(row.FechaInicioCarga),
+                        "upload_end": _iso_date(row.FechaFinCarga),
                     }
                 )
     except (RuntimeError, pyodbc.Error):
@@ -533,16 +647,42 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     return expedients
 
 
-def _context_payload(profile: dict[str, Any], role: str) -> dict[str, Any]:
+def _context_payload(profile: dict[str, Any], current_user: SessionUser) -> dict[str, Any]:
     expedients = _domain_expedients(profile)
-    normalized_role = _role(role)
-    if normalized_role == "ESTUDIANTE":
+    normalized_role = _role(current_user.rol)
+    if normalized_role == "DOCENTE":
+        assigned_expedients: list[dict[str, Any]] = []
         for expedient in expedients:
-            if expedient["module_code"] == "TITULACION":
+            try:
+                _ensure_teacher_practice_access(current_user, expedient)
+            except HTTPException:
+                continue
+            assigned_expedients.append(expedient)
+        if not assigned_expedients:
+            raise HTTPException(
+                status_code=403,
+                detail="El estudiante no tiene un expediente de prácticas asignado a este docente.",
+            )
+        expedients = assigned_expedients
+
+    for expedient in expedients:
+        if expedient["module_code"] in {"PRACTICAS", "VINCULACION"}:
+            if normalized_role != "DOCENTE":
                 expedient["upload_enabled"] = False
                 expedient["upload_message"] = (
-                    "Los documentos oficiales de titulación son cargados por Secretaría o el área Académica."
+                    "Solo el docente responsable asignado puede cargar la documentación; el estudiante conserva acceso de consulta."
                 )
+            else:
+                try:
+                    _ensure_document_upload_window(expedient, True)
+                except HTTPException as exc:
+                    expedient["upload_enabled"] = False
+                    expedient["upload_message"] = str(exc.detail)
+        elif normalized_role == "ESTUDIANTE" and expedient["module_code"] == "TITULACION":
+            expedient["upload_enabled"] = False
+            expedient["upload_message"] = (
+                "Los documentos oficiales de titulación son cargados por Secretaría o el área Académica."
+            )
     graph_rows = list_documents(profile["identification"])
     documents_by_origin: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in graph_rows:
@@ -836,7 +976,20 @@ def _register_domain_document(
 
 
 def _can_access_document(current_user: SessionUser, record: dict[str, Any]) -> bool:
-    if _role(current_user.rol) != "ESTUDIANTE":
+    role = _role(current_user.rol)
+    if role == "DOCENTE":
+        try:
+            _ensure_teacher_practice_access(
+                current_user,
+                {
+                    "module_code": record.get("TipoExpedienteGraphCodigo"),
+                    "origin_id": record.get("OrigenId"),
+                },
+            )
+        except (HTTPException, RuntimeError, pyodbc.Error):
+            return False
+        return True
+    if role != "ESTUDIANTE":
         return True
     return _identification(current_user.cedula) == _identification(record.get("NumeroIdentificacion"))
 
@@ -888,7 +1041,7 @@ def expedient_context(
 ) -> dict[str, Any]:
     if _role(current_user.rol) == "ESTUDIANTE" and identification and _identification(identification) != _identification(current_user.cedula):
         raise HTTPException(status_code=403, detail="El estudiante solo puede consultar su propio expediente.")
-    return _context_payload(_student_profile(current_user, identification), current_user.rol)
+    return _context_payload(_student_profile(current_user, identification), current_user)
 
 
 @router.post("/prepare")
@@ -905,6 +1058,8 @@ def prepare_document_expedient(
 
     profile = _student_profile(current_user, payload.identification)
     expedient = _validate_origin(profile, module_code, payload.origin_id)
+    _ensure_document_upload_actor(current_user, expedient)
+    _ensure_document_upload_window(expedient, True)
     try:
         graph_expedient = prepare_expedient(
             module_code=expedient["module_code"],
@@ -945,10 +1100,13 @@ def start_document_upload(
     current_user: Annotated[SessionUser, Depends(_ACCESS)],
 ) -> dict[str, Any]:
     is_student = _role(current_user.rol) == "ESTUDIANTE"
+    is_teacher = _role(current_user.rol) == "DOCENTE"
     if is_student and payload.identification and _identification(payload.identification) != _identification(current_user.cedula):
         raise HTTPException(status_code=403, detail="El estudiante solo puede cargar en su propio expediente.")
     profile = _student_profile(current_user, payload.identification)
     expedient = _validate_origin(profile, payload.module_code, payload.origin_id)
+    _ensure_document_upload_actor(current_user, expedient)
+    _ensure_document_upload_window(expedient, is_student or is_teacher)
     if is_student and expedient["module_code"] == "TITULACION":
         raise HTTPException(
             status_code=403,
@@ -1028,8 +1186,25 @@ def finalize_document_upload(
     session = upload_session(payload.upload_id)
     if not session:
         raise HTTPException(status_code=404, detail='No existe la sesión de carga indicada.')
+    session_module = _clean(session.get("TipoExpedienteGraphCodigo")).upper()
+    if session_module in {"PRACTICAS", "VINCULACION"} and _role(current_user.rol) != "DOCENTE":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el docente responsable activo puede finalizar cargas de prácticas o vinculación.",
+        )
     if _role(current_user.rol) == "ESTUDIANTE" and _identification(current_user.cedula) != _identification(session["NumeroIdentificacion"]):
         raise HTTPException(status_code=403, detail='La sesión no pertenece al estudiante autenticado.')
+    if _role(current_user.rol) == "DOCENTE":
+        if _clean(session.get("UsuarioCarga")).casefold() != _clean(current_user.login).casefold():
+            raise HTTPException(status_code=403, detail="La sesión de carga no pertenece al docente autenticado.")
+        profile = _student_profile(current_user, _clean(session.get("NumeroIdentificacion")))
+        expedient = _validate_origin(
+            profile,
+            _clean(session.get("TipoExpedienteGraphCodigo")),
+            _clean(session.get("OrigenId")),
+        )
+        _ensure_document_upload_actor(current_user, expedient)
+        _ensure_document_upload_window(expedient, True)
     if _clean(session["EstadoDocumentoGraphCodigo"]) == "CARGADO":
         raise HTTPException(status_code=409, detail="La carga ya fue finalizada.")
     try:

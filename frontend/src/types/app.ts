@@ -72,6 +72,7 @@ export type Page =
   | 'matricula-acad'
   | 'matricula-docente'
   | 'solicitudes-cambio-carrera'
+  | 'solicitudes-cambio-modalidad'
   | 'estado-docente'
   | 'senescyt-estudiantes'
   | 'actualizar-datos-estudiante'
@@ -226,6 +227,8 @@ export type CareerChangeRequestItem = {
   fecha_respaldo: string | null
   restauraciones: number
   fecha_ultima_restauracion: string | null
+  auditoria_id: number | null
+  auditoria_hash: string
 }
 
 export type CareerChangeStoredEquivalence = {
@@ -265,9 +268,176 @@ export type CareerChangeActionResponse = {
   existing_skipped?: number
   respaldo_cabeceras?: number
   respaldo_materias?: number
+  source_headers_archived?: number
+  source_subjects_archived?: number
   cabeceras_restauradas?: number
   materias_restauradas?: number
   existentes_omitidos?: number
+  auditoria_id?: number
+}
+
+export type ModalityChangeCatalogStudent = {
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  estado: string
+  carrera: number | null
+  carrera_nombre: string
+  modalidad: number | null
+  modalidad_nombre: string
+  jornada_codigo?: number | null
+  jornada_nombre?: string
+  periodo?: number | null
+  periodo_nombre?: string
+  tipo_periodo?: 'R' | 'H' | ''
+}
+
+export type ModalityChangeOption = {
+  codigo: number
+  nombre: string
+  jornada_codigo: number
+  jornada_nombre: string
+}
+
+export type ModalityChangePeriod = CareerChangePeriod & {
+  estado: string
+  tipo: 'R' | 'H'
+}
+
+export type ModalityChangeCatalogResponse = {
+  students: ModalityChangeCatalogStudent[]
+  careers: CareerChangeCareer[]
+  modalities: ModalityChangeOption[]
+  periods: ModalityChangePeriod[]
+  states: string[]
+}
+
+export type ModalityChangeSubject = CareerChangeSubject & {
+  estado: 'MIGRAR' | 'MIGRADA' | 'MATRICULAR' | 'PENDIENTE' | 'EXISTENTE' | 'MATRICULADA'
+  num_matricula: number | null
+  materia_origen?: number | null
+  codigo_comun_origen?: string
+  nota_origen?: number | null
+  tiene_notas_origen?: boolean
+  observacion?: string
+  id?: number
+}
+
+export type ModalityChangePreviewResponse = {
+  student: ModalityChangeCatalogStudent & { periodo: number | null; correo?: string }
+  target_career: CareerChangeCareer
+  target_modality: ModalityChangeOption
+  source_period: ModalityChangePeriod
+  homologation_period: ModalityChangePeriod
+  subjects: ModalityChangeSubject[]
+  unmatched_source_subjects: Array<{
+    codigo_materia: number | null
+    codigo_comun: string
+    nombre: string
+    nota_final: number | null
+    tiene_notas: boolean
+  }>
+  summary: {
+    materias_pensum: number
+    materias_origen: number
+    materias_a_migrar: number
+    materias_por_matricular: number
+    materias_existentes: number
+    materias_origen_sin_coincidencia: number
+    cabecera_existente: boolean
+    cabeceras_a_crear: number
+  }
+}
+
+export type ModalityChangeRequestItem = {
+  id: number
+  codigo_estud: number
+  cedula: string
+  estudiante: string
+  carrera_origen: number
+  carrera_origen_nombre: string
+  carrera_destino: number
+  carrera_destino_nombre: string
+  modalidad_origen: number | null
+  modalidad_origen_nombre: string
+  codigo_periodo_origen: number | null
+  periodo_origen_nombre: string
+  tipo_periodo_origen: 'R' | 'H' | ''
+  modalidad_destino: number
+  modalidad_destino_nombre: string
+  codigo_periodo_homologacion: number
+  periodo_homologacion_nombre: string
+  tipo_periodo_destino: 'R' | 'H'
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'APLICADA'
+  motivo: string
+  archivo_nombre: string
+  archivo_url: string
+  expediente_documento_id?: number | null
+  archivo_en_expediente?: boolean
+  estado_expediente?: string
+  archivos?: ModalityChangeDocument[]
+  total_archivos?: number
+  total_materias_pensum: number
+  materias_matriculadas: number
+  materias_existentes: number
+  materias_migradas: number
+  materias_origen_retiradas: number
+  cabeceras_origen_retiradas: number
+  cabecera_creada: boolean | null
+  respaldo_id: number | null
+  respaldo_cabeceras: number
+  respaldo_materias: number
+  respaldo_hash: string
+  fecha_respaldo: string | null
+  auditoria_id: number | null
+  auditoria_hash: string
+  creado_por: string
+  fecha_creacion: string | null
+  revisado_por: string
+  fecha_revision: string | null
+  observacion_revision: string
+  aplicado_por: string
+  fecha_aplicacion: string | null
+}
+
+export type ModalityChangeDocument = {
+  id: number | null
+  orden: number
+  nombre_original: string
+  nombre: string
+  archivo_url: string
+  expediente_documento_id: number | null
+  estado: string
+  tamano: number
+  sha256: string
+  fecha_carga: string | null
+}
+
+export type ModalityChangeRequestDetail = ModalityChangeRequestItem & {
+  subjects: ModalityChangeSubject[]
+}
+
+export type ModalityChangeRequestsResponse = {
+  total: number
+  items: ModalityChangeRequestItem[]
+}
+
+export type ModalityChangeActionResponse = {
+  ok: boolean
+  message: string
+  estado: string
+  id?: number
+  archivos_cargados?: number
+  materias_pensum?: number
+  cabeceras_a_crear?: number
+  cabeceras_creadas?: number
+  materias_matriculadas?: number
+  materias_existentes?: number
+  materias_migradas?: number
+  materias_origen_retiradas?: number
+  cabeceras_origen_retiradas?: number
+  respaldo_id?: number
+  auditoria_id?: number
 }
 
 export type IntegrationHistoryPage<T> = {
@@ -580,6 +750,47 @@ export type MoodleCourseResourcesResponse = {
     visibility_updates_enabled: boolean
     full_edit_in_moodle: boolean
   }
+}
+
+export type MoodleEditableContentType = 'section' | 'label' | 'page'
+
+export type MoodleEditableContentItem = {
+  target_type: Exclude<MoodleEditableContentType, 'section'>
+  target_id: number
+  cmid?: number
+  name: string
+  html: string
+  visible: boolean
+}
+
+export type MoodleEditableContentSection = {
+  target_id: number
+  section_number?: number
+  display_name: string
+  name: string
+  html: string
+  visible: boolean
+  items: MoodleEditableContentItem[]
+}
+
+export type MoodleEditableContentResponse = {
+  course: MoodleCourse
+  sections: MoodleEditableContentSection[]
+  totals: {
+    sections: number
+    items: number
+  }
+  source: MoodleSource
+  editor: {
+    enabled: boolean
+    reason: string
+  }
+}
+
+export type MoodleEditableContentUpdateResponse = {
+  ok: boolean
+  changed: boolean
+  message: string
 }
 
 export type MoodleEvaluationDates = {
@@ -1811,6 +2022,8 @@ export type PracticasExpedienteItem = {
   CodigoCarrera?: string | null
   Carrera?: string | null
   CodigoPeriodo?: string | null
+  FechaInicioCarga?: string | null
+  FechaFinCarga?: string | null
   CodigoDocenteTutor?: string | null
   DocenteTutor?: string | null
   SemestreDetectado?: number | null
@@ -1835,6 +2048,13 @@ export type PracticasExpedienteItem = {
   CertificadoFecha?: string | null
   CertificadoFirmado?: boolean | null
   CertificadoValidado?: boolean | null
+  DocumentosRequeridos?: number
+  DocumentosCargados?: number
+  DocumentosValidados?: number
+  DocumentosPendientes?: number
+  DocumentosDetalle?: PracticasReviewDocumentItem[]
+  AvanceDocumental?: number
+  AvanceValidacionDocumental?: number
   Finalizado?: boolean
   Activo?: boolean
   FechaCreacion?: string | null
@@ -1858,6 +2078,8 @@ export type PracticasEligibilityItem = {
   AutorizacionArchivo?: string | null
   AutorizacionUrl?: string | null
   AutorizacionFecha?: string | null
+  PuedeInscribirse?: boolean | number | null
+  /** @deprecated Compatibilidad con respuestas anteriores. */
   PuedeMatricular?: boolean | number | null
 }
 
@@ -1949,6 +2171,7 @@ export type PracticasResponsableProgressResponse = {
     tipo_proceso?: string
     expedientes?: number
     avance?: number
+    avance_documental?: number
     documentos_requeridos?: number
     documentos_cargados?: number
     documentos_validados?: number
@@ -1982,6 +2205,8 @@ export type PracticasReviewDetailResponse = {
   Carrera?: string | null
   CodigoPeriodo?: string | null
   Periodo?: string | null
+  FechaInicioCarga?: string | null
+  FechaFinCarga?: string | null
   TipoProcesoCodigo: PracticasProcessCode
   TipoProceso?: string | null
   EstadoCodigo?: string | null
@@ -2012,6 +2237,428 @@ export type PracticasReviewResponse = {
     motivo?: string
     expedientes_titulacion?: number
   }
+}
+
+export type PracticasOperationsEntity = {
+  entidad_id: number
+  nombre: string
+  ruc?: string | null
+  tipo_entidad?: string | null
+  sector_economico?: string | null
+  direccion?: string | null
+  contacto_nombre?: string | null
+  contacto_correo?: string | null
+  contacto_telefono?: string | null
+  activo?: boolean
+}
+
+export type PracticasOperationsAgreement = {
+  convenio_id: number
+  entidad_id: number
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_convenio: string
+  objeto?: string | null
+  fecha_inicio: string
+  fecha_fin: string
+  estado: string
+  archivo_url?: string | null
+  activo?: boolean
+  entidad_nombre?: string | null
+}
+
+export type PracticasOperationsProject = {
+  proyecto_id: number
+  entidad_id?: number | null
+  convenio_id?: number | null
+  codigo_proyecto: string
+  nombre: string
+  linea_intervencion: string
+  poblacion_objetivo?: string | null
+  beneficiarios_previstos?: number | null
+  objetivo_general?: string | null
+  fecha_inicio: string
+  fecha_fin: string
+  estado: string
+  activo?: boolean
+  entidad_nombre?: string | null
+  codigo_convenio?: string | null
+}
+
+export type PracticasOperationsConfiguration = {
+  configuracion_id?: number | null
+  tipo_proceso_codigo: PracticasProcessCode
+  codigo_carrera?: string | null
+  nivel?: string | null
+  codigo_periodo?: string | null
+  horas_requeridas: number
+  documentos_requeridos: number
+  nota_minima_aprobacion: number
+  requiere_evaluacion_docente: boolean
+  requiere_evaluacion_tutor: boolean
+  requiere_autoevaluacion: boolean
+  requiere_resultado_vinculacion: boolean
+  peso_docente: number
+  peso_tutor: number
+  peso_autoevaluacion: number
+  activo?: boolean
+}
+
+export type PracticasOperationsCatalogResponse = {
+  entidades: PracticasOperationsEntity[]
+  convenios: PracticasOperationsAgreement[]
+  proyectos: PracticasOperationsProject[]
+  configuraciones: PracticasOperationsConfiguration[]
+  almacenamiento: {
+    base_datos: string
+    esquema_operativo: string
+    tabla_calificacion: string
+    fuente_academica: string
+  }
+}
+
+export type PracticasOperationsDashboardItem = {
+  ExpedienteId: number
+  CodigoExpediente?: string | null
+  CodigoEstud?: number | null
+  Cedula?: string | null
+  Estudiante?: string | null
+  CodigoCarrera?: string | null
+  Carrera?: string | null
+  CodigoPeriodo?: string | null
+  Periodo?: string | null
+  FechaInicio?: string | null
+  FechaFin?: string | null
+  HorasRequeridas?: number
+  HorasReconocidas?: number
+  EstadoCodigo?: string | null
+  Estado?: string | null
+  InscripcionId?: number | null
+  EstadoInscripcion?: 'INSCRITO' | 'EN_PROCESO' | 'EN_REVISION' | 'CUMPLIDO' | 'NO_CUMPLIDO' | 'ANULADO'
+  CodigoPeriodoAcademicoOrigen?: string | null
+  CodigoPeriodoInstitucional?: string | null
+  EsMatriculaAcademica?: boolean
+  EvaluacionId?: number | null
+  EstadoEvaluacion?: 'PENDIENTE_REVISION' | 'EN_REVISION' | 'PENDIENTE_CALIFICACION' | 'CALIFICADA'
+  CalificacionFinal?: number | null
+  NotaMinimaAprobacion?: number
+  ResultadoEvaluacion?: 'PENDIENTE' | 'APROBADO' | 'REPROBADO'
+  FechaEnvioRevision?: string | null
+  FechaRevisionEvaluacion?: string | null
+  FechaCalificacion?: string | null
+  PlanId?: number | null
+  EstadoPlan?: string | null
+  EntidadId?: number | null
+  ConvenioId?: number | null
+  ProyectoId?: number | null
+  HorasRegistradas?: number
+  HorasValidadas?: number
+  Actividades?: number
+  DocumentosCargados?: number
+  DocumentosValidados?: number
+  DocumentosRequeridos?: number
+  AvanceDocumental?: number
+  AvanceValidacionDocumental?: number
+  NombreResponsable?: string | null
+  CierreId?: number | null
+  FechaCierre?: string | null
+  TipoProcesoCodigo?: PracticasProcessCode
+  Semaforo?: 'VERDE' | 'AMARILLO' | 'ROJO'
+  DiasRestantes?: number | null
+}
+
+export type PracticasOperationsDashboardResponse = {
+  tipo_proceso: PracticasProcessCode
+  summary: {
+    total: number
+    verdes: number
+    amarillos: number
+    rojos: number
+    con_plan: number
+    cerrados: number
+    en_revision: number
+    pendientes_calificacion: number
+    aprobados: number
+    reprobados: number
+    horas_registradas: number
+    horas_validadas: number
+  }
+  items: PracticasOperationsDashboardItem[]
+}
+
+export type PracticasOperationsPlan = {
+  plan_id: number
+  expediente_id: number
+  tipo_proceso_codigo: PracticasProcessCode
+  entidad_id?: number | null
+  convenio_id?: number | null
+  proyecto_id?: number | null
+  tutor_externo_nombre?: string | null
+  tutor_externo_correo?: string | null
+  tutor_externo_telefono?: string | null
+  objetivo_general?: string | null
+  resultados_aprendizaje?: string | null
+  actividades_planificadas?: string | null
+  fecha_inicio?: string | null
+  fecha_fin?: string | null
+  horas_planificadas?: number
+  estado?: 'BORRADOR' | 'APROBADO' | 'EN_EJECUCION' | 'FINALIZADO'
+}
+
+export type PracticasOperationsActivity = {
+  actividad_id: number
+  expediente_id: number
+  fecha_actividad: string
+  descripcion: string
+  horas: number
+  hora_inicio?: string | null
+  hora_fin?: string | null
+  descanso_minutos?: number
+  modalidad?: 'PRESENCIAL' | 'VIRTUAL' | 'HIBRIDA' | null
+  lugar?: string | null
+  origen_horas?: 'MANUAL' | 'JORNADA_CALCULADA'
+  evidencia_url?: string | null
+  evidencia_nombre?: string | null
+  estado_revision: 'PENDIENTE' | 'VALIDADO' | 'OBSERVADO' | 'RECHAZADO'
+  observacion_revision?: string | null
+  revisado_por?: string | null
+  fecha_revision?: string | null
+}
+
+export type PracticasOperationsIndicator = {
+  indicador_id: number
+  expediente_id: number
+  nombre: string
+  unidad_medida: string
+  meta: number
+  resultado?: number | null
+  evidencia_url?: string | null
+  observacion?: string | null
+  usuario_registro?: string | null
+  fecha_registro?: string | null
+}
+
+export type PracticasOperationsClosure = {
+  cierre_id: number
+  expediente_id: number
+  supervision_realizada?: boolean
+  evaluacion_entidad?: number | null
+  informe_final_validado?: boolean
+  acta_aceptacion_validada?: boolean
+  certificado_emitido?: boolean
+  observacion?: string | null
+  fecha_cierre?: string | null
+  cerrado_por?: string | null
+}
+
+export type PracticasOperationsEvaluation = {
+  evaluacion_id: number
+  expediente_id: number
+  estado: 'PENDIENTE_REVISION' | 'EN_REVISION' | 'PENDIENTE_CALIFICACION' | 'CALIFICADA'
+  calificacion?: number | null
+  nota_minima_aprobacion: number
+  resultado: 'PENDIENTE' | 'APROBADO' | 'REPROBADO'
+  origen_calificacion?: 'MANUAL_RESPONSABLE' | 'PROMEDIO_PONDERADO_ACTORES' | 'MIGRACION_LEGACY' | null
+  detalle_calculo?: string | null
+  observacion_revision?: string | null
+  observacion_calificacion?: string | null
+  enviado_por?: string | null
+  fecha_envio_revision?: string | null
+  revisado_por?: string | null
+  fecha_revision?: string | null
+  calificado_por?: string | null
+  fecha_calificacion?: string | null
+}
+
+export type PracticasOperationsActorEvaluation = {
+  evaluacion_actor_id: number
+  expediente_id: number
+  rol_evaluador: 'DOCENTE_ACADEMICO' | 'TUTOR_EMPRESARIAL' | 'AUTOEVALUACION'
+  calificacion: number
+  peso: number
+  evaluador_nombre?: string | null
+  evaluador_correo?: string | null
+  observacion?: string | null
+  evidencia_url?: string | null
+  estado: 'REGISTRADA' | 'VALIDADA' | 'OBSERVADA'
+  fecha_validacion?: string | null
+}
+
+export type PracticasOperationsGradeCalculation = {
+  calificacion_calculada?: number | null
+  roles_faltantes: Array<'DOCENTE_ACADEMICO' | 'TUTOR_EMPRESARIAL' | 'AUTOEVALUACION'>
+  componentes: Array<{
+    rol_evaluador: 'DOCENTE_ACADEMICO' | 'TUTOR_EMPRESARIAL' | 'AUTOEVALUACION'
+    calificacion: number
+    peso: number
+  }>
+  usa_evaluaciones_actores: boolean
+}
+
+export type PracticasOperationsVinculationResult = {
+  resultado_vinculacion_id: number
+  expediente_id: number
+  beneficiarios_reales: number
+  resumen_impacto: string
+  observacion?: string | null
+  evidencia_url?: string | null
+  estado: 'REGISTRADO' | 'VALIDADO' | 'OBSERVADO'
+  validado_por?: string | null
+  fecha_validacion?: string | null
+}
+
+export type PracticasOperationsVinculationProduct = {
+  producto_id: number
+  expediente_id: number
+  nombre: string
+  descripcion?: string | null
+  cantidad: number
+  unidad_medida: string
+  evidencia_url?: string | null
+  estado_revision: 'PENDIENTE' | 'VALIDADO' | 'OBSERVADO' | 'RECHAZADO'
+  observacion_revision?: string | null
+}
+
+export type PracticasOperationsGradeHistory = {
+  historial_id: number
+  evaluacion_id: number
+  expediente_id: number
+  accion: string
+  estado: string
+  calificacion?: number | null
+  nota_minima_aprobacion: number
+  resultado: string
+  origen_calificacion?: string | null
+  detalle_calculo?: string | null
+  observacion?: string | null
+  usuario: string
+  fecha: string
+}
+
+export type PracticasOperationsReopening = {
+  reapertura_id: number
+  expediente_id: number
+  evaluacion_id?: number | null
+  estado_anterior?: string | null
+  resultado_anterior?: string | null
+  calificacion_anterior?: number | null
+  motivo: string
+  requiere_reversion_titulacion: boolean
+  usuario: string
+  fecha: string
+}
+
+export type PracticasOperationsRequirement = {
+  codigo: string
+  titulo: string
+  detalle: string
+  estado: 'COMPLETO' | 'EN_REVISION' | 'PENDIENTE'
+  completo: boolean
+}
+
+export type PracticasOperationsDetailResponse = {
+  expediente: Record<string, unknown>
+  tipo_proceso_codigo: PracticasProcessCode
+  responsable?: Record<string, unknown> | null
+  plan?: PracticasOperationsPlan | null
+  actividades: PracticasOperationsActivity[]
+  indicadores: PracticasOperationsIndicator[]
+  resultado_vinculacion?: PracticasOperationsVinculationResult | null
+  productos_vinculacion: PracticasOperationsVinculationProduct[]
+  evaluaciones_actores: PracticasOperationsActorEvaluation[]
+  calculo_calificacion: PracticasOperationsGradeCalculation
+  evaluacion?: PracticasOperationsEvaluation | null
+  historial_calificacion: PracticasOperationsGradeHistory[]
+  reaperturas: PracticasOperationsReopening[]
+  cierre?: PracticasOperationsClosure | null
+  documentos: PracticasReviewDocumentItem[]
+  conciliacion_titulacion?: Record<string, unknown> | null
+  requisitos: PracticasOperationsRequirement[]
+  configuracion: PracticasOperationsConfiguration
+  almacenamiento: {
+    base_datos: string
+    tabla_calificacion: string
+    tabla_historial: string
+  }
+  resumen: {
+    horas_registradas: number
+    horas_validadas: number
+    actividades: number
+    pendientes: number
+    horas_requeridas: number
+    documentos_requeridos: number
+    documentos_cargados: number
+    documentos_validados: number
+    documentos_pendientes: number
+    avance_documental_porcentaje: number
+    avance_validacion_documental_porcentaje: number
+    avance_porcentaje: number
+    requisitos_completos: number
+    requisitos_totales: number
+  }
+  permisos: {
+    puede_editar_plan: boolean
+    puede_registrar_actividad: boolean
+    puede_revisar_actividad: boolean
+    puede_enviar_revision: boolean
+    puede_calificar: boolean
+    puede_cerrar: boolean
+    puede_registrar_evaluacion_actor: boolean
+    puede_registrar_resultado: boolean
+    puede_reabrir: boolean
+  }
+}
+
+export type PracticasOperationsNotification = {
+  notificacion_id: number
+  expediente_id?: number | null
+  tipo_proceso_codigo?: PracticasProcessCode | null
+  destinatario_login?: string | null
+  destinatario_rol: string
+  nivel: 'INFORMATIVA' | 'ADVERTENCIA' | 'CRITICA'
+  titulo: string
+  mensaje: string
+  leida: boolean
+  fecha_registro?: string | null
+}
+
+export type PracticasOperationsNotificationsResponse = {
+  generated: number
+  unread: number
+  items: PracticasOperationsNotification[]
+}
+
+export type PracticasOperationsReconciliation = {
+  conciliacion_id: number
+  expediente_id: number
+  tipo_proceso_codigo: PracticasProcessCode
+  estado: 'PENDIENTE' | 'PROCESANDO' | 'COMPLETADO' | 'ERROR'
+  intentos: number
+  proximo_intento?: string | null
+  ultimo_error?: string | null
+  fecha_solicitud?: string | null
+  fecha_ultimo_intento?: string | null
+  fecha_completado?: string | null
+}
+
+export type PracticasOperationsReconciliationsResponse = {
+  total: number
+  items: PracticasOperationsReconciliation[]
+}
+
+export type PracticasOperationsAuditItem = {
+  auditoria_id: number
+  modulo: string
+  entidad: string
+  entidad_id?: string | null
+  accion: string
+  detalle?: string | null
+  usuario: string
+  fecha: string
+}
+
+export type PracticasOperationsAuditResponse = {
+  total: number
+  items: PracticasOperationsAuditItem[]
 }
 
 export type TeacherEvaluationQuestion = {
@@ -3289,6 +3936,11 @@ export type SisAcademicoListResponse = {
   section?: SisAcademicoSection
   rows?: SisAcademicoRow[]
   total?: number
+  page?: number
+  page_size?: number
+  total_pages?: number
+  has_previous?: boolean
+  has_next?: boolean
   generated_at?: string
   detail?: string
 }

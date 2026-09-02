@@ -3393,7 +3393,79 @@ def _actualizacion_estudiante_select(limit: int | None, where_sql: str = "", per
     """
 
 
-def _list_actualizacion_estudiantes_records(section: dict[str, Any], query: str | None, limit: int | None, periodo: str | None = None) -> dict[str, Any]:
+def _actualizacion_estudiante_list_select(
+    page_size: int,
+    offset: int,
+    where_sql: str = "",
+    periodo: int | None = None,
+) -> str:
+    periodo_value = str(periodo) if periodo else "latest_period.codigo_periodo"
+    return f"""
+        WITH selected_students AS (
+            SELECT
+                d.codigo_estud,
+                d.Cedula_Est,
+                d.Apellidos_nombre,
+                d.Estado,
+                d.correo,
+                est.ESTADO AS estado_nombre
+            FROM dbo.DATOS_ESTUD d
+            LEFT JOIN dbo.ESTADO est
+              ON UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), est.IDESTADO)))) =
+                 UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.Estado))))
+            {where_sql}
+            ORDER BY
+                LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))),
+                TRY_CONVERT(int, d.codigo_estud)
+            OFFSET {offset} ROWS FETCH NEXT {page_size} ROWS ONLY
+        )
+        SELECT
+            TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Cedula_Est))) AS Cedula_Est,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))) AS Apellidos_nombre,
+            TRY_CONVERT(varchar(50), {periodo_value}) AS codigo_periodo,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Estado))) AS Estado,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.estado_nombre))) AS estado_nombre,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.DETALLE))) AS Informacion,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.LINKURL))) AS DocumentoEstado,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))) AS correo,
+            latest_period.codigo_periodo AS ultimo_periodo
+        FROM selected_students d
+        OUTER APPLY (
+            SELECT MAX(TRY_CONVERT(int, cm.codigo_periodo)) AS codigo_periodo
+            FROM dbo.CARRERAXESTUD cm
+            WHERE cm.codigo_estud = d.codigo_estud
+        ) latest_period
+        OUTER APPLY (
+            SELECT TOP (1)
+                rd.DETALLE,
+                rd.LINKURL
+            FROM dbo.REGISTRODOCESTUD rd
+            WHERE rd.IDESTUD = d.codigo_estud
+              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
+            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
+        ) state_document
+        ORDER BY
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))),
+            TRY_CONVERT(int, d.codigo_estud)
+    """
+
+
+def _actualizacion_estudiante_count_select(where_sql: str = "") -> str:
+    return f"""
+        SELECT COUNT_BIG(*)
+        FROM dbo.DATOS_ESTUD d
+        {where_sql}
+    """
+
+
+def _list_actualizacion_estudiantes_records(
+    section: dict[str, Any],
+    query: str | None,
+    periodo: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict[str, Any]:
     cleaned_query = str(query or "").strip()
     periodo_codigo = _optional_int_filter(periodo)
     params: list[Any] = []
@@ -3407,14 +3479,11 @@ def _list_actualizacion_estudiantes_records(section: dict[str, Any], query: str 
             OR TRY_CONVERT(nvarchar(100), d.Cedula_Est) LIKE ?
             OR TRY_CONVERT(nvarchar(255), d.correo) LIKE ?
             OR TRY_CONVERT(nvarchar(255), d.correointec) LIKE ?
-            OR TRY_CONVERT(nvarchar(100), d.movil) LIKE ?
-            OR TRY_CONVERT(nvarchar(100), d.Estado) LIKE ?
-            OR TRY_CONVERT(nvarchar(255), est.ESTADO) LIKE ?
             OR TRY_CONVERT(varchar(50), d.codigo_estud) = ?
         )
         """
         )
-        params = [like, like, like, like, like, like, like, cleaned_query]
+        params = [like, like, like, like, cleaned_query]
     if periodo_codigo:
         where_parts.append(
             f"""
@@ -3430,14 +3499,27 @@ def _list_actualizacion_estudiantes_records(section: dict[str, Any], query: str 
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(_actualizacion_estudiante_select(limit, where_sql, periodo_codigo), params)
+            cursor.execute(_actualizacion_estudiante_count_select(where_sql), params)
+            total = int(cursor.fetchval() or 0)
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            current_page = min(page, total_pages)
+            offset = (current_page - 1) * page_size
+            cursor.execute(
+                _actualizacion_estudiante_list_select(page_size, offset, where_sql, periodo_codigo),
+                params,
+            )
             rows = [_actualizacion_estudiante_row(row) for row in cursor.fetchall()]
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='No se pudo consultar la actualización de estados de estudiantes') from exc
     return {
         "section": _section_meta("actualizacion_estudiantes", section).model_dump(),
         "rows": rows,
-        "total": len(rows),
+        "total": total,
+        "page": current_page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "has_previous": current_page > 1,
+        "has_next": current_page < total_pages,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -4506,12 +4588,21 @@ def list_records(
     query: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     periodo: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=10, le=100),
     _: SessionUser = AllowedEditor,
 ) -> dict[str, Any]:
-    del limit
     section = _section(section_key)
     if section_key == "actualizacion_estudiantes":
-        return _list_actualizacion_estudiantes_records(section, query, None, periodo)
+        effective_page_size = min(limit, 100) if limit else page_size
+        return _list_actualizacion_estudiantes_records(
+            section,
+            query,
+            periodo,
+            page,
+            effective_page_size,
+        )
+    del limit
     if section_key == "actualizacion_est":
         return _list_actualizacion_est_records(section, query, None)
     if section_key == "docente_materias":

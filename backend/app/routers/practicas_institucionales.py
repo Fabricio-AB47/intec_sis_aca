@@ -18,6 +18,16 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from app.core.security import SessionUser, require_roles
 from app.services.db import get_connection, get_practices_connection, get_titulation_connection
+from app.services.practices_operations import (
+    effective_process_configuration,
+    ensure_operations_schema,
+    is_approved_practice_outcome,
+    record_evaluation_history,
+    save_titulation_reconciliation,
+    update_compliance_enrollment_status,
+    upsert_compliance_enrollment,
+    write_operations_audit,
+)
 
 router = APIRouter(prefix="/api/practicas", tags=["practicas-institucionales"])
 
@@ -27,6 +37,7 @@ _MAX_UPLOAD_SIZE = 12 * 1024 * 1024
 
 _ADMIN_ACCESS = require_roles("ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE", "SECRETARIA")
 _STUDENT_ACCESS = require_roles("ESTUDIANTE", "ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE")
+_DOCENTE_ACCESS = require_roles("DOCENTE")
 _RESPONSIBLE_ACCESS = require_roles(
     "DOCENTE",
     "ADMINISTRADOR",
@@ -48,7 +59,7 @@ _ALL_ACCESS = require_roles(
 )
 
 PROCESS_LABELS = {
-    "PPF": "Prácticas preprofesionales",
+    "PPF": "Prácticas laborales/preprofesionales",
     "VIN": "Vinculación con la sociedad",
 }
 
@@ -76,6 +87,11 @@ _PROCESS_REQUIREMENTS = {
 
 _COMPLETION_STATES = {"APROBADO", "VALIDADO", "FINALIZADO", "CERRADO"}
 _ADMIN_ROLES = {"ADMINISTRADOR", "ACADEMICO", "RECTOR", "VICERRECTOR", "SOPORTE", "SECRETARIA"}
+_REVIEW_EXPEDIENT_STATE_BY_DECISION = {
+    "APROBAR": "EN_REVISION",
+    "OBSERVAR": "OBSERVADO",
+    "RECHAZAR": "REPROBADO",
+}
 
 
 class CreateExpedientePayload(BaseModel):
@@ -108,6 +124,37 @@ class PeriodoResponsablePayload(BaseModel):
     estudiantes: list[int] = Field(default_factory=list)
 
 
+class InscripcionPracticaEstudiantePayload(BaseModel):
+    codigo_estud: int = Field(gt=0)
+    codigo_carrera: str = Field(min_length=1, max_length=50)
+    codigo_periodo_origen: str = Field(min_length=1, max_length=50)
+
+
+class InscripcionCumplimientoPayload(BaseModel):
+    tipo_proceso_codigo: str = Field(pattern="^(PPF|VIN)$")
+    codigo_periodo: str = Field(min_length=1, max_length=50)
+    fecha_inicio_carga: date
+    fecha_fin_carga: date
+    estudiantes: list[InscripcionPracticaEstudiantePayload] = Field(default_factory=list)
+    observacion: str | None = Field(default=None, max_length=500)
+
+
+# Alias temporales para clientes internos que aún importan los nombres anteriores.
+MatriculaPracticaEstudiantePayload = InscripcionPracticaEstudiantePayload
+MatriculaPracticasPayload = InscripcionCumplimientoPayload
+
+
+class AsignacionResponsablePracticasPayload(BaseModel):
+    tipo_proceso_codigo: str = Field(pattern="^(PPF|VIN)$")
+    codigo_periodo: str = Field(min_length=1, max_length=50)
+    nombre_responsable: str = Field(min_length=3, max_length=250)
+    rol_responsable: str = Field(default="RESPONSABLE", max_length=50)
+    codigo_docente: str = Field(min_length=1, max_length=50)
+    cedula_responsable: str | None = Field(default=None, max_length=20)
+    correo_responsable: str | None = Field(default=None, max_length=250)
+    expediente_ids: list[int] = Field(default_factory=list)
+
+
 class AssignResponsablePayload(BaseModel):
     responsable_proceso_id: int
 
@@ -130,6 +177,47 @@ def _clean(value: Any) -> str:
     if value is None:
         return ""
     return " ".join(str(value).replace("\xa0", " ").split()).strip()
+
+
+def _active_teacher_by_code(teacher_code: str) -> dict[str, str] | None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP 1
+                TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
+                TRY_CONVERT(nvarchar(100), d.cedula_doc) AS cedula,
+                COALESCE(
+                    NULLIF(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre), N''),
+                    NULLIF(TRY_CONVERT(nvarchar(4000), active_user.Descripcion), N''),
+                    NULLIF(TRY_CONVERT(nvarchar(255), active_user.login), N'')
+                ) AS nombre,
+                COALESCE(
+                    NULLIF(TRY_CONVERT(nvarchar(255), d.correo), N''),
+                    NULLIF(TRY_CONVERT(nvarchar(255), d.correop), N''),
+                    NULLIF(TRY_CONVERT(nvarchar(255), active_user.login), N'')
+                ) AS correo
+            FROM dbo.DATOSDOCENTE d
+            CROSS APPLY (
+                SELECT TOP 1 u.login, u.Descripcion, u.Estado
+                FROM dbo.USUARIOS u
+                WHERE TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                  AND UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(20), u.Estado), N'')))) = N'A'
+                ORDER BY TRY_CONVERT(nvarchar(255), u.login)
+            ) active_user
+            WHERE TRY_CONVERT(int, d.codigo_doc) = TRY_CONVERT(int, ?)
+            """,
+            teacher_code,
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "codigo_doc": _clean(row.codigo_doc),
+            "cedula": _clean(row.cedula),
+            "nombre": _clean(row.nombre),
+            "correo": _clean(row.correo),
+        }
 
 
 def _row_dict(cursor: pyodbc.Cursor, row: Any) -> dict[str, Any]:
@@ -376,6 +464,22 @@ def _required_documents_status(
     return result
 
 
+def _document_compliance_summary(documents: list[dict[str, Any]]) -> dict[str, int | float]:
+    required = len(documents)
+    loaded = sum(1 for document in documents if document.get("Cargado"))
+    validated = sum(1 for document in documents if document.get("Validado"))
+    divisor = max(required, 1)
+    return {
+        "required": required,
+        "loaded": loaded,
+        "validated": validated,
+        "pending_upload": max(required - loaded, 0),
+        "pending_validation": max(required - validated, 0),
+        "upload_percentage": round((loaded / divisor) * 100, 2),
+        "validation_percentage": round((validated / divisor) * 100, 2),
+    }
+
+
 def _responsible_assignment(
     cursor: pyodbc.Cursor,
     expediente_id: int,
@@ -424,6 +528,19 @@ def _responsible_assignment(
             detail="El expediente no está asignado a este docente o no tiene permiso para revisarlo.",
         )
     return _row_dict(cursor, row)
+
+
+def _ensure_assigned_teacher_document_upload(
+    cursor: pyodbc.Cursor,
+    expediente_id: int,
+    current_user: SessionUser,
+) -> dict[str, Any]:
+    if _clean(current_user.rol).upper() != "DOCENTE":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el docente responsable activo puede cargar documentos de prácticas o vinculación.",
+        )
+    return _responsible_assignment(cursor, expediente_id, current_user, require_approval=False)
 
 
 def _student_code(current_user: SessionUser, requested_code: int | None = None) -> int:
@@ -563,7 +680,14 @@ def _legacy_review_detail(
     process_code = _process_code(expediente.get("tipo_proceso_codigo"))
     assignment = _responsible_assignment(cursor, expediente_id, current_user, require_approval=False)
     documents = _required_documents_status(cursor, expediente_id, process_code)
-    required_hours = _required_hours(process_code)
+    configuration = effective_process_configuration(
+        cursor,
+        process_code=process_code,
+        career_code=expediente.get("cod_anio_basica"),
+        level=expediente.get("semestre_numero") or expediente.get("semestre"),
+        period_code=expediente.get("codigo_periodo"),
+    )
+    required_hours = float(configuration["horas_requeridas"])
     recognized_hours = float(expediente.get("horas_reconocidas") or 0)
 
     cursor.execute(
@@ -597,6 +721,8 @@ def _legacy_review_detail(
         "Carrera": expediente.get("carrera_snapshot"),
         "CodigoPeriodo": expediente.get("codigo_periodo"),
         "Periodo": expediente.get("periodo_snapshot"),
+        "FechaInicioCarga": expediente.get("fecha_inicio"),
+        "FechaFinCarga": expediente.get("fecha_fin"),
         "TipoProcesoCodigo": process_code,
         "TipoProceso": expediente.get("tipo_proceso"),
         "EstadoCodigo": expediente.get("estado_expediente_codigo"),
@@ -604,6 +730,7 @@ def _legacy_review_detail(
         "HorasRequeridas": required_hours,
         "HorasReconocidas": recognized_hours,
         "HorasAsistenciaValidadas": float(expediente.get("horas_asistencia_validadas") or 0),
+        "ConfiguracionProceso": configuration,
         "DocumentosDetalle": documents,
         "DocumentosFaltantes": missing,
         "DocumentosCompletos": all_loaded,
@@ -618,19 +745,44 @@ def _sync_titulacion_completion(expediente_id: int, process_code: str, usuario: 
     """Refleja una aprobación ya confirmada sin crear expedientes de titulación ambiguos."""
     with get_practices_connection() as practices_conn:
         practices_cursor = practices_conn.cursor()
+        ensure_operations_schema(practices_cursor)
         row = _fetch_legacy_expediente(practices_cursor, expediente_id)
         if not row:
             return {"sincronizado": False, "motivo": "Expediente de prácticas no encontrado."}
         source = _row_dict(practices_cursor, row)
         documents = _required_documents_status(practices_cursor, expediente_id, process_code)
+        practices_cursor.execute(
+            """
+            SELECT evaluacion.estado, evaluacion.resultado, evaluacion.calificacion, cierre.fecha_cierre
+            FROM ops.evaluacion_practica evaluacion
+            LEFT JOIN ops.cierre_proceso cierre ON cierre.expediente_id = evaluacion.expediente_id
+            WHERE evaluacion.expediente_id = ?
+            """,
+            expediente_id,
+        )
+        evaluation_row = practices_cursor.fetchone()
 
     state = _clean(source.get("estado_expediente_codigo")).upper()
     required_hours = _required_hours(process_code)
     recognized_hours = float(source.get("horas_reconocidas") or 0)
     documents_complete = all(item.get("Validado") for item in documents)
-    completed = state in _COMPLETION_STATES and recognized_hours >= required_hours and documents_complete
+    formal_evaluation_complete = bool(evaluation_row) and is_approved_practice_outcome(
+        evaluation_state=evaluation_row[0] if evaluation_row else None,
+        result=evaluation_row[1] if evaluation_row else None,
+        grade=evaluation_row[2] if evaluation_row else None,
+        closed_at=evaluation_row[3] if evaluation_row else None,
+    )
+    completed = (
+        state in _COMPLETION_STATES
+        and recognized_hours >= required_hours
+        and documents_complete
+        and formal_evaluation_complete
+    )
     if not completed:
-        return {"sincronizado": False, "motivo": "El expediente aún no cumple todos los requisitos aprobados."}
+        return {
+            "sincronizado": False,
+            "motivo": "El expediente requiere calificación aprobada y cierre confirmado antes de habilitar Titulación.",
+        }
 
     document = _normalized_document(source.get("cedula_est"))
     career = _clean(source.get("cod_anio_basica"))
@@ -915,9 +1067,19 @@ def _ensure_expediente_for_source(
     observacion: str | None = None,
     target_codigo_periodo: Any | None = None,
     target_periodo_nombre: str | None = None,
+    fecha_inicio_carga: date | None = None,
+    fecha_fin_carga: date | None = None,
 ) -> int:
     target_period = target_codigo_periodo if target_codigo_periodo not in (None, "") else source.codigo_periodo
     target_period_name = _clean(target_periodo_nombre) or _clean(source.periodo)
+    configuration = effective_process_configuration(
+        cursor,
+        process_code=process_code,
+        career_code=source.cod_anio_basica,
+        level=source.semestre_numero,
+        period_code=target_period,
+    )
+    required_hours = float(configuration["horas_requeridas"])
     cursor.execute(
         """
         SELECT TOP 1 expediente_id
@@ -935,7 +1097,33 @@ def _ensure_expediente_for_source(
     )
     existing = cursor.fetchone()
     if existing:
-        return int(existing.expediente_id)
+        expediente_id = int(existing.expediente_id)
+        cursor.execute(
+            """
+            UPDATE pp.expediente_practica
+            SET fecha_inicio = COALESCE(?, fecha_inicio),
+                fecha_fin = COALESCE(?, fecha_fin),
+                horas_requeridas = ?,
+                observacion = COALESCE(NULLIF(?, ''), observacion)
+            WHERE expediente_id = ?
+            """,
+            fecha_inicio_carga,
+            fecha_fin_carga,
+            required_hours,
+            _clean(observacion),
+            expediente_id,
+        )
+        upsert_compliance_enrollment(
+            cursor,
+            expediente_id=expediente_id,
+            process_code=process_code,
+            student_code=int(source.codigo_estud),
+            career_code=int(source.cod_anio_basica),
+            academic_period_code=int(source.codigo_periodo),
+            institutional_period_code=int(target_period),
+            user=usuario,
+        )
+        return expediente_id
 
     cursor.execute("SELECT estado_expediente_id FROM cat.estado_expediente WHERE codigo = 'BORRADOR'")
     estado_row = cursor.fetchone()
@@ -946,15 +1134,18 @@ def _ensure_expediente_for_source(
     code = f"{process_code}-{next_id:08d}"
     cursor.execute(
         """
+        SET NOCOUNT ON;
+        DECLARE @ExpedienteCreado TABLE (ExpedienteId bigint NOT NULL);
         INSERT INTO pp.expediente_practica (
             codigo_expediente, codigo_estud, cedula_est, cod_anio_basica, codigo_periodo,
             codigo_periodo_origen, estudiante_snapshot, carrera_snapshot, periodo_snapshot,
             periodo_origen_snapshot, estado_expediente_id,
             tipo_proceso_id, semestre, semestre_numero, horas_requeridas,
-            observacion, usuario_registro
+            fecha_inicio, fecha_fin, observacion, usuario_registro
         )
-        OUTPUT INSERTED.expediente_id AS ExpedienteId
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        OUTPUT INSERTED.expediente_id INTO @ExpedienteCreado (ExpedienteId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SELECT TOP (1) ExpedienteId FROM @ExpedienteCreado;
         """,
         code,
         int(source.codigo_estud),
@@ -970,17 +1161,74 @@ def _ensure_expediente_for_source(
         tipo_proceso_id,
         str(source.semestre_numero or ""),
         int(source.semestre_numero or 3),
-        _required_hours(process_code),
+        required_hours,
+        fecha_inicio_carga,
+        fecha_fin_carga,
         observacion,
         usuario,
     )
     row = cursor.fetchone()
-    return int(row.ExpedienteId)
+    expediente_id = int(row.ExpedienteId)
+    upsert_compliance_enrollment(
+        cursor,
+        expediente_id=expediente_id,
+        process_code=process_code,
+        student_code=int(source.codigo_estud),
+        career_code=int(source.cod_anio_basica),
+        academic_period_code=int(source.codigo_periodo),
+        institutional_period_code=int(target_period),
+        user=usuario,
+    )
+    return expediente_id
 
 
 def _ensure_student_owns_expediente(current_user: SessionUser, expediente: Any) -> None:
     if current_user.rol == "ESTUDIANTE" and int(expediente.codigo_estud) != int(current_user.codigo_estud or 0):
         raise HTTPException(status_code=403, detail="No puedes gestionar un expediente de otro estudiante.")
+
+
+def _practice_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    raw = _clean(value)[:10]
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _validate_upload_window(start: date, end: date) -> None:
+    if end < start:
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha de cierre documental no puede ser anterior a la fecha de inicio.",
+        )
+
+
+def _ensure_practice_upload_window(expediente: Any, today: date | None = None) -> None:
+    start = _practice_date(getattr(expediente, "fecha_inicio", None))
+    end = _practice_date(getattr(expediente, "fecha_fin", None))
+    if not start or not end:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Administración debe definir el plazo de carga documental antes de que "
+                "el docente responsable suba archivos."
+            ),
+        )
+    current = today or date.today()
+    if current < start:
+        raise HTTPException(
+            status_code=409,
+            detail=f"La carga documental se habilitará el {start.isoformat()}.",
+        )
+    if current > end:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El plazo de carga documental finalizó el {end.isoformat()}.",
+        )
 
 
 def _build_carta_compromiso_pdf(expediente: Any) -> bytes:
@@ -1080,6 +1328,8 @@ def catalog(_: Annotated[SessionUser, Depends(_ALL_ACCESS)]) -> dict[str, Any]:
         with get_practices_connection() as conn:
             cursor = conn.cursor()
             if _use_legacy_schema(cursor):
+                _ensure_period_designation_table(cursor)
+                ensure_operations_schema(cursor)
                 cursor.execute(
                     """
                     SELECT
@@ -1210,7 +1460,8 @@ def student_practices(
     try:
         with get_practices_connection() as conn:
             cursor = conn.cursor()
-            if _use_legacy_schema(cursor):
+            use_legacy = _use_legacy_schema(cursor)
+            if use_legacy:
                 cursor.execute(
                     """
                     SELECT TOP 100
@@ -1243,7 +1494,7 @@ def student_practices(
                 )
             eligibility = _fetch_all(cursor)
 
-            if _use_legacy_schema(cursor):
+            if use_legacy:
                 cursor.execute(
                     f"""
                     SELECT TOP 100
@@ -1264,6 +1515,8 @@ def student_practices(
                         v.responsable_proceso_id AS ResponsableProcesoId,
                         v.responsable_principal AS NombreResponsable,
                         v.responsable_correo AS CorreoResponsable,
+                        e.fecha_inicio AS FechaInicioCarga,
+                        e.fecha_fin AS FechaFinCarga,
                         v.fecha_registro AS FechaCreacion,
                         carta.documento_id AS CartaCompromisoDocumentoId,
                         carta.estado_codigo AS CartaCompromisoEstadoCodigo,
@@ -1282,6 +1535,7 @@ def student_practices(
                         certificado.firmado AS CertificadoFirmado,
                         certificado.validado AS CertificadoValidado
                     FROM pp.vw_admin_expedientes_control v
+                    INNER JOIN pp.expediente_practica e ON e.expediente_id = v.expediente_id
                     {_latest_carta_select("v")}
                     {_latest_certificado_select("v")}
                     WHERE v.codigo_estud = ?
@@ -1300,6 +1554,28 @@ def student_practices(
                     student_code,
                 )
             expedientes = _fetch_all(cursor)
+            for expediente in expedientes:
+                process = _process_code(expediente.get("TipoProcesoCodigo"))
+                if use_legacy:
+                    documents = _required_documents_status(cursor, int(expediente["ExpedienteId"]), process)
+                    compliance = _document_compliance_summary(documents)
+                    expediente["DocumentosDetalle"] = documents
+                else:
+                    required = len(_required_document_codes(process))
+                    loaded = min(int(expediente.get("DocumentosCargados") or 0), required)
+                    validated = min(int(expediente.get("DocumentosValidados") or 0), required)
+                    compliance = _document_compliance_summary(
+                        [
+                            {"Cargado": index < loaded, "Validado": index < validated}
+                            for index in range(required)
+                        ]
+                    )
+                expediente["DocumentosRequeridos"] = compliance["required"]
+                expediente["DocumentosCargados"] = compliance["loaded"]
+                expediente["DocumentosValidados"] = compliance["validated"]
+                expediente["DocumentosPendientes"] = compliance["pending_upload"]
+                expediente["AvanceDocumental"] = compliance["upload_percentage"]
+                expediente["AvanceValidacionDocumental"] = compliance["validation_percentage"]
 
         return {"codigo_estud": student_code, "eligibility": eligibility, "expedientes": expedientes}
     except (pyodbc.Error, RuntimeError) as exc:
@@ -1317,6 +1593,8 @@ def create_student_expediente(
         with get_practices_connection() as conn:
             cursor = conn.cursor()
             if _use_legacy_schema(cursor):
+                _ensure_period_designation_table(cursor)
+                ensure_operations_schema(cursor)
                 cursor.execute(
                     """
                     SELECT TOP 1 *
@@ -1336,10 +1614,17 @@ def create_student_expediente(
                 )
                 source = cursor.fetchone()
                 if not source:
-                    raise HTTPException(status_code=404, detail="No se encontró matrícula elegible para crear el expediente.")
+                    raise HTTPException(status_code=404, detail="No se encontró una referencia académica elegible para crear la inscripción institucional.")
                 if not bool(source.elegible):
                     raise HTTPException(status_code=400, detail=f"El estudiante no es elegible: {source.motivo_elegibilidad}")
                 tipo_proceso_id = _tipo_proceso_id(cursor, process_code)
+                configuration = effective_process_configuration(
+                    cursor,
+                    process_code=process_code,
+                    career_code=source.cod_anio_basica,
+                    level=source.semestre_numero,
+                    period_code=source.codigo_periodo,
+                )
                 cursor.execute("SELECT estado_expediente_id FROM cat.estado_expediente WHERE codigo = 'BORRADOR'")
                 estado_row = cursor.fetchone()
                 if not estado_row:
@@ -1349,14 +1634,21 @@ def create_student_expediente(
                 code = f"{process_code}-{next_id:08d}"
                 cursor.execute(
                     """
+                    SET NOCOUNT ON;
+                    DECLARE @ExpedienteCreado TABLE (
+                        ExpedienteId bigint NOT NULL,
+                        CodigoExpediente varchar(80) NOT NULL
+                    );
                     INSERT INTO pp.expediente_practica (
                         codigo_expediente, codigo_estud, cedula_est, cod_anio_basica, codigo_periodo,
                         estudiante_snapshot, carrera_snapshot, periodo_snapshot, estado_expediente_id,
                         tipo_proceso_id, semestre, semestre_numero, horas_requeridas,
                         observacion, usuario_registro
                     )
-                    OUTPUT INSERTED.expediente_id AS ExpedienteId, INSERTED.codigo_expediente AS CodigoExpediente
+                    OUTPUT INSERTED.expediente_id, INSERTED.codigo_expediente
+                    INTO @ExpedienteCreado (ExpedienteId, CodigoExpediente)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    SELECT TOP (1) ExpedienteId, CodigoExpediente FROM @ExpedienteCreado;
                     """,
                     code,
                     int(source.codigo_estud),
@@ -1370,21 +1662,27 @@ def create_student_expediente(
                     tipo_proceso_id,
                     str(source.semestre_numero or ""),
                     int(source.semestre_numero or 3),
-                    _required_hours(process_code),
+                    float(configuration["horas_requeridas"]),
                     payload.observacion,
                     current_user.login,
                 )
                 row = cursor.fetchone()
                 response_payload = _row_dict(cursor, row) if row else {"ok": True, "message": "Expediente creado"}
-                if row and getattr(row, "ExpedienteId", None) is not None:
-                    assigned = _apply_period_designation_to_expediente(
+                if row:
+                    upsert_compliance_enrollment(
                         cursor,
-                        int(row.ExpedienteId),
-                        tipo_proceso_id,
-                        source.codigo_periodo,
-                        current_user.login,
+                        expediente_id=int(row.ExpedienteId),
+                        process_code=process_code,
+                        student_code=int(source.codigo_estud),
+                        career_code=int(source.cod_anio_basica),
+                        academic_period_code=int(source.codigo_periodo),
+                        institutional_period_code=int(source.codigo_periodo),
+                        user=current_user.login,
                     )
-                    response_payload["responsable_periodo_asignado"] = assigned
+                    response_payload.update({
+                        "alcance": "INSTITUCIONAL_CUMPLIMIENTO",
+                        "modifica_matricula_academica": False,
+                    })
             else:
                 cursor.execute(
                     """
@@ -1440,10 +1738,11 @@ def download_carta_compromiso(
         raise _db_error(exc, "No se pudo generar la carta compromiso") from exc
 
 
-@router.post("/student/expedientes/{expediente_id}/carta-compromiso")
+@router.post("/student/expedientes/{expediente_id}/carta-compromiso", include_in_schema=False)
+@router.post("/responsable/expedientes/{expediente_id}/carta-compromiso")
 async def upload_carta_compromiso(
     expediente_id: int,
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_DOCENTE_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     original_name = _safe_filename(file.filename or "carta_compromiso.pdf")
@@ -1464,7 +1763,8 @@ async def upload_carta_compromiso(
             expediente = _fetch_legacy_expediente(cursor, expediente_id)
             if not expediente:
                 raise HTTPException(status_code=404, detail="Expediente no encontrado.")
-            _ensure_student_owns_expediente(current_user, expediente)
+            _ensure_assigned_teacher_document_upload(cursor, expediente_id, current_user)
+            _ensure_practice_upload_window(expediente)
             if _clean(expediente.tipo_proceso_codigo).upper() != "PPF":
                 raise HTTPException(status_code=400, detail="La carta compromiso aplica solo para prácticas preprofesionales.")
 
@@ -1503,7 +1803,7 @@ async def upload_carta_compromiso(
                 file.content_type or "application/pdf",
                 digest,
                 len(content),
-                "Carta compromiso firmada cargada por el estudiante.",
+                "Carta compromiso firmada cargada por el docente responsable asignado.",
                 current_user.login,
             )
             row = cursor.fetchone()
@@ -1525,10 +1825,11 @@ async def upload_carta_compromiso(
         raise _db_error(exc, "No se pudo subir la carta compromiso") from exc
 
 
-@router.post("/student/expedientes/{expediente_id}/certificado")
+@router.post("/student/expedientes/{expediente_id}/certificado", include_in_schema=False)
+@router.post("/responsable/expedientes/{expediente_id}/certificado")
 async def upload_certificado_preprofesional(
     expediente_id: int,
-    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    current_user: Annotated[SessionUser, Depends(_DOCENTE_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     original_name = _safe_filename(file.filename or "certificado_practicas.pdf")
@@ -1550,7 +1851,8 @@ async def upload_certificado_preprofesional(
             expediente = _fetch_legacy_expediente(cursor, expediente_id)
             if not expediente:
                 raise HTTPException(status_code=404, detail="Expediente no encontrado.")
-            _ensure_student_owns_expediente(current_user, expediente)
+            _ensure_assigned_teacher_document_upload(cursor, expediente_id, current_user)
+            _ensure_practice_upload_window(expediente)
             if _clean(expediente.tipo_proceso_codigo).upper() != "PPF":
                 raise HTTPException(status_code=400, detail="El certificado aplica solo para prácticas preprofesionales.")
 
@@ -1589,7 +1891,7 @@ async def upload_certificado_preprofesional(
                 file.content_type or ("application/pdf" if extension == ".pdf" else "image/jpeg"),
                 digest,
                 len(content),
-                "CERTIFICADO_PREPROFESIONALES: Certificado cargado por el estudiante.",
+                "CERTIFICADO_PREPROFESIONALES: Certificado cargado por el docente responsable asignado.",
                 current_user.login,
             )
             row = cursor.fetchone()
@@ -1665,6 +1967,8 @@ def admin_expedientes(
                         v.responsable_proceso_id AS ResponsableProcesoId,
                         v.responsable_principal AS NombreResponsable,
                         v.responsable_correo AS CorreoResponsable,
+                        e.fecha_inicio AS FechaInicioCarga,
+                        e.fecha_fin AS FechaFinCarga,
                         v.fecha_registro AS FechaCreacion,
                         carta.documento_id AS CartaCompromisoDocumentoId,
                         carta.estado_codigo AS CartaCompromisoEstadoCodigo,
@@ -1683,6 +1987,7 @@ def admin_expedientes(
                         certificado.firmado AS CertificadoFirmado,
                         certificado.validado AS CertificadoValidado
                     FROM pp.vw_admin_expedientes_control v
+                    INNER JOIN pp.expediente_practica e ON e.expediente_id = v.expediente_id
                     {_latest_carta_select("v")}
                     {_latest_certificado_select("v")}
                     WHERE {' AND '.join(legacy_where)}
@@ -1742,6 +2047,7 @@ def admin_eligible_students(
                         auth.nombre_archivo AS AutorizacionArchivo,
                         auth.ruta_archivo AS AutorizacionUrl,
                         auth.fecha_registro AS AutorizacionFecha,
+                        CASE WHEN v.elegible = 1 OR auth.autorizacion_id IS NOT NULL THEN 1 ELSE 0 END AS PuedeInscribirse,
                         CASE WHEN v.elegible = 1 OR auth.autorizacion_id IS NOT NULL THEN 1 ELSE 0 END AS PuedeMatricular
                     FROM pp.vw_estudiantes_elegibles_proceso v
                     INNER JOIN cat.tipo_proceso tp ON tp.codigo = v.tipo_proceso_codigo
@@ -1947,6 +2253,73 @@ def admin_period_designations(
         raise _db_error(exc, 'No se pudo consultar designaciones por período') from exc
 
 
+@router.get("/admin/docentes-activos")
+def admin_active_teachers(
+    _: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+    query: str = Query(default="", max_length=250),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    search_text = _clean(query)
+    search = f"%{search_text}%"
+    digits = "".join(character for character in search_text if character.isdigit())
+    document = f"%{digits}%" if digits else search
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT TOP ({limit})
+                    TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo_doc,
+                    TRY_CONVERT(nvarchar(100), d.cedula_doc) AS cedula,
+                    COALESCE(
+                        NULLIF(TRY_CONVERT(nvarchar(255), active_user.login), N''),
+                        NULLIF(TRY_CONVERT(nvarchar(255), d.correo), N''),
+                        TRY_CONVERT(nvarchar(255), d.correop)
+                    ) AS login,
+                    N'DOCENTE' AS tipo_usuario,
+                    N'A' AS estado,
+                    COALESCE(
+                        NULLIF(TRY_CONVERT(nvarchar(4000), d.apellidos_nombre), N''),
+                        TRY_CONVERT(nvarchar(4000), active_user.Descripcion)
+                    ) AS descripcion,
+                    TRY_CONVERT(nvarchar(255), d.correo) AS correo,
+                    TRY_CONVERT(nvarchar(255), d.correop) AS correo_personal,
+                    CAST(1 AS bit) AS usuario_validado
+                FROM dbo.DATOSDOCENTE d
+                CROSS APPLY (
+                    SELECT TOP 1 u.login, u.Descripcion, u.Estado
+                    FROM dbo.USUARIOS u
+                    WHERE TRY_CONVERT(int, u.Codigo_Usuario) = TRY_CONVERT(int, d.codigo_doc)
+                      AND UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(nvarchar(20), u.Estado), N'')))) = N'A'
+                    ORDER BY TRY_CONVERT(nvarchar(255), u.login)
+                ) active_user
+                WHERE (
+                       ? = N''
+                    OR TRY_CONVERT(nvarchar(4000), d.apellidos_nombre) LIKE ?
+                    OR TRY_CONVERT(nvarchar(255), d.correo) LIKE ?
+                    OR TRY_CONVERT(nvarchar(255), d.correop) LIKE ?
+                    OR TRY_CONVERT(nvarchar(4000), active_user.Descripcion) LIKE ?
+                    OR TRY_CONVERT(nvarchar(100), d.cedula_doc) LIKE ?
+                    OR TRY_CONVERT(varchar(50), d.codigo_doc) = ?
+                )
+                ORDER BY
+                    TRY_CONVERT(nvarchar(4000), d.apellidos_nombre),
+                    TRY_CONVERT(nvarchar(255), d.correo)
+                """,
+                search_text,
+                search,
+                search,
+                search,
+                search,
+                document,
+                search_text,
+            )
+            items = _fetch_all(cursor)
+        return {"items": items, "total": len(items)}
+    except pyodbc.Error as exc:
+        raise _db_error(exc, "No se pudieron consultar los docentes activos") from exc
+
+
 @router.post("/admin/autorizaciones")
 async def upload_admin_authorization(
     current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
@@ -2038,7 +2411,7 @@ async def upload_admin_authorization(
             conn.commit()
         return {
             "ok": True,
-            "message": "Autorización cargada. El estudiante queda habilitado para matrícula.",
+            "message": "Autorización cargada. El estudiante queda habilitado para la inscripción institucional.",
             "autorizacion_id": getattr(row, "AutorizacionId", None) if row else None,
             "url": relative_url,
             "nombre_archivo": original_name,
@@ -2065,6 +2438,7 @@ def save_period_designation(
             if not _use_legacy_schema(cursor):
                 raise HTTPException(status_code=400, detail='La designación por período está disponible para la estructura actual de prácticas.')
             _ensure_period_designation_table(cursor)
+            ensure_operations_schema(cursor)
             tipo_id = _tipo_proceso_id(cursor, process)
             source_period = payload.codigo_periodo_origen or payload.codigo_periodo
             selected_students = sorted({int(item) for item in payload.estudiantes if int(item) > 0})
@@ -2173,7 +2547,7 @@ def save_period_designation(
                     process,
                     tipo_id,
                     current_user.login,
-                    f"Expediente creado desde el período de origen {source_period} para la matrícula del período {payload.codigo_periodo}.",
+                    f"Expediente creado desde el período académico de referencia {source_period} para la inscripción institucional del período {payload.codigo_periodo}.",
                     payload.codigo_periodo,
                     target_period_name,
                 )
@@ -2213,7 +2587,9 @@ def save_period_designation(
             conn.commit()
         return {
             "ok": True,
-            "message": 'Matrícula por período registrada en prácticas correctamente.',
+            "message": 'Inscripción institucional por período registrada correctamente.',
+            "alcance": "INSTITUCIONAL_CUMPLIMIENTO",
+            "modifica_matricula_academica": False,
             "designacion_id": getattr(row, "DesignacionId", None) if row else None,
             "expedientes_actualizados": len(expediente_ids),
         }
@@ -2225,6 +2601,327 @@ def save_period_designation(
         except Exception:
             pass
         raise _db_error(exc, 'No se pudo guardar la designación por período') from exc
+
+
+@router.post("/admin/matriculas", include_in_schema=False)
+@router.post("/admin/inscripciones-cumplimiento")
+def enroll_practices_students(
+    payload: InscripcionCumplimientoPayload,
+    current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    process = _process_code(payload.tipo_proceso_codigo)
+    target_period = _clean(payload.codigo_periodo)
+    if not target_period.isdigit():
+        raise HTTPException(status_code=400, detail="El período institucional del proceso debe tener un código numérico válido.")
+    _validate_upload_window(payload.fecha_inicio_carga, payload.fecha_fin_carga)
+
+    selected: dict[tuple[int, int, int], InscripcionPracticaEstudiantePayload] = {}
+    for item in payload.estudiantes:
+        career = _clean(item.codigo_carrera)
+        source_period = _clean(item.codigo_periodo_origen)
+        if not career.isdigit() or not source_period.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail="La carrera y el período de origen deben tener códigos numéricos válidos.",
+            )
+        key = (int(item.codigo_estud), int(career), int(source_period))
+        selected[key] = item
+    if not selected:
+        raise HTTPException(status_code=400, detail="Seleccione al menos un estudiante para inscribir en el proceso institucional.")
+    if len(selected) > 500:
+        raise HTTPException(status_code=400, detail="Puede registrar hasta 500 inscripciones institucionales por operación.")
+
+    source_conditions = " OR ".join(
+        "(v.codigo_estud = ? AND v.cod_anio_basica = ? AND v.codigo_periodo = ?)" for _ in selected
+    )
+    source_params: list[Any] = [process]
+    for student_code, career_code, source_period_code in selected:
+        source_params.extend([student_code, career_code, source_period_code])
+
+    try:
+        with get_practices_connection() as conn:
+            cursor = conn.cursor()
+            if not _use_legacy_schema(cursor):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La inscripción de cumplimiento está disponible para la estructura operativa actual de prácticas.",
+                )
+            _ensure_period_designation_table(cursor)
+            ensure_operations_schema(cursor)
+            process_id = _tipo_proceso_id(cursor, process)
+            cursor.execute(
+                """
+                SELECT TOP 1 periodo
+                FROM pp.vw_estudiantes_elegibles_proceso
+                WHERE tipo_proceso_codigo = ?
+                  AND codigo_periodo = TRY_CONVERT(numeric(18,0), ?)
+                """,
+                process,
+                target_period,
+            )
+            target_period_row = cursor.fetchone()
+            target_period_name = _clean(target_period_row.periodo) if target_period_row else target_period
+
+            cursor.execute(
+                f"""
+                SELECT v.*
+                FROM pp.vw_estudiantes_elegibles_proceso v
+                INNER JOIN cat.tipo_proceso tp ON tp.codigo = v.tipo_proceso_codigo
+                OUTER APPLY (
+                    SELECT TOP 1 a.autorizacion_id
+                    FROM pp.autorizacion_practica_estudiante a
+                    WHERE a.tipo_proceso_id = tp.tipo_proceso_id
+                      AND a.codigo_estud = TRY_CONVERT(decimal(18,0), v.codigo_estud)
+                      AND a.codigo_periodo = TRY_CONVERT(numeric(18,0), v.codigo_periodo)
+                      AND a.activo = 1
+                    ORDER BY a.fecha_registro DESC, a.autorizacion_id DESC
+                ) auth
+                WHERE v.tipo_proceso_codigo = ?
+                  AND ({source_conditions})
+                  AND (v.elegible = 1 OR auth.autorizacion_id IS NOT NULL)
+                """,
+                *source_params,
+            )
+            source_by_key: dict[tuple[int, int, int], Any] = {}
+            for source in cursor.fetchall():
+                key = (int(source.codigo_estud), int(source.cod_anio_basica), int(source.codigo_periodo))
+                source_by_key.setdefault(key, source)
+            missing = [key for key in selected if key not in source_by_key]
+            if missing:
+                missing_text = ", ".join(str(student_code) for student_code, _, _ in missing[:20])
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "No se pudo inscribir a los siguientes estudiantes porque no cumplen los requisitos "
+                        f"o no tienen una autorización vigente: {missing_text}."
+                    ),
+                )
+
+            expediente_ids: list[int] = []
+            for key in selected:
+                source = source_by_key[key]
+                expediente_ids.append(
+                    _ensure_expediente_for_source(
+                        cursor,
+                        source,
+                        process,
+                        process_id,
+                        current_user.login,
+                        payload.observacion
+                        or f"Inscripción institucional en {PROCESS_LABELS[process]} para el período {target_period_name}.",
+                        target_period,
+                        target_period_name,
+                        payload.fecha_inicio_carga,
+                        payload.fecha_fin_carga,
+                    )
+                )
+            conn.commit()
+        return {
+            "ok": True,
+            "message": f"Se registraron {len(expediente_ids)} inscripción(es) institucional(es) correctamente.",
+            "alcance": "INSTITUCIONAL_CUMPLIMIENTO",
+            "modifica_matricula_academica": False,
+            "inscripciones_registradas": len(expediente_ids),
+            "expedientes_matriculados": len(expediente_ids),
+            "expediente_ids": expediente_ids,
+            "fecha_inicio_carga": payload.fecha_inicio_carga.isoformat(),
+            "fecha_fin_carga": payload.fecha_fin_carga.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except (pyodbc.Error, RuntimeError) as exc:
+        try:
+            conn.rollback()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        raise _db_error(exc, "No se pudo registrar la inscripción institucional de prácticas") from exc
+
+
+@router.post("/admin/matriculas/responsable", include_in_schema=False)
+@router.post("/admin/inscripciones-cumplimiento/responsable")
+def assign_practices_responsible(
+    payload: AsignacionResponsablePracticasPayload,
+    current_user: Annotated[SessionUser, Depends(_ADMIN_ACCESS)],
+) -> dict[str, Any]:
+    process = _process_code(payload.tipo_proceso_codigo)
+    target_period = _clean(payload.codigo_periodo)
+    teacher_code = _clean(payload.codigo_docente)
+    if not target_period.isdigit() or not teacher_code.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="El período y el código del responsable deben tener valores numéricos válidos.",
+        )
+    expediente_ids = sorted({int(item) for item in payload.expediente_ids if int(item) > 0})
+    if not expediente_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una inscripción institucional para asignar al responsable.")
+    if len(expediente_ids) > 500:
+        raise HTTPException(status_code=400, detail="Puede asignar hasta 500 inscripciones institucionales por operación.")
+
+    placeholders = ",".join("?" for _ in expediente_ids)
+    try:
+        active_teacher = _active_teacher_by_code(teacher_code)
+        if not active_teacher:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "El docente seleccionado no tiene un usuario activo (A) en USUARIOS. "
+                    "Actualice su estado antes de asignarlo como responsable."
+                ),
+            )
+        teacher_name = active_teacher["nombre"]
+        teacher_document = active_teacher["cedula"] or None
+        teacher_email = active_teacher["correo"] or None
+        if not teacher_name:
+            raise HTTPException(status_code=400, detail="El docente activo no tiene un nombre válido registrado.")
+
+        with get_practices_connection() as conn:
+            cursor = conn.cursor()
+            if not _use_legacy_schema(cursor):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La asignación institucional está disponible para la estructura operativa actual de prácticas.",
+                )
+            _ensure_period_designation_table(cursor)
+            ensure_operations_schema(cursor)
+            process_id = _tipo_proceso_id(cursor, process)
+            cursor.execute(
+                f"""
+                SELECT
+                    e.expediente_id,
+                    e.codigo_estud,
+                    e.cedula_est,
+                    e.estudiante_snapshot,
+                    e.cod_anio_basica,
+                    e.carrera_snapshot,
+                    e.codigo_periodo_origen,
+                    e.periodo_origen_snapshot
+                FROM pp.expediente_practica e
+                INNER JOIN cat.tipo_proceso tp ON tp.tipo_proceso_id = e.tipo_proceso_id
+                WHERE tp.codigo = ?
+                  AND e.codigo_periodo = TRY_CONVERT(numeric(18,0), ?)
+                  AND e.expediente_id IN ({placeholders})
+                """,
+                process,
+                target_period,
+                *expediente_ids,
+            )
+            enrollments = cursor.fetchall()
+            found_ids = {int(item.expediente_id) for item in enrollments}
+            missing_ids = [item for item in expediente_ids if item not in found_ids]
+            if missing_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Solo se puede asignar un responsable a estudiantes previamente inscritos en el proceso. "
+                        f"No se encontraron las inscripciones: {', '.join(map(str, missing_ids[:20]))}."
+                    ),
+                )
+
+            source_codes = {
+                int(item.codigo_periodo_origen)
+                for item in enrollments
+                if item.codigo_periodo_origen is not None
+            }
+            source_names = {
+                _clean(item.periodo_origen_snapshot)
+                for item in enrollments
+                if _clean(item.periodo_origen_snapshot)
+            }
+            common_source_code = next(iter(source_codes)) if len(source_codes) == 1 else None
+            common_source_name = next(iter(source_names)) if len(source_names) == 1 else "Varios períodos de origen"
+
+            cursor.execute(
+                f"""
+                UPDATE de
+                SET de.activo = 0
+                FROM pp.designacion_periodo_estudiante de
+                WHERE de.expediente_id IN ({placeholders})
+                  AND de.activo = 1
+                """,
+                *expediente_ids,
+            )
+            cursor.execute(
+                """
+                INSERT INTO pp.designacion_periodo_responsable (
+                    tipo_proceso_id, codigo_periodo, codigo_periodo_origen, codigo_docente,
+                    cedula_responsable, nombre_responsable, correo_responsable, rol_responsable,
+                    cumple_requisitos, activo, observacion, periodo_origen_snapshot, usuario_registro
+                )
+                OUTPUT INSERTED.designacion_id AS DesignacionId
+                VALUES (?, TRY_CONVERT(numeric(18,0), ?), ?, TRY_CONVERT(decimal(18,0), ?),
+                        ?, ?, ?, ?, 1, 1, ?, ?, ?)
+                """,
+                process_id,
+                target_period,
+                common_source_code,
+                teacher_code,
+                teacher_document,
+                teacher_name,
+                teacher_email,
+                payload.rol_responsable,
+                f"Responsable asignado después de la inscripción institucional de {len(enrollments)} estudiante(s).",
+                common_source_name,
+                current_user.login,
+            )
+            designation = cursor.fetchone()
+            designation_id = int(designation.DesignacionId)
+
+            for enrollment in enrollments:
+                _register_responsable_for_expediente(
+                    cursor,
+                    int(enrollment.expediente_id),
+                    teacher_code,
+                    teacher_name,
+                    teacher_document,
+                    teacher_email,
+                    payload.rol_responsable,
+                    current_user.login,
+                    f"Responsable asignado para el período {target_period} después de la inscripción institucional.",
+                )
+                update_compliance_enrollment_status(
+                    cursor,
+                    expediente_id=int(enrollment.expediente_id),
+                    state="EN_PROCESO",
+                    user=current_user.login,
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO pp.designacion_periodo_estudiante (
+                        designacion_id, expediente_id, codigo_estud, cedula_est, estudiante_snapshot,
+                        codigo_periodo_origen, cod_anio_basica, carrera_snapshot, cumple_requisitos,
+                        activo, observacion, periodo_origen_snapshot, usuario_registro
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
+                    """,
+                    designation_id,
+                    int(enrollment.expediente_id),
+                    int(enrollment.codigo_estud),
+                    _clean(enrollment.cedula_est),
+                    _clean(enrollment.estudiante_snapshot),
+                    enrollment.codigo_periodo_origen,
+                    enrollment.cod_anio_basica,
+                    _clean(enrollment.carrera_snapshot),
+                    f"Asignado al responsable {teacher_code} después de confirmar la inscripción institucional.",
+                    _clean(enrollment.periodo_origen_snapshot),
+                    current_user.login,
+                )
+            conn.commit()
+        return {
+            "ok": True,
+            "message": f"Se asignó el responsable a {len(enrollments)} inscripción(es) institucional(es) correctamente.",
+            "alcance": "INSTITUCIONAL_CUMPLIMIENTO",
+            "modifica_matricula_academica": False,
+            "designacion_id": designation_id,
+            "expedientes_asignados": len(enrollments),
+        }
+    except HTTPException:
+        raise
+    except (pyodbc.Error, RuntimeError) as exc:
+        try:
+            conn.rollback()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        raise _db_error(exc, "No se pudo asignar el responsable de prácticas") from exc
 
 
 @router.get("/responsable/avance")
@@ -2260,6 +2957,7 @@ def responsable_progress(
                             "tipo_proceso": process,
                             "expedientes": 0,
                             "avance": 0,
+                            "avance_documental": 0,
                             "documentos_requeridos": required_count,
                             "documentos_cargados": 0,
                             "documentos_validados": 0,
@@ -2279,6 +2977,8 @@ def responsable_progress(
                     v.carrera_snapshot AS Carrera,
                     v.codigo_periodo AS CodigoPeriodo,
                     v.periodo_snapshot AS Periodo,
+                    e.fecha_inicio AS FechaInicioCarga,
+                    e.fecha_fin AS FechaFinCarga,
                     v.estado_expediente AS EstadoExpediente,
                     ee.codigo AS EstadoCodigo,
                     v.responsable_principal AS NombreResponsable,
@@ -2306,17 +3006,20 @@ def responsable_progress(
             items = _fetch_all(cursor)
             for item in items:
                 documents = _required_documents_status(cursor, int(item["ExpedienteId"]), process)
-                loaded = sum(1 for document in documents if document.get("Cargado"))
-                validated = sum(1 for document in documents if document.get("Validado"))
+                compliance = _document_compliance_summary(documents)
+                loaded = int(compliance["loaded"])
+                validated = int(compliance["validated"])
                 recognized_hours = float(item.get("HorasReconocidas") or 0)
                 required_hours = _required_hours(process)
                 item["TotalDocumentos"] = loaded
                 item["DocumentosValidados"] = validated
-                item["DocumentosPendientes"] = max(required_count - loaded, 0)
-                item["DocumentosRequeridos"] = required_count
+                item["DocumentosPendientes"] = compliance["pending_upload"]
+                item["DocumentosRequeridos"] = compliance["required"]
                 item["DocumentosDetalle"] = documents
                 item["ListoParaAprobar"] = loaded == required_count and recognized_hours >= required_hours
-                item["Avance"] = round((validated / max(required_count, 1)) * 100, 2)
+                item["AvanceDocumental"] = compliance["upload_percentage"]
+                item["AvanceValidacionDocumental"] = compliance["validation_percentage"]
+                item["Avance"] = compliance["validation_percentage"]
 
         total_required = required_count * len(items)
         total_validated = sum(int(item.get("DocumentosValidados") or 0) for item in items)
@@ -2326,6 +3029,7 @@ def responsable_progress(
             "tipo_proceso": process,
             "expedientes": len(items),
             "avance": round((total_validated / max(total_required, 1)) * 100, 2),
+            "avance_documental": round((total_loaded / max(total_required, 1)) * 100, 2),
             "documentos_requeridos": total_required,
             "documentos_cargados": total_loaded,
             "documentos_validados": total_validated,
@@ -2349,6 +3053,7 @@ def responsable_expediente_detail(
                     status_code=400,
                     detail="La revisión docente está disponible para la estructura vigente de prácticas.",
                 )
+            ensure_operations_schema(cursor)
             return _legacy_review_detail(cursor, expediente_id, current_user)
     except HTTPException:
         raise
@@ -2365,11 +3070,6 @@ def review_responsable_expediente(
     process = _process_code(payload.tipo_proceso_codigo)
     decision = _clean(payload.decision).upper()
     observation = _clean(payload.observacion)
-    state_by_decision = {
-        "APROBAR": "APROBADO",
-        "OBSERVAR": "OBSERVADO",
-        "RECHAZAR": "REPROBADO",
-    }
     review_result = {
         "APROBAR": "VALIDADO",
         "OBSERVAR": "OBSERVADO",
@@ -2384,6 +3084,7 @@ def review_responsable_expediente(
                     status_code=400,
                     detail="La revisión docente está disponible para la estructura vigente de prácticas.",
                 )
+            ensure_operations_schema(cursor)
 
             expediente_row = _fetch_legacy_expediente(cursor, expediente_id)
             if not expediente_row:
@@ -2407,7 +3108,15 @@ def review_responsable_expediente(
                 require_approval=decision in {"APROBAR", "RECHAZAR"},
             )
             documents = _required_documents_status(cursor, expediente_id, process)
-            required_hours = _required_hours(process)
+            configuration = effective_process_configuration(
+                cursor,
+                process_code=process,
+                career_code=expediente.get("cod_anio_basica"),
+                level=expediente.get("semestre_numero") or expediente.get("semestre"),
+                period_code=expediente.get("codigo_periodo"),
+            )
+            required_hours = float(configuration["horas_requeridas"])
+            minimum_grade = float(configuration["nota_minima_aprobacion"])
             validation_errors = _review_validation_errors(
                 decision,
                 float(payload.horas_verificadas),
@@ -2419,7 +3128,7 @@ def review_responsable_expediente(
             if validation_errors:
                 raise HTTPException(status_code=400, detail=" ".join(validation_errors))
 
-            new_state_code = state_by_decision[decision]
+            new_state_code = _REVIEW_EXPEDIENT_STATE_BY_DECISION[decision]
             new_state_id = _catalog_state_id(
                 cursor,
                 "cat.estado_expediente",
@@ -2490,7 +3199,6 @@ def review_responsable_expediente(
                     horas_reconocidas = ?,
                     horas_asistencia_validadas = ?,
                     estado_expediente_id = ?,
-                    fecha_fin = CASE WHEN ? = 'APROBAR' THEN COALESCE(fecha_fin, CONVERT(date, SYSDATETIME())) ELSE fecha_fin END,
                     observacion = COALESCE(NULLIF(?, ''), observacion),
                     usuario_modifica = ?,
                     fecha_modifica = SYSDATETIME()
@@ -2500,7 +3208,6 @@ def review_responsable_expediente(
                 float(payload.horas_verificadas),
                 float(payload.horas_verificadas),
                 new_state_id,
-                decision,
                 observation,
                 current_user.login,
                 expediente_id,
@@ -2519,27 +3226,81 @@ def review_responsable_expediente(
                     observation or f"Decisión docente: {decision.lower()}.",
                     current_user.login,
                 )
+            update_compliance_enrollment_status(
+                cursor,
+                expediente_id=expediente_id,
+                state={
+                    "APROBAR": "EN_REVISION",
+                    "OBSERVAR": "EN_REVISION",
+                    "RECHAZAR": "NO_CUMPLIDO",
+                }[decision],
+                user=current_user.login,
+            )
+            if decision == "APROBAR":
+                cursor.execute(
+                    "SELECT evaluacion_id FROM ops.evaluacion_practica WHERE expediente_id = ?",
+                    expediente_id,
+                )
+                evaluation_row = cursor.fetchone()
+                if evaluation_row:
+                    evaluation_id = int(evaluation_row[0])
+                    cursor.execute(
+                        """
+                        UPDATE ops.evaluacion_practica
+                        SET estado = N'PENDIENTE_CALIFICACION', calificacion = NULL,
+                            resultado = N'PENDIENTE', nota_minima_aprobacion = ?,
+                            origen_calificacion = NULL, detalle_calculo = NULL,
+                            observacion_revision = ?, observacion_calificacion = NULL,
+                            revisado_por = ?, fecha_revision = SYSDATETIME(),
+                            calificado_por = NULL, fecha_calificacion = NULL,
+                            usuario_modifica = ?, fecha_modifica = SYSDATETIME()
+                        WHERE evaluacion_id = ?
+                        """,
+                        minimum_grade,
+                        observation or "Documentos y horas corroborados por el responsable.",
+                        current_user.login,
+                        current_user.login,
+                        evaluation_id,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO ops.evaluacion_practica (
+                            expediente_id, estado, resultado, nota_minima_aprobacion, observacion_revision,
+                            revisado_por, fecha_revision, usuario_registro
+                        ) OUTPUT INSERTED.evaluacion_id
+                        VALUES (?, N'PENDIENTE_CALIFICACION', N'PENDIENTE', ?, ?, ?, SYSDATETIME(), ?)
+                        """,
+                        expediente_id,
+                        minimum_grade,
+                        observation or "Documentos y horas corroborados por el responsable.",
+                        current_user.login,
+                        current_user.login,
+                    )
+                    evaluation_id = int(cursor.fetchone()[0])
+                record_evaluation_history(
+                    cursor,
+                    evaluation_id=evaluation_id,
+                    action="HABILITAR_CALIFICACION",
+                    user=current_user.login,
+                    observation=observation or "Revisión documental finalizada.",
+                )
+                write_operations_audit(
+                    cursor,
+                    entity="EVALUACION_PRACTICA",
+                    entity_id=evaluation_id,
+                    action="HABILITAR_CALIFICACION",
+                    user=current_user.login,
+                    detail=observation or "Revisión documental finalizada.",
+                )
             conn.commit()
 
         if decision == "APROBAR":
-            try:
-                titulation_sync = _sync_titulacion_completion(
-                    expediente_id,
-                    process,
-                    current_user.login,
-                )
-            except (pyodbc.Error, RuntimeError):
-                # La aprobación pertenece a la base de prácticas y ya fue confirmada.
-                # Titulación también consulta este cumplimiento como respaldo, por lo
-                # que una indisponibilidad temporal no debe deshacer la decisión docente.
-                titulation_sync = {
-                    "sincronizado": False,
-                    "pendiente": True,
-                    "motivo": (
-                        "La aprobación quedó registrada; la actualización directa en "
-                        "Titulación quedó pendiente y se conciliará desde el expediente aprobado."
-                    ),
-                }
+            titulation_sync = {
+                "sincronizado": False,
+                "pendiente": True,
+                "motivo": "La revisión terminó; el expediente está a la espera de la calificación final.",
+            }
         else:
             titulation_sync = {
                 "sincronizado": False,
@@ -2548,7 +3309,7 @@ def review_responsable_expediente(
         return {
             "ok": True,
             "message": {
-                "APROBAR": "Expediente aprobado y requisito institucional corroborado.",
+                "APROBAR": "Revisión finalizada; expediente habilitado para calificación.",
                 "OBSERVAR": "Expediente observado; el estudiante debe corregir la documentación indicada.",
                 "RECHAZAR": "Expediente rechazado con la justificación registrada.",
             }[decision],

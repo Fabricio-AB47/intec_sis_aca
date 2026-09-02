@@ -218,9 +218,11 @@ function ExpedientSection({
           </div>
           <div className="document-expedient-actions">
             {folderUrl ? <a className="ghost-button" href={folderUrl} target="_blank" rel="noreferrer">Abrir carpeta</a> : null}
-            <button type="button" className="secondary-action" onClick={() => void prepareFolder()} disabled={preparing || uploading}>
-              {preparing ? 'Preparando...' : 'Generar expediente documental'}
-            </button>
+            {module.upload_enabled ? (
+              <button type="button" className="secondary-action" onClick={() => void prepareFolder()} disabled={preparing || uploading}>
+                {preparing ? 'Preparando...' : 'Preparar carpeta documental'}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

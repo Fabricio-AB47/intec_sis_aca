@@ -102,6 +102,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
         "Solicitud, equivalencias académicas, documento de respaldo y aprobación del cambio de carrera.",
         "Solicitudes",
     ),
+    _screen(
+        "solicitudes-cambio-modalidad",
+        "Cambio de modalidad",
+        "Solicitud de modalidad, carrera y período destino con matrícula única del pénsum.",
+        "Solicitudes",
+    ),
     _screen("estado-docente", "Estado docente", "Activación, inactivación y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Actualización"),
     _screen(
@@ -243,9 +249,6 @@ SISACADEMICO_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("gestion-sisacademico", "moodle_notas", "Notas Moodle", "Operación / Integraciones"),
     _flow("gestion-sisacademico", "moodle_sincronizacion", "Sincronización Moodle", "Operación / Integraciones"),
     _flow("gestion-sisacademico", "microsoft365_audit", "Auditoría de Microsoft 365", "Operación / Integraciones"),
-    _flow("gestion-sisacademico", "practicas", "Prácticas profesionales", "Operación / Prácticas"),
-    _flow("gestion-sisacademico", "practicas_vinculacion", "Vinculación con la sociedad", "Operación / Prácticas"),
-    _flow("gestion-sisacademico", "empresas", "Empresas de prácticas", "Operación / Prácticas"),
     _flow("gestion-sisacademico", "carreras", "Carreras", "Operación / Catálogos"),
     _flow("gestion-sisacademico", "materias", "Materias y pensum", "Operación / Catálogos"),
     _flow("gestion-sisacademico", "mallas", "Mallas académicas", "Operación / Catálogos"),
@@ -355,7 +358,7 @@ def _combine_pages(*collections: Iterable[str]) -> tuple[str, ...]:
 
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
-    "matricula-docente", "solicitudes-cambio-carrera",
+    "matricula-docente", "solicitudes-cambio-carrera", "solicitudes-cambio-modalidad",
     "estado-docente", "actualizar-datos-estudiante",
     "actualizar-correo-intec",
     "reportes-individuales", "admin-notas-asignatura", "reporteria-integral",
@@ -377,8 +380,8 @@ _ACADEMIC_SIS_FLOWS = _flow_codes(
         "preguntas_evaluacion", "evaluacion_resultados",
         "autoevaluacion_resultados", "fechas_autoevaluacion", "carreras",
         "materias", "mallas", "paralelos", "periodos", "fechas_notas",
-        "asistencia_estudiantes", "jornadas", "modalidades", "practicas",
-        "practicas_vinculacion", "empresas", "certificados_generados",
+        "asistencia_estudiantes", "jornadas", "modalidades",
+        "certificados_generados",
     ),
 )
 _ACADEMIC_REPORT_FLOWS = _combine_pages(
@@ -413,6 +416,8 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
     "solicitudes-cambio-carrera": ("ACADEMICO", "SECRETARIA"),
+    "solicitudes-cambio-modalidad": ("ACADEMICO", "SECRETARIA"),
+    "practicas-institucionales": ("DOCENTE",),
 }
 
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
@@ -454,7 +459,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
             "practicas-institucionales", "fecha-grado",
             "senescyt-estudiantes", "titulacion", "titulacion-proceso",
             "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
-            "solicitudes-cambio-carrera",
+            "solicitudes-cambio-carrera", "solicitudes-cambio-modalidad",
         ),
         _flow_codes("titulos-registrados"),
     ),
@@ -470,7 +475,8 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "VICERRECTOR": ("dashboard",),
     "DOCENTE": (
         "portal-docente", "portal-docente-informe", "portal-docente-planificacion",
-        "portal-docente-contratos", "ingles", "carnet-institucional", "moodle/alerts",
+        "portal-docente-contratos", "practicas-institucionales", "ingles",
+        "carnet-institucional", "moodle/alerts",
     ),
     "ESTUDIANTE": (
         "portal-estudiante", "portal-estudiante-malla-curricular",
@@ -790,14 +796,14 @@ def _migrate_new_screen_default_assignments(cursor: Any) -> None:
                   AND target.PantallaCodigo = source.PantallaCodigo
                 WHEN MATCHED
                  AND target.Activo = 0
-                 AND target.UsuarioActualizacion = N'SISTEMA_CATALOGO' THEN
+                 AND target.UsuarioActualizacion IN (N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL') THEN
                     UPDATE SET
                         target.Activo = 1,
                         target.FechaActualizacion = SYSDATETIME(),
-                        target.UsuarioActualizacion = N'SISTEMA_SOLICITUDES_V1'
+                        target.UsuarioActualizacion = N'SISTEMA_PANTALLAS_NUEVAS'
                 WHEN NOT MATCHED THEN
                     INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
-                    VALUES (source.RolCodigo, source.PantallaCodigo, 1, N'SISTEMA_SOLICITUDES_V1');
+                    VALUES (source.RolCodigo, source.PantallaCodigo, 1, N'SISTEMA_PANTALLAS_NUEVAS');
                 """,
                 role,
                 page,
@@ -1116,14 +1122,19 @@ def role_has_screen_access(role: str, page: str) -> bool:
         ) from exc
 
 
-def get_screen_access(role: str, *, include_all: bool = False) -> dict[str, Any]:
+def get_screen_access(
+    role: str,
+    *,
+    include_all: bool = False,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
     current_role = normalize_role(role)
     valid_roles = {item["value"] for item in ROLE_CATALOG}
     if current_role not in valid_roles:
         raise ValueError('El tipo de usuario no forma parte del catálogo de accesos.')
 
     cache_key = (current_role, include_all)
-    if not include_all:
+    if not include_all and not force_refresh:
         with _access_payload_cache_lock:
             cached = _access_payload_cache.get(cache_key)
             if cached and cached[0] > monotonic():

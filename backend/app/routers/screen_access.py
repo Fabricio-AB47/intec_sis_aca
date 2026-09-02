@@ -29,6 +29,7 @@ def _service_error(exc: Exception) -> HTTPException:
 def list_screen_access(
     current_user: Annotated[SessionUser, Depends(get_current_user)],
     include_all: bool = Query(default=False),
+    refresh: Annotated[bool, Query()] = False,
 ) -> dict:
     if include_all and normalize_role(current_user.rol) != "ADMINISTRADOR":
         raise HTTPException(
@@ -36,7 +37,11 @@ def list_screen_access(
             detail="Solo el administrador puede consultar la matriz completa de accesos.",
         )
     try:
-        return get_screen_access(current_user.rol, include_all=include_all)
+        return get_screen_access(
+            current_user.rol,
+            include_all=include_all,
+            force_refresh=refresh,
+        )
     except (ValueError, RuntimeError, pyodbc.Error) as exc:
         raise _service_error(exc) from exc
 

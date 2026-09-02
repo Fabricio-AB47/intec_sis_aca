@@ -45,6 +45,7 @@ import type {
   Page,
   PreinscriptionStage,
   PortalStudentSection,
+  PracticasProcessCode,
   ScreenPermissionCode,
   UserSession,
 } from '../types/app'
@@ -65,6 +66,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'matricula-acad',
   'matricula-docente',
   'solicitudes-cambio-carrera',
+  'solicitudes-cambio-modalidad',
   'estado-docente',
   'actualizar-datos-estudiante',
   'actualizar-correo-intec',
@@ -100,6 +102,7 @@ const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
 ])
 const SECRETARIA_ALLOWED_PAGES = new Set<Page>([
   'solicitudes-cambio-carrera',
+  'solicitudes-cambio-modalidad',
   'practicas-institucionales',
   'fecha-grado',
   'senescyt-estudiantes',
@@ -181,7 +184,7 @@ function pageAllowedForRole(
   if (normalizedRole === 'ESTUDIANTE') {
     return STUDENT_PORTAL_PAGES.has(page) || page === 'ingles' || page === 'carnet-institucional' || page === 'evaluacion-docente' || page === 'practicas-institucionales'
   }
-  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'ingles' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'carnet-institucional'
+  if (normalizedRole === 'DOCENTE') return page === 'portal-docente' || page === 'ingles' || page === 'portal-docente-informe' || page === 'portal-docente-planificacion' || page === 'portal-docente-contratos' || page === 'practicas-institucionales' || page === 'carnet-institucional'
   if (normalizedRole === 'ADMISIONES') return ADMISSIONS_ALLOWED_PAGES.includes(page)
   if (normalizedRole === 'SECRETARIA') return SECRETARIA_ALLOWED_PAGES.has(page)
   if (DASHBOARD_ONLY_ROLES.has(normalizedRole || '')) return page === 'dashboard'
@@ -281,6 +284,8 @@ export function useReporteriaApp() {
   const [portalStudentSection, setPortalStudentSection] = useState<PortalStudentSection>('dashboard')
   const [preinscriptionActiveStage, setPreinscriptionActiveStage] = useState<PreinscriptionStage>('registro')
   const [activeMoodleSection, setActiveMoodleSection] = useState<MoodleSection>('status')
+  const [practicasProcess, setPracticasProcess] = useState<PracticasProcessCode>('PPF')
+  const [practicasNavigationKey, setPracticasNavigationKey] = useState(0)
   const [titulosRegistradosTipo, setTitulosRegistradosTipo] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [dashboardMatriculaLoading, setDashboardMatriculaLoading] = useState(false)
@@ -483,9 +488,14 @@ export function useReporteriaApp() {
 
         setSession(currentSession)
         if (currentSession) {
-          setActivePage((currentPage) =>
-            pageAllowedForRole(currentSession.rol, currentPage) ? currentPage : defaultPageForRole(currentSession.rol)
-          )
+          const isStudentSession = normalizedRoleKey(currentSession.rol) === 'ESTUDIANTE'
+          setActivePage((currentPage) => {
+            if (isStudentSession) return defaultPageForRole(currentSession.rol)
+            return pageAllowedForRole(currentSession.rol, currentPage)
+              ? currentPage
+              : defaultPageForRole(currentSession.rol)
+          })
+          if (isStudentSession) setPortalStudentSection('dashboard')
         }
         if (!currentSession) {
           resetWorkspace()
@@ -516,14 +526,14 @@ export function useReporteriaApp() {
     }
 
     let cancelled = false
-    const syncAccess = async (initialLoad = false) => {
+    const syncAccess = async (initialLoad = false, refresh = false) => {
       if (initialLoad) {
         setScreenAccessPages(null)
         setScreenAccessLoading(true)
         setScreenAccessError('')
       }
       try {
-        const response = await fetchScreenAccessAssignments(false)
+        const response = await fetchScreenAccessAssignments(false, { refresh })
         if (cancelled) return
         const roleAccess = response.roles.find((item) => item.value === normalizedRoleKey(session.rol))
         if (!roleAccess) {
@@ -547,16 +557,16 @@ export function useReporteriaApp() {
       }
     }
 
-    const handleAccessUpdate = () => void syncAccess(false)
+    const handleAccessUpdate = () => void syncAccess(false, true)
     const handleStorageUpdate = (event: StorageEvent) => {
-      if (event.key === SCREEN_ACCESS_SYNC_KEY) void syncAccess(false)
+      if (event.key === SCREEN_ACCESS_SYNC_KEY) void syncAccess(false, true)
     }
-    const handleWindowFocus = () => void syncAccess(false)
+    const handleWindowFocus = () => void syncAccess(false, true)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void syncAccess(false)
+      if (document.visibilityState === 'visible') void syncAccess(false, true)
     }
-    void syncAccess(true)
-    const refreshInterval = window.setInterval(() => void syncAccess(false), 60_000)
+    void syncAccess(true, true)
+    const refreshInterval = window.setInterval(() => void syncAccess(false, true), 60_000)
     window.addEventListener('intec-screen-access-updated', handleAccessUpdate)
     window.addEventListener('storage', handleStorageUpdate)
     window.addEventListener('focus', handleWindowFocus)
@@ -1176,6 +1186,9 @@ export function useReporteriaApp() {
   const openCareerChangeRequestsPage = () => {
     activateAssignedScreen('solicitudes-cambio-carrera')
   }
+  const openModalityChangeRequestsPage = () => {
+    activateAssignedScreen('solicitudes-cambio-modalidad')
+  }
   const openEstadoDocentePage = () => {
     activateAssignedScreen('estado-docente')
   }
@@ -1278,7 +1291,9 @@ export function useReporteriaApp() {
   const openCarnetInstitucionalPage = () => {
     activateAssignedScreen('carnet-institucional')
   }
-  const openPracticasInstitucionalesPage = () => {
+  const openPracticasInstitucionalesPage = (process: PracticasProcessCode = 'PPF') => {
+    setPracticasProcess(process)
+    setPracticasNavigationKey((current) => current + 1)
     activateAssignedScreen('practicas-institucionales')
   }
 
@@ -1309,6 +1324,8 @@ export function useReporteriaApp() {
     portalStudentSection,
     preinscriptionActiveStage,
     activeMoodleSection,
+    practicasProcess,
+    practicasNavigationKey,
     titulosRegistradosTipo,
     displayName,
     dashboardMatriculaLoading,
@@ -1389,6 +1406,7 @@ export function useReporteriaApp() {
     openMatriculaAcadPage,
     openMatriculaDocentePage,
     openCareerChangeRequestsPage,
+    openModalityChangeRequestsPage,
     openEstadoDocentePage,
     openSenescytEstudiantesPage,
     openActualizarDatosEstudiantePage,

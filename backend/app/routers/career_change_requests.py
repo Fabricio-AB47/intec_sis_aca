@@ -19,6 +19,10 @@ import pyodbc
 import httpx
 
 from app.core.security import SessionUser, require_screen_access
+from app.services.academic_movement_audit import (
+    ensure_academic_movement_audit_schema,
+    record_academic_movement,
+)
 from app.services.db import get_connection, get_integration_control_connection
 from app.services.graph_documents import (
     complete_upload_session,
@@ -388,6 +392,7 @@ def _ensure_schema() -> None:
                 END;
                 """
             )
+            ensure_academic_movement_audit_schema(cursor)
             conn.commit()
         _schema_ready = True
 
@@ -415,6 +420,11 @@ def _user_label(user: SessionUser) -> str:
     return (_clean(user.email) or _clean(user.login) or "USUARIO")[:256]
 
 
+def _legacy_user_code(user: SessionUser) -> str:
+    internal_id = _clean(user.id_usuario)
+    return (internal_id or _clean(user.login) or "SISTEMA")[:10]
+
+
 def _require_reviewer(user: SessionUser) -> None:
     if user.rol.upper() not in _REVIEW_ROLES:
         raise HTTPException(status_code=403, detail="Solo Académico o Administrador puede aprobar y aplicar la solicitud.")
@@ -423,7 +433,25 @@ def _require_reviewer(user: SessionUser) -> None:
 def _fetch_student_context(cursor: pyodbc.Cursor, codigo_estud: int) -> dict[str, Any]:
     cursor.execute(
         """
-        WITH ultima_carrera AS
+        WITH ultima_cabecera AS
+        (
+            SELECT
+                cab.codigo_estud,
+                TRY_CONVERT(int, cab.cod_anio_Basica) AS cod_anio_Basica,
+                TRY_CONVERT(int, cab.codigo_periodo) AS codigo_periodo,
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY cab.codigo_estud
+                    ORDER BY
+                        TRY_CONVERT(int, cab.codigo_periodo) DESC,
+                        COALESCE(TRY_CONVERT(datetime2, cab.fecha_pago), CAST('19000101' AS datetime2)) DESC,
+                        TRY_CONVERT(bigint, cab.numcodigo) DESC,
+                        TRY_CONVERT(int, cab.Num_Matricula) DESC
+                ) AS fila
+            FROM dbo.CABECERA_MATRICULA cab
+            WHERE TRY_CONVERT(int, cab.codigo_estud) = ?
+        ),
+        ultima_materia AS
         (
             SELECT
                 cxe.codigo_estud,
@@ -449,14 +477,17 @@ def _fetch_student_context(cursor: pyodbc.Cursor, codigo_estud: int) -> dict[str
                 NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(300), d.correointec))), N''),
                 NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(300), d.correo))), N'')
             ) AS correo,
-            uc.cod_anio_Basica AS carrera_origen,
+            COALESCE(uc.cod_anio_Basica, um.cod_anio_Basica) AS carrera_origen,
             TRY_CONVERT(nvarchar(250), c.Nombre_Basica) AS carrera_origen_nombre,
-            uc.codigo_periodo AS periodo_origen
+            COALESCE(uc.codigo_periodo, um.codigo_periodo) AS periodo_origen
         FROM dbo.DATOS_ESTUD d
-        LEFT JOIN ultima_carrera uc ON uc.codigo_estud = d.codigo_estud AND uc.fila = 1
-        LEFT JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = uc.cod_anio_Basica
+        LEFT JOIN ultima_cabecera uc ON uc.codigo_estud = d.codigo_estud AND uc.fila = 1
+        LEFT JOIN ultima_materia um ON um.codigo_estud = d.codigo_estud AND um.fila = 1
+        LEFT JOIN dbo.CARRERAS c
+          ON TRY_CONVERT(int, c.Cod_AnioBasica) = COALESCE(uc.cod_anio_Basica, um.cod_anio_Basica)
         WHERE TRY_CONVERT(int, d.codigo_estud) = ?
         """,
+        codigo_estud,
         codigo_estud,
         codigo_estud,
     )
@@ -796,6 +827,112 @@ def _capture_career_snapshot(
     }
 
 
+def _career_record_counts(
+    cursor: pyodbc.Cursor,
+    codigo_estud: int,
+    career_code: int,
+) -> tuple[int, int]:
+    cursor.execute(
+        """
+        SELECT
+            (
+                SELECT COUNT(*)
+                FROM dbo.CABECERA_MATRICULA cab WITH (HOLDLOCK)
+                WHERE TRY_CONVERT(int, cab.codigo_estud) = ?
+                  AND TRY_CONVERT(int, cab.cod_anio_Basica) = ?
+            ) AS total_cabeceras,
+            (
+                SELECT COUNT(*)
+                FROM dbo.CARRERAXESTUD cxe WITH (HOLDLOCK)
+                WHERE TRY_CONVERT(int, cxe.codigo_estud) = ?
+                  AND TRY_CONVERT(int, cxe.cod_anio_Basica) = ?
+            ) AS total_materias
+        """,
+        codigo_estud,
+        career_code,
+        codigo_estud,
+        career_code,
+    )
+    row = cursor.fetchone()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _verify_source_career_backup(
+    cursor: pyodbc.Cursor,
+    request_item: dict[str, Any],
+    backup: dict[str, Any],
+) -> bool:
+    header_count, subject_count = _career_record_counts(
+        cursor,
+        request_item["codigo_estud"],
+        request_item["carrera_origen"],
+    )
+    if header_count == 0 and subject_count == 0:
+        return False
+    if (
+        header_count != backup["total_cabeceras"]
+        or subject_count != backup["total_materias"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La trayectoria de origen cambió después de generar el respaldo. "
+                "No se retiró ningún registro; genere una nueva revisión académica."
+            ),
+        )
+    current_snapshot = _capture_career_snapshot(
+        cursor,
+        request_item["codigo_estud"],
+        request_item["carrera_origen"],
+    )
+    if current_snapshot["hash_contenido"] != backup["hash_contenido"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La trayectoria de origen no coincide con el respaldo íntegro. "
+                "No se retiró ningún registro; revise las calificaciones antes de continuar."
+            ),
+        )
+    return True
+
+
+def _archive_source_career(
+    cursor: pyodbc.Cursor,
+    request_item: dict[str, Any],
+) -> dict[str, int]:
+    if request_item["carrera_origen"] == request_item["carrera_destino"]:
+        raise HTTPException(status_code=409, detail="La carrera de origen y destino no pueden coincidir.")
+    parameters = (request_item["codigo_estud"], request_item["carrera_origen"])
+    cursor.execute(
+        """
+        DELETE FROM dbo.CARRERAXESTUD
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+        """,
+        *parameters,
+    )
+    archived_subjects = max(int(cursor.rowcount or 0), 0)
+    cursor.execute(
+        """
+        DELETE FROM dbo.CABECERA_MATRICULA
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+        """,
+        *parameters,
+    )
+    archived_headers = max(int(cursor.rowcount or 0), 0)
+    remaining_headers, remaining_subjects = _career_record_counts(cursor, *parameters)
+    if remaining_headers or remaining_subjects:
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo retirar completamente la carrera de origen; la operación fue cancelada.",
+        )
+    return {
+        "source_headers_archived": archived_headers,
+        "source_subjects_archived": archived_subjects,
+    }
+
+
 def _backup_metadata(row: Any) -> dict[str, Any]:
     return {
         "id_respaldo": int(row.IdRespaldo),
@@ -1059,6 +1196,8 @@ def _row_to_request(row: Any) -> dict[str, Any]:
             if getattr(row, "FechaUltimaRestauracion", None)
             else None
         ),
+        "auditoria_id": _int_value(getattr(row, "AuditoriaId", None)),
+        "auditoria_hash": _clean(getattr(row, "AuditoriaHash", "")),
     }
 
 
@@ -1173,10 +1312,16 @@ def _request_select() -> str:
             respaldo.TotalMaterias AS RespaldoMaterias,
             respaldo.FechaRespaldo,
             respaldo.Restauraciones,
-            respaldo.FechaUltimaRestauracion
+            respaldo.FechaUltimaRestauracion,
+            auditoria.IdMovimiento AS AuditoriaId,
+            auditoria.HashMovimiento AS AuditoriaHash
         FROM sol.SolicitudCambioCarrera s
         LEFT JOIN sol.RespaldoCambioCarrera respaldo
           ON respaldo.IdSolicitud = s.IdSolicitud
+        LEFT JOIN aud.MovimientoAcademico auditoria
+          ON auditoria.TipoSolicitud = 'CARRERA'
+         AND auditoria.IdSolicitud = s.IdSolicitud
+         AND auditoria.Accion = 'APLICAR'
     """
 
 
@@ -1601,7 +1746,13 @@ def decide_career_change_request(
             if cursor.rowcount != 1:
                 raise HTTPException(status_code=409, detail="La solicitud ya fue revisada o no existe.")
             conn.commit()
-        return {"ok": True, "message": f"La solicitud quedó {decision.lower()}.", "estado": decision}
+        if decision == "APROBADA":
+            result = apply_career_change_request(request_id, current_user)
+            return {
+                **result,
+                "message": f"La solicitud fue aprobada. {result['message']}",
+            }
+        return {"ok": True, "message": "La solicitud quedó rechazada.", "estado": decision}
     except HTTPException:
         raise
     except pyodbc.Error as exc:
@@ -1677,8 +1828,9 @@ def _apply_equivalence(
     request_item: dict[str, Any],
     equivalence: dict[str, Any],
     registration_number: int,
-    user_label: str,
+    legacy_user_code: str,
 ) -> bool:
+    stored_user_code = (_clean(legacy_user_code) or "SISTEMA")[:10]
     cursor.execute(
         """
         SELECT COUNT(*)
@@ -1783,7 +1935,7 @@ def _apply_equivalence(
         source.Recuperacion,
         source.PromedioFinal if source.PromedioFinal is not None else approved_grade,
         "A",
-        user_label,
+        stored_user_code,
         equivalence["creditos_destino"] or source.Num_Creditos,
         date.today().isoformat(),
         registration_number,
@@ -1794,7 +1946,7 @@ def _apply_equivalence(
         source.ControlMatricula,
         source.teoriaHomo,
         source.practicahomo,
-        user_label,
+        stored_user_code,
         _clean(source.TipoCursoMigra),
     )
     return True
@@ -1817,15 +1969,17 @@ def apply_career_change_request(
             request_item = _row_to_request(row)
             backup = _find_backup(integration_cursor, request_id)
             already_applied = request_item["estado"] == "APLICADA"
-            if already_applied and backup:
+            if already_applied and backup and backup["estado"] == "RESTAURADO":
                 return {
                     "ok": True,
-                    "message": "La solicitud ya fue aplicada y su carrera anterior está respaldada.",
+                    "message": "La carrera anterior ya fue recuperada desde el respaldo.",
                     "estado": "APLICADA",
                     "inserted": 0,
                     "existing_skipped": 0,
                     "respaldo_cabeceras": backup["total_cabeceras"],
                     "respaldo_materias": backup["total_materias"],
+                    "source_headers_archived": 0,
+                    "source_subjects_archived": 0,
                 }
             if request_item["estado"] not in {"APROBADA", "APLICADA"}:
                 raise HTTPException(status_code=409, detail="La solicitud debe estar aprobada antes de aplicarla.")
@@ -1881,30 +2035,66 @@ def apply_career_change_request(
                     snapshot=snapshot,
                     audit_user=_user_label(current_user),
                 )
+            source_career_present = _verify_source_career_backup(cursor, request_item, backup)
 
             inserted = 0
             skipped = 0
-            if not already_applied:
-                _ensure_target_header(cursor, request_item)
-                next_registration = _next_registration_number(cursor)
-                for equivalence in equivalences:
-                    was_inserted = _apply_equivalence(
-                        cursor,
-                        request_item,
-                        equivalence,
-                        next_registration,
-                        _user_label(current_user),
-                    )
-                    if was_inserted:
-                        inserted += 1
-                        next_registration += 1
-                    else:
-                        skipped += 1
+            legacy_user_code = _legacy_user_code(current_user)
+            _ensure_target_header(cursor, request_item)
+            next_registration = _next_registration_number(cursor)
+            for equivalence in equivalences:
+                was_inserted = _apply_equivalence(
+                    cursor,
+                    request_item,
+                    equivalence,
+                    next_registration,
+                    legacy_user_code,
+                )
+                if was_inserted:
+                    inserted += 1
+                    next_registration += 1
+                else:
+                    skipped += 1
+            archived = {
+                "source_headers_archived": 0,
+                "source_subjects_archived": 0,
+            }
+            if source_career_present:
+                archived = _archive_source_career(cursor, request_item)
             primary_conn.commit()
 
-        if not already_applied:
-            with get_integration_control_connection() as integration_conn:
-                cursor = integration_conn.cursor()
+        with get_integration_control_connection() as integration_conn:
+            cursor = integration_conn.cursor()
+            audit = record_academic_movement(
+                cursor,
+                request_type="CARRERA",
+                request_id=request_id,
+                action="APLICAR",
+                student_code=request_item["codigo_estud"],
+                source_career=request_item["carrera_origen"],
+                target_career=request_item["carrera_destino"],
+                source_period=None,
+                target_period=request_item["codigo_periodo_destino"],
+                source_modality=None,
+                target_modality=None,
+                backup_headers=backup["total_cabeceras"],
+                backup_subjects=backup["total_materias"],
+                migrated_subjects=len(equivalences),
+                deleted_records=backup["total_cabeceras"] + backup["total_materias"],
+                backup_hash=backup["hash_contenido"],
+                before={
+                    "carrera": request_item["carrera_origen"],
+                    "cabeceras": backup["total_cabeceras"],
+                    "materias": backup["total_materias"],
+                },
+                after={
+                    "carrera": request_item["carrera_destino"],
+                    "periodo": request_item["codigo_periodo_destino"],
+                    "equivalencias_migradas": len(equivalences),
+                },
+                audit_user=_user_label(current_user),
+            )
+            if not already_applied:
                 cursor.execute(
                     """
                     UPDATE sol.SolicitudCambioCarrera
@@ -1914,22 +2104,30 @@ def apply_career_change_request(
                     _user_label(current_user),
                     request_id,
                 )
-                integration_conn.commit()
+            integration_conn.commit()
         return {
             "ok": True,
             "message": (
-                "La carrera anterior quedó respaldada correctamente."
-                if already_applied
-                else "El cambio de carrera se aplicó y la trayectoria anterior quedó respaldada."
+                "Se completó el reemplazo: la carrera anterior quedó únicamente en el respaldo."
+                if already_applied and sum(archived.values()) > 0
+                else (
+                    "La solicitud ya estaba aplicada y la trayectoria anterior permanece respaldada."
+                    if already_applied
+                    else "El cambio de carrera se aplicó; la trayectoria anterior quedó respaldada y fuera de la matrícula activa."
+                )
             ),
             "estado": "APLICADA",
             "inserted": inserted,
             "existing_skipped": skipped,
             "respaldo_cabeceras": backup["total_cabeceras"] if backup else 0,
             "respaldo_materias": backup["total_materias"] if backup else 0,
+            "auditoria_id": audit["id_movimiento"],
+            **archived,
         }
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=f"No se pudo validar la auditoría: {exc}") from exc
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo aplicar el cambio de carrera: {exc}") from exc
 

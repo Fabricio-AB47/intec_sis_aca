@@ -1041,7 +1041,7 @@ def document_record(document_graph_id: int) -> dict[str, Any] | None:
             """
             SELECT D.DocumentoGraphId, D.GraphItemId, D.GraphWebUrl, D.NombreArchivo,
                    D.ContentType, D.TamanoBytes, E.NumeroIdentificacion,
-                   E.TipoExpedienteGraphCodigo
+                   E.TipoExpedienteGraphCodigo, E.OrigenId
             FROM doc.DocumentoGraph D
             INNER JOIN doc.ExpedienteGraph E ON E.ExpedienteGraphId = D.ExpedienteGraphId
             WHERE D.DocumentoGraphId = ? AND D.Activo = 1

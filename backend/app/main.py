@@ -21,6 +21,7 @@ from app.routers.carnet import router as carnet_router
 from app.routers.certificados import router as certificados_router
 from app.routers.certificate_renamer import router as certificate_renamer_router
 from app.routers.career_change_requests import router as career_change_requests_router
+from app.routers.modality_change_requests import router as modality_change_requests_router
 from app.routers.credential_generator import router as credential_generator_router
 from app.routers.document_expedients import router as document_expedients_router
 from app.routers.excel_validator import router as excel_validator_router
@@ -33,6 +34,7 @@ from app.routers.mass_email import router as mass_email_router
 from app.routers.moodle import router as moodle_router
 from app.routers.portal_academico import router as portal_academico_router
 from app.routers.practicas_institucionales import router as practicas_institucionales_router
+from app.routers.practicas_operativas import router as practicas_operativas_router
 from app.routers.preinscription import UPLOAD_ROOT, router as preinscription_router
 from app.routers.senescyt import router as senescyt_router
 from app.routers.screen_access import router as screen_access_router
@@ -239,6 +241,7 @@ app.include_router(carnet_router)
 app.include_router(certificados_router)
 app.include_router(certificate_renamer_router)
 app.include_router(career_change_requests_router)
+app.include_router(modality_change_requests_router)
 app.include_router(credential_generator_router)
 app.include_router(mass_email_router)
 app.include_router(moodle_router)
@@ -257,6 +260,7 @@ app.include_router(sisacademico_admin_router)
 app.include_router(portal_academico_router)
 app.include_router(teacher_evaluation_router)
 app.include_router(practicas_institucionales_router)
+app.include_router(practicas_operativas_router)
 app.include_router(titulos_registrados_router)
 app.include_router(titulacion_router)
 

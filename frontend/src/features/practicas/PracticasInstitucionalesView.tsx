@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  createPracticasExpediente,
+  assignPracticasEnrollmentResponsable,
   downloadPracticasCartaCompromiso,
+  enrollPracticasStudents,
   fetchPracticasCatalog,
   fetchPracticasElegibles,
   fetchPracticasExpedientes,
@@ -12,11 +13,8 @@ import {
   fetchPracticasReviewDetail,
   fetchPracticasStudent,
   reviewPracticasExpediente,
-  savePracticasPeriodoDesignacion,
-  searchAcademicEnrollmentTeachers,
+  searchPracticasActiveTeachers,
   uploadPracticasAutorizacion,
-  uploadPracticasCartaCompromiso,
-  uploadPracticasCertificado,
 } from '../../lib/api'
 import type {
   AcademicTeacherOption,
@@ -32,17 +30,40 @@ import type {
   PracticasStudentResponse,
 } from '../../types/app'
 import { ExpedientesDocumentalesView } from '../expedientes/ExpedientesDocumentalesView'
+import { PracticasSeguimientoPanel } from './PracticasSeguimientoPanel'
 
 type PracticasInstitucionalesViewProps = {
   displayName: string
   role?: string
   codigoEstud?: number
+  initialProcess?: PracticasProcessCode
+  onProcessChange?: (process: PracticasProcessCode) => void
 }
 
-const PROCESS_OPTIONS: Array<{ code: PracticasProcessCode; label: string; short: string }> = [
-  { code: 'PPF', label: 'Prácticas preprofesionales', short: 'Preprofesionales' },
-  { code: 'VIN', label: 'Vinculación con la sociedad', short: 'Vinculación con la sociedad' },
+type PracticasWorkspace = 'gestion' | 'seguimiento' | 'catalogos'
+
+const PROCESS_OPTIONS: Array<{ code: PracticasProcessCode; label: string; short: string; description: string }> = [
+  {
+    code: 'PPF',
+    label: 'Prácticas laborales/preprofesionales',
+    short: 'Prácticas preprofesionales',
+    description: 'Inscripción institucional, plan de trabajo, horas, documentos y cierre.',
+  },
+  {
+    code: 'VIN',
+    label: 'Vinculación con la sociedad',
+    short: 'Vinculación con la sociedad',
+    description: 'Proyecto, beneficiarios, actividades, indicadores y evidencias.',
+  },
 ]
+
+function eligibilityKey(item: PracticasEligibilityItem) {
+  return `${item.codigo_estud}|${item.CodigoCarrera || ''}|${item.CodigoPeriodo || ''}`
+}
+
+function canRegisterInstitutionalEnrollment(item: PracticasEligibilityItem) {
+  return Boolean(item.PuedeInscribirse ?? item.PuedeMatricular)
+}
 
 function valueOrDash(value: unknown) {
   const text = value === null || value === undefined ? '' : String(value).trim()
@@ -88,13 +109,49 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function dateInputValue(value: unknown) {
+  const match = String(value ?? '').trim().match(/^\d{4}-\d{2}-\d{2}/)
+  return match?.[0] || ''
+}
+
+function ecuadorDateValue() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Guayaquil',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function uploadWindowLabel(start: unknown, end: unknown) {
+  const from = dateInputValue(start)
+  const to = dateInputValue(end)
+  return from && to ? `${from} al ${to}` : 'Plazo pendiente de configuración'
+}
+
+function isUploadWindowOpen(start: unknown, end: unknown) {
+  const from = dateInputValue(start)
+  const to = dateInputValue(end)
+  if (!from || !to) return false
+  const today = ecuadorDateValue()
+  return today >= from && today <= to
+}
+
 export function PracticasInstitucionalesView({
   displayName,
   role = '',
   codigoEstud,
+  initialProcess = 'PPF',
+  onProcessChange,
 }: Readonly<PracticasInstitucionalesViewProps>) {
-  const [mode, setMode] = useState<'student' | 'admin' | 'responsable'>('student')
-  const [selectedProcess, setSelectedProcess] = useState<PracticasProcessCode>('PPF')
+  const normalizedRole = role.trim().toUpperCase()
+  const isAdmin = !['ESTUDIANTE', 'DOCENTE'].includes(normalizedRole)
+  const isResponsible = normalizedRole === 'DOCENTE'
+  const isStudent = normalizedRole === 'ESTUDIANTE'
+  const [selectedProcess, setSelectedProcess] = useState<PracticasProcessCode>(initialProcess)
+  const [activeWorkspace, setActiveWorkspace] = useState<PracticasWorkspace>(isAdmin ? 'gestion' : 'seguimiento')
   const [catalog, setCatalog] = useState<PracticasCatalogResponse | null>(null)
   const [studentData, setStudentData] = useState<PracticasStudentResponse | null>(null)
   const [responsableProgress, setResponsableProgress] = useState<PracticasResponsableProgressResponse | null>(null)
@@ -109,10 +166,12 @@ export function PracticasInstitucionalesView({
   const [eligibilitySearch, setEligibilitySearch] = useState('')
   const [teacherSearch, setTeacherSearch] = useState('')
   const [teacherOptions, setTeacherOptions] = useState<AcademicTeacherOption[]>([])
-  const [selectedEligibility, setSelectedEligibility] = useState('')
   const [selectedPeriod, setSelectedPeriod] = useState('')
   const [selectedSourcePeriod, setSelectedSourcePeriod] = useState('')
-  const [selectedStudents, setSelectedStudents] = useState<number[]>([])
+  const [uploadStartDate, setUploadStartDate] = useState('')
+  const [uploadEndDate, setUploadEndDate] = useState('')
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([])
+  const [selectedEnrollmentIds, setSelectedEnrollmentIds] = useState<number[]>([])
   const [documentExpedient, setDocumentExpedient] = useState<{
     identification: string
     process: PracticasProcessCode
@@ -131,24 +190,51 @@ export function PracticasInstitucionalesView({
     rol_responsable: 'RESPONSABLE',
   })
 
-  const isAdmin = !['ESTUDIANTE', 'DOCENTE'].includes(role.trim().toUpperCase())
-  const isResponsible = role.trim().toUpperCase() === 'DOCENTE'
-
-  const filteredEligibility = useMemo(
-    () => (studentData?.eligibility || []).filter((item) => item.TipoProcesoCodigo === selectedProcess),
-    [selectedProcess, studentData]
-  )
-
-  const eligibilityOptions = isAdmin ? adminElegibles : filteredEligibility
   const sourcePeriodDetail = periodos.find((periodo) => String(periodo.CodigoPeriodo) === selectedSourcePeriod)
   const targetPeriodDetail = periodos.find((periodo) => String(periodo.CodigoPeriodo) === selectedPeriod)
+
+  const periodEnrollments = useMemo(
+    () => expedientes.filter((item) => (
+      item.TipoProcesoCodigo === selectedProcess
+      && String(item.CodigoPeriodo || '') === selectedPeriod
+    )),
+    [expedientes, selectedPeriod, selectedProcess],
+  )
 
   const filteredStudentExpedientes = useMemo(
     () => (studentData?.expedientes || []).filter((item) => item.TipoProcesoCodigo === selectedProcess),
     [selectedProcess, studentData]
   )
 
-  const visibleStudentExpedientes = isAdmin ? expedientes : filteredStudentExpedientes
+  const adminReviewItems = useMemo(
+    () => (responsableProgress?.items || []).filter((item) => (
+      item.TipoProcesoCodigo === selectedProcess
+      && String(item.CodigoPeriodo || '') === selectedPeriod
+    )),
+    [responsableProgress, selectedPeriod, selectedProcess],
+  )
+
+  const adminReviewSummary = useMemo(() => {
+    const required = adminReviewItems.reduce(
+      (total, item) => total + Number(item.DocumentosRequeridos || 0),
+      0,
+    )
+    const loaded = adminReviewItems.reduce(
+      (total, item) => total + Number(item.TotalDocumentos || 0),
+      0,
+    )
+    const validated = adminReviewItems.reduce(
+      (total, item) => total + Number(item.DocumentosValidados || 0),
+      0,
+    )
+    return {
+      expedientes: adminReviewItems.length,
+      documentos_cargados: loaded,
+      documentos_validados: validated,
+      documentos_pendientes: Math.max(required - validated, 0),
+      avance: required ? (validated / required) * 100 : 0,
+    }
+  }, [adminReviewItems])
 
   const processDocuments = useMemo(
     () => (catalog?.documents || []).filter((item) => item.TipoProcesoCodigo === selectedProcess),
@@ -160,25 +246,67 @@ export function PracticasInstitucionalesView({
     [catalog, selectedProcess]
   )
 
+  const workspaceOptions: Array<{ code: PracticasWorkspace; label: string; description: string }> = isAdmin
+    ? [
+        {
+          code: 'gestion',
+          label: 'Inscripción y responsables',
+          description: 'Inscribir estudiantes para cumplimiento, definir plazos y asignar el docente responsable.',
+        },
+        {
+          code: 'seguimiento',
+          label: 'Seguimiento, calificación y cierre',
+          description: selectedProcess === 'VIN'
+            ? 'Controlar proyecto, actividades, indicadores, revisión, calificación y cierre.'
+            : 'Controlar plan, bitácora, documentos, revisión, calificación y cierre.',
+        },
+        {
+          code: 'catalogos',
+          label: selectedProcess === 'VIN' ? 'Proyectos y convenios' : 'Entidades y convenios',
+          description: selectedProcess === 'VIN'
+            ? 'Administrar entidades, convenios y proyectos activos de vinculación.'
+            : 'Administrar empresas receptoras y convenios vigentes.',
+        },
+      ]
+    : isResponsible
+      ? [
+          {
+            code: 'seguimiento',
+            label: 'Seguimiento y calificación',
+            description: 'Revisar plan, evidencias y horas; habilitar y registrar la calificación final.',
+          },
+          {
+            code: 'gestion',
+            label: 'Revisión documental previa',
+            description: 'Corroborar documentos y horas antes de la calificación final del seguimiento.',
+          },
+        ]
+      : [
+          {
+            code: 'seguimiento',
+            label: 'Mi seguimiento y resultado',
+            description: 'Consultar requisitos, enviar a revisión y revisar la calificación final.',
+          },
+          {
+            code: 'gestion',
+            label: 'Mi cumplimiento documental',
+            description: 'Consultar el porcentaje, los plazos y los documentos cargados por el docente responsable.',
+          },
+        ]
+
   async function loadCatalog() {
     const payload = await fetchPracticasCatalog()
     setCatalog(payload)
   }
 
   async function loadStudent() {
-    if (isAdmin && !codigoEstud) {
-      setStudentData({ codigo_estud: 0, eligibility: [], expedientes: [] })
-      setSelectedEligibility('')
-      return
-    }
+    if (isAdmin || isResponsible) return
     const payload = await fetchPracticasStudent(codigoEstud)
     setStudentData(payload)
-    const first = payload.eligibility.find((item) => item.TipoProcesoCodigo === selectedProcess)
-    setSelectedEligibility(first ? `${first.CodigoCarrera || ''}|${first.CodigoPeriodo || ''}` : '')
   }
 
   async function loadAdmin() {
-    const payload = await fetchPracticasExpedientes({ tipo_proceso: selectedProcess, search: '', limit: 200 })
+    const payload = await fetchPracticasExpedientes({ tipo_proceso: selectedProcess, search: '', limit: 500 })
     setExpedientes(payload.items || [])
   }
 
@@ -201,8 +329,16 @@ export function PracticasInstitucionalesView({
     ])
     setPeriodos(periodPayload.items || [])
     setPeriodDesignations(designationPayload.items || [])
-    if (!selectedPeriod && periodPayload.items?.length) {
-      setSelectedPeriod(String(periodPayload.items[0].CodigoPeriodo || ''))
+    const initialPeriodCode = selectedPeriod || String(periodPayload.items?.[0]?.CodigoPeriodo || '')
+    if (!selectedPeriod && initialPeriodCode) {
+      setSelectedPeriod(initialPeriodCode)
+    }
+    const initialPeriod = periodPayload.items?.find(
+      (item) => String(item.CodigoPeriodo || '') === initialPeriodCode,
+    )
+    if (initialPeriod) {
+      setUploadStartDate((current) => current || dateInputValue(initialPeriod.FechaInicio))
+      setUploadEndDate((current) => current || dateInputValue(initialPeriod.FechaFin))
     }
     if (!selectedSourcePeriod && periodPayload.items?.length) {
       setSelectedSourcePeriod(String(periodPayload.items[0].CodigoPeriodo || ''))
@@ -260,7 +396,7 @@ export function PracticasInstitucionalesView({
     }
     if (decision === 'APROBAR') {
       if (!reviewDetail.DocumentosCompletos) {
-        setReviewError('No se puede aprobar mientras existan documentos obligatorios pendientes.')
+        setReviewError('No se puede finalizar la revisión mientras existan documentos obligatorios pendientes.')
         return
       }
       if (hours < Number(reviewDetail.HorasRequeridas || 0)) {
@@ -313,7 +449,7 @@ export function PracticasInstitucionalesView({
     setError('')
     setMessage('')
     try {
-      const payload = await searchAcademicEnrollmentTeachers(teacherSearch, 20, false)
+      const payload = await searchPracticasActiveTeachers(teacherSearch, 20)
       setTeacherOptions(payload.items || [])
       if (!(payload.items || []).length) setMessage('No se encontraron docentes con ese nombre, cédula o código.')
     } catch (apiError) {
@@ -336,25 +472,42 @@ export function PracticasInstitucionalesView({
     setTeacherOptions([])
   }
 
-  function toggleStudent(code: number) {
-    const student = adminElegibles.find((item) => Number(item.codigo_estud) === code)
-    if (student && !student.PuedeMatricular) {
+  function toggleStudent(key: string) {
+    const student = adminElegibles.find((item) => eligibilityKey(item) === key)
+    if (student && !canRegisterInstitutionalEnrollment(student)) {
       setError('El estudiante no cumple tercer semestre. Suba una autorización para habilitarlo.')
       return
     }
     setSelectedStudents((current) => (
-      current.includes(code)
-        ? current.filter((item) => item !== code)
-        : [...current, code]
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
     ))
   }
 
   function toggleAllStudents() {
-    const codes = adminElegibles
-      .filter((item) => Boolean(item.PuedeMatricular))
-      .map((item) => Number(item.codigo_estud))
+    const keys = adminElegibles
+      .filter(canRegisterInstitutionalEnrollment)
+      .map(eligibilityKey)
       .filter(Boolean)
-    setSelectedStudents((current) => current.length === codes.length ? [] : codes)
+    setSelectedStudents((current) => (
+      keys.length > 0 && keys.every((key) => current.includes(key)) ? [] : keys
+    ))
+  }
+
+  function toggleEnrollment(expedienteId: number) {
+    setSelectedEnrollmentIds((current) => (
+      current.includes(expedienteId)
+        ? current.filter((item) => item !== expedienteId)
+        : [...current, expedienteId]
+    ))
+  }
+
+  function toggleAllEnrollments() {
+    const ids = periodEnrollments.map((item) => Number(item.ExpedienteId)).filter(Boolean)
+    setSelectedEnrollmentIds((current) => (
+      ids.length > 0 && ids.every((id) => current.includes(id)) ? [] : ids
+    ))
   }
 
   async function uploadAutorizacion(student: PracticasEligibilityItem, file: File | null) {
@@ -384,7 +537,7 @@ export function PracticasInstitucionalesView({
     setLoading(true)
     try {
       await loadCatalog()
-      if (!isResponsible) await loadStudent()
+      if (!isAdmin && !isResponsible) await loadStudent()
       if (isAdmin) {
         await loadAdmin()
         await loadPeriodDesignations()
@@ -402,72 +555,94 @@ export function PracticasInstitucionalesView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProcess])
 
-  async function createExpediente() {
-    const [codigoEstudValue, codigoCarrera, codigoPeriodo] = selectedEligibility.split('|')
-    if (!codigoEstudValue || (!codigoCarrera && !codigoPeriodo)) {
-      setError('Seleccione un estudiante, carrera y período elegible.')
+  async function saveEnrollment() {
+    if (!selectedSourcePeriod) {
+      setError('Seleccione el período académico del estudiante para cargar la lista.')
       return
     }
+    if (!selectedPeriod) {
+      setError('Seleccione el período institucional donde se controlará el cumplimiento.')
+      return
+    }
+    if (!selectedStudents.length) {
+      setError('Seleccione al menos un estudiante para inscribir en el proceso institucional.')
+      return
+    }
+    if (!uploadStartDate || !uploadEndDate) {
+      setError('Defina la fecha de inicio y la fecha de cierre para la carga documental.')
+      return
+    }
+    if (uploadEndDate < uploadStartDate) {
+      setError('La fecha de cierre documental no puede ser anterior a la fecha de inicio.')
+      return
+    }
+
+    const selectedItems = adminElegibles.filter((item) => selectedStudents.includes(eligibilityKey(item)))
+    if (selectedItems.length !== selectedStudents.length) {
+      setError('La selección de estudiantes cambió. Cargue nuevamente la lista antes de registrar la inscripción.')
+      return
+    }
+
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      const response = await createPracticasExpediente({
+      const response = await enrollPracticasStudents({
         tipo_proceso_codigo: selectedProcess,
-        codigo_estud: Number(codigoEstudValue) || codigoEstud || null,
-        codigo_carrera: codigoCarrera || null,
-        codigo_periodo: codigoPeriodo || null,
-        observacion: `Creado desde módulo de ${processLabel(selectedProcess)}`,
+        codigo_periodo: selectedPeriod,
+        fecha_inicio_carga: uploadStartDate,
+        fecha_fin_carga: uploadEndDate,
+        estudiantes: selectedItems.map((item) => ({
+          codigo_estud: Number(item.codigo_estud),
+          codigo_carrera: String(item.CodigoCarrera || ''),
+          codigo_periodo_origen: String(item.CodigoPeriodo || ''),
+        })),
+        observacion: `Inscripción institucional de cumplimiento en ${processLabel(selectedProcess)}.`,
       })
-      setMessage(String(response.Mensaje || response.message || 'Expediente creado correctamente.'))
-      await loadStudent()
-      if (isAdmin) {
-        await loadAdmin()
-        await loadAdminEligibility()
-      }
-      if (isResponsible || isAdmin) await loadResponsibleProgress()
+      setSelectedStudents([])
+      setMessage(String(response.message || 'Las inscripciones institucionales fueron registradas correctamente.'))
+      await loadAdmin()
+      await loadAdminEligibility()
+      await loadResponsibleProgress()
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo crear el expediente.')
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo registrar la inscripción institucional de prácticas.')
     } finally {
       setSaving(false)
     }
   }
 
   async function saveResponsable() {
-    if (!selectedSourcePeriod) {
-      setError('Seleccione el período académico del estudiante para cargar la lista.')
-      return
-    }
     if (!selectedPeriod) {
-      setError('Seleccione el nuevo período de prácticas donde se va a matricular.')
+      setError('Seleccione el período institucional de las inscripciones.')
       return
     }
-    if (!responsableForm.codigo_docente.trim()) {
-      setError('Seleccione un docente del buscador para registrar la designación.')
+    if (!responsableForm.codigo_docente.trim() || !responsableForm.nombre_responsable.trim()) {
+      setError('Seleccione un docente del buscador para asignarlo como responsable.')
       return
     }
-    if (!selectedStudents.length) {
-      setError('Seleccione los estudiantes que estarán a cargo del docente.')
+    if (!selectedEnrollmentIds.length) {
+      setError('Seleccione al menos una inscripción antes de asignar al responsable.')
       return
     }
-    if (!responsableForm.nombre_responsable.trim()) {
-      setError('Ingrese el nombre del responsable.')
+    const availableIds = new Set(periodEnrollments.map((item) => Number(item.ExpedienteId)))
+    if (selectedEnrollmentIds.some((id) => !availableIds.has(id))) {
+      setError('La lista de inscripciones cambió. Actualice la información y vuelva a seleccionar.')
       return
     }
+
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      const response = await savePracticasPeriodoDesignacion({
+      const response = await assignPracticasEnrollmentResponsable({
         tipo_proceso_codigo: selectedProcess,
         codigo_periodo: selectedPeriod,
-        codigo_periodo_origen: selectedSourcePeriod,
         nombre_responsable: responsableForm.nombre_responsable.trim(),
         cedula_responsable: responsableForm.cedula_responsable.trim() || null,
         correo_responsable: responsableForm.correo_responsable.trim() || null,
         codigo_docente: responsableForm.codigo_docente.trim(),
         rol_responsable: 'RESPONSABLE',
-        estudiantes: selectedStudents,
+        expediente_ids: selectedEnrollmentIds,
       })
       setResponsableForm({
         nombre_responsable: '',
@@ -477,11 +652,10 @@ export function PracticasInstitucionalesView({
         rol_responsable: 'RESPONSABLE',
       })
       setTeacherSearch('')
-      setSelectedStudents([])
-      setMessage(String(response.message || 'Matrícula por período registrada en prácticas correctamente.'))
+      setSelectedEnrollmentIds([])
+      setMessage(String(response.message || 'El responsable fue asignado correctamente.'))
       await loadCatalog()
       await loadAdmin()
-      await loadStudent()
       await loadPeriodDesignations()
       await loadResponsibleProgress()
     } catch (apiError) {
@@ -505,40 +679,6 @@ export function PracticasInstitucionalesView({
     }
   }
 
-  async function uploadCarta(item: PracticasExpedienteItem, file: File | null) {
-    if (!file) return
-    setSaving(true)
-    setError('')
-    setMessage('')
-    try {
-      await uploadPracticasCartaCompromiso(item.ExpedienteId, file)
-      setMessage('Carta compromiso subida correctamente.')
-      await loadStudent()
-      if (isAdmin) await loadAdmin()
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo subir la carta compromiso.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function uploadCertificado(item: PracticasExpedienteItem, file: File | null) {
-    if (!file) return
-    setSaving(true)
-    setError('')
-    setMessage('')
-    try {
-      await uploadPracticasCertificado(item.ExpedienteId, file)
-      setMessage('Certificado subido correctamente.')
-      await loadStudent()
-      if (isAdmin) await loadAdmin()
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'No se pudo subir el certificado.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   function openDocumentExpedient(item: PracticasExpedienteItem) {
     const identification = String(item.Cedula_Est || '').trim()
     if (!identification) {
@@ -553,69 +693,135 @@ export function PracticasInstitucionalesView({
     })
   }
 
-  return (
-    <section className="portal-student-page practicas-page">
-      <header className="portal-student-hero practicas-hero">
-        <small>Prácticas institucionales</small>
-        <h1>Preprofesionales y vinculación con la sociedad</h1>
-        <p>{displayName} · Expedientes asignados, carta compromiso y designación administrativa.</p>
-      </header>
+  function openOperationalDocuments(identification: string) {
+    const normalized = identification.trim()
+    if (!normalized) {
+      setError('El expediente no tiene una cédula estudiantil válida para abrir la carpeta documental.')
+      return
+    }
+    setError('')
+    setMessage('')
+    setDocumentExpedient({ identification: normalized, process: selectedProcess })
+  }
 
-      <div className="portal-dashboard-overview practicas-controls">
-        <div className="teacher-evaluation__flow-actions practicas-process-tabs">
-          {PROCESS_OPTIONS.map((item) => (
-            <button
-              key={item.code}
-              type="button"
-              className={selectedProcess === item.code ? 'primary-action' : 'ghost-button'}
-              onClick={() => {
-                setSelectedProcess(item.code)
-                setSelectedStudents([])
-                setAdminElegibles([])
-                closeReview()
-              }}
-            >
-              {item.short}
-            </button>
-          ))}
+  function closeDocumentExpedient() {
+    setDocumentExpedient(null)
+    if (isResponsible) {
+      void loadResponsibleProgress()
+    } else if (isAdmin) {
+      void loadAdmin()
+      void loadResponsibleProgress()
+    } else {
+      void loadStudent()
+    }
+  }
+
+  function selectProcess(process: PracticasProcessCode) {
+    if (process === selectedProcess) return
+    setSelectedProcess(process)
+    setActiveWorkspace(isAdmin ? 'gestion' : 'seguimiento')
+    setSelectedPeriod('')
+    setSelectedSourcePeriod('')
+    setUploadStartDate('')
+    setUploadEndDate('')
+    setSelectedStudents([])
+    setSelectedEnrollmentIds([])
+    setAdminElegibles([])
+    closeReview()
+    onProcessChange?.(process)
+  }
+
+  return (
+    <section className={`portal-student-page practicas-page${isStudent ? ' practicas-page--student' : ''}`}>
+      <header className="portal-student-hero practicas-hero">
+        <div className="practicas-hero__copy">
+          <small>Prácticas institucionales</small>
+          <h1>{processLabel(selectedProcess)}</h1>
+          <p>
+            {displayName} · {selectedProcess === 'VIN'
+              ? 'Inscripción institucional, proyecto, actividades, indicadores, evidencias y cierre.'
+              : 'Inscripción institucional, plan, horas, documentos, evaluación y cierre.'}
+          </p>
         </div>
-        {isAdmin ? (
-          <div className="teacher-evaluation__flow-actions practicas-process-tabs">
-            <button type="button" className={mode === 'student' ? 'primary-action' : 'ghost-button'} onClick={() => setMode('student')}>
-              Estudiantes
-            </button>
-            <button type="button" className={mode === 'responsable' ? 'primary-action' : 'ghost-button'} onClick={() => setMode('responsable')}>
-              Avance responsable
-            </button>
-            <button type="button" className={mode === 'admin' ? 'primary-action' : 'ghost-button'} onClick={() => setMode('admin')}>
-              Designación
-            </button>
-          </div>
-        ) : null}
-      </div>
+      </header>
 
       {error ? <p className="form-error">{error}</p> : null}
       {message ? <p className="form-success">{message}</p> : null}
 
-      <section className="portal-dashboard-overview practicas-summary">
-        <article>
-          <span>Proceso</span>
-          <strong>{processLabel(selectedProcess)}</strong>
-          <p>{selectedProcess === 'PPF' ? 'Carta compromiso, certificados, asistencia, actividades y evaluación.' : 'Anexo 1, Anexo 2, evidencias y certificado.'}</p>
-        </article>
-        <article>
-          <span>Documentos</span>
-          <strong>{processDocuments.length}</strong>
-          <p>{processDocuments.filter((item) => item.EsObligatorio).length} obligatorio(s)</p>
-        </article>
-        <article>
-          <span>Responsables</span>
-          <strong>{processResponsibles.length}</strong>
-          <p>Activos para {processLabel(selectedProcess)}</p>
-        </article>
-      </section>
+      <div className="practicas-overview-layout">
+        <nav className="practicas-process-selector" aria-label="Procesos de prácticas institucionales">
+          {PROCESS_OPTIONS.map((item) => (
+            <button
+              key={item.code}
+              type="button"
+              className={selectedProcess === item.code ? 'is-active' : ''}
+              aria-pressed={selectedProcess === item.code}
+              onClick={() => selectProcess(item.code)}
+            >
+              <span>{item.code}</span>
+              <strong>{item.short}</strong>
+              <small>{item.description}</small>
+            </button>
+          ))}
+        </nav>
 
-      {mode === 'responsable' || isResponsible ? (
+        <section className="portal-dashboard-overview practicas-summary">
+          <article>
+            <span>Proceso</span>
+            <strong>{processLabel(selectedProcess)}</strong>
+            <p>{selectedProcess === 'PPF' ? 'Carta compromiso, certificados, asistencia, actividades y evaluación.' : 'Anexo 1, Anexo 2, evidencias y certificado.'}</p>
+          </article>
+          <article>
+            <span>Documentos</span>
+            <strong>{processDocuments.length}</strong>
+            <p>{processDocuments.filter((item) => item.EsObligatorio).length} obligatorio(s)</p>
+          </article>
+          <article>
+            <span>Responsables</span>
+            <strong>{processResponsibles.length}</strong>
+            <p>Activos para {processLabel(selectedProcess)}</p>
+          </article>
+        </section>
+      </div>
+
+      <div className="practicas-navigation-layout">
+        <aside className="practicas-enrollment-boundary" aria-label="Alcance de la inscripción institucional">
+          <div>
+            <strong>Inscripción institucional de cumplimiento</strong>
+            <span>Se registra únicamente en el módulo de prácticas.</span>
+          </div>
+          <div>
+            <strong>Matrícula académica sin cambios</strong>
+            <span>Carrera, estudiante y período se consultan como referencia de solo lectura.</span>
+          </div>
+        </aside>
+
+        <nav className="practicas-workspace-tabs" aria-label={`Apartados de ${processLabel(selectedProcess)}`}>
+          {workspaceOptions.map((item) => (
+            <button
+              key={item.code}
+              type="button"
+              className={activeWorkspace === item.code ? 'is-active' : ''}
+              aria-pressed={activeWorkspace === item.code}
+              onClick={() => setActiveWorkspace(item.code)}
+            >
+              <strong>{item.label}</strong>
+              <small>{item.description}</small>
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {activeWorkspace !== 'gestion' ? (
+        <PracticasSeguimientoPanel
+          process={selectedProcess}
+          role={role}
+          mode={activeWorkspace === 'catalogos' ? 'catalogos' : 'seguimiento'}
+          onOpenDocuments={openOperationalDocuments}
+        />
+      ) : null}
+
+      {activeWorkspace === 'gestion' ? (isResponsible ? (
         <section className="student-card student-card--wide matricula-panel">
           <div className="section-title">
             <span>Responsable</span>
@@ -651,6 +857,7 @@ export function PracticasInstitucionalesView({
                   <th>Estudiante</th>
                   <th>Carrera</th>
                   <th>Período</th>
+                  <th>Plazo documental</th>
                   <th>Estado</th>
                   <th>Horas</th>
                   <th>Documentos</th>
@@ -668,6 +875,10 @@ export function PracticasInstitucionalesView({
                     </td>
                     <td>{valueOrDash(item.Carrera)}</td>
                     <td>{valueOrDash(item.CodigoPeriodo)}</td>
+                    <td className="practicas-upload-window">
+                      <strong>{uploadWindowLabel(item.FechaInicioCarga, item.FechaFinCarga)}</strong>
+                      <small>{isUploadWindowOpen(item.FechaInicioCarga, item.FechaFinCarga) ? 'Carga habilitada' : 'Carga cerrada'}</small>
+                    </td>
                     <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
                     <td>
                       <strong>{Number(item.HorasReconocidas || 0).toFixed(2)} / {Number(item.HorasRequeridas || (selectedProcess === 'PPF' ? 240 : 60)).toFixed(0)}</strong>
@@ -693,64 +904,35 @@ export function PracticasInstitucionalesView({
                         >
                           Revisar
                         </button>
-                        <button type="button" className="ghost-button" onClick={() => openDocumentExpedient(item)} disabled={saving}>
-                          Expediente
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => openDocumentExpedient(item)}
+                          disabled={saving || !String(item.Cedula_Est || '').trim()}
+                        >
+                          Cargar documentos
                         </button>
                       </div>
                     </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={9}>No existen expedientes asignados al responsable para este proceso.</td>
+                    <td colSpan={10}>No existen expedientes asignados al responsable para este proceso.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         </section>
-      ) : mode === 'student' ? (
+      ) : !isAdmin ? (
         <section className="student-card student-card--wide matricula-panel">
           <div className="section-title">
             <span>Estudiante</span>
-            <strong>{isAdmin ? 'Matrícula administrativa' : 'Mis prácticas asignadas'}</strong>
+            <strong>Mis prácticas asignadas</strong>
           </div>
-          {isAdmin ? (
-            <div className="matricula-acad-form practicas-form">
-              <label>
-                <span>Buscar estudiante</span>
-                <input
-                  value={eligibilitySearch}
-                  onChange={(event) => setEligibilitySearch(event.target.value)}
-                  placeholder="Nombre, cédula, carrera o período"
-                />
-              </label>
-              <button type="button" className="secondary-action" onClick={loadAdminEligibility} disabled={loading}>
-                Buscar elegibles
-              </button>
-              <label>
-                <span>Estudiante, carrera y período</span>
-                <select value={selectedEligibility} onChange={(event) => setSelectedEligibility(event.target.value)}>
-                  <option value="">Seleccione una opción</option>
-                  {eligibilityOptions.map((item) => {
-                    const key = `${item.codigo_estud || ''}|${item.CodigoCarrera || ''}|${item.CodigoPeriodo || ''}`
-                    return (
-                      <option key={key} value={key} disabled={!item.EsElegible}>
-                        {valueOrDash(item.Apellidos_nombre)} · {valueOrDash(item.Cedula_Est)} · {valueOrDash(item.Carrera)} · {valueOrDash(item.NombrePeriodo || item.CodigoPeriodo)} · Semestre {valueOrDash(item.SemestreMaximo)}
-                        {item.EsElegible ? '' : ' · no elegible'}
-                      </option>
-                    )
-                  })}
-                </select>
-              </label>
-              <button type="button" className="primary-action" onClick={createExpediente} disabled={saving || loading}>
-                {saving ? 'Guardando...' : `Matricular en ${processLabel(selectedProcess)}`}
-              </button>
-            </div>
-          ) : (
-            <p className="portal-muted">
-              La matrícula de prácticas y vinculación con la sociedad la realiza administración. Desde aquí puedes descargar y subir la carta compromiso cuando tengas un expediente asignado.
-            </p>
-          )}
+          <p className="portal-muted">
+            Administración registra tu inscripción institucional y el docente responsable asignado carga la documentación. Aquí puedes consultar el cumplimiento, revisar cada archivo y descargar tu carta compromiso sin modificar la matrícula académica.
+          </p>
 
           <div className="matricula-table-wrap excel-table-wrap">
             <table className="matricula-table practicas-table">
@@ -760,71 +942,54 @@ export function PracticasInstitucionalesView({
                   <th>Proceso</th>
                   <th>Carrera</th>
                   <th>Período</th>
+                  <th>Plazo documental</th>
+                  <th>Cumplimiento documental</th>
                   <th>Estado</th>
                   <th>Responsable</th>
-                  <th>Carta compromiso</th>
-                  <th>Certificado</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleStudentExpedientes.length ? visibleStudentExpedientes.map((item) => (
+                {filteredStudentExpedientes.length ? filteredStudentExpedientes.map((item) => (
                   <tr key={item.ExpedienteId}>
                     <td>{valueOrDash(item.CodigoExpediente || item.ExpedienteId)}</td>
                     <td>{processLabel(String(item.TipoProcesoCodigo))}</td>
                     <td>{valueOrDash(item.Carrera || item.CodigoCarrera)}</td>
                     <td>{valueOrDash(item.CodigoPeriodo)}</td>
+                    <td className="practicas-upload-window">
+                      <strong>{uploadWindowLabel(item.FechaInicioCarga, item.FechaFinCarga)}</strong>
+                      <small>{isUploadWindowOpen(item.FechaInicioCarga, item.FechaFinCarga) ? 'Plazo vigente' : 'Plazo finalizado'}</small>
+                    </td>
+                    <td>
+                      <div className="practicas-document-progress">
+                        <div>
+                          <strong>{percentValue(item.AvanceDocumental).toFixed(0)}%</strong>
+                          <small>{item.DocumentosCargados || 0} de {item.DocumentosRequeridos || 0}</small>
+                        </div>
+                        <div
+                          className="practicas-mini-progress"
+                          role="progressbar"
+                          aria-label="Cumplimiento documental"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={percentValue(item.AvanceDocumental)}
+                        >
+                          <span style={{ width: `${percentValue(item.AvanceDocumental)}%` }} />
+                        </div>
+                        <small>{item.DocumentosPendientes ? `${item.DocumentosPendientes} pendiente(s)` : 'Documentación completa'}</small>
+                      </div>
+                    </td>
                     <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
                     <td>{valueOrDash(item.DocenteTutor || item.NombreResponsable)}</td>
                     <td>
-                      {item.TipoProcesoCodigo === 'PPF' ? (
-                        <span className={statusClass(item.CartaCompromisoEstadoCodigo)}>
-                          {valueOrDash(item.CartaCompromisoEstado || (item.CartaCompromisoDocumentoId ? 'Cargada' : 'Pendiente'))}
-                        </span>
-                      ) : 'No aplica'}
-                    </td>
-                    <td>
-                      {item.TipoProcesoCodigo === 'PPF' ? (
-                        <span className={statusClass(item.CertificadoEstadoCodigo)}>
-                          {valueOrDash(item.CertificadoEstado || (item.CertificadoDocumentoId ? 'Cargado' : 'Pendiente'))}
-                        </span>
-                      ) : 'No aplica'}
-                    </td>
-                    <td>
                       <div className="practicas-row-actions">
                         <button type="button" className="secondary-action" onClick={() => openDocumentExpedient(item)} disabled={saving}>
-                          Expediente
+                          Ver documentos
                         </button>
                         {item.TipoProcesoCodigo === 'PPF' ? (
-                          <>
                           <button type="button" className="secondary-action" onClick={() => void downloadCarta(item)} disabled={saving}>
                             Descargar carta
                           </button>
-                          <label className="ghost-button practicas-upload-button">
-                            Subir firmada
-                            <input
-                              type="file"
-                              accept="application/pdf,.pdf"
-                              onChange={(event) => {
-                                void uploadCarta(item, event.target.files?.[0] || null)
-                                event.currentTarget.value = ''
-                              }}
-                              disabled={saving}
-                            />
-                          </label>
-                          <label className="ghost-button practicas-upload-button">
-                            Subir certificado
-                            <input
-                              type="file"
-                              accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg"
-                              onChange={(event) => {
-                                void uploadCertificado(item, event.target.files?.[0] || null)
-                                event.currentTarget.value = ''
-                              }}
-                              disabled={saving}
-                            />
-                          </label>
-                          </>
                         ) : null}
                       </div>
                     </td>
@@ -842,16 +1007,44 @@ export function PracticasInstitucionalesView({
         <section className="student-card student-card--wide matricula-panel practicas-admin-card">
           <div className="section-title">
             <span>Administrador</span>
-            <strong>Matricular estudiantes por período</strong>
+            <strong>Flujo institucional de {processLabel(selectedProcess).toLowerCase()}</strong>
           </div>
 
           <p className="portal-muted">
-            Seleccione primero el período académico donde está el estudiante, luego el nuevo período de prácticas donde quedará matriculado. Todo se guarda únicamente en la base de prácticas.
+            Primero registre la inscripción institucional y luego asigne el responsable. Solo ese docente podrá cargar la documentación; el estudiante consultará su porcentaje de cumplimiento sin alterar materias ni matrícula académica.
           </p>
+
+          <div className="practicas-workflow" aria-label="Etapas del proceso">
+            <article className="practicas-workflow-step is-current">
+              <span>1</span>
+              <div><strong>Inscripción</strong><small>Registrar estudiantes para el control de cumplimiento.</small></div>
+            </article>
+            <article className="practicas-workflow-step">
+              <span>2</span>
+              <div><strong>Responsable</strong><small>Asignar quién revisará cada inscripción.</small></div>
+            </article>
+            <article className="practicas-workflow-step">
+              <span>3</span>
+              <div><strong>Documentación</strong><small>Carga del expediente estudiantil.</small></div>
+            </article>
+            <article className="practicas-workflow-step">
+              <span>4</span>
+              <div><strong>Cumplimiento</strong><small>Revisión y aprobación del responsable.</small></div>
+            </article>
+          </div>
+
+          <section className="practicas-stage practicas-stage--enrollment">
+            <header className="practicas-stage__header">
+              <span>1</span>
+              <div>
+                <strong>Inscripción institucional de estudiantes</strong>
+                <small>Seleccione la referencia académica y el período en el que se controlará la práctica.</small>
+              </div>
+            </header>
 
           <div className="matricula-acad-form practicas-form practicas-responsable-form">
             <label>
-              <span>Período académico del estudiante ({periodos.length} período(s))</span>
+              <span>Período académico de referencia ({periodos.length} período(s))</span>
               <select
                 value={selectedSourcePeriod}
                 onChange={(event) => {
@@ -869,12 +1062,17 @@ export function PracticasInstitucionalesView({
               </select>
             </label>
             <label>
-              <span>Nuevo período de prácticas ({periodos.length} período(s))</span>
+              <span>Período institucional del proceso ({periodos.length} período(s))</span>
               <select
                 value={selectedPeriod}
                 onChange={(event) => {
-                  setSelectedPeriod(event.target.value)
+                  const periodCode = event.target.value
+                  const period = periodos.find((item) => String(item.CodigoPeriodo) === periodCode)
+                  setSelectedPeriod(periodCode)
+                  setUploadStartDate(dateInputValue(period?.FechaInicio))
+                  setUploadEndDate(dateInputValue(period?.FechaFin))
                   setSelectedStudents([])
+                  setSelectedEnrollmentIds([])
                 }}
               >
                 <option value="">Seleccione período destino</option>
@@ -905,67 +1103,68 @@ export function PracticasInstitucionalesView({
                 Nota aprobar: {valueOrDash(targetPeriodDetail?.NotaAprobar)}
               </small>
             </div>
-            <label>
-              <span>Buscar docente responsable</span>
-              <input value={teacherSearch} onChange={(event) => setTeacherSearch(event.target.value)} placeholder="Nombre, cédula o código docente" />
-            </label>
-            <button type="button" className="secondary-action" onClick={searchTeachers} disabled={loading}>
-              Buscar docente
-            </button>
-            <label>
-              <span>Docente seleccionado</span>
-              <input value={responsableForm.nombre_responsable} readOnly placeholder="Seleccione un docente del listado" />
-            </label>
-            <label>
-              <span>Cédula</span>
-              <input value={responsableForm.cedula_responsable} readOnly />
-            </label>
-            <label>
-              <span>Código docente</span>
-              <input value={responsableForm.codigo_docente} readOnly />
-            </label>
-            <label>
-              <span>Rol</span>
-              <input value="Responsable" readOnly />
-            </label>
-            <button type="button" className="primary-action" onClick={saveResponsable} disabled={saving}>
-              Matricular estudiantes y asignar docente
-            </button>
-          </div>
-          {teacherOptions.length ? (
-            <div className="practicas-teacher-results">
-              {teacherOptions.map((teacher) => (
-                <button key={`${teacher.codigo_doc}-${teacher.cedula || ''}`} type="button" onClick={() => selectTeacher(teacher)}>
-                  <strong>{valueOrDash(teacher.descripcion || teacher.login)}</strong>
-                  <span>{valueOrDash(teacher.cedula)} · Código {valueOrDash(teacher.codigo_doc)} · {valueOrDash(teacher.correo || teacher.correo_personal)}</span>
-                </button>
-              ))}
+            <div className="practicas-upload-window-form">
+              <label>
+                <span>Inicio de carga documental</span>
+                <input
+                  type="date"
+                  value={uploadStartDate}
+                  max={uploadEndDate || undefined}
+                  onChange={(event) => setUploadStartDate(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                <span>Cierre de carga documental</span>
+                <input
+                  type="date"
+                  value={uploadEndDate}
+                  min={uploadStartDate || undefined}
+                  onChange={(event) => setUploadEndDate(event.target.value)}
+                  required
+                />
+              </label>
+              <p>
+                Este plazo se aplica a la carga de documentos de todas las inscripciones seleccionadas.
+                La descarga de formatos permanece disponible.
+              </p>
             </div>
-          ) : null}
+            <label className="practicas-form__search">
+              <span>Filtrar estudiantes del período</span>
+              <input
+                value={eligibilitySearch}
+                onChange={(event) => setEligibilitySearch(event.target.value)}
+                placeholder="Nombre, cédula, carrera o período"
+              />
+            </label>
+          </div>
 
           <div className="practicas-student-picker">
             <div className="practicas-picker-head">
-              <strong>Estudiantes a matricular en el período</strong>
+              <strong>Estudiantes a inscribir para cumplimiento</strong>
               <button type="button" className="secondary-action" onClick={loadAdminEligibility} disabled={loading || !selectedSourcePeriod}>
                 Cargar estudiantes
               </button>
               <button type="button" className="ghost-button" onClick={toggleAllStudents} disabled={!adminElegibles.length}>
-                {selectedStudents.length === adminElegibles.length && adminElegibles.length ? 'Quitar todos' : 'Seleccionar todos'}
+                {adminElegibles.filter(canRegisterInstitutionalEnrollment).length > 0
+                  && adminElegibles.filter(canRegisterInstitutionalEnrollment).every((item) => selectedStudents.includes(eligibilityKey(item)))
+                  ? 'Quitar todos'
+                  : 'Seleccionar habilitados'}
               </button>
             </div>
-            <p>{selectedStudents.length} de {adminElegibles.length} estudiante(s) del período origen seleccionados para matricular en el período destino.</p>
+            <p>{selectedStudents.length} de {adminElegibles.length} estudiante(s) seleccionados desde la referencia académica para el período institucional.</p>
             <div className="practicas-student-list">
               {adminElegibles.length ? adminElegibles.map((student) => {
-                const code = Number(student.codigo_estud)
-                const canEnroll = Boolean(student.PuedeMatricular)
+                const key = eligibilityKey(student)
+                const canEnroll = canRegisterInstitutionalEnrollment(student)
                 const hasAuthorization = Boolean(student.TieneAutorizacion || student.AutorizacionId)
                 return (
                   <label key={`${student.codigo_estud}-${student.CodigoCarrera}-${student.CodigoPeriodo}`} className={canEnroll ? '' : 'practicas-student-list__blocked'}>
                     <input
                       type="checkbox"
-                      checked={selectedStudents.includes(code)}
+                      checked={selectedStudents.includes(key)}
                       disabled={!canEnroll}
-                      onChange={() => toggleStudent(code)}
+                      onChange={() => toggleStudent(key)}
                     />
                     <span>
                       <b>{valueOrDash(student.Apellidos_nombre)}</b>
@@ -1000,8 +1199,124 @@ export function PracticasInstitucionalesView({
             </div>
           </div>
 
+          <div className="practicas-stage__actions">
+            <button type="button" className="primary-action" onClick={saveEnrollment} disabled={saving || !selectedStudents.length}>
+              {saving ? 'Registrando inscripción...' : `Inscribir ${selectedStudents.length || ''} estudiante(s)`}
+            </button>
+          </div>
+          </section>
+
+          <section className="practicas-stage practicas-stage--responsible">
+            <header className="practicas-stage__header">
+              <span>2</span>
+              <div>
+                <strong>Asignación del responsable</strong>
+                <small>Solo se muestran estudiantes previamente inscritos en el proceso y período seleccionado.</small>
+              </div>
+            </header>
+
+            <div className="matricula-acad-form practicas-form practicas-responsable-form">
+              <label>
+                <span>Período de las inscripciones</span>
+                <select
+                  value={selectedPeriod}
+                  onChange={(event) => {
+                    setSelectedPeriod(event.target.value)
+                    setSelectedEnrollmentIds([])
+                  }}
+                >
+                  <option value="">Seleccione un período</option>
+                  {periodos.map((periodo) => (
+                    <option key={`responsible-${periodo.CodigoPeriodo}`} value={periodo.CodigoPeriodo}>
+                      {periodLabel(periodo)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Buscar docente responsable</span>
+                <input
+                  value={teacherSearch}
+                  onChange={(event) => setTeacherSearch(event.target.value)}
+                  placeholder="Nombre, cédula o código docente"
+                />
+              </label>
+              <button type="button" className="secondary-action" onClick={searchTeachers} disabled={loading || !selectedPeriod}>
+                Buscar docente
+              </button>
+              <label>
+                <span>Docente seleccionado</span>
+                <input value={responsableForm.nombre_responsable} readOnly placeholder="Seleccione un docente del listado" />
+              </label>
+              <label>
+                <span>Cédula</span>
+                <input value={responsableForm.cedula_responsable} readOnly placeholder="-" />
+              </label>
+              <label>
+                <span>Código docente</span>
+                <input value={responsableForm.codigo_docente} readOnly placeholder="-" />
+              </label>
+            </div>
+
+            {teacherOptions.length ? (
+              <div className="practicas-teacher-results">
+                {teacherOptions.map((teacher) => (
+                  <button key={`${teacher.codigo_doc}-${teacher.cedula || ''}`} type="button" onClick={() => selectTeacher(teacher)}>
+                    <strong>{valueOrDash(teacher.descripcion || teacher.login)}</strong>
+                    <span>{valueOrDash(teacher.cedula)} · Código {valueOrDash(teacher.codigo_doc)} · {valueOrDash(teacher.correo || teacher.correo_personal)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="practicas-student-picker practicas-enrollment-picker">
+              <div className="practicas-picker-head">
+                <strong>Inscripciones disponibles para asignación</strong>
+                <button type="button" className="secondary-action" onClick={loadAdmin} disabled={loading || !selectedPeriod}>
+                  Actualizar inscripciones
+                </button>
+                <button type="button" className="ghost-button" onClick={toggleAllEnrollments} disabled={!periodEnrollments.length}>
+                  {periodEnrollments.length > 0 && periodEnrollments.every((item) => selectedEnrollmentIds.includes(Number(item.ExpedienteId)))
+                    ? 'Quitar todas'
+                    : 'Seleccionar todas'}
+                </button>
+              </div>
+              <p>{selectedEnrollmentIds.length} de {periodEnrollments.length} inscripción(es) seleccionada(s).</p>
+              <div className="practicas-student-list">
+                {periodEnrollments.length ? periodEnrollments.map((item) => (
+                  <label key={`enrollment-${item.ExpedienteId}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedEnrollmentIds.includes(Number(item.ExpedienteId))}
+                      onChange={() => toggleEnrollment(Number(item.ExpedienteId))}
+                    />
+                    <span>
+                      <b>{valueOrDash(item.Apellidos_nombre)}</b>
+                      <small>Cédula: {valueOrDash(item.Cedula_Est)}</small>
+                      <small>Carrera: {valueOrDash(item.Carrera || item.CodigoCarrera)}</small>
+                      <small>Expediente: {valueOrDash(item.CodigoExpediente || item.ExpedienteId)}</small>
+                      <small>Responsable actual: {valueOrDash(item.DocenteTutor || item.NombreResponsable)}</small>
+                    </span>
+                  </label>
+                )) : (
+                  <span className="portal-muted">No hay inscripciones en este período. Complete primero la etapa 1.</span>
+                )}
+              </div>
+            </div>
+
+            <div className="practicas-stage__actions">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={saveResponsable}
+                disabled={saving || !selectedEnrollmentIds.length || !responsableForm.codigo_docente}
+              >
+                {saving ? 'Asignando...' : `Asignar responsable a ${selectedEnrollmentIds.length || ''} inscripción(es)`}
+              </button>
+            </div>
+
           <div className="practicas-period-designations">
-              <strong>Matrículas activas por período</strong>
+              <strong>Responsables vigentes por período</strong>
             {periodDesignations.length ? periodDesignations.map((item) => (
               <div key={item.DesignacionId}>
                 <span>{valueOrDash(item.CodigoPeriodo)}</span>
@@ -1012,12 +1327,17 @@ export function PracticasInstitucionalesView({
               <p>No hay designaciones activas para este proceso.</p>
             )}
           </div>
+          </section>
 
+          <section className="practicas-stage practicas-stage--documents">
+            <header className="practicas-stage__header">
+              <span>3</span>
+              <div>
+                <strong>Carga de información y expediente</strong>
+                <small>El docente responsable carga los documentos requeridos; administración y estudiante conservan acceso de consulta.</small>
+              </div>
+            </header>
           <div className="matricula-table-wrap excel-table-wrap">
-            <div className="section-title section-title--inline">
-              <span>Control</span>
-              <strong>Expedientes generados por matrícula</strong>
-            </div>
             <table className="matricula-table practicas-table">
               <thead>
                 <tr>
@@ -1025,13 +1345,14 @@ export function PracticasInstitucionalesView({
                   <th>Estudiante</th>
                   <th>Carrera</th>
                   <th>Período</th>
+                  <th>Plazo documental</th>
                   <th>Estado</th>
                   <th>Responsable</th>
                   <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
-                {expedientes.length ? expedientes.map((item) => (
+                {periodEnrollments.length ? periodEnrollments.map((item) => (
                   <tr key={item.ExpedienteId}>
                     <td>{valueOrDash(item.CodigoExpediente)}</td>
                     <td>
@@ -1040,6 +1361,10 @@ export function PracticasInstitucionalesView({
                     </td>
                     <td>{valueOrDash(item.Carrera || item.CodigoCarrera)}</td>
                     <td>{valueOrDash(item.CodigoPeriodo)}</td>
+                    <td className="practicas-upload-window">
+                      <strong>{uploadWindowLabel(item.FechaInicioCarga, item.FechaFinCarga)}</strong>
+                      <small>{isUploadWindowOpen(item.FechaInicioCarga, item.FechaFinCarga) ? 'Carga habilitada' : 'Carga cerrada'}</small>
+                    </td>
                     <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
                     <td>{valueOrDash(item.DocenteTutor || item.NombreResponsable)}</td>
                     <td>
@@ -1050,21 +1375,127 @@ export function PracticasInstitucionalesView({
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={7}>No existen expedientes para el filtro seleccionado.</td>
+                    <td colSpan={8}>No existen expedientes para el filtro seleccionado.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          </section>
+
+          <section className="practicas-stage practicas-stage--review">
+            <header className="practicas-stage__header">
+              <span>4</span>
+              <div>
+                <strong>Verificación de cumplimiento</strong>
+                <small>El responsable corroborará documentos, horas y requisitos antes de aprobar u observar el expediente.</small>
+              </div>
+              <button type="button" className="secondary-action" onClick={loadResponsibleProgress} disabled={loading || saving}>
+                Actualizar cumplimiento
+              </button>
+            </header>
+
+            <section className="practicas-progress-card">
+              <div className="practicas-progress-head">
+                <div>
+                  <span>Avance del período seleccionado</span>
+                  <strong>{percentValue(adminReviewSummary.avance).toFixed(2)}%</strong>
+                </div>
+              </div>
+              <div className="practicas-progress-bar" aria-label="Avance del período seleccionado">
+                <span style={{ width: `${percentValue(adminReviewSummary.avance)}%` }} />
+              </div>
+              <div className="practicas-progress-metrics">
+                <span><b>{adminReviewSummary.expedientes}</b> expediente(s)</span>
+                <span><b>{adminReviewSummary.documentos_cargados}</b> cargado(s)</span>
+                <span><b>{adminReviewSummary.documentos_validados}</b> validado(s)</span>
+                <span><b>{adminReviewSummary.documentos_pendientes}</b> pendiente(s)</span>
+              </div>
+            </section>
+
+            <div className="matricula-table-wrap excel-table-wrap">
+              <table className="matricula-table practicas-table">
+                <thead>
+                  <tr>
+                    <th>Expediente</th>
+                    <th>Estudiante</th>
+                    <th>Carrera</th>
+                    <th>Período</th>
+                    <th>Plazo documental</th>
+                    <th>Estado</th>
+                    <th>Horas</th>
+                    <th>Documentos</th>
+                    <th>Avance</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminReviewItems.length ? adminReviewItems.map((item) => (
+                    <tr key={`review-${item.ExpedienteId}`}>
+                      <td>{valueOrDash(item.CodigoExpediente || item.ExpedienteId)}</td>
+                      <td>
+                        <strong>{valueOrDash(item.Apellidos_nombre)}</strong>
+                        <small>{valueOrDash(item.Cedula_Est)}</small>
+                      </td>
+                      <td>{valueOrDash(item.Carrera)}</td>
+                      <td>{valueOrDash(item.CodigoPeriodo)}</td>
+                      <td className="practicas-upload-window">
+                        <strong>{uploadWindowLabel(item.FechaInicioCarga, item.FechaFinCarga)}</strong>
+                        <small>{isUploadWindowOpen(item.FechaInicioCarga, item.FechaFinCarga) ? 'Carga habilitada' : 'Carga cerrada'}</small>
+                      </td>
+                      <td><span className={statusClass(item.EstadoCodigo)}>{valueOrDash(item.EstadoExpediente || item.EstadoCodigo)}</span></td>
+                      <td>
+                        <strong>{Number(item.HorasReconocidas || 0).toFixed(2)} / {Number(item.HorasRequeridas || (selectedProcess === 'PPF' ? 240 : 60)).toFixed(0)}</strong>
+                        <small>Horas corroboradas</small>
+                      </td>
+                      <td>
+                        <strong>{item.TotalDocumentos || 0} / {item.DocumentosRequeridos || 0}</strong>
+                        <small>{item.DocumentosValidados || 0} validado(s)</small>
+                      </td>
+                      <td>
+                        <div className="practicas-mini-progress">
+                          <span style={{ width: `${percentValue(item.Avance)}%` }} />
+                        </div>
+                        <small>{percentValue(item.Avance).toFixed(2)}%</small>
+                      </td>
+                      <td>
+                        <div className="practicas-row-actions">
+                          <button
+                            type="button"
+                            className="secondary-action"
+                            onClick={() => void openReview(item.ExpedienteId)}
+                            disabled={reviewLoading || saving}
+                          >
+                            Revisar
+                          </button>
+                          <button type="button" className="ghost-button" onClick={() => openDocumentExpedient(item)} disabled={saving}>
+                            Expediente
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={10}>
+                        {selectedPeriod
+                          ? 'No existen inscripciones de este proceso en el período seleccionado.'
+                          : 'Seleccione un período para revisar el cumplimiento.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </section>
-      )}
+      )) : null}
 
       {reviewDetail ? (
         <div className="practicas-expedient-overlay" role="presentation">
           <section className="practicas-review-dialog" role="dialog" aria-modal="true" aria-labelledby="practicas-review-title">
             <header className="practicas-review-dialog__header">
               <div>
-                <span>Revisión docente</span>
+                <span>Revisión documental previa</span>
                 <h2 id="practicas-review-title">{valueOrDash(reviewDetail.Apellidos_nombre)}</h2>
                 <p>
                   {processLabel(reviewDetail.TipoProcesoCodigo)} · {valueOrDash(reviewDetail.Carrera)} ·
@@ -1092,6 +1523,11 @@ export function PracticasInstitucionalesView({
               <article>
                 <span>Documentos</span>
                 <strong>{reviewDetail.DocumentosDetalle.filter((item) => item.Cargado).length} / {reviewDetail.DocumentosDetalle.length}</strong>
+              </article>
+              <article className="practicas-upload-window">
+                <span>Plazo documental</span>
+                <strong>{uploadWindowLabel(reviewDetail.FechaInicioCarga, reviewDetail.FechaFinCarga)}</strong>
+                <small>{isUploadWindowOpen(reviewDetail.FechaInicioCarga, reviewDetail.FechaFinCarga) ? 'Carga habilitada' : 'Carga cerrada'}</small>
               </article>
             </div>
 
@@ -1142,7 +1578,7 @@ export function PracticasInstitucionalesView({
                   onChange={(event) => setReviewObservation(event.target.value)}
                   disabled={reviewLoading}
                   rows={4}
-                  placeholder="Obligatoria al observar o rechazar."
+                  placeholder="Obligatoria cuando se solicitan correcciones."
                 />
               </label>
               <label className="practicas-review-corroboration">
@@ -1163,14 +1599,6 @@ export function PracticasInstitucionalesView({
               </button>
               <button
                 type="button"
-                className="secondary-action practicas-review-reject"
-                onClick={() => void submitReview('RECHAZAR')}
-                disabled={reviewLoading || !reviewDetail.PuedeAprobar}
-              >
-                Rechazar
-              </button>
-              <button
-                type="button"
                 className="primary-action"
                 onClick={() => void submitReview('APROBAR')}
                 disabled={
@@ -1181,7 +1609,7 @@ export function PracticasInstitucionalesView({
                   || Number(reviewHours.replace(',', '.')) < Number(reviewDetail.HorasRequeridas || 0)
                 }
               >
-                {reviewLoading ? 'Guardando...' : 'Aprobar y habilitar Titulación'}
+                {reviewLoading ? 'Guardando...' : 'Finalizar revisión y habilitar calificación'}
               </button>
             </footer>
           </section>
@@ -1197,7 +1625,7 @@ export function PracticasInstitucionalesView({
               initialIdentification={documentExpedient.identification}
               moduleFilter={[documentExpedient.process === 'PPF' ? 'PRACTICAS' : 'VINCULACION']}
               embedded
-              onClose={() => setDocumentExpedient(null)}
+              onClose={closeDocumentExpedient}
             />
           </div>
         </div>

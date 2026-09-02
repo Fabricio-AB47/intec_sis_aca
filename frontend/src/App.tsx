@@ -57,6 +57,10 @@ const CareerChangeRequestsView = lazyView(
   () => import('./features/solicitudes/CareerChangeRequestsView'),
   'CareerChangeRequestsView',
 )
+const ModalityChangeRequestsView = lazyView(
+  () => import('./features/solicitudes/ModalityChangeRequestsView'),
+  'ModalityChangeRequestsView',
+)
 const TeamsEnrollmentView = lazyView(() => import('./features/teams/TeamsEnrollmentView'), 'TeamsEnrollmentView')
 const TeamsView = lazyView(() => import('./features/teams/TeamsView'), 'TeamsView')
 const HistoricoIntegracionesView = lazyView(
@@ -279,6 +283,8 @@ function App() {
       pageContent = <MatriculaDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'solicitudes-cambio-carrera') {
       pageContent = <CareerChangeRequestsView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'solicitudes-cambio-modalidad') {
+      pageContent = <ModalityChangeRequestsView displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'estado-docente') {
       pageContent = <EstadoDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'senescyt-estudiantes') {
@@ -478,9 +484,12 @@ function App() {
     } else if (app.activePage === 'practicas-institucionales') {
       pageContent = (
         <PracticasInstitucionalesView
+          key={app.practicasNavigationKey}
           displayName={app.displayName}
           role={app.session.rol}
           codigoEstud={app.session.codigo_estud}
+          initialProcess={app.practicasProcess}
+          onProcessChange={app.openPracticasInstitucionalesPage}
         />
       )
     } else if (app.activePage === 'teams-matricula') {
@@ -559,6 +568,7 @@ function App() {
           activePreinscriptionStage={app.preinscriptionActiveStage}
           activeMatriculaAcadMode={app.matriculaAcadMode}
           activeMoodleSection={app.activeMoodleSection}
+          activePracticasProcess={app.practicasProcess}
           role={app.session.rol}
           screenAccessPages={app.screenAccessPages}
           displayName={app.displayName}
@@ -582,6 +592,7 @@ function App() {
           onOpenMatriculaAcad={app.openMatriculaAcadPage}
           onOpenMatriculaDocente={app.openMatriculaDocentePage}
           onOpenCareerChangeRequests={app.openCareerChangeRequestsPage}
+          onOpenModalityChangeRequests={app.openModalityChangeRequestsPage}
           onOpenEstadoDocente={app.openEstadoDocentePage}
           onOpenSenescytEstudiantes={app.openSenescytEstudiantesPage}
           onOpenActualizarDatosEstudiante={app.openActualizarDatosEstudiantePage}

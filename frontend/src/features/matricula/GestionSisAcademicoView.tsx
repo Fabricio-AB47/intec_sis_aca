@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   applyAcademicPeriodChange,
@@ -18,6 +18,7 @@ import type {
   AcademicPeriodChangePreviewResponse,
   AcademicPeriodOption,
   SisAcademicoField,
+  SisAcademicoListResponse,
   SisAcademicoRow,
   SisAcademicoSection,
 } from '../../types/app'
@@ -340,6 +341,8 @@ function uniqueOptionsByValue(options: OptionItem[]): OptionItem[] {
   })
 }
 
+const STUDENT_STATE_DEFAULT_PAGE_SIZE = 25
+
 function formatSpanishDate(value: string): string {
   const [yearText, monthText, dayText] = value.split('-')
   const year = Number(yearText)
@@ -430,18 +433,22 @@ export function GestionSisAcademicoView({
   const allowedSectionSignature = [...(allowedSectionKeys || [])].sort().join('|')
   const [sections, setSections] = useState<SisAcademicoSection[]>([])
   const [selectedSectionKey, setSelectedSectionKey] = useState('')
-  const [appliedInitialSection, setAppliedInitialSection] = useState('')
   const [selectedProcessKey, setSelectedProcessKey] = useState(processShortcuts[0]?.key || '')
   const [query, setQuery] = useState('')
-  const [estadoPeriodFilter, setEstadoPeriodFilter] = useState('')
   const [docenteEstadoFilter, setDocenteEstadoFilter] = useState('')
   const [rows, setRows] = useState<SisAcademicoRow[]>([])
+  const [listTotal, setListTotal] = useState(0)
+  const [listPage, setListPage] = useState(1)
+  const [listPageSize, setListPageSize] = useState(STUDENT_STATE_DEFAULT_PAGE_SIZE)
+  const [listTotalPages, setListTotalPages] = useState(1)
   const [selectedRecordKey, setSelectedRecordKey] = useState('')
   const [formValues, setFormValues] = useState<Record<string, FormValue>>({})
   const [mode, setMode] = useState<'edit' | 'create'>('edit')
   const [tableFilter, setTableFilter] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [listLoading, setListLoading] = useState(false)
+  const listRequestIdRef = useRef(0)
+  const listAbortControllerRef = useRef<AbortController | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [studentAcademicHistory, setStudentAcademicHistory] = useState<AcademicEnrollmentDetailResponse | null>(null)
   const [studentAcademicHistoryLoading, setStudentAcademicHistoryLoading] = useState(false)
@@ -530,7 +537,6 @@ export function GestionSisAcademicoView({
     },
     [estadoInlineField],
   )
-  const estadoPeriodField = selectedSection?.list_fields?.find((field) => field.name === 'codigo_periodo')
   const tableFields = isEstadoInlineSection ? listFields.filter((field) => field.name !== 'estado_nombre') : listFields
   const hasIndexColumn = !isEstadoInlineSection
   const tableColSpan = tableFields.length + 1 + (hasIndexColumn ? 1 : 0) + (isEstadoInlineSection ? 1 : 0) + (isStudentEstadoSection ? 1 : 0) + (isDocenteEstadoSection ? 1 : 0)
@@ -672,7 +678,11 @@ export function GestionSisAcademicoView({
   const workflowTable = isOperationalMenuSection
     ? 'Backend y frontend integrados'
     : selectedSection?.table || 'Sin tabla'
-  const workflowRows = isOperationalMenuSection ? totalOperationalSections : rows.length
+  const workflowRows = isOperationalMenuSection
+    ? totalOperationalSections
+    : isStudentEstadoSection
+      ? listTotal
+      : rows.length
   const workflowRowsLabel = isOperationalMenuSection ? `${workflowRows} módulo(s)` : `${workflowRows} registro(s)`
   const workflowMode = isOperationalMenuSection ? 'Navegación funcional' : canCreate ? 'Permite crear' : 'Solo edición'
 
@@ -680,11 +690,35 @@ export function GestionSisAcademicoView({
     return processShortcuts.find((process) => process.sections.includes(sectionKey))?.key || processShortcuts[0]?.key || ''
   }
 
-  async function loadRows(sectionKey = selectedSectionKey, nextQuery = query, nextPeriodo = estadoPeriodFilter) {
+  function applyListPayload(sectionKey: string, payload: SisAcademicoListResponse) {
+    const nextRows = payload.rows || []
+    setRows(nextRows)
+    if (sectionKey === 'actualizacion_estudiantes') {
+      setListTotal(payload.total ?? nextRows.length)
+      setListPage(payload.page ?? 1)
+      setListPageSize(payload.page_size ?? STUDENT_STATE_DEFAULT_PAGE_SIZE)
+      setListTotalPages(Math.max(1, payload.total_pages ?? 1))
+      return
+    }
+    setListTotal(nextRows.length)
+    setListPage(1)
+    setListTotalPages(1)
+  }
+
+  async function loadRows(
+    sectionKey = selectedSectionKey,
+    nextQuery = query,
+    nextPage = 1,
+    nextPageSize = listPageSize,
+  ) {
     if (!sectionKey) return
     setError('')
     setMessage('')
     if (sectionKey === 'cambio_periodo_hr' || sectionKey === 'menu_usuarios') {
+      listAbortControllerRef.current?.abort()
+      listAbortControllerRef.current = null
+      listRequestIdRef.current += 1
+      setListLoading(false)
       setRows([])
       setInlineEstadoValues({})
       setSelectedRecordKey('')
@@ -695,12 +729,21 @@ export function GestionSisAcademicoView({
       setMode('edit')
       return
     }
+
+    listAbortControllerRef.current?.abort()
+    const controller = new AbortController()
+    const requestId = listRequestIdRef.current + 1
+    listRequestIdRef.current = requestId
+    listAbortControllerRef.current = controller
     setListLoading(true)
     try {
       const payload = await fetchSisAcademicoRows(sectionKey, nextQuery.trim(), {
-        periodo: sectionKey === 'actualizacion_estudiantes' ? nextPeriodo : '',
+        page: sectionKey === 'actualizacion_estudiantes' ? nextPage : undefined,
+        pageSize: sectionKey === 'actualizacion_estudiantes' ? nextPageSize : undefined,
+        signal: controller.signal,
       })
-      setRows(payload.rows || [])
+      if (requestId !== listRequestIdRef.current) return
+      applyListPayload(sectionKey, payload)
       setInlineEstadoValues({})
       setSelectedRecordKey('')
       setFormValues({})
@@ -709,10 +752,19 @@ export function GestionSisAcademicoView({
       setStudentProfileEditing(false)
       setMode('edit')
     } catch (apiError) {
+      if (controller.signal.aborted || requestId !== listRequestIdRef.current) return
       setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar la seccion')
       setRows([])
+      setListTotal(0)
+      setListPage(1)
+      setListTotalPages(1)
     } finally {
-      setListLoading(false)
+      if (requestId === listRequestIdRef.current) {
+        if (listAbortControllerRef.current === controller) {
+          listAbortControllerRef.current = null
+        }
+        setListLoading(false)
+      }
     }
   }
 
@@ -783,7 +835,12 @@ export function GestionSisAcademicoView({
           ? await createSisAcademicoRecord(selectedSection.key, valuesToSave)
           : await updateSisAcademicoRecord(selectedSection.key, selectedRecordKey, valuesToSave)
       const successMessage = payload.message || 'Cambios guardados'
-      await loadRows(selectedSection.key)
+      await loadRows(
+        selectedSection.key,
+        query,
+        isStudentEstadoSection ? listPage : 1,
+        listPageSize,
+      )
       if (returnToStudentProfile) {
         await openRecord(selectedSection.key, savedRecordKey)
       }
@@ -843,7 +900,12 @@ export function GestionSisAcademicoView({
             Informacion: informacion,
           })
       setMessage(payload.message || 'Estado actualizado')
-      await loadRows(selectedSection.key)
+      await loadRows(
+        selectedSection.key,
+        query,
+        isStudentEstadoSection ? listPage : 1,
+        listPageSize,
+      )
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo actualizar el estado')
     } finally {
@@ -884,14 +946,17 @@ export function GestionSisAcademicoView({
     setSelectedSectionKey(sectionKey)
     setSelectedProcessKey(processKey || processKeyForSection(sectionKey))
     setQuery('')
-    setEstadoPeriodFilter('')
+    setListTotal(0)
+    setListPage(1)
+    setListPageSize(STUDENT_STATE_DEFAULT_PAGE_SIZE)
+    setListTotalPages(1)
     setDocenteEstadoFilter('')
     setTableFilter('')
     setSelectedRecordKey('')
     setFormValues({})
     setStudentProfileEditing(false)
     setMode('edit')
-    void loadRows(sectionKey, '', '')
+    void loadRows(sectionKey, '')
   }
 
   function toggleHomoMateria(code: string) {
@@ -1072,6 +1137,7 @@ export function GestionSisAcademicoView({
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
 
     async function loadCatalog() {
       setCatalogLoading(true)
@@ -1090,18 +1156,24 @@ export function GestionSisAcademicoView({
           setSelectedProcessKey(processKeyForSection(firstSection))
         }
         if (firstSection && !['cambio_periodo_hr', 'menu_usuarios'].includes(firstSection)) {
-          const rowsPayload = await fetchSisAcademicoRows(firstSection, '')
-          if (!cancelled) setRows(rowsPayload.rows || [])
+          setListLoading(true)
+          const rowsPayload = await fetchSisAcademicoRows(firstSection, '', {
+            page: firstSection === 'actualizacion_estudiantes' ? 1 : undefined,
+            pageSize: firstSection === 'actualizacion_estudiantes' ? STUDENT_STATE_DEFAULT_PAGE_SIZE : undefined,
+            signal: controller.signal,
+          })
+          if (!cancelled) applyListPayload(firstSection, rowsPayload)
         } else if (!cancelled) {
           setRows([])
         }
       } catch (apiError) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar la gestión operativa.')
         }
       } finally {
         if (!cancelled) {
           setCatalogLoading(false)
+          setListLoading(false)
         }
       }
     }
@@ -1110,43 +1182,15 @@ export function GestionSisAcademicoView({
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [allowedSectionSignature, initialSectionKey])
 
-  useEffect(() => {
-    if (!initialSectionKey || initialSectionKey === appliedInitialSection) return
-    const exists = sections.some((section) => section.key === initialSectionKey)
-    if (!exists) return
-    setAppliedInitialSection(initialSectionKey)
-    setSelectedSectionKey(initialSectionKey)
-    setSelectedProcessKey(processShortcuts.find((process) => process.sections.includes(initialSectionKey))?.key || processShortcuts[0]?.key || '')
-    setQuery('')
-    setEstadoPeriodFilter('')
-    setDocenteEstadoFilter('')
-    setTableFilter('')
-    setSelectedRecordKey('')
-    setFormValues({})
-    setStudentAcademicHistory(null)
-    setStudentAcademicHistoryError('')
-    setStudentProfileEditing(false)
-    setMode('edit')
-    if (['cambio_periodo_hr', 'menu_usuarios'].includes(initialSectionKey)) {
-      setRows([])
-      return
-    }
-    let cancelled = false
-    setListLoading(true)
-    void fetchSisAcademicoRows(initialSectionKey, '').then((payload) => {
-      if (!cancelled) setRows(payload.rows || [])
-    }).catch((apiError) => {
-      if (!cancelled) setError(apiError instanceof Error ? apiError.message : 'No se pudo consultar la seccion')
-    }).finally(() => {
-      if (!cancelled) setListLoading(false)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [appliedInitialSection, initialSectionKey, sections])
+  useEffect(() => () => {
+    listRequestIdRef.current += 1
+    listAbortControllerRef.current?.abort()
+    listAbortControllerRef.current = null
+  }, [])
 
   useEffect(() => {
     if (!isPeriodChangeSection || periodChangeCatalog) return
@@ -1832,19 +1876,6 @@ export function GestionSisAcademicoView({
                     }
                   />
                 </label>
-                {isStudentEstadoSection ? (
-                  <label>
-                    <span>Período</span>
-                    <select value={estadoPeriodFilter} onChange={(event) => setEstadoPeriodFilter(event.target.value)}>
-                      <option value="">-- Todos --</option>
-                      {(estadoPeriodField?.options || []).map((option) => (
-                        <option key={`estado-periodo-${option.value}`} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
                 {isDocenteEstadoSection ? (
                   <label>
                     <span>Estado docente</span>
@@ -1889,8 +1920,12 @@ export function GestionSisAcademicoView({
                   </label>
                 ) : null}
                 <div>
-                  <strong>{visibleRows.length}</strong>
-                  <span>de {rows.length} registro(s)</span>
+                  <strong>{isStudentEstadoSection ? listTotal : visibleRows.length}</strong>
+                  <span>
+                    {isStudentEstadoSection
+                      ? `${listTotal} registro(s) · Página ${listPage} de ${listTotalPages}`
+                      : `de ${rows.length} registro(s)`}
+                  </span>
                 </div>
                 <small>
                   {isStudentEstadoSection
@@ -2055,6 +2090,63 @@ export function GestionSisAcademicoView({
                   </tbody>
                 </table>
               </div>
+              {isStudentEstadoSection ? (
+                <div className="gestion-sis-pagination" aria-label="Paginación de estados de estudiantes">
+                  <label>
+                    <span>Registros por página</span>
+                    <select
+                      value={listPageSize}
+                      disabled={listLoading}
+                      onChange={(event) => {
+                        const nextPageSize = Number(event.target.value)
+                        setListPageSize(nextPageSize)
+                        void loadRows(selectedSectionKey, query, 1, nextPageSize)
+                      }}
+                    >
+                      {[25, 50, 100].map((size) => (
+                        <option key={`student-state-page-${size}`} value={size}>{size}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <span>
+                    Mostrando {visibleRows.length} de {listTotal} estudiante(s)
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={listLoading || listPage <= 1}
+                      onClick={() => void loadRows(selectedSectionKey, query, 1, listPageSize)}
+                    >
+                      Primero
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={listLoading || listPage <= 1}
+                      onClick={() => void loadRows(selectedSectionKey, query, listPage - 1, listPageSize)}
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={listLoading || listPage >= listTotalPages}
+                      onClick={() => void loadRows(selectedSectionKey, query, listPage + 1, listPageSize)}
+                    >
+                      Siguiente
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={listLoading || listPage >= listTotalPages}
+                      onClick={() => void loadRows(selectedSectionKey, query, listTotalPages, listPageSize)}
+                    >
+                      Último
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
         </article>

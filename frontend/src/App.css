@@ -1186,6 +1186,80 @@
   margin: 0;
 }
 
+.practicas-process-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.practicas-process-selector button,
+.practicas-workspace-tabs button {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 13px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.practicas-process-selector button:hover,
+.practicas-workspace-tabs button:hover {
+  border-color: var(--celeste-strong);
+  background: #f5fafb;
+}
+
+.practicas-process-selector button:focus-visible,
+.practicas-workspace-tabs button:focus-visible {
+  outline: 3px solid rgba(14, 139, 151, 0.2);
+  outline-offset: 2px;
+}
+
+.practicas-process-selector button.is-active,
+.practicas-workspace-tabs button.is-active {
+  border-color: var(--celeste-strong);
+  box-shadow: inset 4px 0 0 var(--celeste-strong);
+  background: #eef8f8;
+}
+
+.practicas-process-selector button > span {
+  color: var(--celeste-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.practicas-process-selector button > strong,
+.practicas-workspace-tabs button > strong {
+  overflow-wrap: anywhere;
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.practicas-process-selector button > small,
+.practicas-workspace-tabs button > small {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.practicas-workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.practicas-workspace-tabs button {
+  min-height: 82px;
+}
+
 .practicas-summary {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
@@ -1211,6 +1285,44 @@
 
 .practicas-summary p {
   margin: 0;
+}
+
+.practicas-enrollment-boundary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(141, 187, 199, 0.68);
+  border-left: 4px solid var(--celeste-strong);
+  border-radius: 7px;
+  background: #f7fbfc;
+}
+
+.practicas-enrollment-boundary > div {
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.practicas-enrollment-boundary > div + div {
+  border-left: 1px solid rgba(141, 187, 199, 0.48);
+}
+
+.practicas-enrollment-boundary strong,
+.practicas-enrollment-boundary span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-enrollment-boundary strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.practicas-enrollment-boundary span {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .practicas-form {
@@ -1251,7 +1363,7 @@
 
 .practicas-admin-card .practicas-responsable-form {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
   align-items: end;
   margin: 14px 0 16px;
@@ -1266,34 +1378,154 @@
   min-width: 0;
 }
 
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(1),
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(2),
 .practicas-admin-card .practicas-responsable-form > .practicas-period-detail {
-  grid-column: span 6;
+  min-height: 100%;
 }
 
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(3),
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(4) {
-  grid-column: span 4;
+.practicas-admin-card .practicas-responsable-form > .practicas-form__search {
+  grid-column: 1 / -1;
 }
 
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(5),
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(6),
-.practicas-admin-card .practicas-responsable-form > label:nth-of-type(7) {
-  grid-column: span 3;
+.practicas-upload-window-form {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.52);
+  border-radius: 8px;
+  background: rgba(238, 248, 251, 0.72);
+}
+
+.practicas-upload-window-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .practicas-admin-card .practicas-responsable-form > .secondary-action {
-  grid-column: span 4;
   min-height: 42px;
   width: 100%;
 }
 
 .practicas-admin-card .practicas-responsable-form > .primary-action {
-  grid-column: span 6;
   min-height: 44px;
   justify-self: stretch;
   width: 100%;
+}
+
+.practicas-workflow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 16px 0 4px;
+  border: 1px solid rgba(141, 187, 199, 0.62);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.practicas-workflow-step {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+  padding: 13px 14px;
+  border-right: 1px solid rgba(141, 187, 199, 0.45);
+}
+
+.practicas-workflow-step:last-child {
+  border-right: 0;
+}
+
+.practicas-workflow-step.is-current {
+  background: rgba(141, 187, 199, 0.15);
+}
+
+.practicas-workflow-step > span,
+.practicas-stage__header > span {
+  display: inline-flex;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--rojo);
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.practicas-workflow-step div,
+.practicas-workflow-step strong,
+.practicas-workflow-step small {
+  min-width: 0;
+  display: block;
+}
+
+.practicas-workflow-step strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.practicas-workflow-step small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.practicas-stage {
+  padding: 20px 0;
+  border-top: 1px solid rgba(141, 187, 199, 0.45);
+}
+
+.practicas-stage:first-of-type {
+  border-top: 0;
+}
+
+.practicas-stage__header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.practicas-stage__header > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.practicas-stage__header strong,
+.practicas-stage__header small {
+  display: block;
+}
+
+.practicas-stage__header strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.practicas-stage__header small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.practicas-stage__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.practicas-stage__actions .primary-action {
+  min-width: min(100%, 290px);
+}
+
+.practicas-enrollment-picker .practicas-student-list {
+  max-height: 360px;
 }
 
 .practicas-page .secondary-action {
@@ -1335,6 +1567,15 @@
   color: var(--ink-soft);
 }
 
+.practicas-upload-window {
+  min-width: 180px;
+}
+
+.practicas-upload-window strong,
+.practicas-upload-window small {
+  display: block;
+}
+
 .practicas-row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1359,6 +1600,12 @@
 
 .practicas-upload-button input {
   display: none;
+}
+
+.practicas-upload-button.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .practicas-progress-card {
@@ -1437,6 +1684,1551 @@
   width: 110px;
   max-width: 100%;
   height: 10px;
+}
+
+.practicas-document-progress {
+  display: grid;
+  min-width: 150px;
+  gap: 6px;
+}
+
+.practicas-document-progress > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.practicas-document-progress strong,
+.practicas-document-progress small {
+  display: block;
+}
+
+.practicas-document-progress > small {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.practicas-document-progress .practicas-mini-progress {
+  width: 100%;
+}
+
+.practicas-ops {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.practicas-ops.is-catalog-mode .practicas-ops__metrics,
+.practicas-ops.is-catalog-mode .practicas-ops__notifications,
+.practicas-ops.is-catalog-mode .practicas-ops__reconciliations,
+.practicas-ops.is-catalog-mode .practicas-ops__workspace {
+  display: none;
+}
+
+.practicas-ops.is-followup-mode .practicas-ops__catalog,
+.practicas-ops.is-followup-mode .practicas-ops__audit {
+  display: none;
+}
+
+.practicas-ops.is-catalog-mode .practicas-ops__catalog {
+  margin-top: 0;
+}
+
+.practicas-ops__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line-strong);
+  background: #f8fbfc;
+}
+
+.practicas-ops__header > div:first-child {
+  min-width: 0;
+}
+
+.practicas-ops__header span,
+.practicas-ops__section > header > span,
+.practicas-ops__catalog section header span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-ops__header h2,
+.practicas-ops__header p,
+.practicas-ops__section h3,
+.practicas-ops__catalog h3 {
+  margin: 0;
+}
+
+.practicas-ops__header h2 {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.practicas-ops__header p {
+  margin-top: 5px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.practicas-ops__actions,
+.practicas-ops__form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.practicas-ops > .form-error,
+.practicas-ops > .form-success {
+  margin: 0 22px;
+}
+
+.practicas-ops__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 0 22px;
+}
+
+.practicas-ops__metrics article {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.practicas-ops__metrics span,
+.practicas-ops__metrics strong,
+.practicas-ops__metrics small {
+  display: block;
+}
+
+.practicas-ops__metrics span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-ops__metrics strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 1.45rem;
+}
+
+.practicas-ops__metrics small {
+  margin-top: 2px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__notifications,
+.practicas-ops__reconciliations {
+  margin: 0 22px;
+  border: 1px solid rgba(190, 128, 10, 0.42);
+  border-radius: 7px;
+  background: #fff9ec;
+}
+
+.practicas-ops__notifications summary,
+.practicas-ops__reconciliations summary,
+.practicas-ops__catalog summary,
+.practicas-ops__audit summary,
+.practicas-ops__history summary {
+  padding: 12px 14px;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.practicas-ops__notifications > div {
+  display: grid;
+  gap: 1px;
+  border-top: 1px solid rgba(190, 128, 10, 0.3);
+}
+
+.practicas-ops__notifications button {
+  display: grid;
+  grid-template-columns: 105px minmax(150px, 0.35fr) minmax(220px, 1fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  padding: 10px 14px;
+  background: #fffdf7;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.practicas-ops__notifications button + button {
+  border-top: 1px solid rgba(190, 128, 10, 0.18);
+}
+
+.practicas-ops__notifications button.is-read {
+  opacity: 0.72;
+  background: #ffffff;
+}
+
+.practicas-ops__notifications button span {
+  color: #8a5700;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.practicas-ops__notifications button small {
+  color: var(--ink-soft);
+}
+
+.practicas-ops__reconciliations > div {
+  display: grid;
+  border-top: 1px solid rgba(190, 128, 10, 0.3);
+}
+
+.practicas-ops__reconciliations article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  background: #fffdf7;
+}
+
+.practicas-ops__reconciliations article + article {
+  border-top: 1px solid rgba(190, 128, 10, 0.22);
+}
+
+.practicas-ops__reconciliations article span,
+.practicas-ops__reconciliations article strong,
+.practicas-ops__reconciliations article small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__reconciliations article span {
+  color: #98231e;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.practicas-ops__reconciliations article small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 315px) minmax(0, 1fr);
+  min-height: 560px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__list {
+  min-width: 0;
+  border-right: 1px solid var(--line-strong);
+  background: #f8fbfc;
+}
+
+.practicas-ops__list > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-ops__list > header span {
+  min-width: 30px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #ffffff;
+  text-align: center;
+  font-weight: 900;
+}
+
+.practicas-ops__list > button {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(141, 187, 199, 0.35);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.practicas-ops__list > button:hover,
+.practicas-ops__list > button:focus-visible,
+.practicas-ops__list > button.is-selected {
+  background: #ffffff;
+  outline: none;
+}
+
+.practicas-ops__list > button.is-selected {
+  box-shadow: inset 4px 0 0 var(--celeste-strong);
+}
+
+.practicas-ops__list > button strong,
+.practicas-ops__list > button small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__list > button small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.practicas-ops__list > p {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.practicas-semaphore {
+  display: block;
+  width: 11px;
+  height: 11px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #d39a19;
+}
+
+.practicas-semaphore.is-verde {
+  background: #16856f;
+}
+
+.practicas-semaphore.is-rojo {
+  background: #b5231e;
+}
+
+.practicas-ops__detail {
+  min-width: 0;
+  background: #ffffff;
+}
+
+.practicas-ops__empty {
+  margin: 0;
+  padding: 28px 22px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-ops__detail-header > div {
+  min-width: 0;
+}
+
+.practicas-ops__detail-header span,
+.practicas-ops__detail-header h3,
+.practicas-ops__detail-header p {
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__detail-header span {
+  color: var(--celeste-strong);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.practicas-ops__detail-header h3 {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 1.2rem;
+}
+
+.practicas-ops__detail-header p {
+  margin-top: 4px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__progress {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(180px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 15px 22px;
+  border-bottom: 1px solid var(--line-strong);
+  background: #eef8fb;
+}
+
+.practicas-ops__progress span,
+.practicas-ops__progress strong {
+  display: block;
+}
+
+.practicas-ops__context {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: #ffffff;
+}
+
+.practicas-ops__context > div {
+  min-width: 0;
+  padding: 12px 14px;
+  border-right: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-ops__context > div:nth-child(3n) {
+  border-right: 0;
+}
+
+.practicas-ops__context > div:nth-last-child(-n + 3) {
+  border-bottom: 0;
+}
+
+.practicas-ops__context dt {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-ops__context dd {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__progress > div:first-child > span,
+.practicas-ops__progress > small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.practicas-ops__progress strong {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 1.3rem;
+}
+
+.practicas-ops__section {
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-ops__section > header {
+  margin-bottom: 14px;
+}
+
+.practicas-ops__section h3,
+.practicas-ops__catalog h3 {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.practicas-requirements {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-requirements li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 11px 13px;
+  background: #ffffff;
+}
+
+.practicas-requirements li + li {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-requirements li > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #f5f8f9;
+  color: var(--ink-soft);
+  font-weight: 900;
+}
+
+.practicas-requirements li strong,
+.practicas-requirements li small {
+  display: block;
+}
+
+.practicas-requirements li small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-requirements li > b,
+.practicas-activity-list__state > span,
+.practicas-document-checklist article > span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f2f4f5;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.practicas-requirements li.is-complete > span,
+.practicas-requirements li.is-complete > b,
+.practicas-activity-list__state > span.is-complete,
+.practicas-document-checklist article.is-complete > span {
+  border-color: rgba(22, 133, 111, 0.35);
+  background: #e7f6f1;
+  color: #096653;
+}
+
+.practicas-requirements li.is-review > b,
+.practicas-activity-list__state > span.is-review,
+.practicas-document-checklist article.is-review > span {
+  background: #fff4d8;
+  color: #815100;
+}
+
+.practicas-requirements li.is-pending > b,
+.practicas-activity-list__state > span.is-pending,
+.practicas-document-checklist article.is-pending > span {
+  background: #fbe9e8;
+  color: #98231e;
+}
+
+.practicas-ops__form-grid,
+.practicas-ops__activity-form,
+.practicas-ops__closure {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.practicas-ops__form-grid label,
+.practicas-ops__activity-form label,
+.practicas-ops__closure > label:not(:has(input[type='checkbox'])),
+.practicas-ops__catalog section > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.practicas-ops__form-grid label > span,
+.practicas-ops__activity-form label > span,
+.practicas-ops__closure label > span,
+.practicas-ops__catalog label > span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.practicas-ops__form-grid input,
+.practicas-ops__form-grid select,
+.practicas-ops__form-grid textarea,
+.practicas-ops__activity-form input,
+.practicas-ops__activity-form select,
+.practicas-ops__activity-form textarea,
+.practicas-ops__closure input:not([type='checkbox']),
+.practicas-ops__closure textarea,
+.practicas-ops__catalog input,
+.practicas-ops__catalog select,
+.practicas-ops__catalog textarea,
+.practicas-activity-list__actions textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 10px 11px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.practicas-ops__form-grid input,
+.practicas-ops__form-grid select,
+.practicas-ops__activity-form input,
+.practicas-ops__activity-form select,
+.practicas-ops__closure input:not([type='checkbox']),
+.practicas-ops__catalog input,
+.practicas-ops__catalog select {
+  min-height: 42px;
+}
+
+.practicas-ops__form-grid textarea,
+.practicas-ops__activity-form textarea,
+.practicas-ops__closure textarea,
+.practicas-ops__catalog textarea,
+.practicas-activity-list__actions textarea {
+  resize: vertical;
+}
+
+.practicas-ops__form-grid .is-wide,
+.practicas-ops__activity-form .is-wide,
+.practicas-ops__closure .is-wide {
+  grid-column: 1 / -1;
+}
+
+.practicas-ops__plan-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-ops__plan-summary > div {
+  min-width: 0;
+  padding: 11px 13px;
+  border-right: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.practicas-ops__plan-summary > div:nth-child(3n) {
+  border-right: 0;
+}
+
+.practicas-ops__plan-summary > div.is-wide {
+  grid-column: 1 / -1;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.practicas-ops__plan-summary dt {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-ops__plan-summary dd {
+  margin: 5px 0 0;
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__notice {
+  margin: 0;
+  padding: 11px 13px;
+  border-left: 4px solid #d39a19;
+  background: #fff9ec;
+  color: #684400;
+  line-height: 1.45;
+}
+
+.practicas-ops__hour-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 13px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #eef8fb;
+}
+
+.practicas-ops__hour-summary span {
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+.practicas-activity-list {
+  display: grid;
+  gap: 0;
+  margin-top: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-activity-list article {
+  display: grid;
+  grid-template-columns: 120px minmax(220px, 1fr) minmax(120px, auto);
+  gap: 14px;
+  align-items: start;
+  padding: 12px 13px;
+}
+
+.practicas-activity-list article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-activity-list__date strong,
+.practicas-activity-list__date span,
+.practicas-activity-list article > div:nth-child(2) > strong,
+.practicas-activity-list article > div:nth-child(2) > small {
+  display: block;
+}
+
+.practicas-activity-list__date span,
+.practicas-activity-list article > div:nth-child(2) > small,
+.practicas-activity-list article > div:nth-child(2) > p {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-activity-list article > div:nth-child(2) > p {
+  margin-bottom: 0;
+  line-height: 1.4;
+}
+
+.practicas-activity-list__state {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.practicas-activity-list__state a,
+.practicas-document-checklist a {
+  color: var(--celeste-strong);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.practicas-activity-list__actions {
+  display: flex;
+  grid-column: 2 / -1;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.practicas-activity-list__actions textarea {
+  flex: 1 1 100%;
+}
+
+.practicas-indicator-list {
+  display: grid;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-indicator-list article {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(90px, 0.35fr) minmax(110px, 0.35fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 13px;
+}
+
+.practicas-indicator-list article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-indicator-list article strong,
+.practicas-indicator-list article small,
+.practicas-indicator-list article span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-indicator-list article small,
+.practicas-indicator-list article span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+}
+
+.practicas-indicator-list article a {
+  color: var(--celeste-strong);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.practicas-indicator-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-document-checklist {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-document-checklist article {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 11px 13px;
+}
+
+.practicas-document-checklist article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-document-checklist strong,
+.practicas-document-checklist small {
+  display: block;
+}
+
+.practicas-document-checklist small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-document-checklist + .practicas-ops__form-actions {
+  margin-top: 12px;
+}
+
+.practicas-evaluation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+  background: #f8fbfc;
+}
+
+.practicas-evaluation-summary > div {
+  min-width: 0;
+  padding: 12px 13px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.practicas-evaluation-summary > div:last-child {
+  border-right: 0;
+}
+
+.practicas-evaluation-summary dt,
+.practicas-evaluation-summary dd {
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.practicas-evaluation-summary dt {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-evaluation-summary dd {
+  margin-top: 5px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.practicas-evaluation-summary.is-aprobado {
+  border-left: 4px solid #16856f;
+}
+
+.practicas-evaluation-summary.is-reprobado {
+  border-left: 4px solid #b5231e;
+}
+
+.practicas-evaluation-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #f8fbfc;
+}
+
+.practicas-evaluation-actions > label,
+.practicas-evaluation-grade > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.practicas-evaluation-actions label > span,
+.practicas-evaluation-grade > div > span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.practicas-evaluation-actions textarea,
+.practicas-evaluation-grade input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 10px 11px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.practicas-evaluation-actions textarea {
+  resize: vertical;
+}
+
+.practicas-evaluation-grade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.45fr);
+  gap: 12px;
+}
+
+.practicas-evaluation-grade > div {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #eef8fb;
+}
+
+.practicas-evaluation-grade > div > strong {
+  margin-top: 4px;
+  color: var(--ink);
+}
+
+.practicas-evaluation-result {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-left: 4px solid #16856f;
+  background: #eaf7f3;
+  color: #126553;
+}
+
+.practicas-evaluation-result.is-reprobado {
+  border-left-color: #b5231e;
+  background: #fff0ef;
+  color: #8f211c;
+}
+
+.practicas-evaluation-result strong,
+.practicas-evaluation-result span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__storage-note {
+  margin: 10px 0 14px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.practicas-actor-evaluations,
+.practicas-vin-results,
+.practicas-vin-products {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.practicas-vin-results,
+.practicas-vin-products {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-vin-results header,
+.practicas-vin-products header {
+  display: grid;
+  gap: 3px;
+}
+
+.practicas-vin-results header span,
+.practicas-vin-products header span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-vin-results h4,
+.practicas-vin-products h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.practicas-actor-evaluations__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-actor-evaluations__list article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 13px;
+  background: #f8fbfc;
+}
+
+.practicas-actor-evaluations__list article + article {
+  border-left: 1px solid var(--line-strong);
+}
+
+.practicas-actor-evaluations__list span,
+.practicas-actor-evaluations__list small {
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.practicas-actor-evaluations__list span {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.practicas-actor-evaluations__list strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.practicas-grade-calculation {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(110px, auto) minmax(220px, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 0;
+  padding: 11px 13px;
+  border-left: 4px solid var(--celeste-strong);
+  background: #eef8fb;
+}
+
+.practicas-grade-calculation span,
+.practicas-grade-calculation small {
+  color: var(--ink-soft);
+}
+
+.practicas-product-list {
+  display: grid;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.practicas-product-list article {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, auto) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 13px;
+}
+
+.practicas-product-list article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-product-list article strong,
+.practicas-product-list article small,
+.practicas-product-list article p {
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.practicas-product-list article small,
+.practicas-product-list article p {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.practicas-product-list .practicas-activity-list__actions {
+  grid-column: 1 / -1;
+}
+
+.practicas-product-form,
+.practicas-actor-form {
+  padding-top: 14px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-reopen-section > label:not(.practicas-reopen-confirm) {
+  display: grid;
+  gap: 6px;
+}
+
+.practicas-reopen-section textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  resize: vertical;
+  font: inherit;
+}
+
+.practicas-reopen-confirm,
+.practicas-config-checks label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  color: var(--ink-soft);
+}
+
+.practicas-reopen-confirm {
+  margin-top: 12px;
+}
+
+.practicas-reopen-confirm input,
+.practicas-config-checks input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.practicas-config-section {
+  grid-column: 1 / -1;
+}
+
+.practicas-config-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line-strong);
+  background: #f8fbfc;
+}
+
+.practicas-ops__closure > label:has(input[type='checkbox']) {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #f8fbfc;
+}
+
+.practicas-ops__closure input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.practicas-ops__catalog {
+  margin: 0 22px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #f8fbfc;
+}
+
+.practicas-ops__audit {
+  margin: 0 22px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.practicas-ops__history {
+  margin: 16px 22px 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.practicas-ops__history > div {
+  display: grid;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__history article {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) minmax(180px, 0.4fr);
+  gap: 12px;
+  align-items: start;
+  padding: 11px 14px;
+}
+
+.practicas-ops__history article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__history article > span {
+  color: var(--celeste-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.practicas-ops__history strong,
+.practicas-ops__history small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__history small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__audit-list {
+  display: grid;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__audit-list article {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) minmax(190px, 0.45fr);
+  gap: 12px;
+  align-items: start;
+  padding: 11px 14px;
+}
+
+.practicas-ops__audit-list article + article {
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__audit-list article > span {
+  color: var(--celeste-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.practicas-ops__audit-list strong,
+.practicas-ops__audit-list small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practicas-ops__audit-list small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+}
+
+.practicas-ops__catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line-strong);
+}
+
+.practicas-ops__catalog-grid > section {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.practicas-ops__catalog-grid > section + section {
+  border-left: 1px solid var(--line-strong);
+}
+
+@media (max-width: 1100px) {
+  .practicas-ops__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-ops__workspace {
+    grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
+  }
+
+  .practicas-ops__plan-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-evaluation-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-evaluation-summary > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .practicas-evaluation-summary > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__context {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-ops__context > div:nth-child(3n) {
+    border-right: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__context > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .practicas-ops__context > div:nth-last-child(-n + 3) {
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__context > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .practicas-ops__plan-summary > div,
+  .practicas-ops__plan-summary > div:nth-child(3n) {
+    border-right: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__plan-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .practicas-ops__plan-summary > div.is-wide {
+    border-right: 0;
+  }
+
+  .practicas-activity-list article {
+    grid-template-columns: 105px minmax(180px, 1fr);
+  }
+
+  .practicas-activity-list__state {
+    grid-column: 2;
+    grid-row: 2;
+    justify-items: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .practicas-ops__header,
+  .practicas-ops__detail-header,
+  .practicas-ops__hour-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .practicas-ops__actions,
+  .practicas-ops__form-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .practicas-ops__actions button,
+  .practicas-ops__form-actions button,
+  .practicas-ops__detail-header button {
+    width: 100%;
+  }
+
+  .practicas-ops__notifications button {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .practicas-ops__reconciliations article,
+  .practicas-ops__audit-list article,
+  .practicas-ops__history article,
+  .practicas-indicator-list article,
+  .practicas-product-list article,
+  .practicas-grade-calculation {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .practicas-product-list .practicas-activity-list__actions {
+    grid-column: 1;
+  }
+
+  .practicas-ops__context {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-ops__context > div,
+  .practicas-ops__context > div:nth-child(2n),
+  .practicas-ops__context > div:nth-child(3n),
+  .practicas-ops__context > div:nth-last-child(-n + 3),
+  .practicas-ops__context > div:nth-last-child(-n + 2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__context > div:last-child {
+    border-bottom: 0;
+  }
+
+  .practicas-ops__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-ops__list {
+    max-height: 320px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__progress {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-requirements li {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .practicas-requirements li > b {
+    grid-column: 2;
+    width: fit-content;
+  }
+
+  .practicas-ops__form-grid,
+  .practicas-ops__activity-form,
+  .practicas-ops__closure,
+  .practicas-ops__plan-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-evaluation-grade,
+  .practicas-evaluation-result {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-ops__form-grid .is-wide,
+  .practicas-ops__activity-form .is-wide,
+  .practicas-ops__closure .is-wide,
+  .practicas-ops__plan-summary > div.is-wide {
+    grid-column: 1;
+  }
+
+  .practicas-ops__plan-summary > div,
+  .practicas-ops__plan-summary > div:nth-child(2n),
+  .practicas-ops__plan-summary > div:nth-child(3n) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-ops__plan-summary > div:last-child {
+    border-bottom: 0;
+  }
+
+  .practicas-ops__hour-summary span {
+    text-align: left;
+  }
+
+  .practicas-activity-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-activity-list__state,
+  .practicas-activity-list__actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-items: start;
+  }
+
+  .practicas-activity-list__actions {
+    display: grid;
+    width: 100%;
+  }
+
+  .practicas-document-checklist article {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .practicas-document-checklist article > span {
+    width: fit-content;
+  }
+
+  .practicas-ops__catalog-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-ops__catalog-grid > section + section {
+    border-top: 1px solid var(--line-strong);
+    border-left: 0;
+  }
+
+  .practicas-actor-evaluations__list {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-actor-evaluations__list article + article {
+    border-top: 1px solid var(--line-strong);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .practicas-ops__header,
+  .practicas-ops__detail-header,
+  .practicas-ops__section {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .practicas-ops__metrics {
+    grid-template-columns: 1fr;
+    padding: 0 14px;
+  }
+
+  .practicas-evaluation-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-evaluation-summary > div,
+  .practicas-evaluation-summary > div:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-evaluation-summary > div:last-child {
+    border-bottom: 0;
+  }
+
+  .practicas-ops__notifications,
+  .practicas-ops__reconciliations,
+  .practicas-ops__catalog,
+  .practicas-ops__audit,
+  .practicas-ops__history {
+    margin-right: 14px;
+    margin-left: 14px;
+  }
+
+  .practicas-ops__progress {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
 }
 
 .practicas-teacher-results {
@@ -2514,20 +4306,16 @@
 }
 
 @media (max-width: 1100px) {
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(1),
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(2),
-  .practicas-admin-card .practicas-responsable-form > .practicas-period-detail {
-    grid-column: span 12;
+  .practicas-workflow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(3),
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(4),
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(5),
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(6),
-  .practicas-admin-card .practicas-responsable-form > label:nth-of-type(7),
-  .practicas-admin-card .practicas-responsable-form > .secondary-action,
-  .practicas-admin-card .practicas-responsable-form > .primary-action {
-    grid-column: span 6;
+  .practicas-workflow-step:nth-child(2) {
+    border-right: 0;
+  }
+
+  .practicas-workflow-step:nth-child(-n + 2) {
+    border-bottom: 1px solid rgba(141, 187, 199, 0.45);
   }
 }
 
@@ -2536,9 +4324,26 @@
     width: min(100%, calc(100vw - 20px));
   }
 
+  .practicas-process-selector,
+  .practicas-workspace-tabs,
   .practicas-controls,
   .practicas-form {
     grid-template-columns: 1fr;
+  }
+
+  .practicas-enrollment-boundary {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-enrollment-boundary > div + div {
+    border-top: 1px solid rgba(141, 187, 199, 0.48);
+    border-left: 0;
+  }
+
+  .practicas-process-selector button,
+  .practicas-workspace-tabs button {
+    min-height: 0;
+    padding: 12px;
   }
 
   .practicas-admin-card .section-title {
@@ -2551,11 +4356,29 @@
     padding: 12px;
   }
 
+  .practicas-upload-window-form {
+    grid-template-columns: 1fr;
+  }
+
   .practicas-admin-card .practicas-responsable-form > label,
   .practicas-admin-card .practicas-responsable-form > .practicas-period-detail,
   .practicas-admin-card .practicas-responsable-form > .secondary-action,
   .practicas-admin-card .practicas-responsable-form > .primary-action {
     grid-column: 1 / -1 !important;
+  }
+
+  .practicas-stage__header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .practicas-stage__header .secondary-action {
+    width: 100%;
+  }
+
+  .practicas-stage__actions,
+  .practicas-stage__actions .primary-action {
+    width: 100%;
   }
 
   .practicas-picker-head {
@@ -2632,6 +4455,22 @@
 
   .practicas-review-actions button {
     width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .practicas-workflow {
+    grid-template-columns: 1fr;
+  }
+
+  .practicas-workflow-step,
+  .practicas-workflow-step:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid rgba(141, 187, 199, 0.45);
+  }
+
+  .practicas-workflow-step:last-child {
+    border-bottom: 0;
   }
 }
 
@@ -13943,6 +15782,10 @@
   grid-column: span 2;
 }
 
+.gestion-sis-filters > label:only-child {
+  grid-column: 1 / -1;
+}
+
 .gestion-sis-table-wrap {
   max-height: 610px;
 }
@@ -14048,6 +15891,57 @@
 
 .gestion-sis-excel-toolbar {
   grid-template-columns: minmax(260px, 1fr) auto minmax(180px, auto);
+}
+
+.gestion-sis-pagination {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: #ffffff;
+}
+
+.gestion-sis-pagination label {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+  color: #58627e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gestion-sis-pagination select {
+  min-height: 38px;
+  border: 1px solid rgba(141, 187, 199, 0.58);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 10px;
+}
+
+.gestion-sis-pagination > span {
+  color: #5f6987;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gestion-sis-pagination > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.gestion-sis-pagination .ghost-button {
+  min-height: 38px;
+  padding: 8px 13px;
 }
 
 .gestion-sis-modal {
@@ -43053,6 +44947,330 @@ body .student-sidebar .logout-button {
   }
 }
 
+@media (max-width: 760px) {
+  .gestion-sis-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gestion-sis-pagination > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gestion-sis-pagination .ghost-button {
+    width: 100%;
+  }
+}
+
+/* Vista compacta del estudiante en practicas institucionales. */
+.practicas-hero__copy {
+  min-width: 0;
+}
+
+.practicas-hero {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.practicas-hero__copy h1,
+.practicas-hero__copy p {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.practicas-overview-layout,
+.practicas-navigation-layout {
+  display: contents;
+}
+
+.practicas-page--student {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.practicas-page--student > * {
+  min-width: 0;
+}
+
+.practicas-page--student .practicas-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.practicas-page--student .practicas-hero small {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0;
+}
+
+.practicas-page--student .practicas-hero h1 {
+  margin: 3px 0 5px;
+  font-size: 2rem;
+  line-height: 1.08;
+}
+
+.practicas-page--student .practicas-hero p {
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.practicas-page--student .practicas-overview-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.practicas-page--student .practicas-process-selector,
+.practicas-page--student .practicas-summary,
+.practicas-page--student .practicas-enrollment-boundary,
+.practicas-page--student .practicas-workspace-tabs,
+.practicas-page--student .practicas-ops {
+  margin-top: 0;
+}
+
+.practicas-page--student .practicas-process-selector {
+  height: 100%;
+  gap: 8px;
+}
+
+.practicas-page--student .practicas-process-selector button {
+  min-height: 76px;
+  gap: 2px;
+  padding: 9px 11px;
+}
+
+.practicas-page--student .practicas-process-selector button > strong {
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.practicas-page--student .practicas-process-selector button > small {
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.practicas-page--student .practicas-summary {
+  grid-template-columns: minmax(210px, 1.55fr) repeat(2, minmax(105px, 0.7fr));
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.practicas-page--student .practicas-summary article {
+  align-content: center;
+  gap: 3px;
+  padding: 9px 12px;
+}
+
+.practicas-page--student .practicas-summary article + article {
+  border-left: 1px solid var(--line-strong);
+}
+
+.practicas-page--student .practicas-summary span {
+  font-size: 0.68rem;
+  letter-spacing: 0;
+}
+
+.practicas-page--student .practicas-summary strong {
+  font-size: 1.08rem;
+  line-height: 1.2;
+}
+
+.practicas-page--student .practicas-summary p {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.practicas-page--student .practicas-navigation-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.practicas-page--student .practicas-enrollment-boundary {
+  height: 100%;
+}
+
+.practicas-page--student .practicas-enrollment-boundary > div {
+  display: grid;
+  align-content: center;
+  padding: 9px 12px;
+}
+
+.practicas-page--student .practicas-enrollment-boundary strong {
+  font-size: 0.78rem;
+}
+
+.practicas-page--student .practicas-enrollment-boundary span {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.practicas-page--student .practicas-workspace-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 100%;
+  gap: 8px;
+}
+
+.practicas-page--student .practicas-workspace-tabs button {
+  min-height: 64px;
+  gap: 2px;
+  padding: 9px 11px;
+}
+
+.practicas-page--student .practicas-workspace-tabs button > strong {
+  font-size: 0.86rem;
+}
+
+.practicas-page--student .practicas-workspace-tabs button > small {
+  font-size: 0.69rem;
+  line-height: 1.3;
+}
+
+.practicas-page--student .practicas-ops {
+  gap: 10px;
+}
+
+.practicas-page--student .practicas-ops__header {
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.practicas-page--student .practicas-ops__header h2 {
+  margin-top: 2px;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.practicas-page--student .practicas-ops__header p {
+  margin-top: 3px;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.practicas-page--student .practicas-ops__header .secondary-action {
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
+.practicas-page--student .practicas-ops__metrics {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 14px;
+}
+
+.practicas-page--student .practicas-ops__metrics article {
+  min-height: 72px;
+  padding: 8px 10px;
+}
+
+.practicas-page--student .practicas-ops__metrics span {
+  font-size: 0.64rem;
+  letter-spacing: 0;
+}
+
+.practicas-page--student .practicas-ops__metrics strong {
+  margin-top: 2px;
+  font-size: 1.15rem;
+}
+
+.practicas-page--student .practicas-ops__metrics small {
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.practicas-page--student .practicas-ops__workspace {
+  min-height: clamp(220px, 28vh, 300px);
+}
+
+@media (max-width: 900px) {
+  .practicas-page--student .practicas-ops__metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .practicas-page--student {
+    gap: 8px;
+  }
+
+  .practicas-page--student .practicas-hero {
+    padding: 11px 12px;
+  }
+
+  .practicas-page--student .practicas-hero h1 {
+    font-size: 1.55rem;
+  }
+
+  .practicas-page--student .practicas-process-selector,
+  .practicas-page--student .practicas-workspace-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-page--student .practicas-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .practicas-page--student .practicas-summary article:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .practicas-page--student .practicas-summary article:nth-child(2) {
+    border-left: 0;
+  }
+
+  .practicas-page--student .practicas-enrollment-boundary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .practicas-page--student .practicas-enrollment-boundary > div + div {
+    border-top: 1px solid rgba(141, 187, 199, 0.48);
+    border-left: 0;
+  }
+
+  .practicas-page--student .practicas-ops__header {
+    align-items: stretch;
+  }
+
+  .practicas-page--student .practicas-ops__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .practicas-page--student .practicas-process-selector,
+  .practicas-page--student .practicas-workspace-tabs,
+  .practicas-page--student .practicas-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .practicas-page--student .practicas-summary article:first-child {
+    grid-column: auto;
+    border-bottom: 0;
+  }
+
+  .practicas-page--student .practicas-summary article + article {
+    border-top: 1px solid var(--line-strong);
+    border-left: 0;
+  }
+
+  .practicas-page--student .practicas-summary article:first-child {
+    border-top: 0;
+  }
+}
+
 /* Registro previo guiado: mantiene el formulario compacto y ordenado por etapa. */
 .preinscripcion-registration-steps {
   display: grid;
@@ -43389,6 +45607,29 @@ body .student-sidebar .logout-button {
   background: #0f827c;
 }
 
+.screen-access-selection-key--restricted {
+  border-color: rgba(166, 94, 12, 0.36);
+  background: #fff8e8;
+  color: #76500f;
+}
+
+.screen-access-selection-key--restricted::before {
+  border-color: #a65e0c;
+  background: #a65e0c;
+}
+
+.screen-access-selection-filters button.is-active.is-restricted {
+  border-color: rgba(166, 94, 12, 0.62);
+  background: #fff4d8;
+  color: #704708;
+  box-shadow: inset 0 -3px 0 rgba(166, 94, 12, 0.78);
+}
+
+.screen-access-selection-filters button.is-active.is-restricted b {
+  background: #8b510d;
+  color: #ffffff;
+}
+
 .screen-access-group__head > div {
   display: grid;
   min-width: 0;
@@ -43463,6 +45704,28 @@ body .student-sidebar .logout-button {
 .screen-access-item--checked {
   border-left: 4px solid #0f827c;
   box-shadow: 0 3px 10px rgba(15, 130, 124, 0.08);
+}
+
+.screen-access-item--restricted {
+  cursor: not-allowed;
+  border-color: rgba(166, 94, 12, 0.38);
+  background: #fffaf0;
+  box-shadow: none;
+}
+
+.screen-access-item--restricted input {
+  cursor: not-allowed;
+}
+
+.screen-access-item .screen-access-item__status.is-restricted {
+  border-color: rgba(166, 94, 12, 0.42);
+  background: #fff0c7;
+  color: #704708;
+}
+
+.screen-access-item .screen-access-item__restriction {
+  color: #76500f;
+  font-weight: 800;
 }
 
 @media (max-width: 720px) {

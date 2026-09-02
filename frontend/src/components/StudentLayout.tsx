@@ -5,6 +5,7 @@ import type {
   MoodleSection,
   Page,
   PortalStudentSection,
+  PracticasProcessCode,
   PreinscriptionStage,
   ScreenPermissionCode,
 } from '../types/app'
@@ -18,6 +19,7 @@ type StudentLayoutProps = {
   activePreinscriptionStage?: PreinscriptionStage
   activeMatriculaAcadMode?: AcademicEnrollmentMode
   activeMoodleSection?: MoodleSection
+  activePracticasProcess?: PracticasProcessCode
   role?: string
   screenAccessPages?: ScreenPermissionCode[] | null
   displayName?: string
@@ -41,6 +43,7 @@ type StudentLayoutProps = {
   onOpenMatriculaAcad: (mode?: AcademicEnrollmentMode) => void
   onOpenMatriculaDocente: () => void
   onOpenCareerChangeRequests: () => void
+  onOpenModalityChangeRequests: () => void
   onOpenEstadoDocente: () => void
   onOpenSenescytEstudiantes: () => void
   onOpenActualizarDatosEstudiante: () => void
@@ -74,7 +77,7 @@ type StudentLayoutProps = {
   onOpenTeacherEvaluationProgress: () => void
   onOpenTeacherEvaluationReports: () => void
   onOpenTeacherComplianceFormat: () => void
-  onOpenPracticasInstitucionales: () => void
+  onOpenPracticasInstitucionales: (process?: PracticasProcessCode) => void
   onLogout: () => void
   children: ReactNode
 }
@@ -89,6 +92,7 @@ type NavItem = {
   portalSection?: PortalStudentSection
   preinscriptionStage?: PreinscriptionStage
   moodleSection?: MoodleSection
+  practicasProcess?: PracticasProcessCode
   category?: string
   action: () => void
 }
@@ -140,6 +144,7 @@ const academicPages = new Set<Page>([
   'matricula-acad',
   'matricula-docente',
   'solicitudes-cambio-carrera',
+  'solicitudes-cambio-modalidad',
   'estado-docente',
   'actualizar-datos-estudiante',
   'actualizar-correo-intec',
@@ -199,7 +204,7 @@ const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
 const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['solicitudes-cambio-carrera', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
+const secretaryPages = new Set<Page>(['solicitudes-cambio-carrera', 'solicitudes-cambio-modalidad', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -221,7 +226,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   if (item.page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA', 'FINANCIERO'].includes(normalizedRole)) return false
 
   if (normalizedRole === 'ESTUDIANTE') return Boolean(item.page && studentPortalPages.has(item.page)) || item.page === 'ingles' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
-  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'carnet-institucional' || item.moodleSection === 'alerts'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional' || item.moodleSection === 'alerts'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
     if (item.page === 'gestion-sisacademico' && item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
@@ -260,7 +265,11 @@ function navItemAccessCode(item: NavItem): ScreenPermissionCode {
 
 function navItemIdentity(item: NavItem) {
   const accessCode = navItemAccessCode(item)
-  if (accessCode) return `access:${accessCode}`
+  if (accessCode) {
+    return item.practicasProcess
+      ? `access:${accessCode}:process:${item.practicasProcess}`
+      : `access:${accessCode}`
+  }
   return [
     item.portalSection || '',
     item.label,
@@ -383,7 +392,10 @@ function groupIconName(groupKey: string): GroupIconName {
     'admision-consultas': 'admission',
     migracion: 'matricula',
     certificados: 'certificate',
+    'dashboard-estudiante': 'home',
     'portal-estudiante': 'student',
+    'malla-estudiante': 'catalog',
+    'practicas-estudiante': 'briefcase',
     idiomas: 'academic',
     'expedientes-documentales': 'certificate',
     'portal-docente': 'teacher',
@@ -545,6 +557,7 @@ export function StudentLayout({
   activePreinscriptionStage = 'registro',
   activeMatriculaAcadMode = 'individual',
   activeMoodleSection = 'status',
+  activePracticasProcess = 'PPF',
   role = '',
   screenAccessPages = null,
   displayName = '',
@@ -568,6 +581,7 @@ export function StudentLayout({
   onOpenMatriculaAcad,
   onOpenMatriculaDocente,
   onOpenCareerChangeRequests,
+  onOpenModalityChangeRequests,
   onOpenEstadoDocente,
   onOpenSenescytEstudiantes,
   onOpenActualizarDatosEstudiante,
@@ -610,7 +624,7 @@ export function StudentLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [openMenuGroups, setOpenMenuGroups] = useState<Set<string>>(
-    () => new Set(['solicitudes']),
+    () => new Set([normalizedRole === 'ESTUDIANTE' ? 'dashboard-estudiante' : 'solicitudes']),
   )
 
   useEffect(() => {
@@ -698,6 +712,23 @@ export function StudentLayout({
       action: () => onOpenPreinscripcion('materias'),
     },
   ]
+  const practicesInstitutionalMenuItems: NavItem[] = [
+    {
+      label: 'Prácticas laborales / preprofesionales',
+      description: 'Inscripción institucional, responsable, plan, horas, documentos y cierre.',
+      page: 'practicas-institucionales',
+      practicasProcess: 'PPF',
+      action: () => onOpenPracticasInstitucionales('PPF'),
+    },
+    {
+      label: 'Vinculación con la sociedad',
+      description: 'Inscripción institucional, proyecto, actividades, indicadores, evidencias y cierre.',
+      page: 'practicas-institucionales',
+      practicasProcess: 'VIN',
+      action: () => onOpenPracticasInstitucionales('VIN'),
+    },
+  ]
+
   const admissionsMenuGroup: NavGroup = {
     key: 'admisiones',
     title: 'Admisiones',
@@ -815,6 +846,12 @@ export function StudentLayout({
         description: 'Comparar equivalencias, adjuntar el respaldo y gestionar el cambio de carrera.',
         page: 'solicitudes-cambio-carrera',
         action: onOpenCareerChangeRequests,
+      },
+      {
+        label: 'Cambio de modalidad',
+        description: 'Seleccionar carrera, modalidad y período destino en una sola matrícula.',
+        page: 'solicitudes-cambio-modalidad',
+        action: onOpenModalityChangeRequests,
       },
     ],
   }
@@ -1406,35 +1443,7 @@ export function StudentLayout({
       key: 'vinculacion',
       title: 'Prácticas institucionales',
       summary: 'Preprofesionales y vinculación',
-      items: [
-        {
-          label: 'Módulo institucional',
-          description: 'Crear expedientes PPF/VIN y designar responsables.',
-          page: 'practicas-institucionales',
-          action: onOpenPracticasInstitucionales,
-        },
-        {
-          label: 'Prácticas profesionales',
-          description: 'Registro de prácticas, horas, docente y empresa.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'practicas',
-          action: () => onOpenGestionSisAcademico('practicas'),
-        },
-        {
-          label: 'Vinculación con la sociedad',
-          description: 'Proyectos de vinculación con la sociedad, horas, docente y evidencias.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'practicas_vinculacion',
-          action: () => onOpenGestionSisAcademico('practicas_vinculacion'),
-        },
-        {
-          label: 'Empresas',
-          description: 'Empresas usadas en prácticas profesionales.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'empresas',
-          action: () => onOpenGestionSisAcademico('empresas'),
-        },
-      ],
+      items: practicesInstitutionalMenuItems,
     },
     {
       key: 'catalogos',
@@ -2075,14 +2084,7 @@ export function StudentLayout({
       key: 'vinculacion',
       title: 'Prácticas institucionales',
       summary: 'Preprofesionales y vinculación con la sociedad',
-      items: [
-        {
-          label: 'Módulo institucional',
-          description: 'Matricular estudiantes y asignar responsable de prácticas.',
-          page: 'practicas-institucionales',
-          action: onOpenPracticasInstitucionales,
-        },
-      ],
+      items: practicesInstitutionalMenuItems,
     },
     {
       key: 'titulacion',
@@ -2177,14 +2179,7 @@ export function StudentLayout({
       key: 'vinculacion',
       title: 'Prácticas institucionales',
       summary: 'Preprofesionales y vinculación con la sociedad',
-      items: [
-        {
-          label: 'Prácticas y vinculación con la sociedad',
-          description: 'Observar expedientes, estudiantes, responsables y avance documental.',
-          page: 'practicas-institucionales',
-          action: onOpenPracticasInstitucionales,
-        },
-      ],
+      items: practicesInstitutionalMenuItems,
     },
     {
       key: 'datos-senecyt',
@@ -2242,31 +2237,24 @@ export function StudentLayout({
 
   const studentMenuGroups: NavGroup[] = [
     {
-      key: 'portal-estudiante',
-      title: 'Estudiante',
-      summary: 'Dashboard, mallas y calificaciones',
+      key: 'dashboard-estudiante',
+      title: 'Dashboard',
+      summary: 'Inicio y avance académico',
       items: [
         {
           label: 'Panel académico',
-          description: 'Inicio con avance, cumplimiento y accesos rapidos.',
+          description: 'Inicio con avance, cumplimiento y accesos rápidos.',
           page: 'portal-estudiante',
           portalSection: 'dashboard',
           action: () => onOpenPortalEstudiante('dashboard'),
         },
-        {
-          label: 'Malla curricular',
-          description: 'Materias por cursar, códigos, niveles y créditos.',
-          page: 'portal-estudiante-malla-curricular',
-          portalSection: 'curricular',
-          action: () => onOpenPortalEstudiante('curricular'),
-        },
-        {
-          label: 'Malla académica',
-          description: 'Materias aprobadas, pendientes y avance por promedio.',
-          page: 'portal-estudiante-malla-academica',
-          portalSection: 'academica',
-          action: () => onOpenPortalEstudiante('academica'),
-        },
+      ],
+    },
+    {
+      key: 'portal-estudiante',
+      title: 'Estudiante',
+      summary: 'Calificaciones, evaluación y servicios',
+      items: [
         {
           label: 'Calificaciones por período',
           description: 'Revisión de notas filtrada por período académico.',
@@ -2281,18 +2269,39 @@ export function StudentLayout({
           action: onOpenTeacherEvaluation,
         },
         {
-          label: 'Prácticas institucionales',
-          description: 'Crear y revisar prácticas preprofesionales o vinculación.',
-          page: 'practicas-institucionales',
-          action: onOpenPracticasInstitucionales,
-        },
-        {
           label: 'Carnet institucional',
           description: 'Subir foto y revisar estado de aprobación.',
           page: 'carnet-institucional',
           action: onOpenCarnetInstitucional,
         },
       ],
+    },
+    {
+      key: 'malla-estudiante',
+      title: 'Malla',
+      summary: 'Plan curricular y avance académico',
+      items: [
+        {
+          label: 'Malla académica',
+          description: 'Materias aprobadas, pendientes y avance por promedio.',
+          page: 'portal-estudiante-malla-academica',
+          portalSection: 'academica',
+          action: () => onOpenPortalEstudiante('academica'),
+        },
+        {
+          label: 'Malla curricular',
+          description: 'Materias por cursar, códigos, niveles y créditos.',
+          page: 'portal-estudiante-malla-curricular',
+          portalSection: 'curricular',
+          action: () => onOpenPortalEstudiante('curricular'),
+        },
+      ],
+    },
+    {
+      key: 'practicas-estudiante',
+      title: 'Prácticas',
+      summary: 'Laborales, preprofesionales y vinculación',
+      items: practicesInstitutionalMenuItems,
     },
   ]
 
@@ -2326,6 +2335,7 @@ export function StudentLayout({
           page: 'portal-docente-contratos',
           action: onOpenPortalDocenteContratos,
         },
+        ...practicesInstitutionalMenuItems,
         {
           label: 'Carnet institucional',
           description: 'Subir foto y revisar estado de aprobación.',
@@ -2485,6 +2495,9 @@ export function StudentLayout({
 
   function itemIsActive(item: NavItem) {
     if (item.page !== activePage) return false
+    if (item.practicasProcess) {
+      return item.practicasProcess === activePracticasProcess
+    }
     if (item.moodleSection) {
       return item.moodleSection === activeMoodleSection
     }

@@ -19,6 +19,7 @@ from app.services.screen_access import (
     _deactivate_non_admin_automatic_moodle_assignments,
     _deactivate_container_assignments,
     _ensure_screen_catalog_ready,
+    get_screen_access,
     _initialize_role_assignments,
     _materialize_role_screen_matrix,
     _migrate_flow_screen_assignments,
@@ -527,11 +528,17 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             {
                 ("ACADEMICO", "solicitudes-cambio-carrera"),
                 ("SECRETARIA", "solicitudes-cambio-carrera"),
+                ("ACADEMICO", "solicitudes-cambio-modalidad"),
+                ("SECRETARIA", "solicitudes-cambio-modalidad"),
+                ("DOCENTE", "practicas-institucionales"),
             },
         )
         for statement, _ in cursor.executions:
-            self.assertIn("TARGET.USUARIOACTUALIZACION = N'SISTEMA_CATALOGO'", statement)
-            self.assertIn("SISTEMA_SOLICITUDES_V1", statement)
+            self.assertIn(
+                "TARGET.USUARIOACTUALIZACION IN (N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL')",
+                statement,
+            )
+            self.assertIn("SISTEMA_PANTALLAS_NUEVAS", statement)
             self.assertNotIn("WHEN MATCHED AND TARGET.ACTIVO = 1", statement)
 
     def test_complete_role_screen_matrix_avoids_repeating_migrations(self) -> None:
@@ -593,10 +600,46 @@ class ScreenAccessRouterTests(unittest.TestCase):
             "roles": [],
         }
 
-        result = list_screen_access(profile("BIENESTAR"), include_all=False)
+        result = list_screen_access(
+            profile("BIENESTAR"),
+            include_all=False,
+            refresh=True,
+        )
 
         self.assertEqual(result["current_role"], "BIENESTAR")
-        get_access.assert_called_once_with("BIENESTAR", include_all=False)
+        get_access.assert_called_once_with(
+            "BIENESTAR",
+            include_all=False,
+            force_refresh=True,
+        )
+
+
+class ScreenAccessRefreshTests(unittest.TestCase):
+    @patch("app.services.screen_access._role_payloads")
+    @patch("app.services.screen_access.get_integration_control_connection")
+    @patch("app.services.screen_access._ensure_screen_catalog_ready")
+    def test_force_refresh_bypasses_existing_role_cache(
+        self,
+        ensure_catalog: MagicMock,
+        get_connection: MagicMock,
+        role_payloads: MagicMock,
+    ) -> None:
+        fresh_role = {"value": "BIENESTAR", "pages": ["dashboard"]}
+        role_payloads.return_value = [fresh_role]
+        cached_payload = {"roles": [{"value": "BIENESTAR", "pages": []}]}
+        cache_key = ("BIENESTAR", False)
+
+        with patch.dict(
+            "app.services.screen_access._access_payload_cache",
+            {cache_key: (float("inf"), cached_payload)},
+            clear=True,
+        ):
+            result = get_screen_access("BIENESTAR", force_refresh=True)
+
+        self.assertEqual(result["roles"], [fresh_role])
+        self.assertIsNot(result, cached_payload)
+        ensure_catalog.assert_called_once_with()
+        get_connection.assert_called_once_with()
 
 
 class ScreenAccessAuthorizationTests(unittest.TestCase):

@@ -15,6 +15,7 @@ import pyodbc
 from app.core.security import SessionUser, require_roles
 from app.routers.students import _MATRICULA_ACTUAL_CTE
 from app.services.db import get_connection, get_practices_connection, get_titulation_connection
+from app.services.practices_operations import ensure_operations_schema, is_approved_practice_outcome
 
 router = APIRouter(prefix="/api/titulacion", tags=["titulacion"])
 
@@ -195,6 +196,7 @@ def _operational_practices_completion(
     try:
         with get_practices_connection() as conn:
             cursor = conn.cursor()
+            ensure_operations_schema(cursor)
             for start in range(0, len(documents), 800):
                 batch = documents[start : start + 800]
                 placeholders = ",".join("?" for _ in batch)
@@ -208,12 +210,20 @@ def _operational_practices_completion(
                         ee.codigo AS EstadoCodigo,
                         ISNULL(e.horas_reconocidas, 0) AS HorasReconocidas,
                         ISNULL(e.horas_asistencia_validadas, 0) AS HorasAsistenciaValidadas,
-                        e.fecha_fin AS FechaFin
+                        e.fecha_fin AS FechaFin,
+                        evaluacion.estado AS EstadoEvaluacion,
+                        evaluacion.calificacion AS CalificacionFinal,
+                        evaluacion.resultado AS ResultadoEvaluacion,
+                        cierre.fecha_cierre AS FechaCierreOperativo
                     FROM pp.expediente_practica e
                     INNER JOIN cat.tipo_proceso tp
                         ON tp.tipo_proceso_id = e.tipo_proceso_id
                     INNER JOIN cat.estado_expediente ee
                         ON ee.estado_expediente_id = e.estado_expediente_id
+                    LEFT JOIN ops.evaluacion_practica evaluacion
+                        ON evaluacion.expediente_id = e.expediente_id
+                    LEFT JOIN ops.cierre_proceso cierre
+                        ON cierre.expediente_id = e.expediente_id
                     WHERE REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(CONVERT(varchar(50), e.cedula_est))), '-', ''), ' ', ''), '.', '') IN ({placeholders})
                       AND tp.codigo IN ('PPF', 'VIN')
                     ORDER BY e.expediente_id DESC
@@ -308,6 +318,12 @@ def _operational_practices_completion(
         )
         complete = (
             _clean(expediente.get("EstadoCodigo")).upper() in completed_states
+            and is_approved_practice_outcome(
+                evaluation_state=expediente.get("EstadoEvaluacion"),
+                result=expediente.get("ResultadoEvaluacion"),
+                grade=expediente.get("CalificacionFinal"),
+                closed_at=expediente.get("FechaCierreOperativo"),
+            )
             and hours >= float(requirement["hours"])
             and set(requirement["documents"]).issubset(validated_codes)
         )
