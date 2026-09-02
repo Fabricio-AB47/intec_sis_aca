@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 from io import BytesIO
+from unittest.mock import patch
 
 from pypdf import PdfReader
 
@@ -10,14 +11,18 @@ from app.routers.preinscription import (
     _build_program_scholarship_contract_pdf,
     _build_selected_scholarship_contract_pdf,
     _build_scholarship_contract_pdf,
+    _combined_scholarship_seeds,
     _exclude_english_scholarship_items,
     _is_english_career,
+    _scholarship_relation_key,
     _scholarship_contract_base_number,
     _scholarship_contract_clauses,
     _scholarship_contract_generation_selection,
     _scholarship_contract_initial,
     _scholarship_contract_scope,
+    list_scholarship_contract_candidates,
 )
+from app.core.security import SessionUser
 from app.services.screen_access import DEFAULT_ACCESS, SCREEN_CATALOG
 
 
@@ -45,6 +50,46 @@ def scholarship_item(**overrides: object) -> dict[str, object]:
 
 
 class ScholarshipContractTests(unittest.TestCase):
+    def test_scholarship_sources_are_related_by_normalized_name(self) -> None:
+        seeds = _combined_scholarship_seeds(
+            [("Beca Intec", 10.0, 100.0), ("Suzuki", 100.0, 100.0)],
+            [
+                ("Beca Intec", 25.0, 25.0),
+                ("Susuki", 100.0, 100.0),
+                ("Beca deportiva", 75.0, 75.0),
+                ("Ninguno", 0.0, 0.0),
+            ],
+        )
+
+        self.assertEqual(
+            seeds,
+            [
+                ("Beca Intec", 10.0, 100.0),
+                ("Suzuki", 100.0, 100.0),
+                ("Beca deportiva", 75.0, 75.0),
+            ],
+        )
+        self.assertEqual(_scholarship_relation_key("Beca Susuki"), "SUZUKI")
+
+    @patch(
+        "app.routers.preinscription._scholarship_configurations",
+        return_value=[{"nombre": "Beca Intec"}, {"nombre": "Beca Mintel"}],
+    )
+    @patch(
+        "app.routers.preinscription._scholarship_contract_candidates",
+        return_value=[{"tipo_beca": "Beca Intec", "codigo_periodo": "1060"}],
+    )
+    def test_contract_filters_include_configured_types_without_candidates(
+        self,
+        _candidates_mock: object,
+        _configurations_mock: object,
+    ) -> None:
+        response = list_scholarship_contract_candidates(
+            SessionUser(login="admin", rol="ADMINISTRADOR"),
+        )
+
+        self.assertEqual(response["tipos_beca"], ["Beca Intec", "Beca Mintel"])
+
     def test_english_career_is_excluded_from_scholarships(self) -> None:
         self.assertTrue(_is_english_career("12", "Inglés"))
         self.assertTrue(_is_english_career("", "Escuela de Idiomas"))

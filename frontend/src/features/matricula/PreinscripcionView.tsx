@@ -197,7 +197,7 @@ function toNumber(value: string, fallback = 0): number {
 
 function isNoScholarship(value?: string): boolean {
   const normalized = String(value || '').trim().toUpperCase()
-  return !normalized || ['SIN BECA', 'NO APLICA', 'NINGUNA'].includes(normalized)
+  return !normalized || ['SIN BECA', 'NO APLICA', 'NINGUNA', 'NINGUNO'].includes(normalized)
 }
 
 function isMintelScholarship(value?: string): boolean {

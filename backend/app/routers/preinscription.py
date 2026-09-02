@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from tempfile import SpooledTemporaryFile
 from typing import Annotated, Any, Literal
+import unicodedata
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -266,7 +267,7 @@ def _scholarship_contract_generation_selection(
 
 def _is_no_scholarship(value: Any) -> bool:
     normalized = _clean(value).upper()
-    return normalized in {"", "SIN BECA", "NO APLICA", "NINGUNA"}
+    return normalized in {"", "SIN BECA", "NO APLICA", "NINGUNA", "NINGUNO"}
 
 
 def _is_mintel_scholarship(value: Any) -> bool:
@@ -299,6 +300,36 @@ def _scholarship_code(value: Any) -> str:
     return normalized[:50] or "BECA"
 
 
+def _scholarship_relation_key(value: Any) -> str:
+    """Matches scholarship sources by name without duplicating spelling variants."""
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFD", _clean(value).upper())
+        if unicodedata.category(character) != "Mn"
+    )
+    key = re.sub(r"[^A-Z0-9]+", "_", normalized).strip("_")
+    if key.startswith("BECA_"):
+        key = key[5:]
+    if key == "SUSUKI":
+        key = "SUZUKI"
+    return key
+
+
+def _combined_scholarship_seeds(
+    *sources: list[tuple[str, float, float]],
+) -> list[tuple[str, float, float]]:
+    combined: list[tuple[str, float, float]] = []
+    known_keys: set[str] = set()
+    for source in sources:
+        for name, minimum, maximum in source:
+            relation_key = _scholarship_relation_key(name)
+            if not relation_key or _is_no_scholarship(name) or relation_key in known_keys:
+                continue
+            combined.append((name, minimum, maximum))
+            known_keys.add(relation_key)
+    return combined
+
+
 def _normalized_scholarship(tipo_beca: Any, porcentaje_beca: Any, valor_beca: Any = 0) -> tuple[str, float, float]:
     scholarship_type = _clean(tipo_beca)
     if _is_no_scholarship(scholarship_type):
@@ -310,6 +341,7 @@ def _normalized_scholarship(tipo_beca: Any, porcentaje_beca: Any, valor_beca: An
 
 def _ensure_scholarship_configuration_table() -> None:
     legacy_rows: list[tuple[str, float, float]] = []
+    agreement_discount_rows: list[tuple[str, float, float]] = []
     try:
         with get_connection() as legacy_conn:
             legacy_cursor = legacy_conn.cursor()
@@ -327,8 +359,25 @@ def _ensure_scholarship_configuration_table() -> None:
                 """
             )
             legacy_rows = [(_clean(row[0]), float(row[1] or 0), float(row[2] or 0)) for row in legacy_cursor.fetchall()]
+            legacy_cursor.execute(
+                """
+                IF OBJECT_ID(N'dbo.IN_DESCCONVE', N'U') IS NOT NULL
+                    SELECT LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), DetalleDesConve))),
+                           TRY_CONVERT(decimal(9,2), Porcentaje)
+                    FROM dbo.IN_DESCCONVE
+                    WHERE NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), DetalleDesConve))), '') IS NOT NULL
+                    ORDER BY LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), DetalleDesConve)))
+                ELSE
+                    SELECT TOP (0) N'', CAST(0 AS decimal(9,2))
+                """
+            )
+            agreement_discount_rows = [
+                (_clean(row[0]), float(row[1] or 0), float(row[1] or 0))
+                for row in legacy_cursor.fetchall()
+            ]
     except pyodbc.Error:
         legacy_rows = []
+        agreement_discount_rows = []
 
     with get_finance_connection() as conn:
         cursor = conn.cursor()
@@ -368,32 +417,62 @@ def _ensure_scholarship_configuration_table() -> None:
         )
         cursor.execute("SELECT COUNT(1) FROM cat.ConfiguracionBecaPreinscripcion")
         is_empty = int(cursor.fetchone()[0] or 0) == 0
-        if is_empty:
-            seeds = legacy_rows or [
+        seeds = _combined_scholarship_seeds(legacy_rows, agreement_discount_rows)
+        migration_user = "MIGRACION_INICIAL" if is_empty else "SINCRONIZACION_HISTORICA"
+        if is_empty and not seeds:
+            seeds = [
                 ("Beca Intec", 0.0, 100.0),
                 ("Beca Futuro Femenino", 100.0, 100.0),
                 ("Beca Mintel", 100.0, 100.0),
                 ("Suzuki", 100.0, 100.0),
             ]
-            for name, minimum, maximum in seeds:
-                is_mintel = _is_mintel_scholarship(name)
-                is_variable = not is_mintel and abs(maximum - minimum) > 0.001
-                fixed_percentage = 100.0 if is_mintel else (None if is_variable else maximum)
-                cursor.execute(
-                    """
-                    INSERT INTO cat.ConfiguracionBecaPreinscripcion
-                        (Codigo, Nombre, EsVariable, PorcentajeFijo, PorcentajeMinimo,
-                         PorcentajeMaximo, Protegida, Activo, UsuarioCreacion)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'MIGRACION_INICIAL')
-                    """,
-                    _scholarship_code(name),
-                    name,
-                    int(is_variable),
-                    fixed_percentage,
-                    100.0 if is_mintel else minimum,
-                    100.0 if is_mintel else maximum,
-                    int(is_mintel),
-                )
+        cursor.execute("SELECT Nombre FROM cat.ConfiguracionBecaPreinscripcion")
+        configured_relation_keys = {
+            _scholarship_relation_key(row[0])
+            for row in cursor.fetchall()
+            if _scholarship_relation_key(row[0])
+        }
+        for name, minimum, maximum in seeds:
+            relation_key = _scholarship_relation_key(name)
+            if relation_key in configured_relation_keys:
+                continue
+            is_mintel = _is_mintel_scholarship(name)
+            is_variable = not is_mintel and abs(maximum - minimum) > 0.001
+            fixed_percentage = 100.0 if is_mintel else (None if is_variable else maximum)
+            cursor.execute(
+                """
+                MERGE cat.ConfiguracionBecaPreinscripcion WITH (HOLDLOCK) AS target
+                USING
+                (
+                    SELECT
+                        ? AS Codigo, ? AS Nombre, ? AS EsVariable, ? AS PorcentajeFijo,
+                        ? AS PorcentajeMinimo, ? AS PorcentajeMaximo, ? AS Protegida,
+                        ? AS UsuarioCreacion
+                ) AS source
+                   ON target.Codigo = source.Codigo
+                WHEN NOT MATCHED THEN
+                    INSERT
+                    (
+                        Codigo, Nombre, EsVariable, PorcentajeFijo, PorcentajeMinimo,
+                        PorcentajeMaximo, Protegida, Activo, UsuarioCreacion
+                    )
+                    VALUES
+                    (
+                        source.Codigo, source.Nombre, source.EsVariable, source.PorcentajeFijo,
+                        source.PorcentajeMinimo, source.PorcentajeMaximo, source.Protegida, 1,
+                        source.UsuarioCreacion
+                    );
+                """,
+                _scholarship_code(name),
+                name,
+                int(is_variable),
+                fixed_percentage,
+                100.0 if is_mintel else minimum,
+                100.0 if is_mintel else maximum,
+                int(is_mintel),
+                migration_user,
+            )
+            configured_relation_keys.add(relation_key)
         cursor.execute(
             """
             UPDATE cat.ConfiguracionBecaPreinscripcion
@@ -4179,7 +4258,10 @@ def list_preinscription_scholarship_beneficiaries(
                     COALESCE(ca.NombreCarrera, c.CodigoCarrera) AS Carrera,
                     c.CodigoPeriodo,
                     COALESCE(pe.NombrePeriodo, c.CodigoPeriodo) AS Periodo,
-                    COALESCE(NULLIF(LTRIM(RTRIM(lb.tipo_beca)), ''), tb.Nombre) AS TipoBeca,
+                    COALESCE(
+                        NULLIF(LTRIM(RTRIM(lb.tipo_beca COLLATE DATABASE_DEFAULT)), ''),
+                        tb.Nombre COLLATE DATABASE_DEFAULT
+                    ) AS TipoBeca,
                     b.PorcentajeBeca,
                     b.ValorBeca,
                     b.Motivo,
@@ -4198,7 +4280,8 @@ def list_preinscription_scholarship_beneficiaries(
                 INNER JOIN fin.CuentaEstudiante c ON c.CuentaEstudianteId = b.CuentaEstudianteId
                     AND c.Activo = 1
                 INNER JOIN INTECBDD.dbo.DATOS_ESTUD active_student
-                    ON TRY_CONVERT(nvarchar(50), active_student.codigo_estud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                    ON TRY_CONVERT(nvarchar(50), active_student.codigo_estud) COLLATE DATABASE_DEFAULT
+                     = TRY_CONVERT(nvarchar(50), e.CodigoEstud) COLLATE DATABASE_DEFAULT
                    AND UPPER(LTRIM(RTRIM(ISNULL(active_student.Estado, '')))) = 'A'
                 INNER JOIN cat.TipoBeca tb ON tb.TipoBecaId = b.TipoBecaId
                 INNER JOIN cat.EstadoBeca eb ON eb.EstadoBecaId = b.EstadoBecaId
@@ -4208,7 +4291,8 @@ def list_preinscription_scholarship_beneficiaries(
                 (
                     SELECT TOP (1) legacy.tipo_beca
                     FROM INTECBDD.dbo.Becas legacy
-                    WHERE TRY_CONVERT(nvarchar(50), legacy.codestud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                    WHERE TRY_CONVERT(nvarchar(50), legacy.codestud) COLLATE DATABASE_DEFAULT
+                        = TRY_CONVERT(nvarchar(50), e.CodigoEstud) COLLATE DATABASE_DEFAULT
                       AND ISNULL(TRY_CONVERT(decimal(9,2), legacy.porcentaje_beca), 0) > 0
                     ORDER BY
                         CASE WHEN ABS(ISNULL(TRY_CONVERT(decimal(9,2), legacy.porcentaje_beca), 0) - ISNULL(b.PorcentajeBeca, 0)) < 0.01 THEN 0 ELSE 1 END,
@@ -4220,13 +4304,20 @@ def list_preinscription_scholarship_beneficiaries(
                   (
                       SELECT 1
                       FROM INTECBDD.dbo.CARRERAXESTUD active_enrollment
-                      WHERE TRY_CONVERT(nvarchar(50), active_enrollment.codigo_estud) = TRY_CONVERT(nvarchar(50), e.CodigoEstud)
+                      WHERE TRY_CONVERT(nvarchar(50), active_enrollment.codigo_estud) COLLATE DATABASE_DEFAULT
+                          = TRY_CONVERT(nvarchar(50), e.CodigoEstud) COLLATE DATABASE_DEFAULT
                   )
                   AND (
-                    ? = '' OR e.NumeroIdentificacion LIKE ? OR e.NombreCompleto LIKE ?
-                    OR ISNULL(ca.NombreCarrera, c.CodigoCarrera) LIKE ?
-                    OR COALESCE(NULLIF(LTRIM(RTRIM(lb.tipo_beca)), ''), tb.Nombre) LIKE ?
-                    OR c.CodigoPeriodo LIKE ? OR ISNULL(b.UsuarioAprobacion, '') LIKE ?
+                    ? = ''
+                    OR e.NumeroIdentificacion COLLATE DATABASE_DEFAULT LIKE ?
+                    OR e.NombreCompleto COLLATE DATABASE_DEFAULT LIKE ?
+                    OR ISNULL(ca.NombreCarrera, c.CodigoCarrera) COLLATE DATABASE_DEFAULT LIKE ?
+                    OR COALESCE(
+                        NULLIF(LTRIM(RTRIM(lb.tipo_beca COLLATE DATABASE_DEFAULT)), ''),
+                        tb.Nombre COLLATE DATABASE_DEFAULT
+                    ) LIKE ?
+                    OR c.CodigoPeriodo COLLATE DATABASE_DEFAULT LIKE ?
+                    OR ISNULL(b.UsuarioAprobacion, '') COLLATE DATABASE_DEFAULT LIKE ?
                   )
                 ORDER BY COALESCE(b.FechaAprobacion, b.FechaSolicitud) DESC,
                          e.NombreCompleto ASC, b.BecaId DESC
@@ -4309,9 +4400,12 @@ def list_preinscription_scholarship_beneficiaries(
                 WHERE ISNULL(TRY_CONVERT(decimal(9,2), b.porcentaje_beca), 0) > 0
                   AND ce.codigo_periodo IS NOT NULL
                   AND (
-                    ? = '' OR d.Cedula_Est LIKE ? OR d.Apellidos_nombre LIKE ?
-                    OR ISNULL(c.Nombre_Basica, '') LIKE ? OR ISNULL(b.tipo_beca, '') LIKE ?
-                    OR ISNULL(p.Detalle_Periodo, '') LIKE ?
+                    ? = ''
+                    OR d.Cedula_Est COLLATE DATABASE_DEFAULT LIKE ?
+                    OR d.Apellidos_nombre COLLATE DATABASE_DEFAULT LIKE ?
+                    OR ISNULL(c.Nombre_Basica, '') COLLATE DATABASE_DEFAULT LIKE ?
+                    OR ISNULL(b.tipo_beca, '') COLLATE DATABASE_DEFAULT LIKE ?
+                    OR ISNULL(p.Detalle_Periodo, '') COLLATE DATABASE_DEFAULT LIKE ?
                   )
                 ORDER BY d.Apellidos_nombre, b.id
                 """,
@@ -4546,8 +4640,14 @@ def list_scholarship_contract_candidates(
 ) -> dict[str, Any]:
     try:
         all_items = _scholarship_contract_candidates(current_user, query, "", "", limit)
+        configured_types = {
+            _clean(item.get("nombre"))
+            for item in _scholarship_configurations(active_only=True)
+            if _clean(item.get("nombre"))
+        }
         scholarship_types = sorted(
-            {_clean(item.get("tipo_beca")) for item in all_items if _clean(item.get("tipo_beca"))},
+            configured_types
+            | {_clean(item.get("tipo_beca")) for item in all_items if _clean(item.get("tipo_beca"))},
             key=str.casefold,
         )
         selected_code = _scholarship_code(tipo_beca) if _clean(tipo_beca) else ""
