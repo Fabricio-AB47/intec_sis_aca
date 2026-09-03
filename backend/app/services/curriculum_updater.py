@@ -26,6 +26,7 @@ _COMMON_TESSERACT_PATHS = (
 )
 _INVALID_SHEET_TITLE = re.compile(r"[\\/*?:\[\]]")
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
+_SUBJECT_CONNECTORS = frozenset({"a", "de", "del", "el", "en", "la", "las", "los", "y"})
 _MALLA_ADM_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "malla_adm_template.xlsx"
 _MALLA_ADM_TEMPLATE_SHA256 = "4f5f82ff48714839407c3c6f454fac3db63725d45e28ec561acadfbc7dd76c96"
 _MALLA_ADM_TEMPLATE_SHEET = "Malla ADM"
@@ -73,6 +74,66 @@ def _normalized(value: Any) -> str:
     text = unicodedata.normalize("NFD", _clean(value).casefold())
     text = "".join(character for character in text if unicodedata.category(character) != "Mn")
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _subject_key(value: Any) -> str:
+    roman_numbers = {
+        "i": "1",
+        "ii": "2",
+        "iii": "3",
+        "iv": "4",
+        "v": "5",
+        "vi": "6",
+    }
+    return " ".join(roman_numbers.get(token, token) for token in _normalized(value).split())
+
+
+def _subject_similarity(left: str, right: str) -> float:
+    normalized_left = _subject_key(left)
+    normalized_right = _subject_key(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if normalized_left == normalized_right:
+        return 1.0
+    sequence = SequenceMatcher(None, normalized_left, normalized_right).ratio()
+    left_tokens = set(normalized_left.split())
+    right_tokens = set(normalized_right.split())
+    union = left_tokens | right_tokens
+    token_score = len(left_tokens & right_tokens) / len(union) if union else 0.0
+    left_core = left_tokens - _SUBJECT_CONNECTORS
+    right_core = right_tokens - _SUBJECT_CONNECTORS
+    core_overlap = left_core & right_core
+    core_f1 = (
+        (2 * len(core_overlap)) / (len(left_core) + len(right_core))
+        if left_core and right_core
+        else 0.0
+    )
+    sorted_sequence = SequenceMatcher(
+        None,
+        " ".join(sorted(left_core)),
+        " ".join(sorted(right_core)),
+    ).ratio()
+    length_ratio = min(len(normalized_left), len(normalized_right)) / max(
+        len(normalized_left), len(normalized_right)
+    )
+    containment = (
+        0.93
+        if length_ratio >= 0.60
+        and (normalized_left in normalized_right or normalized_right in normalized_left)
+        else 0.0
+    )
+    score = max(
+        sequence,
+        sorted_sequence,
+        core_f1,
+        (sequence * 0.6) + (token_score * 0.4),
+        containment,
+    )
+    left_numbers = set(re.findall(r"\b\d+\b", normalized_left))
+    right_numbers = set(re.findall(r"\b\d+\b", normalized_right))
+    if left_numbers and right_numbers and left_numbers != right_numbers:
+        return min(score, 0.74)
+    return score
 
 
 def _compact_multiline(value: Any) -> str:
@@ -476,25 +537,25 @@ def _extract_layout_pdf_pages(data: bytes) -> list[str]:
     return pages
 
 
-def _extract_ocr_pdf_text(data: bytes) -> str:
+def _extract_ocr_pdf_pages(data: bytes, max_pages: int = MAX_ACADEMIC_DOCUMENT_PAGES) -> list[str]:
     tesseract = _tesseract_executable()
     if not tesseract:
-        return ""
+        return []
     try:
         import pypdfium2 as pdfium  # type: ignore[import-not-found]
         import pytesseract  # type: ignore[import-not-found]
     except Exception:
-        return ""
+        return []
 
     pytesseract.pytesseract.tesseract_cmd = tesseract
     try:
         document = pdfium.PdfDocument(data)
     except Exception:
-        return ""
+        return []
 
     parts: list[str] = []
     try:
-        for page_index in range(min(len(document), MAX_ACADEMIC_DOCUMENT_PAGES)):
+        for page_index in range(min(len(document), max_pages)):
             page = document[page_index]
             try:
                 bitmap = page.render(scale=2.4, rotation=0)
@@ -514,7 +575,7 @@ def _extract_ocr_pdf_text(data: bytes) -> str:
             document.close()
         except Exception:
             pass
-    return "\n".join(parts)
+    return parts
 
 
 def _document_lines(text: str) -> list[str]:
@@ -579,25 +640,242 @@ def _filename_subject(filename: str) -> str:
     return _clean(stem)
 
 
-def _extract_subject(lines: list[str], filename: str) -> tuple[str, bool]:
-    subject = _value_after_label(
-        lines,
-        r"nombre\s+de\s+la\s+asignatura",
-        (
-            r"nivel\s+de\s+la\s+asignatura",
-            r"unidad\s+de\s+organizaci[oó]n",
-            r"campo\s+de\s+formaci[oó]n",
-        ),
-        max_following_lines=3,
+def _phrase_occurrences(text: str, phrase: str) -> int:
+    if not text or not phrase:
+        return 0
+    return len(re.findall(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text))
+
+
+def _without_page_marker(line: str) -> tuple[str, bool]:
+    match = re.search(r"(?i)\bp[aá]gina\s*\d+\s+de\s+\d+", line)
+    if not match:
+        return _clean(line), False
+    return _clean(line[: match.start()]), True
+
+
+def _cover_subject_candidates(lines: list[str]) -> list[str]:
+    heading_markers = (
+        "pea de la asignatura",
+        "silabo de la asignatura",
+        "programa de estudio de la asignatura",
+        "programa de estudios de la asignatura",
     )
-    if subject:
-        return subject, False
+    stop_prefixes = (
+        "control de cambios",
+        "datos generales",
+        "codigo de la asignatura",
+        "carrera",
+        "descripcion version",
+        "resultados de aprendizaje",
+    )
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for index, line in enumerate(lines[:80]):
+        normalized_line = _normalized(line)
+        if normalized_line.startswith(
+            (
+                "codigo de la asignatura",
+                "nombre de la asignatura",
+                "nivel de la asignatura",
+                "resultados de aprendizaje de la asignatura",
+                "contenidos de la asignatura",
+            )
+        ):
+            continue
+        subject_match = re.search(r"(?i)\basignatura\b", line)
+        if not subject_match:
+            continue
+        heading_context = _normalized(" ".join(lines[max(0, index - 2) : index + 1]))
+        if not any(marker in heading_context for marker in heading_markers):
+            continue
+
+        parts: list[str] = []
+        tail, has_page_marker = _without_page_marker(line[subject_match.end() :].strip(" :-"))
+        if tail and _normalized(tail) not in {"pea", "silabo"}:
+            parts.append(tail)
+        if not has_page_marker:
+            for following in lines[index + 1 : index + 7]:
+                value, has_page_marker = _without_page_marker(following)
+                normalized_value = _normalized(value)
+                if any(normalized_value.startswith(prefix) for prefix in stop_prefixes):
+                    break
+                if value and not _is_document_noise(value):
+                    parts.append(value)
+                if has_page_marker:
+                    break
+
+        candidate = _clean(" ".join(parts))
+        key = _subject_key(candidate)
+        if not key or key in {"pea", "silabo"} or key in seen:
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+    return candidates
+
+
+def _catalog_subject_from_document(
+    lines: list[str],
+    filename: str,
+    label_candidates: Iterable[str],
+    subject_catalog: Iterable[str],
+) -> tuple[str, str]:
+    catalog: list[str] = []
+    seen: set[str] = set()
+    for raw_subject in subject_catalog:
+        subject = _clean(raw_subject)
+        key = _subject_key(subject)
+        if not subject or not key or key in seen:
+            continue
+        seen.add(key)
+        catalog.append(subject)
+    if not catalog:
+        return "", ""
+
+    labels = [_clean(value) for value in label_candidates if _clean(value)]
+    filename_subject = _filename_subject(filename)
+    if labels:
+        label_matches: list[tuple[float, int, float, int, int, str]] = []
+        for label_index, label in enumerate(labels):
+            for catalog_index, subject in enumerate(catalog):
+                subject_compact = _subject_key(subject).replace(" ", "")
+                label_compact = _subject_key(label).replace(" ", "")
+                score = _subject_similarity(subject, label)
+                if (
+                    len(subject_compact) >= 8
+                    and subject_compact in label_compact
+                    and len(subject_compact) / max(1, len(label_compact)) >= 0.45
+                ):
+                    score = max(score, 0.97)
+                if score >= 0.78:
+                    label_matches.append(
+                        (
+                            score,
+                            -label_index,
+                            _subject_similarity(subject, filename_subject),
+                            len(_subject_key(subject)),
+                            -catalog_index,
+                            subject,
+                        )
+                    )
+        if label_matches:
+            *_ranking, subject = max(label_matches)
+            return subject, "DOCUMENTO_ETIQUETA"
+
+    identity_lines: list[str] = []
+    identity_stops = (
+        "resultados de aprendizaje",
+        "alineamiento curricular",
+        "contenidos de la asignatura",
+        "plan de estudios",
+        "control de cambios",
+        "datos generales",
+    )
+    for line in lines[:120]:
+        normalized_line = _normalized(line)
+        if identity_lines and (
+            any(normalized_line.startswith(stop) for stop in identity_stops)
+            or re.match(r"^unidad\s+\d{1,2}\b", normalized_line)
+        ):
+            break
+        identity_lines.append(line)
+    heading_key = _subject_key(" ".join(identity_lines))
+    heading_compact = heading_key.replace(" ", "")
+
+    context_keys: list[str] = []
+    context_source = identity_lines
+    for index, line in enumerate(context_source):
+        for size in (1, 2, 3, 4, 5):
+            context = _subject_key(" ".join(context_source[index : index + size]))
+            if 4 <= len(context) <= 320:
+                context_keys.append(context)
+
+    matches: list[tuple[float, int, int, int, int, str, str]] = []
+    for catalog_index, subject in enumerate(catalog):
+        key = _subject_key(subject)
+        compact = key.replace(" ", "")
+        tokens = key.split()
+        best_score = 0.0
+        evidence_count = 0
+        source = ""
+
+        heading_count = _phrase_occurrences(heading_key, key)
+        if heading_count and 4.0 + min(heading_count, 5) * 0.02 > best_score:
+            best_score = 4.0 + min(heading_count, 5) * 0.02
+            evidence_count = heading_count
+            source = "DOCUMENTO_TEXTO"
+
+        if len(compact) >= 8 and compact in heading_compact and 3.9 > best_score:
+            best_score = 3.9
+            evidence_count = heading_compact.count(compact)
+            source = "DOCUMENTO_OCR"
+
+        context_score = max((_subject_similarity(subject, context) for context in context_keys), default=0.0)
+        if context_score >= 0.86 and 2.0 + context_score > best_score:
+            best_score = 2.0 + context_score
+            source = "DOCUMENTO_APROXIMADO"
+
+        filename_score = _subject_similarity(subject, filename_subject)
+        if filename_score >= 0.84 and 1.0 + filename_score > best_score:
+            best_score = 1.0 + filename_score
+            source = "ARCHIVO"
+
+        if best_score:
+            matches.append(
+                (best_score, evidence_count, len(tokens), len(key), -catalog_index, subject, source)
+            )
+
+    if not matches:
+        return "", ""
+    *_ranking, subject, source = max(matches)
+    return subject, source
+
+
+def _extract_subject(
+    lines: list[str],
+    filename: str,
+    subject_catalog: Iterable[str] = (),
+) -> tuple[str, bool]:
+    stop_patterns = (
+        r"c[oó]digo\s+de\s+la\s+asignatura",
+        r"nivel\s+de\s+la\s+asignatura",
+        r"unidad\s+de\s+organizaci[oó]n",
+        r"campo\s+de\s+formaci[oó]n",
+        r"(?:^|\s)carrera\s*:",
+        r"per[ií]odo\s+acad[eé]mico",
+    )
+    label_candidates = _cover_subject_candidates(lines)
+    for label_pattern in (
+        r"nombre\s+de\s+la\s+asignatura",
+        r"nombre\s+de\s+la\s+materia",
+        r"^\s*asignatura\s*:",
+        r"^\s*materia\s*:",
+        r"^\s*m[oó]dulo\s*:",
+    ):
+        candidate = _value_after_label(
+            lines,
+            label_pattern,
+            stop_patterns,
+            max_following_lines=3,
+        )
+        if candidate and _normalized(candidate) not in {_normalized(value) for value in label_candidates}:
+            label_candidates.append(candidate)
 
     for index, line in enumerate(lines):
         if re.search(r"(?i)PEA\s+DE\s+LA\s+ASIGNATURA", line) and index + 1 < len(lines):
             candidate = lines[index + 1]
             if candidate and not _is_document_noise(candidate):
-                return _clean(candidate), False
+                label_candidates.append(_clean(candidate))
+
+    catalog_subject, detection_source = _catalog_subject_from_document(
+        lines,
+        filename,
+        label_candidates,
+        subject_catalog,
+    )
+    if catalog_subject:
+        return catalog_subject, detection_source == "ARCHIVO"
+    if label_candidates:
+        return label_candidates[0], False
     return _filename_subject(filename), True
 
 
@@ -905,11 +1183,17 @@ def _extract_syllabus_units(positioned_pages: list[PdfTextPage]) -> list[dict[st
     ]
 
 
-def parse_pea_pdf(data: bytes, filename: str, index: int = 0) -> dict[str, Any]:
+def parse_pea_pdf(
+    data: bytes,
+    filename: str,
+    index: int = 0,
+    subject_catalog: Iterable[str] = (),
+) -> dict[str, Any]:
     warnings: list[str] = []
     selectable_text, page_count, selectable_warnings, positioned_pages = _extract_selectable_pdf_text(data)
     warnings.extend(selectable_warnings)
     text = selectable_text
+    first_page_text = positioned_pages[0].text if positioned_pages else ""
     method = "TEXTO"
     normalized_selectable = _normalized(selectable_text)
     text_is_sufficient = (
@@ -920,20 +1204,30 @@ def parse_pea_pdf(data: bytes, filename: str, index: int = 0) -> dict[str, Any]:
             for marker in ("unidad 1", "resultados de aprendizaje", "contenidos de la asignatura")
         )
     )
-    if not text_is_sufficient:
-        ocr_text = _extract_ocr_pdf_text(data)
+    first_page_has_text = len(_normalized(first_page_text)) >= 20
+    if not text_is_sufficient or not first_page_has_text:
+        ocr_pages = _extract_ocr_pdf_pages(
+            data,
+            MAX_ACADEMIC_DOCUMENT_PAGES if not text_is_sufficient else 1,
+        )
+        ocr_text = "\n".join(ocr_pages)
         if ocr_text:
             text = f"{selectable_text}\n{ocr_text}" if selectable_text else ocr_text
             method = "TEXTO+OCR" if selectable_text.strip() else "OCR"
+            if ocr_pages:
+                first_page_text = (
+                    f"{first_page_text}\n{ocr_pages[0]}" if first_page_text.strip() else ocr_pages[0]
+                )
         elif not ocr_available():
             warnings.append("El PDF requiere OCR, pero Tesseract no está disponible en el servidor.")
         else:
             warnings.append("El OCR no devolvió texto suficiente para este documento.")
 
     lines = _document_lines(text)
+    subject_lines = _document_lines(first_page_text) or lines
     document_type = _detect_academic_document_type(filename, lines)
     document_label = "El sílabo" if document_type == "SILABO" else "El PEA"
-    subject_name, subject_from_filename = _extract_subject(lines, filename)
+    subject_name, subject_from_filename = _extract_subject(subject_lines, filename, subject_catalog)
     if subject_from_filename:
         warnings.append("El nombre de la asignatura se tomó del nombre del archivo.")
 
@@ -1022,22 +1316,6 @@ def parse_pea_pdf(data: bytes, filename: str, index: int = 0) -> dict[str, Any]:
     }
 
 
-def _subject_similarity(left: str, right: str) -> float:
-    normalized_left = _normalized(left)
-    normalized_right = _normalized(right)
-    if not normalized_left or not normalized_right:
-        return 0.0
-    if normalized_left == normalized_right:
-        return 1.0
-    sequence = SequenceMatcher(None, normalized_left, normalized_right).ratio()
-    left_tokens = set(normalized_left.split())
-    right_tokens = set(normalized_right.split())
-    union = left_tokens | right_tokens
-    token_score = len(left_tokens & right_tokens) / len(union) if union else 0.0
-    containment = 0.93 if normalized_left in normalized_right or normalized_right in normalized_left else 0.0
-    return max(sequence, (sequence * 0.6) + (token_score * 0.4), containment)
-
-
 def _assign_documents(
     subjects: list[dict[str, Any]],
     documents: list[dict[str, Any]],
@@ -1098,30 +1376,6 @@ def analyze_curriculum(
     workbook, info = inspect_workbook(workbook_content, workbook_filename, requested_career)
     reference_layout: SheetLayout = info["target_layout"] or info["base_layout"]
     reference_sheet = workbook[reference_layout.sheet_name]
-    documents: list[dict[str, Any]] = []
-    for index, (filename, content) in enumerate(academic_documents):
-        try:
-            documents.append(parse_pea_pdf(content, filename, index))
-        except ValueError as exc:
-            documents.append(
-                {
-                    "index": index,
-                    "filename": filename,
-                    "document_type": _detect_academic_document_type(filename, []),
-                    "method": "ERROR",
-                    "page_count": 0,
-                    "course_code": "",
-                    "subject_name": _filename_subject(filename),
-                    "career_name": "",
-                    "field": "",
-                    "learning_outcomes": "",
-                    "minimum_contents": "",
-                    "units": [],
-                    "confidence": 0,
-                    "warnings": [str(exc)],
-                }
-            )
-
     subjects: list[dict[str, Any]] = []
     for row in reference_layout.subject_rows:
         subjects.append(
@@ -1140,6 +1394,32 @@ def analyze_curriculum(
                 },
             }
         )
+
+    subject_catalog = [subject["subject_name"] for subject in subjects]
+    documents: list[dict[str, Any]] = []
+    for index, (filename, content) in enumerate(academic_documents):
+        try:
+            documents.append(parse_pea_pdf(content, filename, index, subject_catalog))
+        except ValueError as exc:
+            fallback_subject, _from_filename = _extract_subject([], filename, subject_catalog)
+            documents.append(
+                {
+                    "index": index,
+                    "filename": filename,
+                    "document_type": _detect_academic_document_type(filename, []),
+                    "method": "ERROR",
+                    "page_count": 0,
+                    "course_code": "",
+                    "subject_name": fallback_subject,
+                    "career_name": "",
+                    "field": "",
+                    "learning_outcomes": "",
+                    "minimum_contents": "",
+                    "units": [],
+                    "confidence": 0,
+                    "warnings": [str(exc)],
+                }
+            )
 
     assignments = _assign_documents(subjects, documents)
     used_documents: set[int] = set()

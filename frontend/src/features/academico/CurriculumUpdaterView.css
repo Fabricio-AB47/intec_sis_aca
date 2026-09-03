@@ -249,18 +249,52 @@
 
 .curriculum-file-list button,
 .curriculum-modal-close {
-  display: grid;
+  display: inline-flex;
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  place-items: center;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 1px solid #d3dce0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
   color: #a61f1f;
-  font-size: 1.25rem;
-  font-weight: 800;
   cursor: pointer;
+  line-height: 1;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.curriculum-file-list button > span,
+.curriculum-modal-close > span {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  font-family: Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.curriculum-file-list button:hover,
+.curriculum-modal-close:hover {
+  border-color: #c65f5f;
+  background: #fff1f1;
+  color: #8f1818;
+}
+
+.curriculum-file-list button:focus-visible,
+.curriculum-modal-close:focus-visible {
+  border-color: #a61f1f;
+  outline: 3px solid rgba(166, 31, 31, 0.16);
+  outline-offset: 2px;
+}
+
+.curriculum-file-list button:active,
+.curriculum-modal-close:active {
+  transform: scale(0.96);
 }
 
 .curriculum-alert {

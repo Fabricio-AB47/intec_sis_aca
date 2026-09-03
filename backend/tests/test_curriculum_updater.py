@@ -185,6 +185,64 @@ def syllabus_pdf_bytes(subject: str = "Sistemas Operativos") -> bytes:
     return output.getvalue()
 
 
+def catalog_search_pdf_bytes(subject_text: str, *, label: str = "") -> bytes:
+    output = BytesIO()
+    document = canvas.Canvas(output)
+    lines = [
+        "DOCUMENTO ACADÉMICO INSTITUCIONAL",
+        f"{label}: {subject_text}" if label else subject_text,
+        "Carrera: Tecnología Superior",
+        "Resultados de Aprendizaje de la asignatura:",
+        "Resultado general que no se utilizará para completar la malla.",
+        "CONTENIDOS DE LA ASIGNATURA",
+        "UNIDAD 1: Fundamentos",
+        "Resultado de Aprendizaje: Identifica y aplica los fundamentos de la unidad.",
+        "Contenidos Horas de la Unidad Observaciones",
+        *(
+            "Información académica complementaria para validar la búsqueda dentro del documento PDF."
+            for _ in range(8)
+        ),
+    ]
+    y = 805
+    for line in lines:
+        document.drawString(35, y, line)
+        y -= 28
+    document.save()
+    return output.getvalue()
+
+
+def cover_title_pdf_bytes(
+    title_lines: tuple[str, ...],
+    *,
+    repeated_title_lines: tuple[str, ...] = (),
+) -> bytes:
+    output = BytesIO()
+    document = canvas.Canvas(output)
+    y = 805
+    for line in (*title_lines, *repeated_title_lines, "CONTROL DE CAMBIOS"):
+        document.drawString(35, y, line)
+        y -= 28
+    document.showPage()
+    lines = [
+        "DATOS GENERALES DE LA ASIGNATURA",
+        "Carrera: Tecnología Superior",
+        "CONTENIDOS DE LA ASIGNATURA",
+        "UNIDAD 1: Fundamentos",
+        "Resultado de Aprendizaje: Aplica los fundamentos de la unidad.",
+        "Contenidos Horas de la Unidad Observaciones",
+        *(
+            "Información académica complementaria para completar la extracción del documento."
+            for _ in range(10)
+        ),
+    ]
+    y = 805
+    for line in lines:
+        document.drawString(35, y, line)
+        y -= 28
+    document.save()
+    return output.getvalue()
+
+
 def style_signature(cell: object) -> tuple[str, ...]:
     return tuple(
         str(getattr(cell, attribute))
@@ -262,6 +320,114 @@ class CurriculumUpdaterTests(unittest.TestCase):
         self.assertEqual(result["unmatched_documents"][0]["filename"], "PEA Materia desconocida.pdf")
         self.assertTrue(all(row["document_index"] is None for row in result["rows"]))
         self.assertTrue(all(not row["apply_recommended"] for row in result["rows"]))
+
+    def test_matches_four_documents_using_subject_names_inside_the_pdf(self) -> None:
+        result = analyze_curriculum(
+            base_workbook_bytes(),
+            "Malla Desarrollo Software.xlsx",
+            [
+                ("documento-001.pdf", catalog_search_pdf_bytes("Sis te mas Ope ra ti vos")),
+                ("Silabo documento-002.pdf", catalog_search_pdf_bytes("Sis te mas Ope ra ti vos")),
+                ("documento-003.pdf", catalog_search_pdf_bytes("Inteligencia Artificial I", label="Materia")),
+                ("Silabo documento-004.pdf", catalog_search_pdf_bytes("Inteligencia Artificial I", label="Materia")),
+            ],
+            "Desarrollo de Software",
+        )
+
+        systems = next(row for row in result["rows"] if row["subject_name"] == "Sistemas Operativos")
+        artificial_intelligence = next(
+            row for row in result["rows"] if row["subject_name"] == "Inteligencia Artificial 1"
+        )
+        self.assertEqual(result["summary"]["documents"], 4)
+        self.assertEqual(result["summary"]["unmatched_documents"], 0)
+        self.assertEqual(len(systems["document_indices"]), 2)
+        self.assertEqual(len(artificial_intelligence["document_indices"]), 2)
+        self.assertEqual(systems["match_type"], "NOMBRE_EXACTO")
+        self.assertEqual(artificial_intelligence["match_type"], "NOMBRE_EXACTO")
+
+    def test_uses_multiline_first_page_title_for_similar_subjects(self) -> None:
+        catalog = (
+            "Administración de Base de Datos",
+            "Seguridad de base de datos",
+            "Fundamentos de Seguridad Informática y ciberseguridad",
+            "Gestión de incidentes de seguridad - Ciberinteligencia",
+            "Gestión de riesgos de la seguridad informática",
+            "Investigación forense digital",
+            "Legislación Empresarial y Laboral",
+            "Titulación",
+            "Hacking Etico 1",
+            "Hacking Etico 2",
+        )
+        cases = (
+            (
+                "documento-legislacion.pdf",
+                (
+                    "PROGRAMA DE ESTUDIO",
+                    "DE LA ASIGNATURA",
+                    "LEGISLACIÓN",
+                    "EMPRESARIAL Y",
+                    "LEGISLACIÓN LABORAL",
+                ),
+                (),
+                "Legislación Empresarial y Laboral",
+            ),
+            (
+                "documento-incidentes.pdf",
+                (
+                    "PROGRAMA DE ESTUDIO DE LA",
+                    "ASIGNATURA GESTIÓN DE INCIDENTES",
+                    "DE SEGURIDAD y CIBERINTELIGENCIA Página 1 de 8",
+                ),
+                (),
+                "Gestión de incidentes de seguridad - Ciberinteligencia",
+            ),
+            (
+                "documento-base-datos.pdf",
+                (
+                    "PROGRAMA DE ESTUDIO DE LA",
+                    "ASIGNATURA SEGURIDAD EN BASE",
+                    "DE DATOS Página 1 de 6",
+                ),
+                (),
+                "Seguridad de base de datos",
+            ),
+            (
+                "PEA INVESTIGACIÓN DIGITAL.pdf",
+                (
+                    "PROGRAMA DE ESTUDIO DE LA",
+                    "ASIGNATURA GESTION DE",
+                    "RIESGOS DE LA SEGURIDAD INF. Página 1 de 6",
+                ),
+                (),
+                "Gestión de riesgos de la seguridad informática",
+            ),
+            (
+                "documento-hacking.pdf",
+                (
+                    "PROGRAMA DE ESTUDIO DE",
+                    "LA ASIGNATURA HACKING",
+                    "ÉTICO 2 Página 1 de 9",
+                ),
+                (
+                    "PROGRAMA DE ESTUDIO DE",
+                    "LA ASIGNATURA HACKING",
+                    "ÉTICO 1",
+                ),
+                "Hacking Etico 2",
+            ),
+        )
+
+        for filename, title_lines, repeated_title_lines, expected in cases:
+            with self.subTest(filename=filename):
+                result = parse_pea_pdf(
+                    cover_title_pdf_bytes(
+                        title_lines,
+                        repeated_title_lines=repeated_title_lines,
+                    ),
+                    filename,
+                    subject_catalog=catalog,
+                )
+                self.assertEqual(result["subject_name"], expected)
 
     def test_combines_pea_and_syllabus_for_the_same_subject(self) -> None:
         result = analyze_curriculum(

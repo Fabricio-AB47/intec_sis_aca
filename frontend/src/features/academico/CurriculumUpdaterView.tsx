@@ -342,7 +342,7 @@ export function CurriculumUpdaterView({ displayName }: Readonly<CurriculumUpdate
                   onClick={() => removeAcademicFile(index)}
                   aria-label={`Quitar ${file.name}`}
                   title="Quitar archivo"
-                >×</button>
+                ><span aria-hidden="true">&times;</span></button>
               </div>
             ))}
           </div>
@@ -504,7 +504,7 @@ export function CurriculumUpdaterView({ displayName }: Readonly<CurriculumUpdate
                 onClick={() => setEditingRowNumber(null)}
                 aria-label="Cerrar"
                 title="Cerrar"
-              >×</button>
+              ><span aria-hidden="true">&times;</span></button>
             </header>
 
             <div className="curriculum-modal-toolbar">
