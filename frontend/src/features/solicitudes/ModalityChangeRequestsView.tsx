@@ -62,6 +62,7 @@ function stateLabel(state: string): string {
     EXISTENTE: 'Ya matriculada',
     MATRICULADA: 'Matriculada',
     MATRICULAR: 'Por matricular',
+    REPETIR: 'Repetir sin nota',
     MIGRAR: 'Migrar por código',
     MIGRADA: 'Migrada',
   }
@@ -502,6 +503,7 @@ export function ModalityChangeRequestsView({
               <div className="career-change-summary">
                 <div><span>Materias origen</span><strong>{preview.summary.materias_origen}</strong></div>
                 <div><span>Notas por migrar</span><strong>{preview.summary.materias_a_migrar}</strong></div>
+                <div><span>Reprobadas por repetir</span><strong>{preview.summary.materias_por_repetir}</strong></div>
                 <div><span>Materias destino</span><strong>{preview.summary.materias_pensum}</strong></div>
                 <div><span>Nuevas sin nota</span><strong>{preview.summary.materias_por_matricular}</strong></div>
                 <div><span>Ya existentes</span><strong>{preview.summary.materias_existentes}</strong></div>
@@ -569,7 +571,7 @@ export function ModalityChangeRequestsView({
               </div>
             </div>
             <div className="career-change-submit-row">
-              <span>{preview ? `${preview.summary.materias_a_migrar} materia(s) migradas por código y ${preview.summary.materias_pensum} en destino` : 'Vista previa pendiente'}</span>
+              <span>{preview ? `${preview.summary.materias_a_migrar} aprobada(s) por migrar, ${preview.summary.materias_por_repetir} por repetir y ${preview.summary.materias_pensum} en destino` : 'Vista previa pendiente'}</span>
               <button type="submit" className="career-change-button career-change-button--primary" disabled={saving || !preview}>
                 {saving ? 'Registrando...' : 'Registrar solicitud'}
               </button>
@@ -677,7 +679,7 @@ export function ModalityChangeRequestsView({
               ) : null}
 
               <section className="career-change-detail-block">
-                <h3>Materias aprobadas para la migración</h3>
+                <h3>Materias para migración y repetición</h3>
                 <div className="career-change-table-wrap modality-change-subjects">
                   <table>
                     <thead><tr><th>Nivel</th><th>Código único</th><th>Materia</th><th>Nota origen</th><th>Créditos</th><th>Estado</th></tr></thead>

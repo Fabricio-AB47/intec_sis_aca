@@ -132,9 +132,17 @@ def _build_equivalence_preview(
         for subject in source_subjects
         if (_float_value(subject.get("nota_final")) or 0) >= _PASSING_GRADE
     ]
+    failed_sources = [
+        subject
+        for subject in source_subjects
+        if _float_value(subject.get("nota_final")) is not None
+        and (_float_value(subject.get("nota_final")) or 0) < _PASSING_GRADE
+    ]
     used_sources: set[int] = set()
     used_targets: set[int] = set()
     matches: list[dict[str, Any]] = []
+    failed_matches: list[dict[str, Any]] = []
+    used_failed_sources: set[int] = set()
 
     def append_match(
         source: dict[str, Any],
@@ -147,6 +155,20 @@ def _build_equivalence_preview(
         used_sources.add(source_code)
         used_targets.add(target_code)
         matches.append(_match_payload(source, target, match_type, similarity))
+
+    def append_failed_match(
+        source: dict[str, Any],
+        target: dict[str, Any],
+        match_type: str,
+    ) -> None:
+        used_failed_sources.add(int(source["codigo_materia"]))
+        used_targets.add(int(target["codigo_materia"]))
+        failed_matches.append(
+            {
+                **_match_payload(source, target, match_type, 1.0),
+                "accion": "REPETIR",
+            }
+        )
 
     source_by_common: dict[str, list[dict[str, Any]]] = {}
     for source in approved_sources:
@@ -166,6 +188,25 @@ def _build_equivalence_preview(
             source = max(candidates, key=lambda item: _float_value(item.get("nota_final")) or 0)
             append_match(source, target, "CODIGO_EXACTO", 1.0)
             used_targets.add(target_code)
+
+    failed_by_common: dict[str, list[dict[str, Any]]] = {}
+    for source in failed_sources:
+        common_code = _clean(source.get("codigo_comun")).upper()
+        if common_code:
+            failed_by_common.setdefault(common_code, []).append(source)
+
+    for target in target_subjects:
+        if int(target["codigo_materia"]) in used_targets:
+            continue
+        common_code = _clean(target.get("codigo_comun")).upper()
+        candidates = [
+            source
+            for source in failed_by_common.get(common_code, [])
+            if int(source["codigo_materia"]) not in used_failed_sources
+        ]
+        if common_code and candidates:
+            source = max(candidates, key=lambda item: _float_value(item.get("nota_final")) or 0)
+            append_failed_match(source, target, "CODIGO_EXACTO")
 
     source_by_name: dict[str, list[dict[str, Any]]] = {}
     for source in approved_sources:
@@ -188,6 +229,27 @@ def _build_equivalence_preview(
         if normalized and candidates:
             source = max(candidates, key=lambda item: _float_value(item.get("nota_final")) or 0)
             append_match(source, target, "NOMBRE_EXACTO", 1.0)
+
+    failed_by_name: dict[str, list[dict[str, Any]]] = {}
+    for source in failed_sources:
+        if int(source["codigo_materia"]) in used_failed_sources:
+            continue
+        normalized = _normalize_subject_name(source.get("nombre"))
+        if normalized:
+            failed_by_name.setdefault(normalized, []).append(source)
+
+    for target in target_subjects:
+        if int(target["codigo_materia"]) in used_targets:
+            continue
+        normalized = _normalize_subject_name(target.get("nombre"))
+        candidates = [
+            source
+            for source in failed_by_name.get(normalized, [])
+            if int(source["codigo_materia"]) not in used_failed_sources
+        ]
+        if normalized and candidates:
+            source = max(candidates, key=lambda item: _float_value(item.get("nota_final")) or 0)
+            append_failed_match(source, target, "NOMBRE_EXACTO")
 
     fuzzy_candidates: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for source in approved_sources:
@@ -228,10 +290,12 @@ def _build_equivalence_preview(
     ]
     return {
         "matches": matches,
+        "failed_matches": failed_matches,
         "unmatched_targets": unmatched_targets,
         "unused_approved_sources": unused_approved,
         "summary": {
             "aprobadas_origen": len(approved_sources),
+            "reprobadas_origen": len(failed_sources),
             "equivalencias_exactas": sum(
                 1 for item in matches if item["tipo_coincidencia"] != "NOMBRE_SIMILAR"
             ),
@@ -239,6 +303,7 @@ def _build_equivalence_preview(
                 1 for item in matches if item["tipo_coincidencia"] == "NOMBRE_SIMILAR"
             ),
             "materias_destino_sin_equivalencia": len(unmatched_targets),
+            "materias_por_repetir": len(failed_matches),
         },
     }
 
@@ -328,6 +393,8 @@ def _ensure_schema() -> None:
                         TipoCoincidencia NVARCHAR(30) NOT NULL,
                         Similitud DECIMAL(6,4) NOT NULL,
                         Seleccionada BIT NOT NULL,
+                        Repetir BIT NOT NULL
+                            CONSTRAINT DF_SolicitudCambioCarreraEquivalencia_Repetir DEFAULT (0),
                         CONSTRAINT FK_SolicitudCambioCarreraEquivalencia_Solicitud
                             FOREIGN KEY (IdSolicitud)
                             REFERENCES sol.SolicitudCambioCarrera(IdSolicitud),
@@ -335,6 +402,11 @@ def _ensure_schema() -> None:
                             UNIQUE (IdSolicitud, MateriaDestino)
                     );
                 END;
+
+                IF COL_LENGTH(N'sol.SolicitudCambioCarreraEquivalencia', N'Repetir') IS NULL
+                    ALTER TABLE sol.SolicitudCambioCarreraEquivalencia
+                        ADD Repetir BIT NOT NULL
+                            CONSTRAINT DF_SolicitudCambioCarreraEquivalencia_Repetir DEFAULT (0);
 
                 IF OBJECT_ID(N'sol.RespaldoCambioCarrera', N'U') IS NULL
                 BEGIN
@@ -1184,6 +1256,7 @@ def _row_to_request(row: Any) -> dict[str, Any]:
         "aplicado_por": _clean(row.AplicadoPor),
         "fecha_aplicacion": row.FechaAplicacion.isoformat() if row.FechaAplicacion else None,
         "equivalencias": int(getattr(row, "TotalEquivalencias", 0) or 0),
+        "materias_por_repetir": int(getattr(row, "TotalRepeticiones", 0) or 0),
         "respaldo_estado": _clean(getattr(row, "RespaldoEstado", "")),
         "respaldo_cabeceras": int(getattr(row, "RespaldoCabeceras", 0) or 0),
         "respaldo_materias": int(getattr(row, "RespaldoMaterias", 0) or 0),
@@ -1307,6 +1380,8 @@ def _request_select() -> str:
             s.*,
             (SELECT COUNT(*) FROM sol.SolicitudCambioCarreraEquivalencia e
              WHERE e.IdSolicitud = s.IdSolicitud AND e.Seleccionada = 1) AS TotalEquivalencias,
+            (SELECT COUNT(*) FROM sol.SolicitudCambioCarreraEquivalencia e
+             WHERE e.IdSolicitud = s.IdSolicitud AND e.Repetir = 1) AS TotalRepeticiones,
             respaldo.Estado AS RespaldoEstado,
             respaldo.TotalCabeceras AS RespaldoCabeceras,
             respaldo.TotalMaterias AS RespaldoMaterias,
@@ -1540,7 +1615,14 @@ async def create_career_change_request(
                 _user_label(current_user),
             )
             request_id = int(cursor.fetchone()[0])
-            for pair, item in available_matches.items():
+            stored_matches = [
+                (item, pair in selected, False)
+                for pair, item in available_matches.items()
+            ] + [
+                (item, False, True)
+                for item in preview["failed_matches"]
+            ]
+            for item, is_selected, must_repeat in stored_matches:
                 source = item["source"]
                 target = item["target"]
                 cursor.execute(
@@ -1550,9 +1632,10 @@ async def create_career_change_request(
                         IdSolicitud, MateriaOrigen, CodigoComunOrigen, NombreMateriaOrigen,
                         CarreraOrigen, PeriodoOrigen, PeriodoOrigenNombre, NotaFinal,
                         MateriaDestino, CodigoComunDestino, NombreMateriaDestino,
-                        NivelDestino, CreditosDestino, TipoCoincidencia, Similitud, Seleccionada
+                        NivelDestino, CreditosDestino, TipoCoincidencia, Similitud,
+                        Seleccionada, Repetir
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     request_id,
                     int(source["codigo_materia"]),
@@ -1569,7 +1652,8 @@ async def create_career_change_request(
                     target["creditos"],
                     item["tipo_coincidencia"],
                     item["similitud"],
-                    1 if pair in selected else 0,
+                    1 if is_selected else 0,
+                    1 if must_repeat else 0,
                 )
             conn.commit()
 
@@ -1602,6 +1686,7 @@ async def create_career_change_request(
             "id": request_id,
             "estado": "PENDIENTE",
             "equivalencias_seleccionadas": len(selected),
+            "materias_por_repetir": len(preview["failed_matches"]),
             "expediente_documento_id": archived["document_id"],
             "expediente_url": archived["web_url"],
         }
@@ -1705,6 +1790,7 @@ def career_change_request_detail(
                     "tipo_coincidencia": _clean(item.TipoCoincidencia),
                     "similitud": float(item.Similitud),
                     "seleccionada": bool(item.Seleccionada),
+                    "repetir": bool(getattr(item, "Repetir", False)),
                 }
                 for item in cursor.fetchall()
             ]
@@ -1848,40 +1934,11 @@ def _apply_equivalence(
     if int(cursor.fetchone()[0] or 0) > 0:
         return False
 
-    cursor.execute(
-        """
-        SELECT TOP (1) *
-        FROM dbo.CARRERAXESTUD
-        WHERE TRY_CONVERT(int, codigo_estud) = ?
-          AND TRY_CONVERT(int, cod_anio_Basica) = ?
-          AND TRY_CONVERT(int, codigo_materia) = ?
-          AND TRY_CONVERT(int, codigo_periodo) = ?
-        ORDER BY
-            COALESCE(
-                TRY_CONVERT(decimal(5,2), PromedioFinal),
-                TRY_CONVERT(decimal(5,2), Promedio),
-                TRY_CONVERT(decimal(5,2), PromedioAux),
-                TRY_CONVERT(decimal(5,2), Recuperacion),
-                -1
-            ) DESC,
-            TRY_CONVERT(bigint, num) DESC
-        """,
-        request_item["codigo_estud"],
-        equivalence["carrera_origen"],
-        equivalence["materia_origen"],
-        equivalence["periodo_origen"],
-    )
-    source = cursor.fetchone()
+    source = _fetch_origin_subject(cursor, request_item, equivalence)
     if not source:
         raise HTTPException(status_code=409, detail="Ya no existe la calificación de origen de una equivalencia aprobada.")
 
-    approved_grade = (
-        _float_value(equivalence.get("nota_final"))
-        or _float_value(source.PromedioFinal)
-        or _float_value(source.Promedio)
-        or _float_value(source.PromedioAux)
-        or _float_value(source.Recuperacion)
-    )
+    approved_grade = _source_final_grade(source)
     if approved_grade is None or approved_grade < _PASSING_GRADE:
         raise HTTPException(
             status_code=409,
@@ -1952,6 +2009,141 @@ def _apply_equivalence(
     return True
 
 
+def _fetch_origin_subject(
+    cursor: pyodbc.Cursor,
+    request_item: dict[str, Any],
+    movement: dict[str, Any],
+) -> Any | None:
+    cursor.execute(
+        """
+        SELECT TOP (1) *
+        FROM dbo.CARRERAXESTUD WITH (HOLDLOCK)
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+          AND TRY_CONVERT(int, codigo_materia) = ?
+          AND (? IS NULL OR TRY_CONVERT(int, codigo_periodo) = ?)
+        ORDER BY
+            COALESCE(
+                TRY_CONVERT(decimal(5,2), PromedioFinal),
+                TRY_CONVERT(decimal(5,2), Promedio),
+                TRY_CONVERT(decimal(5,2), PromedioAux),
+                TRY_CONVERT(decimal(5,2), Recuperacion),
+                -1
+            ) DESC,
+            TRY_CONVERT(bigint, num) DESC
+        """,
+        request_item["codigo_estud"],
+        movement["carrera_origen"],
+        movement["materia_origen"],
+        movement.get("periodo_origen"),
+        movement.get("periodo_origen"),
+    )
+    return cursor.fetchone()
+
+
+def _source_final_grade(source: Any) -> float | None:
+    for field in ("PromedioFinal", "Promedio", "PromedioAux", "Recuperacion"):
+        value = _float_value(getattr(source, field, None))
+        if value is not None:
+            return value
+    return None
+
+
+def _next_career_subject_attempt(
+    cursor: pyodbc.Cursor,
+    request_item: dict[str, Any],
+    subject_code: int,
+) -> int:
+    cursor.execute(
+        """
+        SELECT COALESCE(MAX(TRY_CONVERT(int, Num_Matricula)), 0) + 1
+        FROM dbo.CARRERAXESTUD WITH (UPDLOCK, HOLDLOCK)
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+          AND TRY_CONVERT(int, codigo_materia) = ?
+        """,
+        request_item["codigo_estud"],
+        request_item["carrera_destino"],
+        subject_code,
+    )
+    return int(cursor.fetchone()[0] or 1)
+
+
+def _apply_repetition(
+    cursor: pyodbc.Cursor,
+    request_item: dict[str, Any],
+    repetition: dict[str, Any],
+    registration_number: int,
+    legacy_user_code: str,
+) -> bool:
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM dbo.CARRERAXESTUD
+        WHERE TRY_CONVERT(int, codigo_estud) = ?
+          AND TRY_CONVERT(int, cod_anio_Basica) = ?
+          AND TRY_CONVERT(int, codigo_periodo) = ?
+          AND TRY_CONVERT(int, codigo_materia) = ?
+        """,
+        request_item["codigo_estud"],
+        request_item["carrera_destino"],
+        request_item["codigo_periodo_destino"],
+        repetition["materia_destino"],
+    )
+    if int(cursor.fetchone()[0] or 0) > 0:
+        return False
+
+    source = _fetch_origin_subject(cursor, request_item, repetition)
+    if not source:
+        raise HTTPException(
+            status_code=409,
+            detail="Ya no existe la materia de origen registrada para repetición.",
+        )
+    source_grade = _source_final_grade(source)
+    if source_grade is not None and source_grade >= _PASSING_GRADE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Una materia marcada para repetición ahora consta como aprobada. "
+                "Registre nuevamente la solicitud para revisar sus equivalencias."
+            ),
+        )
+
+    destination_attempt = _next_career_subject_attempt(
+        cursor,
+        request_item,
+        repetition["materia_destino"],
+    )
+    source_attempt = (_int_value(getattr(source, "Num_Matricula", None)) or 0) + 1
+    attempt = max(destination_attempt, source_attempt)
+    stored_user_code = (_clean(legacy_user_code) or "SISTEMA")[:10]
+    cursor.execute(
+        """
+        INSERT INTO dbo.CARRERAXESTUD
+        (
+            codigo_estud, cod_anio_Basica, codigo_materia, codigo_periodo,
+            Num_Matricula, paralelo, NumGrupo, Usuario, Num_Creditos,
+            Fecha_Matricula, Num_Reg_Mat, MateriaConvalidada, TipoMatricula,
+            ControlMatricula, CodUsuaMat, estadoMoodle
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, N'N', 1, ?, 0)
+        """,
+        request_item["codigo_estud"],
+        request_item["carrera_destino"],
+        repetition["materia_destino"],
+        request_item["codigo_periodo_destino"],
+        attempt,
+        _clean(getattr(source, "paralelo", "")) or "A",
+        _int_value(getattr(source, "NumGrupo", None)) or 1,
+        stored_user_code,
+        repetition.get("creditos_destino") or getattr(source, "Num_Creditos", 0),
+        date.today().isoformat(),
+        registration_number,
+        stored_user_code,
+    )
+    return True
+
+
 @router.post("/{request_id}/apply")
 def apply_career_change_request(
     request_id: int,
@@ -1987,7 +2179,7 @@ def apply_career_change_request(
                 """
                 SELECT *
                 FROM sol.SolicitudCambioCarreraEquivalencia
-                WHERE IdSolicitud = ? AND Seleccionada = 1
+                WHERE IdSolicitud = ? AND (Seleccionada = 1 OR Repetir = 1)
                 ORDER BY IdEquivalencia
                 """,
                 request_id,
@@ -2000,9 +2192,12 @@ def apply_career_change_request(
                     "materia_destino": int(item.MateriaDestino),
                     "creditos_destino": _float_value(item.CreditosDestino),
                     "nota_final": _float_value(item.NotaFinal),
+                    "repetir": bool(getattr(item, "Repetir", False)),
                 }
                 for item in integration_cursor.fetchall()
             ]
+            repetitions = [item for item in equivalences if item["repetir"]]
+            equivalences = [item for item in equivalences if not item["repetir"]]
 
         with get_connection() as primary_conn:
             cursor = primary_conn.cursor()
@@ -2039,6 +2234,7 @@ def apply_career_change_request(
 
             inserted = 0
             skipped = 0
+            repeated = 0
             legacy_user_code = _legacy_user_code(current_user)
             _ensure_target_header(cursor, request_item)
             next_registration = _next_registration_number(cursor)
@@ -2052,6 +2248,20 @@ def apply_career_change_request(
                 )
                 if was_inserted:
                     inserted += 1
+                    next_registration += 1
+                else:
+                    skipped += 1
+            for repetition in repetitions:
+                was_inserted = _apply_repetition(
+                    cursor,
+                    request_item,
+                    repetition,
+                    next_registration,
+                    legacy_user_code,
+                )
+                if was_inserted:
+                    inserted += 1
+                    repeated += 1
                     next_registration += 1
                 else:
                     skipped += 1
@@ -2091,6 +2301,7 @@ def apply_career_change_request(
                     "carrera": request_item["carrera_destino"],
                     "periodo": request_item["codigo_periodo_destino"],
                     "equivalencias_migradas": len(equivalences),
+                    "materias_repetidas_sin_notas": len(repetitions),
                 },
                 audit_user=_user_label(current_user),
             )
@@ -2113,12 +2324,17 @@ def apply_career_change_request(
                 else (
                     "La solicitud ya estaba aplicada y la trayectoria anterior permanece respaldada."
                     if already_applied
-                    else "El cambio de carrera se aplicó; la trayectoria anterior quedó respaldada y fuera de la matrícula activa."
+                    else (
+                        "El cambio de carrera se aplicó: solo se migraron notas aprobadas; "
+                        f"{repeated} materia(s) reprobada(s) quedaron matriculadas para "
+                        "repetición sin calificaciones. La trayectoria anterior quedó respaldada."
+                    )
                 )
             ),
             "estado": "APLICADA",
             "inserted": inserted,
             "existing_skipped": skipped,
+            "repeated": repeated,
             "respaldo_cabeceras": backup["total_cabeceras"] if backup else 0,
             "respaldo_materias": backup["total_materias"] if backup else 0,
             "auditoria_id": audit["id_movimiento"],

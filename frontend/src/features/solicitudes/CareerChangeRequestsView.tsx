@@ -527,8 +527,10 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
               </div>
               <div className="career-change-summary">
                 <div><span>Aprobadas en origen</span><strong>{formatNumber(preview.summary.aprobadas_origen)}</strong></div>
+                <div><span>Reprobadas en origen</span><strong>{formatNumber(preview.summary.reprobadas_origen)}</strong></div>
                 <div><span>Coincidencias exactas</span><strong>{formatNumber(preview.summary.equivalencias_exactas)}</strong></div>
                 <div><span>Coincidencias similares</span><strong>{formatNumber(preview.summary.equivalencias_similares)}</strong></div>
+                <div><span>Materias por repetir</span><strong>{formatNumber(preview.summary.materias_por_repetir)}</strong></div>
                 <div><span>Sin equivalencia</span><strong>{formatNumber(preview.summary.materias_destino_sin_equivalencia)}</strong></div>
               </div>
 
@@ -577,6 +579,22 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
                 </table>
               </div>
 
+              {preview.failed_matches.length ? (
+                <div className="career-change-table-wrap career-change-repeat-table">
+                  <table>
+                    <thead><tr><th>Materia reprobada</th><th>Nota</th><th>Materia destino</th><th>Acción</th></tr></thead>
+                    <tbody>{preview.failed_matches.map((match) => (
+                      <tr key={`repeat-${pairKey(match)}`}>
+                        <td><strong>{match.source.nombre}</strong><small>{match.source.codigo_comun || `Código ${match.source.codigo_materia}`}</small></td>
+                        <td><strong>{formatGrade(match.source.nota_final)}</strong></td>
+                        <td><strong>{match.target.nombre}</strong><small>Nivel {match.target.nivel ?? '-'}</small></td>
+                        <td><span className="career-change-state career-change-state--rechazada">Repetir sin migrar notas</span></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ) : null}
+
               {preview.unmatched_targets.length ? (
                 <details className="career-change-unmatched">
                   <summary>{preview.unmatched_targets.length} materia(s) del pénsum destino sin equivalencia</summary>
@@ -610,7 +628,7 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
               </label>
             </div>
             <div className="career-change-submit-row">
-              <span>{selectedMatches.length} equivalencia(s) seleccionada(s)</span>
+              <span>{selectedMatches.length} equivalencia(s) seleccionada(s) · {preview?.failed_matches.length || 0} materia(s) por repetir</span>
               <button type="submit" className="career-change-button career-change-button--primary" disabled={saving || !preview || !targetPeriodCode}>
                 {saving ? 'Registrando...' : 'Registrar solicitud'}
               </button>
@@ -664,7 +682,7 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
                     <td><strong>{item.estudiante}</strong><small>{item.cedula} · Código {item.codigo_estud}</small></td>
                     <td><span>{item.carrera_origen_nombre}</span><strong>{item.carrera_destino_nombre}</strong></td>
                     <td>{item.periodo_destino_nombre}</td>
-                    <td>{item.equivalencias}</td>
+                    <td><strong>{item.equivalencias} migrada(s)</strong><small>{item.materias_por_repetir} por repetir</small></td>
                     <td><span className={`career-change-state career-change-state--${item.estado.toLowerCase()}`}>{stateLabel(item.estado)}</span></td>
                     <td><button type="button" className="career-change-button" onClick={() => openDetail(item)}>Revisar</button></td>
                   </tr>
@@ -736,6 +754,25 @@ export function CareerChangeRequestsView({ displayName, role }: Readonly<CareerC
                   </table>
                 </div>
               </section>
+
+              {detail.equivalences.some((item) => item.repetir) ? (
+                <section className="career-change-detail-block">
+                  <h3>Materias reprobadas para repetir</h3>
+                  <div className="career-change-table-wrap">
+                    <table>
+                      <thead><tr><th>Materia cursada</th><th>Nota</th><th>Materia destino</th><th>Acción</th></tr></thead>
+                      <tbody>{detail.equivalences.filter((item) => item.repetir).map((item) => (
+                        <tr key={item.id}>
+                          <td><strong>{item.nombre_materia_origen}</strong><small>{item.codigo_comun_origen || item.materia_origen}</small></td>
+                          <td>{formatGrade(item.nota_final)}</td>
+                          <td><strong>{item.nombre_materia_destino}</strong><small>Nivel {item.nivel_destino ?? '-'}</small></td>
+                          <td>Matricular nuevamente sin copiar calificaciones</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
 
               {detail.observacion_revision ? (
                 <section className="career-change-detail-block"><h3>Observación de revisión</h3><p>{detail.observacion_revision}</p></section>

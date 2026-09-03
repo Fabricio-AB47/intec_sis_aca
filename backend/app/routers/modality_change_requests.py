@@ -46,6 +46,7 @@ _ENROLLMENT_TYPE_BY_PERIOD = {"R": "N", "H": "H"}
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 _MAX_SUPPORTING_FILES = 10
 _MAX_TOTAL_DOCUMENT_BYTES = 100 * 1024 * 1024
+_PASSING_GRADE = 7.0
 _HOMOLOGATION_THEORY_WEIGHT = 0.40
 _HOMOLOGATION_PRACTICE_WEIGHT = 0.60
 _STUDENT_MODALITY_BY_ENROLLMENT = {1: "5", 3: "1"}
@@ -761,6 +762,16 @@ def _has_grades(data: dict[str, Any]) -> bool:
     return any(_optional_float(data.get(field)) is not None for field in _GRADE_FIELDS)
 
 
+def _is_approved_grade(value: Any) -> bool:
+    grade = _optional_float(value)
+    return grade is not None and grade >= _PASSING_GRADE
+
+
+def _is_failed_grade(value: Any) -> bool:
+    grade = _optional_float(value)
+    return grade is not None and grade < _PASSING_GRADE
+
+
 def _fetch_source_enrollments(
     cursor: pyodbc.Cursor,
     codigo_estud: int,
@@ -850,16 +861,24 @@ def _build_subject_migration_plan(
     planned: list[dict[str, Any]] = []
     for subject in target_subjects:
         common_code = _normalize_common_code(subject.get("codigo_comun"))
-        source = sources_by_code.get(common_code) if common_code else None
+        matching_source = sources_by_code.get(common_code) if common_code else None
+        source = matching_source if matching_source and _is_approved_grade(
+            matching_source.get("nota_final")
+        ) else None
         subject_code = int(subject["codigo_materia"])
         already_exists = subject_code in existing
-        if target_period_type == "R" and source is None and not already_exists:
+        if target_period_type == "R" and matching_source is None and not already_exists:
             continue
+        if matching_source is not None:
+            matched_source_numbers.add(int(matching_source.get("num") or 0))
         if source is not None:
-            matched_source_numbers.add(int(source.get("num") or 0))
             planned_state = "MIGRAR"
         elif already_exists:
             planned_state = "EXISTENTE"
+        elif matching_source is not None and _is_failed_grade(
+            matching_source.get("nota_final")
+        ):
+            planned_state = "REPETIR"
         else:
             planned_state = "MATRICULAR"
         planned.append(
@@ -868,9 +887,16 @@ def _build_subject_migration_plan(
                 "estado": planned_state,
                 "num_matricula": existing.get(subject_code),
                 "materia_origen": source.get("codigo_materia") if source else None,
-                "codigo_comun_origen": source.get("codigo_comun", "") if source else "",
-                "nota_origen": source.get("nota_final") if source else None,
-                "tiene_notas_origen": bool(source and source.get("tiene_notas")),
+                "codigo_comun_origen": (
+                    matching_source.get("codigo_comun", "") if matching_source else ""
+                ),
+                "nota_origen": (
+                    matching_source.get("nota_final") if matching_source else None
+                ),
+                "tiene_notas_origen": bool(
+                    matching_source and matching_source.get("tiene_notas")
+                ),
+                "requiere_repeticion": planned_state == "REPETIR",
             }
         )
     unmatched = [
@@ -1001,6 +1027,9 @@ def _preview_with_cursor(
                 1 for item in planned_subjects if item["estado"] == "MIGRAR"
             ),
             "materias_por_matricular": sum(1 for item in planned_subjects if item["estado"] == "MATRICULAR"),
+            "materias_por_repetir": sum(
+                1 for item in planned_subjects if item["estado"] == "REPETIR"
+            ),
             "materias_existentes": sum(1 for item in planned_subjects if item["estado"] == "EXISTENTE"),
             "materias_origen_sin_coincidencia": len(unmatched_sources),
             "cabecera_existente": header_exists,
@@ -1827,6 +1856,28 @@ def _write_target_subject(
     enrollment_type = _ENROLLMENT_TYPE_BY_PERIOD[target_period_type]
     control_enrollment = 1 if target_period_type == "R" else 0
     existing = _find_target_subject(cursor, request_item, subject_code)
+    source_candidate = source
+    source_candidate_data = source_candidate["data"] if source_candidate else {}
+    recorded_source_grade = _optional_float(subject.get("nota_origen"))
+    current_source_grade = (
+        _effective_grade(source_candidate_data, source_period_type)
+        if source_candidate
+        else recorded_source_grade
+    )
+    requires_repetition = bool(
+        subject.get("requiere_repeticion")
+        or _is_failed_grade(recorded_source_grade)
+        or _is_failed_grade(current_source_grade)
+    )
+    reported_source_grade = (
+        recorded_source_grade
+        if _is_failed_grade(recorded_source_grade)
+        else current_source_grade
+    )
+    if source_candidate and (
+        requires_repetition or not _is_approved_grade(current_source_grade)
+    ):
+        source = None
     source_data = source["data"] if source else {}
     grade_values = _transformed_grade_values(
         source_data,
@@ -1880,6 +1931,12 @@ def _write_target_subject(
                 else "Registro y calificaciones migrados por código único al período destino."
             )
             state = "MIGRADA"
+        elif requires_repetition:
+            observation = (
+                "La materia reprobada ya estaba matriculada en el período destino; "
+                "no se copiaron calificaciones del período anterior."
+            )
+            state = "EXISTENTE"
         else:
             observation = "La materia ya existía en el período destino y se conservó sin duplicarla."
             state = "EXISTENTE"
@@ -1889,6 +1946,13 @@ def _write_target_subject(
             "num_matricula": _int_value(existing.get("Num_Matricula")) or 1,
             "observacion": observation,
             "origen_mapeado": source is not None,
+            "materia_origen": (
+                _int_value(source_candidate.get("codigo_materia"))
+                if source is not None and source_candidate
+                else None
+            ),
+            "nota_origen": reported_source_grade,
+            "requiere_repeticion": requires_repetition,
             "created": False,
         }
 
@@ -1898,6 +1962,11 @@ def _write_target_subject(
         request_item["carrera_destino"],
         subject_code,
     )
+    if requires_repetition and source_candidate:
+        source_attempt = _int_value(
+            source_candidate_data.get("Num_Matricula")
+        ) or 0
+        attempt = max(attempt, source_attempt + 1)
     columns = [
         "codigo_estud",
         "cod_anio_Basica",
@@ -1954,9 +2023,20 @@ def _write_target_subject(
         "observacion": (
             "Registro y calificaciones migrados por código único al período destino."
             if source
-            else "Materia incorporada sin calificaciones en la matrícula de homologación."
+            else (
+                "Materia reprobada matriculada nuevamente sin copiar calificaciones."
+                if requires_repetition
+                else "Materia incorporada sin calificaciones en la matrícula del período destino."
+            )
         ),
         "origen_mapeado": source is not None,
+        "materia_origen": (
+            _int_value(source_candidate.get("codigo_materia"))
+            if source is not None and source_candidate
+            else None
+        ),
+        "nota_origen": reported_source_grade,
+        "requiere_repeticion": requires_repetition,
         "created": True,
     }
 
@@ -1975,7 +2055,12 @@ def _migrate_subjects(
         source_code = _normalize_common_code(
             subject.get("codigo_comun_origen") or subject.get("codigo_comun")
         )
-        source = sources_by_code.get(source_code) if subject.get("materia_origen") else None
+        requires_repetition = _is_failed_grade(subject.get("nota_origen"))
+        source = (
+            sources_by_code.get(source_code)
+            if subject.get("materia_origen") or requires_repetition
+            else None
+        )
         if subject.get("materia_origen") and (
             source is None
             or int(source.get("codigo_materia") or 0) != int(subject["materia_origen"])
@@ -1985,6 +2070,14 @@ def _migrate_subjects(
                 detail=(
                     f"La materia de origen vinculada a {subject['nombre']} cambió. "
                     "No se aplicó la solicitud."
+                ),
+            )
+        if requires_repetition and source is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"La materia reprobada vinculada a {subject['nombre']} ya no está "
+                    "disponible en el período de origen. No se aplicó la solicitud."
                 ),
             )
         results.append(
@@ -2350,7 +2443,11 @@ async def create_modality_change_request(
                         else (
                             "Pendiente de migrar por código único."
                             if subject["estado"] == "MIGRAR"
-                            else "Pendiente de aprobación y matrícula."
+                            else (
+                                "Materia reprobada: se matriculará nuevamente sin copiar calificaciones."
+                                if subject["estado"] == "REPETIR"
+                                else "Pendiente de aprobación y matrícula."
+                            )
                         )
                     ),
                 )
@@ -2518,6 +2615,10 @@ def modality_change_request_detail(
                         getattr(item, "CodigoComunOrigen", "")
                     ),
                     "nota_origen": _optional_float(getattr(item, "NotaOrigen", None)),
+                    "requiere_repeticion": bool(
+                        _is_failed_grade(getattr(item, "NotaOrigen", None))
+                        and _int_value(getattr(item, "MateriaOrigen", None)) is None
+                    ),
                     "estado": _clean(item.Estado),
                     "num_matricula": _int_value(item.NumMatricula),
                     "observacion": _clean(item.Observacion),
@@ -2768,6 +2869,10 @@ def apply_modality_change_request(
                             ),
                         )
                     mapped = subject.get("materia_origen") is not None
+                    recorded_grade = _optional_float(subject.get("nota_origen"))
+                    requires_repetition = bool(
+                        not mapped and _is_failed_grade(recorded_grade)
+                    )
                     results.append(
                         {
                             "codigo_materia": int(subject["codigo_materia"]),
@@ -2779,6 +2884,9 @@ def apply_modality_change_request(
                                 else "Materia destino verificada sin duplicarla durante el reintento."
                             ),
                             "origen_mapeado": mapped,
+                            "materia_origen": subject.get("materia_origen"),
+                            "nota_origen": recorded_grade,
+                            "requiere_repeticion": requires_repetition,
                             "created": False,
                         }
                     )
@@ -2810,12 +2918,15 @@ def apply_modality_change_request(
                 cursor.execute(
                     """
                     UPDATE sol.SolicitudCambioModalidadMateria
-                    SET Estado = ?, NumMatricula = ?, Observacion = ?
+                    SET Estado = ?, NumMatricula = ?, Observacion = ?,
+                        MateriaOrigen = ?, NotaOrigen = ?
                     WHERE IdSolicitud = ? AND CodigoMateria = ?
                     """,
                     item["estado"],
                     item["num_matricula"],
                     item["observacion"],
+                    item.get("materia_origen"),
+                    item.get("nota_origen"),
                     request_id,
                     item["codigo_materia"],
                 )
@@ -2853,6 +2964,9 @@ def apply_modality_change_request(
                     "periodo": request_item["codigo_periodo_homologacion"],
                     "tipo_periodo": request_item["tipo_periodo_destino"],
                     "materias_migradas": migrated,
+                    "materias_repetidas": sum(
+                        1 for item in results if item.get("requiere_repeticion")
+                    ),
                     "materias_creadas": inserted,
                     "materias_existentes": existing,
                 },
@@ -2879,14 +2993,18 @@ def apply_modality_change_request(
         return {
             "ok": True,
             "message": (
-                "El cambio de modalidad se aplicó: las notas se migraron por código único, "
-                "la matrícula anterior se retiró y su respaldo quedó registrado en auditoría."
+                "El cambio de modalidad se aplicó: solo se migraron notas aprobadas por código único; "
+                "las materias reprobadas quedaron matriculadas para repetición sin calificaciones y "
+                "la matrícula anterior se respaldó en auditoría."
             ),
             "estado": "APLICADA",
             "cabeceras_creadas": 1 if header_created else 0,
             "materias_matriculadas": inserted,
             "materias_existentes": existing,
             "materias_migradas": migrated,
+            "materias_repetidas": sum(
+                1 for item in results if item.get("requiere_repeticion")
+            ),
             "materias_origen_retiradas": archived["source_subjects_archived"],
             "cabeceras_origen_retiradas": archived["source_headers_archived"],
             "respaldo_id": backup["id_respaldo"],

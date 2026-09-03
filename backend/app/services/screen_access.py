@@ -37,7 +37,7 @@ def _canonical_screen_group(group: str) -> str:
 
 
 ROLE_CATALOG: tuple[dict[str, str], ...] = (
-    {"value": "ADMINISTRADOR", "label": "Administrador", "description": 'Acceso total y configuración institucional.'},
+    {"value": "ADMINISTRADOR", "label": "Administrador", "description": 'Administración y configuración institucional.'},
     {"value": "ACADEMICO", "label": "Académico", "description": 'Matrícula, estudiantes, notas y titulación.'},
     {"value": "BIENESTAR", "label": "Bienestar", "description": "Indicadores, becas, calificaciones y acompañamiento estudiantil."},
     {"value": "ADMISIONES", "label": "Admisiones", "description": 'Inscripción, aspirantes y matrícula inicial.'},
@@ -338,10 +338,10 @@ ASSIGNABLE_SCREEN_CATALOG: tuple[dict[str, str], ...] = tuple(
 # parent with child flows remains in the catalog as navigation metadata, but it
 # is never counted or persisted as an additional permission.
 ALL_PAGES: tuple[str, ...] = tuple(screen["page"] for screen in ASSIGNABLE_SCREEN_CATALOG)
-ADMIN_ONLY_PAGES = frozenset({"sistema-academico", "asignacion-pantallas"})
-ROLE_DENIED_PAGES: dict[str, frozenset[str]] = {
-    "ESTUDIANTE": frozenset({"expedientes-documentales"}),
-}
+# La matriz central es la única fuente de autorización de pantallas. Estos
+# catálogos se conservan vacíos por compatibilidad con consumidores anteriores.
+ADMIN_ONLY_PAGES: frozenset[str] = frozenset()
+ROLE_DENIED_PAGES: dict[str, frozenset[str]] = {}
 
 
 def _flow_codes(parent_page: str, keys: Iterable[str] | None = None) -> tuple[str, ...]:
@@ -567,14 +567,6 @@ def normalize_role(value: Any) -> str:
     return _ROLE_ALIASES.get(role, role)
 
 
-def _is_page_or_flow_of(page: str, parent_page: str) -> bool:
-    return page == parent_page or page.startswith(f"{parent_page}/")
-
-
-def _is_restricted_page(page: str, restricted_pages: Iterable[str]) -> bool:
-    return any(_is_page_or_flow_of(page, parent) for parent in restricted_pages)
-
-
 def _ensure_tables(cursor: Any) -> None:
     cursor.execute(
         """
@@ -663,26 +655,6 @@ def _sync_catalog(cursor: Any) -> None:
         *KNOWN_PAGES,
     )
 
-    # Los expedientes institucionales contienen documentos internos. Aunque
-    # exista una asignacion historica, nunca se exponen al perfil estudiante.
-    for role, denied_pages in ROLE_DENIED_PAGES.items():
-        for page in denied_pages:
-            cursor.execute(
-                """
-                UPDATE cfg.AccesoPantallaRol
-                   SET Activo = 0,
-                       FechaActualizacion = SYSDATETIME(),
-                       UsuarioActualizacion = N'SISTEMA'
-                 WHERE RolCodigo = ?
-                   AND (PantallaCodigo = ? OR PantallaCodigo LIKE ?)
-                   AND Activo <> 0
-                """,
-                role,
-                page,
-                f"{page}/%",
-            )
-
-
 def _deactivate_container_assignments(cursor: Any) -> None:
     """Removes legacy parent grants after their child permissions exist."""
     if not CONTAINER_PAGES:
@@ -723,31 +695,6 @@ def _deactivate_non_admin_automatic_moodle_assignments(cursor: Any) -> None:
         *sorted(optional_pages),
         *_SYSTEM_GENERATED_ACCESS_USERS,
     )
-
-
-def _ensure_mandatory_moodle_alert_assignments(cursor: Any) -> None:
-    """Mantiene la bandeja de alertas activa para Docente y Académico."""
-    for role in ("DOCENTE", "ACADEMICO"):
-        cursor.execute(
-            """
-            MERGE cfg.AccesoPantallaRol AS target
-            USING
-            (
-                SELECT ? AS RolCodigo, N'moodle/alerts' AS PantallaCodigo
-            ) AS source
-               ON target.RolCodigo = source.RolCodigo
-              AND target.PantallaCodigo = source.PantallaCodigo
-            WHEN MATCHED AND target.Activo <> 1 THEN
-                UPDATE SET
-                    target.Activo = 1,
-                    target.FechaActualizacion = SYSDATETIME(),
-                    target.UsuarioActualizacion = N'SISTEMA_ALERTAS_MOODLE'
-            WHEN NOT MATCHED THEN
-                INSERT (RolCodigo, PantallaCodigo, Activo, UsuarioActualizacion)
-                VALUES (source.RolCodigo, source.PantallaCodigo, 1, N'SISTEMA_ALERTAS_MOODLE');
-            """,
-            role,
-        )
 
 
 def _materialize_role_screen_matrix(cursor: Any) -> None:
@@ -988,7 +935,6 @@ def _synchronize_screen_catalog(cursor: Any) -> None:
         _materialize_role_screen_matrix(cursor)
     _migrate_new_screen_default_assignments(cursor)
     _deactivate_non_admin_automatic_moodle_assignments(cursor)
-    _ensure_mandatory_moodle_alert_assignments(cursor)
     _deactivate_container_assignments(cursor)
 
 
@@ -1055,23 +1001,13 @@ def _role_payloads(cursor: Any, roles: Iterable[str]) -> list[dict[str, Any]]:
         # La navegación efectiva siempre sale de cfg.AccesoPantallaRol. Los
         # valores recomendados solo se usan al inicializar un perfil nuevo.
         pages = _ordered_pages(stored[role]["pages"]) if configured else []
-        if role == "ADMINISTRADOR":
-            pages = list(ALL_PAGES)
-        else:
-            denied_pages = ROLE_DENIED_PAGES.get(role, frozenset())
-            pages = [
-                page
-                for page in pages
-                if not _is_restricted_page(page, ADMIN_ONLY_PAGES)
-                and not _is_restricted_page(page, denied_pages)
-            ]
         result.append(
             {
                 **meta,
                 "pages": pages,
                 "default_pages": list(DEFAULT_ACCESS.get(role, ())),
                 "configured": configured,
-                "protected": role == "ADMINISTRADOR",
+                "protected": False,
                 "updated_at": _as_iso(stored.get(role, {}).get("updated_at")),
                 "updated_by": stored.get(role, {}).get("updated_by"),
             }
@@ -1088,13 +1024,6 @@ def role_has_screen_access(role: str, page: str) -> bool:
     if page_code not in KNOWN_PAGES:
         raise ValueError(f"Pantalla no reconocida: {page_code or '(vacia)'}")
     if role_code not in valid_roles:
-        return False
-    if role_code == "ADMINISTRADOR":
-        return True
-    if _is_restricted_page(page_code, ADMIN_ONLY_PAGES) or _is_restricted_page(
-        page_code,
-        ROLE_DENIED_PAGES.get(role_code, frozenset()),
-    ):
         return False
 
     try:
@@ -1176,30 +1105,7 @@ def save_screen_access(role: str, pages: Iterable[str], *, updated_by: str) -> d
     invalid_pages = sorted({page for page in requested_pages if page not in ALL_PAGES})
     if invalid_pages:
         raise ValueError(f"Pantallas no reconocidas: {', '.join(invalid_pages)}")
-    denied_pages = sorted(
-        page
-        for page in set(requested_pages)
-        if _is_restricted_page(page, ROLE_DENIED_PAGES.get(role_code, frozenset()))
-    )
-    if denied_pages:
-        raise ValueError(
-            f"El perfil {role_code} no puede acceder a: {', '.join(denied_pages)}"
-        )
-    administrator_pages = sorted(
-        page
-        for page in set(requested_pages)
-        if role_code != "ADMINISTRADOR" and _is_restricted_page(page, ADMIN_ONLY_PAGES)
-    )
-    if administrator_pages:
-        raise ValueError(
-            f"Solo el perfil ADMINISTRADOR puede acceder a: {', '.join(administrator_pages)}"
-        )
-    allowed_requested_pages = [
-        page
-        for page in requested_pages
-        if role_code == "ADMINISTRADOR" or not _is_restricted_page(page, ADMIN_ONLY_PAGES)
-    ]
-    selected_pages = set(ALL_PAGES if role_code == "ADMINISTRADOR" else allowed_requested_pages)
+    selected_pages = set(requested_pages)
     audit_user = str(updated_by or "SISTEMA").strip()[:128] or "SISTEMA"
 
     _ensure_screen_catalog_ready()

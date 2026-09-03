@@ -5,10 +5,12 @@ from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 
 from app.routers.modality_change_requests import (
+    _GRADE_FIELDS,
     ModalityChangePreviewPayload,
     _build_subject_migration_plan,
     _enroll_all_subjects,
     _ensure_single_header,
+    _migrate_subjects,
     _preview_with_cursor,
     _read_supporting_pdfs,
     _transformed_grade_values,
@@ -301,6 +303,142 @@ class ModalityChangeEnrollmentTests(unittest.TestCase):
         self.assertEqual([item["codigo_materia"] for item in planned], [21, 23])
         self.assertEqual([item["estado"] for item in planned], ["MIGRAR", "EXISTENTE"])
         self.assertEqual(unmatched, [])
+
+    def test_failed_common_subject_is_planned_as_repetition_without_grade_migration(self) -> None:
+        source = {
+            "data": {"codigo_materia": 11, "PromedioFinal": 6.99, "num": 10},
+            "codigo_materia": 11,
+            "codigo_comun": "UNI-01",
+            "codigo_normalizado": "UNI-01",
+            "nombre": "Origen reprobada",
+            "nota_final": 6.99,
+            "tiene_notas": True,
+            "num": 10,
+        }
+
+        planned, unmatched = _build_subject_migration_plan(
+            target_subjects=[
+                {"codigo_materia": 21, "codigo_comun": "UNI-01", "nombre": "Destino"},
+            ],
+            source_rows=[source],
+            existing={},
+            target_period_type="R",
+        )
+
+        self.assertEqual(len(planned), 1)
+        self.assertEqual(planned[0]["estado"], "REPETIR")
+        self.assertIsNone(planned[0]["materia_origen"])
+        self.assertEqual(planned[0]["nota_origen"], 6.99)
+        self.assertTrue(planned[0]["requiere_repeticion"])
+        self.assertEqual(unmatched, [])
+
+    def test_grade_seven_is_planned_for_migration(self) -> None:
+        source = {
+            "data": {"codigo_materia": 11, "PromedioFinal": 7, "num": 10},
+            "codigo_materia": 11,
+            "codigo_comun": "UNI-01",
+            "codigo_normalizado": "UNI-01",
+            "nombre": "Origen aprobada",
+            "nota_final": 7,
+            "tiene_notas": True,
+            "num": 10,
+        }
+
+        planned, _unmatched = _build_subject_migration_plan(
+            target_subjects=[
+                {"codigo_materia": 21, "codigo_comun": "UNI-01", "nombre": "Destino"},
+            ],
+            source_rows=[source],
+            existing={},
+            target_period_type="R",
+        )
+
+        self.assertEqual(planned[0]["estado"], "MIGRAR")
+        self.assertEqual(planned[0]["materia_origen"], 11)
+        self.assertFalse(planned[0]["requiere_repeticion"])
+
+    @patch(
+        "app.routers.modality_change_requests._next_subject_attempt",
+        return_value=2,
+    )
+    @patch(
+        "app.routers.modality_change_requests._find_target_subject",
+        return_value=None,
+    )
+    def test_failed_source_is_written_as_clean_repetition(
+        self,
+        _target_mock: MagicMock,
+        _attempt_mock: MagicMock,
+    ) -> None:
+        cursor = MagicMock()
+        result = _write_target_subject(
+            cursor,
+            request_item={
+                "codigo_estud": 491,
+                "carrera_destino": 3,
+                "codigo_periodo_homologacion": 1056,
+            },
+            subject={"codigo_materia": 133, "creditos": 3, "nota_origen": 6.99},
+            source={
+                "data": {
+                    "PromedioFinal": 6.99,
+                    "P1Tareas": 8,
+                    "Num_Matricula": 3,
+                },
+                "codigo_materia": 11,
+            },
+            user_code="61",
+            source_period_type="R",
+            target_period_type="H",
+        )
+
+        insert_call = next(
+            call
+            for call in cursor.execute.call_args_list
+            if "INSERT INTO dbo.CARRERAXESTUD" in call.args[0]
+        )
+        inserted_values = insert_call.args[1:]
+        grade_values = inserted_values[7 : 7 + len(_GRADE_FIELDS)]
+        self.assertTrue(all(value is None for value in grade_values))
+        self.assertEqual(inserted_values[4], 4)
+        self.assertEqual(result["estado"], "MATRICULADA")
+        self.assertFalse(result["origen_mapeado"])
+        self.assertTrue(result["requiere_repeticion"])
+        self.assertIn("reprobada", result["observacion"].lower())
+
+    @patch("app.routers.modality_change_requests._write_target_subject")
+    def test_repetition_recovers_source_only_to_increment_the_attempt(
+        self,
+        write_mock: MagicMock,
+    ) -> None:
+        source = {
+            "data": {"PromedioFinal": 6, "Num_Matricula": 2},
+            "codigo_materia": 11,
+            "codigo_comun": "UNI-01",
+            "codigo_normalizado": "UNI-01",
+            "nota_final": 6,
+            "num": 10,
+        }
+        write_mock.return_value = {"codigo_materia": 21}
+
+        _migrate_subjects(
+            MagicMock(),
+            request_item={"tipo_periodo_origen": "R", "tipo_periodo_destino": "H"},
+            subjects=[
+                {
+                    "codigo_materia": 21,
+                    "codigo_comun": "UNI-01",
+                    "codigo_comun_origen": "UNI-01",
+                    "materia_origen": None,
+                    "nota_origen": 6,
+                    "nombre": "Destino",
+                }
+            ],
+            source_rows=[source],
+            user_code="61",
+        )
+
+        self.assertIs(write_mock.call_args.kwargs["source"], source)
 
     def test_existing_header_is_reused_instead_of_inserted(self) -> None:
         cursor = MagicMock()

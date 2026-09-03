@@ -348,6 +348,8 @@
   border-radius: 7px;
 }
 
+.career-change-repeat-table { margin-top: 12px; }
+
 .career-change-table-wrap table {
   width: 100%;
   min-width: 880px;

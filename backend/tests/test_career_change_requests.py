@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime, time
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from app.routers.career_change_requests import (
     CareerChangeDecisionPayload,
     _archive_source_career,
     _archive_supporting_document,
+    _apply_repetition,
     _build_equivalence_preview,
     _decode_snapshot_data,
     _legacy_user_code,
@@ -17,6 +19,7 @@ from app.routers.career_change_requests import (
     _restore_snapshot_rows,
     _snapshot_row,
     _subject_similarity,
+    _source_final_grade,
     _validate_pdf_content,
     _verify_source_career_backup,
     decide_career_change_request,
@@ -118,7 +121,86 @@ class CareerChangeEquivalenceTests(unittest.TestCase):
 
         self.assertEqual(preview["matches"], [])
         self.assertEqual(preview["summary"]["aprobadas_origen"], 0)
-        self.assertEqual(len(preview["unmatched_targets"]), 1)
+        self.assertEqual(preview["summary"]["reprobadas_origen"], 1)
+        self.assertEqual(preview["summary"]["materias_por_repetir"], 1)
+        self.assertEqual(len(preview["failed_matches"]), 1)
+        self.assertEqual(preview["failed_matches"][0]["accion"], "REPETIR")
+        self.assertEqual(preview["unmatched_targets"], [])
+
+    def test_failed_unique_code_takes_priority_over_an_approved_name_match(self) -> None:
+        preview = _build_equivalence_preview(
+            [
+                source_subject(13, "MAT-01", "Matemática anterior", 6.5),
+                source_subject(14, "OTRA-01", "Matemática", 9),
+            ],
+            [target_subject(83, "MAT-01", "Matemática")],
+        )
+
+        self.assertEqual(preview["matches"], [])
+        self.assertEqual(len(preview["failed_matches"]), 1)
+        self.assertEqual(preview["failed_matches"][0]["source"]["codigo_materia"], 13)
+
+    def test_grade_validation_uses_final_grade_even_when_it_is_zero(self) -> None:
+        source = SimpleNamespace(
+            PromedioFinal=0,
+            Promedio=8,
+            PromedioAux=9,
+            Recuperacion=10,
+        )
+
+        self.assertEqual(_source_final_grade(source), 0)
+
+    @patch(
+        "app.routers.career_change_requests._next_career_subject_attempt",
+        return_value=1,
+    )
+    @patch("app.routers.career_change_requests._fetch_origin_subject")
+    def test_failed_subject_is_enrolled_without_copying_grades(
+        self,
+        source_mock: MagicMock,
+        _attempt_mock: MagicMock,
+    ) -> None:
+        source_mock.return_value = SimpleNamespace(
+            PromedioFinal=6.99,
+            Promedio=None,
+            PromedioAux=None,
+            Recuperacion=None,
+            Num_Matricula=1,
+            paralelo="A",
+            NumGrupo=1,
+            Num_Creditos=3,
+        )
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (0,)
+
+        inserted = _apply_repetition(
+            cursor,
+            {
+                "codigo_estud": 77,
+                "carrera_destino": 8,
+                "codigo_periodo_destino": 1060,
+            },
+            {
+                "carrera_origen": 4,
+                "materia_origen": 13,
+                "periodo_origen": 1050,
+                "materia_destino": 83,
+                "creditos_destino": 3,
+            },
+            900,
+            "61",
+        )
+
+        insert_call = next(
+            call
+            for call in cursor.execute.call_args_list
+            if "INSERT INTO dbo.CARRERAXESTUD" in call.args[0]
+        )
+        normalized_sql = " ".join(insert_call.args[0].split())
+        self.assertTrue(inserted)
+        self.assertNotIn("PromedioFinal", normalized_sql)
+        self.assertNotIn("P1Tareas", normalized_sql)
+        self.assertEqual(insert_call.args[5], 2)
 
     def test_validates_pdf_extension_signature_and_size(self) -> None:
         _validate_pdf_content("respaldo.pdf", "application/pdf", b"%PDF-1.7\ncontenido")

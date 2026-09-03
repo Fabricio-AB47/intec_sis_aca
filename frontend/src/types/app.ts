@@ -169,6 +169,10 @@ export type CareerChangeMatch = {
   seleccion_recomendada: boolean
 }
 
+export type CareerChangeFailedMatch = CareerChangeMatch & {
+  accion: 'REPETIR'
+}
+
 export type CareerChangePreviewResponse = {
   student: {
     codigo_estud: number
@@ -181,6 +185,7 @@ export type CareerChangePreviewResponse = {
   }
   target_career: CareerChangeCareer
   matches: CareerChangeMatch[]
+  failed_matches: CareerChangeFailedMatch[]
   unmatched_targets: CareerChangeSubject[]
   unused_approved_sources: Array<CareerChangeSubject & {
     nota_final: number | null
@@ -189,9 +194,11 @@ export type CareerChangePreviewResponse = {
   }>
   summary: {
     aprobadas_origen: number
+    reprobadas_origen: number
     equivalencias_exactas: number
     equivalencias_similares: number
     materias_destino_sin_equivalencia: number
+    materias_por_repetir: number
   }
 }
 
@@ -221,6 +228,7 @@ export type CareerChangeRequestItem = {
   aplicado_por: string
   fecha_aplicacion: string | null
   equivalencias: number
+  materias_por_repetir: number
   respaldo_estado: '' | 'DISPONIBLE' | 'RESTAURADO'
   respaldo_cabeceras: number
   respaldo_materias: number
@@ -247,6 +255,7 @@ export type CareerChangeStoredEquivalence = {
   tipo_coincidencia: string
   similitud: number
   seleccionada: boolean
+  repetir: boolean
 }
 
 export type CareerChangeRequestDetail = CareerChangeRequestItem & {
@@ -264,6 +273,7 @@ export type CareerChangeActionResponse = {
   estado: string
   id?: number
   equivalencias_seleccionadas?: number
+  materias_por_repetir?: number
   inserted?: number
   existing_skipped?: number
   respaldo_cabeceras?: number
@@ -274,6 +284,7 @@ export type CareerChangeActionResponse = {
   materias_restauradas?: number
   existentes_omitidos?: number
   auditoria_id?: number
+  repeated?: number
 }
 
 export type ModalityChangeCatalogStudent = {
@@ -313,12 +324,13 @@ export type ModalityChangeCatalogResponse = {
 }
 
 export type ModalityChangeSubject = CareerChangeSubject & {
-  estado: 'MIGRAR' | 'MIGRADA' | 'MATRICULAR' | 'PENDIENTE' | 'EXISTENTE' | 'MATRICULADA'
+  estado: 'MIGRAR' | 'MIGRADA' | 'MATRICULAR' | 'REPETIR' | 'PENDIENTE' | 'EXISTENTE' | 'MATRICULADA'
   num_matricula: number | null
   materia_origen?: number | null
   codigo_comun_origen?: string
   nota_origen?: number | null
   tiene_notas_origen?: boolean
+  requiere_repeticion?: boolean
   observacion?: string
   id?: number
 }
@@ -342,6 +354,7 @@ export type ModalityChangePreviewResponse = {
     materias_origen: number
     materias_a_migrar: number
     materias_por_matricular: number
+    materias_por_repetir: number
     materias_existentes: number
     materias_origen_sin_coincidencia: number
     cabecera_existente: boolean
@@ -434,6 +447,7 @@ export type ModalityChangeActionResponse = {
   materias_matriculadas?: number
   materias_existentes?: number
   materias_migradas?: number
+  materias_repetidas?: number
   materias_origen_retiradas?: number
   cabeceras_origen_retiradas?: number
   respaldo_id?: number

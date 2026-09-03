@@ -195,29 +195,9 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_administrator_default_is_the_complete_catalog(self) -> None:
         self.assertEqual(tuple(DEFAULT_ACCESS["ADMINISTRADOR"]), ALL_PAGES)
 
-    def test_administration_pages_are_exclusive_to_administrator(self) -> None:
-        self.assertEqual(ADMIN_ONLY_PAGES, {"sistema-academico", "asignacion-pantallas"})
-        for role, pages in DEFAULT_ACCESS.items():
-            with self.subTest(role=role):
-                if role == "ADMINISTRADOR":
-                    self.assertTrue(ADMIN_ONLY_PAGES.issubset(pages))
-                else:
-                    self.assertTrue(ADMIN_ONLY_PAGES.isdisjoint(pages))
-
-    def test_student_cannot_receive_document_expedients(self) -> None:
-        self.assertEqual(
-            ROLE_DENIED_PAGES["ESTUDIANTE"],
-            frozenset({"expedientes-documentales"}),
-        )
-        self.assertNotIn("expedientes-documentales", DEFAULT_ACCESS["ESTUDIANTE"])
-
-    def test_rejects_student_document_expedient_assignment(self) -> None:
-        with self.assertRaises(ValueError):
-            save_screen_access(
-                "ESTUDIANTE",
-                ["portal-estudiante", "expedientes-documentales"],
-                updated_by="prueba",
-            )
+    def test_screen_assignment_has_no_hardcoded_role_restrictions(self) -> None:
+        self.assertEqual(ADMIN_ONLY_PAGES, frozenset())
+        self.assertEqual(ROLE_DENIED_PAGES, {})
 
     def test_normalizes_every_administrative_tp_us(self) -> None:
         expected = {
@@ -249,13 +229,6 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_rejects_unknown_screen_before_opening_database(self) -> None:
         with self.assertRaises(ValueError):
             save_screen_access("ACADEMICO", ["pantalla-inexistente"], updated_by="prueba")
-
-    def test_rejects_assignment_with_only_administrator_screen(self) -> None:
-        with self.assertRaises(ValueError):
-            save_screen_access("ACADEMICO", ["sistema-academico"], updated_by="prueba")
-
-        with self.assertRaises(ValueError):
-            save_screen_access("BIENESTAR", ["asignacion-pantallas"], updated_by="prueba")
 
     def test_catalog_sync_does_not_grant_new_screens_to_configured_profiles(self) -> None:
         class RecordingCursor:
@@ -323,6 +296,54 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertIn("UPDATE CFG.ACCESOPANTALLAROL", statement)
         self.assertIn("CASE WHEN PANTALLACODIGO IN", statement)
         role_payloads.assert_called_once_with(cursor, ["ACADEMICO"])
+        connection.commit.assert_called_once_with()
+
+    @patch("app.services.screen_access._role_payloads", return_value=[{"pages": ["asignacion-pantallas", "expedientes-documentales"]}])
+    @patch("app.services.screen_access.get_integration_control_connection")
+    @patch("app.services.screen_access._ensure_screen_catalog_ready")
+    def test_save_accepts_every_catalog_screen_for_any_role(
+        self,
+        ensure_catalog: MagicMock,
+        get_connection: MagicMock,
+        role_payloads: MagicMock,
+    ) -> None:
+        connection = get_connection.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value
+
+        result = save_screen_access(
+            "ESTUDIANTE",
+            ["asignacion-pantallas", "expedientes-documentales"],
+            updated_by="prueba",
+        )
+
+        self.assertEqual(result["pages"], ["asignacion-pantallas", "expedientes-documentales"])
+        ensure_catalog.assert_called_once_with()
+        statement_params = cursor.execute.call_args.args[1:]
+        self.assertIn("asignacion-pantallas", statement_params)
+        self.assertIn("expedientes-documentales", statement_params)
+        role_payloads.assert_called_once_with(cursor, ["ESTUDIANTE"])
+        connection.commit.assert_called_once_with()
+
+    @patch("app.services.screen_access._role_payloads", return_value=[{"pages": []}])
+    @patch("app.services.screen_access.get_integration_control_connection")
+    @patch("app.services.screen_access._ensure_screen_catalog_ready")
+    def test_administrator_can_remove_every_screen_assignment(
+        self,
+        ensure_catalog: MagicMock,
+        get_connection: MagicMock,
+        role_payloads: MagicMock,
+    ) -> None:
+        connection = get_connection.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value
+
+        result = save_screen_access("ADMINISTRADOR", [], updated_by="prueba")
+
+        self.assertEqual(result["pages"], [])
+        ensure_catalog.assert_called_once_with()
+        statement = " ".join(cursor.execute.call_args.args[0].split()).upper()
+        self.assertIn("SET ACTIVO = 0", statement)
+        self.assertEqual(cursor.execute.call_args.args[-2:], ("prueba", "ADMINISTRADOR"))
+        role_payloads.assert_called_once_with(cursor, ["ADMINISTRADOR"])
         connection.commit.assert_called_once_with()
 
     def test_initial_assignments_are_materialized_only_for_missing_roles(self) -> None:
@@ -583,6 +604,27 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertFalse(role["configured"])
         self.assertEqual(role["pages"], [])
 
+    def test_administrator_payload_uses_exactly_the_stored_selection(self) -> None:
+        class StoredRow:
+            RolCodigo = "ADMINISTRADOR"
+            PantallaCodigo = "dashboard"
+            Activo = 1
+            FechaActualizacion = None
+            UsuarioActualizacion = "prueba"
+
+        class StoredCursor:
+            def execute(self, statement: str, *params: object) -> None:
+                del statement, params
+
+            def fetchall(self) -> list[StoredRow]:
+                return [StoredRow()]
+
+        role = _role_payloads(StoredCursor(), ["ADMINISTRADOR"])[0]
+
+        self.assertTrue(role["configured"])
+        self.assertEqual(role["pages"], ["dashboard"])
+        self.assertFalse(role["protected"])
+
 
 class ScreenAccessRouterTests(unittest.TestCase):
     def test_only_administrator_can_request_complete_matrix(self) -> None:
@@ -663,6 +705,15 @@ class ScreenAccessAuthorizationTests(unittest.TestCase):
         get_connection.return_value.__enter__.return_value = connection
 
         self.assertFalse(role_has_screen_access("DOCENTE", "matricula-acad"))
+
+    @patch("app.services.screen_access.get_integration_control_connection")
+    def test_administrator_also_uses_the_stored_assignment(self, get_connection: MagicMock) -> None:
+        connection = MagicMock()
+        connection.cursor.return_value.fetchone.return_value = None
+        get_connection.return_value.__enter__.return_value = connection
+
+        self.assertFalse(role_has_screen_access("ADMINISTRADOR", "dashboard"))
+        connection.cursor.return_value.execute.assert_called_once()
 
     @patch("app.services.screen_access.role_has_screen_access", return_value=True)
     def test_screen_dependency_accepts_an_assigned_profile(self, check_access: MagicMock) -> None:
