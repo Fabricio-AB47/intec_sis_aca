@@ -28,18 +28,21 @@ logger = logging.getLogger(__name__)
 
 SITE_INFO_FUNCTION = "core_webservice_get_site_info"
 USERS_FUNCTION = "core_user_get_users"
+USERS_BY_FIELD_FUNCTION = "core_user_get_users_by_field"
 COURSES_FUNCTION = "core_course_get_courses_by_field"
 COURSE_CONTENTS_FUNCTION = "core_course_get_contents"
 ENROLLED_USERS_FUNCTION = "core_enrol_get_enrolled_users"
 GRADE_ITEMS_FUNCTION = "gradereport_user_get_grade_items"
 URLS_FUNCTION = "mod_url_get_urls_by_courses"
 UPDATE_USERS_FUNCTION = "core_user_update_users"
+CREATE_USERS_FUNCTION = "core_user_create_users"
 EDIT_SECTION_FUNCTION = "core_course_edit_section"
 UPDATE_INPLACE_EDITABLE_FUNCTION = "core_update_inplace_editable"
 READ_FUNCTIONS = frozenset(
     {
         SITE_INFO_FUNCTION,
         USERS_FUNCTION,
+        USERS_BY_FIELD_FUNCTION,
         COURSES_FUNCTION,
         COURSE_CONTENTS_FUNCTION,
         ENROLLED_USERS_FUNCTION,
@@ -48,7 +51,12 @@ READ_FUNCTIONS = frozenset(
     }
 )
 WRITE_FUNCTIONS = frozenset(
-    {UPDATE_USERS_FUNCTION, EDIT_SECTION_FUNCTION, UPDATE_INPLACE_EDITABLE_FUNCTION}
+    {
+        CREATE_USERS_FUNCTION,
+        UPDATE_USERS_FUNCTION,
+        EDIT_SECTION_FUNCTION,
+        UPDATE_INPLACE_EDITABLE_FUNCTION,
+    }
 )
 _FUNCTION_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -252,6 +260,72 @@ class MoodleClient:
         if len(users) > int(self._settings.moodle_max_user_scan_items):
             raise MoodleResultLimitExceededError("La consulta de usuarios Moodle superó el límite configurado")
         return [item for item in users if isinstance(item, dict)]
+
+    async def get_users_by_field(self, field: str, values: list[str]) -> list[dict[str, Any]]:
+        normalized_field = str(field or "").strip().casefold()
+        if normalized_field not in {"email", "idnumber", "username"}:
+            raise MoodleConfigurationError("El campo de búsqueda de usuarios Moodle no es válido")
+
+        normalized_values = list(
+            dict.fromkeys(str(value or "").strip() for value in values if str(value or "").strip())
+        )
+        if not normalized_values:
+            return []
+        if len(normalized_values) > 100:
+            raise MoodleConfigurationError("La búsqueda Moodle admite hasta 100 valores")
+
+        parameters: dict[str, Any] = {"field": normalized_field}
+        for index, value in enumerate(normalized_values):
+            parameters[f"values[{index}]"] = value
+        payload = await self._post(USERS_BY_FIELD_FUNCTION, parameters)
+        if not isinstance(payload, list):
+            raise MoodleInvalidResponseError(
+                "La búsqueda de usuarios Moodle no tiene el formato esperado"
+            )
+        return [item for item in payload if isinstance(item, dict)]
+
+    async def create_users(self, users: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not users:
+            return []
+        if len(users) > 100:
+            raise MoodleConfigurationError("La creación Moodle admite hasta 100 usuarios por solicitud")
+
+        required_fields = ("username", "password", "firstname", "lastname", "email")
+        allowed_fields = (*required_fields, "auth", "idnumber", "lang")
+        parameters: dict[str, Any] = {}
+        for index, user in enumerate(users):
+            missing = [field for field in required_fields if not str(user.get(field) or "").strip()]
+            if missing:
+                raise MoodleConfigurationError(
+                    f"Faltan campos obligatorios para crear el usuario Moodle: {', '.join(missing)}"
+                )
+            for field in allowed_fields:
+                value = user.get(field)
+                if value is not None and str(value).strip():
+                    parameters[f"users[{index}][{field}]"] = str(value).strip()
+            preferences = user.get("preferences")
+            if preferences is not None and not isinstance(preferences, list):
+                raise MoodleConfigurationError("Las preferencias del usuario Moodle no son válidas")
+            for preference_index, preference in enumerate(preferences or []):
+                if not isinstance(preference, Mapping):
+                    raise MoodleConfigurationError("Las preferencias del usuario Moodle no son válidas")
+                preference_type = str(preference.get("type") or "").strip()
+                preference_value = str(preference.get("value") or "").strip()
+                if not preference_type:
+                    raise MoodleConfigurationError("La preferencia Moodle no tiene tipo")
+                parameters[
+                    f"users[{index}][preferences][{preference_index}][type]"
+                ] = preference_type
+                parameters[
+                    f"users[{index}][preferences][{preference_index}][value]"
+                ] = preference_value
+
+        payload = await self._post(CREATE_USERS_FUNCTION, parameters, write=True)
+        if not isinstance(payload, list):
+            raise MoodleInvalidResponseError(
+                "La creación de usuarios Moodle no tiene el formato esperado"
+            )
+        return [item for item in payload if isinstance(item, dict)]
 
     async def get_all_courses(self) -> list[dict[str, Any]]:
         payload = await self._post(COURSES_FUNCTION, {"field": "", "value": ""})

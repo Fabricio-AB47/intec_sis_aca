@@ -59,10 +59,12 @@ import type {
   CertificateRenameLocalSaveResponse,
   CertificateRenameResponse,
   CertificadosStudentsResponse,
-  CredentialBulkPayload,
-  CredentialBulkResponse,
-  CredentialCatalogResponse,
-  CredentialListResponse,
+  CredentialAnalysisResponse,
+  CredentialHistoryResponse,
+  CredentialPersonType,
+  CredentialProvisionConfig,
+  CredentialProvisionPayload,
+  CredentialProvisionResponse,
   AdmissionsDashboardStudentsResponse,
   ActaGradoPayload,
   AcademicSystemIntegrationResponse,
@@ -2059,23 +2061,6 @@ export async function saveCertificateRenameLocal(files: File[]): Promise<Certifi
   })
 }
 
-export async function fetchCredentialCatalog(): Promise<CredentialCatalogResponse> {
-  return request<CredentialCatalogResponse>('/api/admin/credenciales/catalog')
-}
-
-export async function fetchCredentialRows(codCurso = '', limit = 100): Promise<CredentialListResponse> {
-  const params = new URLSearchParams({ limit: String(limit) })
-  if (codCurso) params.set('cod_curso', codCurso)
-  return request<CredentialListResponse>(`/api/admin/credenciales?${params.toString()}`)
-}
-
-export async function saveCredentialBulk(payload: CredentialBulkPayload): Promise<CredentialBulkResponse> {
-  return request<CredentialBulkResponse>('/api/admin/credenciales/bulk', {
-    method: 'POST',
-    body: payload,
-  })
-}
-
 export async function resolveMassEmailRecipients(
   payload: MassEmailResolvePayload
 ): Promise<MassEmailResolveResponse> {
@@ -3930,6 +3915,54 @@ export async function fetchPracticasPeriodoDesignaciones(
 ): Promise<PracticasPeriodoDesignacionesResponse> {
   const params = new URLSearchParams({ tipo_proceso: tipoProceso })
   return request<PracticasPeriodoDesignacionesResponse>(`/api/practicas/admin/designaciones-periodo?${params.toString()}`)
+}
+
+export async function fetchCredentialProvisionConfig(): Promise<CredentialProvisionConfig> {
+  return request<CredentialProvisionConfig>('/api/admin/credenciales/config')
+}
+
+export async function downloadCredentialProvisionTemplate(tipoPersona: CredentialPersonType): Promise<Blob> {
+  const params = new URLSearchParams({ tipo_persona: tipoPersona })
+  return request<Blob>(`/api/admin/credenciales/template?${params.toString()}`, { responseType: 'blob' })
+}
+
+export async function analyzeCredentialProvisionWorkbook(file: File): Promise<CredentialAnalysisResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<CredentialAnalysisResponse>('/api/admin/credenciales/analyze', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function provisionCredentials(
+  payload: CredentialProvisionPayload,
+): Promise<CredentialProvisionResponse> {
+  return request<CredentialProvisionResponse>('/api/admin/credenciales/provision', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function downloadCredentialProvisionReport(reportId: string): Promise<Blob> {
+  return request<Blob>(`/api/admin/credenciales/reports/${encodeURIComponent(reportId)}`, {
+    responseType: 'blob',
+  })
+}
+
+export async function fetchCredentialProvisionHistory(
+  limit = 100,
+  tipoPersona?: CredentialPersonType,
+): Promise<CredentialHistoryResponse> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (tipoPersona) params.set('tipo_persona', tipoPersona)
+  return request<CredentialHistoryResponse>(`/api/admin/credenciales/history?${params.toString()}`)
+}
+
+export async function downloadCredentialHistoryReport(recordId: number): Promise<Blob> {
+  return request<Blob>(`/api/admin/credenciales/history/${recordId}/report`, {
+    responseType: 'blob',
+  })
 }
 
 export async function searchPracticasActiveTeachers(

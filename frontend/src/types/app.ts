@@ -4223,79 +4223,134 @@ export type CertificadosGeneratePayload = {
   estudiantes: string[]
 }
 
-export type CredentialCourse = {
-  cod_curso: string
-  curso: string
-  estado?: string | null
-  fecha_inicio?: string | null
-  fecha_final?: string | null
-  source?: string | null
-  codigo_materia?: string | null
-  cod_materia?: string | null
-  carrera?: string | null
-  semestre?: string | null
-}
-
-export type CredentialCatalogResponse = {
-  courses: CredentialCourse[]
-  default_message: string
-  default_link: string
-  graph_user_domain?: string | null
-  graph_mail_sender?: string | null
-  detail?: string
-}
-
-export type CredentialRow = {
-  id?: number
-  cod_curso?: string
-  curso?: string
+export type CredentialProvisionPerson = {
   primer_nombre: string
-  segundo_nombre?: string
+  segundo_nombre: string
   primer_apellido: string
-  segundo_apellido?: string
+  segundo_apellido: string
   cedula: string
-  correo_electronico: string
-  usuario_generado?: string
-  clave_temporal?: string
-  graph_user_id?: string
-  graph_user_principal_name?: string
-  graph_mail_sender?: string
-  estado_graph?: string
-  error_graph?: string
-  correo_enviado?: boolean
-  estado_envio?: string
-  error_envio?: string
-  fecha_creacion?: string | null
-  fecha_graph?: string | null
-  fecha_envio?: string | null
+  fila_origen?: number | null
 }
 
-export type CredentialBulkPayload = {
-  cod_curso: string
-  curso: string
-  mensaje: string
-  link: string
-  enviar_correo: boolean
-  usuarios: CredentialRow[]
-}
+export type CredentialPersonType = 'ESTUDIANTE' | 'PROFESOR'
 
-export type CredentialListResponse = {
-  rows: CredentialRow[]
-  count: number
+export type CredentialLicenseConfig = {
+  person_type: CredentialPersonType
+  configured: boolean
+  name: string
+  sku_part_number: string
+  status: 'DISPONIBLE' | 'SIN_CUPOS' | 'NO_DISPONIBLE' | string
+  available_units: number
   detail?: string
 }
 
-export type CredentialBulkResponse = {
-  ok?: boolean
-  created?: number
-  updated?: number
-  graph_created?: number
-  graph_updated?: number
-  graph_failed?: number
-  sent?: number
-  failed?: number
-  rows?: CredentialRow[]
-  message?: string
+export type CredentialProvisionConfig = {
+  domain: string
+  year: number
+  graph_configured: boolean
+  license_configured: boolean
+  license_type: 'ESTUDIANTE' | string
+  license_name: string
+  license_sku_part_number: string
+  license_status: 'DISPONIBLE' | 'SIN_CUPOS' | 'NO_DISPONIBLE' | string
+  license_available_units: number
+  license_detail?: string
+  licenses: Record<CredentialPersonType, CredentialLicenseConfig>
+  moodle_configured: boolean
+  moodle_url: string
+  identity_count: number
+  max_users: number
+  report_ttl_minutes: number
+  detail?: string
+}
+
+export type CredentialAnalysisRow = CredentialProvisionPerson & {
+  correo_propuesto: string
+  estado: 'VALIDO' | 'ERROR' | string
+  errores: string[]
+}
+
+export type CredentialAnalysisResponse = {
+  rows: CredentialAnalysisRow[]
+  summary: {
+    total: number
+    validos: number
+    errores: number
+  }
+  filename: string
+  detail?: string
+}
+
+export type CredentialProvisionResultRow = CredentialProvisionPerson & {
+  tipo_persona: CredentialPersonType
+  correo_institucional: string
+  clave_permanente: string
+  graph_user_id?: string
+  estado_graph: string
+  error_graph?: string
+  estado_licencia: string
+  error_licencia?: string
+  licencia_nombre?: string
+  licencia_sku_part_number?: string
+  moodle_user_id?: number | null
+  moodle_username?: string
+  estado_moodle: string
+  error_moodle?: string
+  estado_general: string
+  errores?: string[]
+  clave_emitida: boolean
+  observacion: string
+}
+
+export type CredentialProvisionResponse = {
+  ok: boolean
+  batch_id: string
+  tipo_persona?: CredentialPersonType
+  rows: CredentialProvisionResultRow[]
+  summary: {
+    total: number
+    completos: number
+    parciales: number
+    fallidos: number
+  }
+  report_id: string
+  report_expires_minutes: number
+  message: string
+  detail?: string
+}
+
+export type CredentialProvisionPayload = {
+  tipo_persona: CredentialPersonType
+  modo: 'INDIVIDUAL' | 'EXCEL'
+  usuarios: CredentialProvisionPerson[]
+}
+
+export type CredentialHistoryRow = {
+  id: number
+  batch_id: string
+  tipo_persona: CredentialPersonType
+  modo: 'INDIVIDUAL' | 'EXCEL' | string
+  fila_origen?: number | null
+  cedula: string
+  nombres: string
+  correo_institucional: string
+  estado_graph: string
+  estado_licencia: string
+  estado_moodle: string
+  estado_general: string
+  clave_emitida: boolean
+  reporte_disponible: boolean
+  observacion: string
+  numero_descargas: number
+  fecha_ultima_descarga?: string | null
+  usuario_ultima_descarga?: string
+  usuario_creacion: string
+  fecha_creacion?: string | null
+}
+
+export type CredentialHistoryResponse = {
+  rows: CredentialHistoryRow[]
+  count: number
   detail?: string
 }
 

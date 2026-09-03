@@ -88,6 +88,83 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(users, [{"id": 1, "username": "usuario"}])
 
+    async def test_get_users_by_field(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"))
+            self.assertEqual(form["wsfunction"], ["core_user_get_users_by_field"])
+            self.assertEqual(form["field"], ["idnumber"])
+            self.assertEqual(form["values[0]"], ["0123456789"])
+            return json_response(
+                request,
+                [{"id": 8, "username": "maria.delacruz@intec.edu.ec"}],
+            )
+
+        client, http_client = await self._client(handler)
+        try:
+            users = await client.get_users_by_field("idnumber", ["0123456789"])
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(users[0]["id"], 8)
+
+    async def test_create_users_requires_and_sends_identity_fields(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"))
+            self.assertEqual(form["wsfunction"], ["core_user_create_users"])
+            self.assertEqual(form["users[0][username]"], ["maria.delacruz@intec.edu.ec"])
+            self.assertEqual(form["users[0][idnumber]"], ["0123456789"])
+            self.assertEqual(form["users[0][firstname]"], ["María José"])
+            self.assertEqual(form["users[0][lastname]"], ["De la Cruz"])
+            self.assertEqual(
+                form["users[0][preferences][0][type]"],
+                ["auth_forcepasswordchange"],
+            )
+            self.assertEqual(form["users[0][preferences][0][value]"], ["0"])
+            return json_response(
+                request,
+                [{"id": 9, "username": "maria.delacruz@intec.edu.ec"}],
+            )
+
+        client, http_client = await self._client(handler)
+        try:
+            users = await client.create_users(
+                [
+                    {
+                        "username": "maria.delacruz@intec.edu.ec",
+                        "password": "MDelacruz6789@2026",
+                        "firstname": "María José",
+                        "lastname": "De la Cruz",
+                        "email": "maria.delacruz@intec.edu.ec",
+                        "idnumber": "0123456789",
+                        "auth": "manual",
+                        "preferences": [
+                            {"type": "auth_forcepasswordchange", "value": "0"},
+                        ],
+                    }
+                ]
+            )
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(users[0]["id"], 9)
+
+    async def test_create_users_rejects_missing_fields_before_request(self) -> None:
+        called = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return json_response(request, [])
+
+        client, http_client = await self._client(handler)
+        try:
+            with self.assertRaises(MoodleConfigurationError):
+                await client.create_users([{"username": "usuario"}])
+        finally:
+            await http_client.aclose()
+
+        self.assertFalse(called)
+
     async def test_get_all_courses(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             form = parse_qs(request.content.decode("utf-8"), keep_blank_values=True)

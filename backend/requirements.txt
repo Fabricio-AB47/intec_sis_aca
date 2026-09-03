@@ -14,7 +14,7 @@ pydantic-settings==2.14.2
 PyJWT==2.13.0
 pyodbc==5.2.0
 pypdfium2==5.10.1
-pypdf==6.15.0
+pypdf==6.16.1
 pytesseract==0.3.13
 pytest==9.0.3
 python-dotenv==1.2.2

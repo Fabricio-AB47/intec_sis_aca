@@ -209,7 +209,43 @@ class Settings(BaseSettings):
     graph_scope: str = Field(default="https://graph.microsoft.com/.default", validation_alias=AliasChoices("GRAPH_SCOPE", "MS_GRAPH_SCOPE"))
     graph_delegate_scopes: str = "User.Read,ChannelMessage.Send,Team.ReadBasic.All,ChannelMessage.Read.All"
     graph_delegate_redirect_uri: str = "http://localhost:8000/api/auth/microsoft/callback"
-    graph_user_domain: str | None = Field(default=None, validation_alias=AliasChoices("GRAPH_USER_DOMAIN", "MS_USER_DOMAIN"))
+    graph_user_domain: str = Field(
+        default="intec.edu.ec",
+        validation_alias=AliasChoices("GRAPH_USER_DOMAIN", "MS_USER_DOMAIN"),
+    )
+    graph_student_license_sku_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GRAPH_STUDENT_LICENSE_SKU_ID",
+            "GRAPH_USER_LICENSE_SKU_ID",
+            "MS_USER_LICENSE_SKU_ID",
+        ),
+    )
+    graph_student_license_sku_part_number: str = Field(
+        default="STANDARDWOFFPACK_STUDENT",
+        validation_alias=AliasChoices(
+            "GRAPH_STUDENT_LICENSE_SKU_PART_NUMBER",
+            "MS_STUDENT_LICENSE_SKU_PART_NUMBER",
+        ),
+    )
+    graph_faculty_license_sku_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GRAPH_FACULTY_LICENSE_SKU_ID",
+            "MS_FACULTY_LICENSE_SKU_ID",
+        ),
+    )
+    graph_faculty_license_sku_part_number: str = Field(
+        default="STANDARDWOFFPACK_FACULTY",
+        validation_alias=AliasChoices(
+            "GRAPH_FACULTY_LICENSE_SKU_PART_NUMBER",
+            "MS_FACULTY_LICENSE_SKU_PART_NUMBER",
+        ),
+    )
+    graph_user_usage_location: str = Field(
+        default="EC",
+        validation_alias=AliasChoices("GRAPH_USER_USAGE_LOCATION", "MS_USER_USAGE_LOCATION"),
+    )
     graph_mail_sender: str | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -230,6 +266,11 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
 
     session_secret: str | None = Field(default=None, repr=False)
+    credential_archive_secret: SecretStr | None = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("CREDENTIAL_ARCHIVE_SECRET"),
+    )
     session_cookie_name: str = "reporteria_session"
     session_expire_minutes: int = Field(default=480, ge=5, le=1440)
     session_cookie_secure: bool = False
