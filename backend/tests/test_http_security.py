@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 from fastapi.routing import APIRoute
@@ -83,6 +84,22 @@ class HttpSecurityTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["detail"], "Solicitud rechazada por la política de origen.")
+
+    def test_server_error_detail_is_masked_with_tracking_code(self) -> None:
+        with (
+            patch(
+                "app.routers.health.warm_screen_access_catalog",
+                side_effect=RuntimeError("cadena sensible de conexión"),
+            ),
+            TestClient(app) as client,
+        ):
+            response = client.get("/health/ready")
+
+        self.assertEqual(response.status_code, 503)
+        detail = response.json()["detail"]
+        self.assertIn("Código de seguimiento", detail)
+        self.assertNotIn("cadena sensible", detail)
+        self.assertIn(response.headers["X-Request-ID"], detail)
 
 
 if __name__ == "__main__":

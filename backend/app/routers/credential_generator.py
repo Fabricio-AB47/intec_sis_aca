@@ -23,6 +23,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.file_security import read_secure_upload
 from app.core.security import SessionUser, require_roles
 from app.integrations.moodle.client import MoodleClient
 from app.integrations.moodle.exceptions import MoodleError
@@ -121,6 +122,9 @@ _REPORTS_LOCK = Lock()
 _IDENTITY_LOCK = asyncio.Lock()
 _LICENSE_CACHE: dict[tuple[str, str, str], tuple[datetime, _EducationLicense]] = {}
 _LICENSE_CACHE_LOCK = Lock()
+_SUBSCRIBED_SKUS_CACHE: tuple[datetime, list[dict[str, Any]]] | None = None
+_SCHEMA_LOCK = Lock()
+_SCHEMA_READY = False
 
 
 def _clean(value: Any) -> str:
@@ -284,8 +288,14 @@ def _moodle_is_configured() -> bool:
 
 
 def _ensure_tables(cursor: Any) -> None:
-    cursor.execute(
-        """
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY:
+            return
+        cursor.execute(
+            """
         IF OBJECT_ID(N'dbo.CREDENCIAL_IDENTIDAD', N'U') IS NULL
         BEGIN
             CREATE TABLE dbo.CREDENCIAL_IDENTIDAD (
@@ -342,11 +352,11 @@ def _ensure_tables(cursor: Any) -> None:
             CREATE INDEX IX_CREDENCIAL_APROVISIONAMIENTO_CEDULA
                 ON dbo.CREDENCIAL_APROVISIONAMIENTO (cedula, fecha_creacion DESC);
         END;
-        """
-    )
-    # Dynamic DDL lets SQL Server add all migration columns in one round trip.
-    cursor.execute(
-        """
+            """
+        )
+        # Dynamic DDL lets SQL Server add all migration columns in one round trip.
+        cursor.execute(
+            """
         IF COL_LENGTH(N'dbo.CREDENCIAL_APROVISIONAMIENTO', N'tipo_persona') IS NULL
             EXEC(N'ALTER TABLE dbo.CREDENCIAL_APROVISIONAMIENTO ADD tipo_persona VARCHAR(20) NULL');
         IF COL_LENGTH(N'dbo.CREDENCIAL_APROVISIONAMIENTO', N'clave_cifrada') IS NULL
@@ -359,10 +369,10 @@ def _ensure_tables(cursor: Any) -> None:
             EXEC(N'ALTER TABLE dbo.CREDENCIAL_APROVISIONAMIENTO ADD fecha_ultima_descarga DATETIME2(0) NULL');
         IF COL_LENGTH(N'dbo.CREDENCIAL_APROVISIONAMIENTO', N'usuario_ultima_descarga') IS NULL
             EXEC(N'ALTER TABLE dbo.CREDENCIAL_APROVISIONAMIENTO ADD usuario_ultima_descarga NVARCHAR(100) NULL');
-        """
-    )
-    cursor.execute(
-        """
+            """
+        )
+        cursor.execute(
+            """
         UPDATE dbo.CREDENCIAL_APROVISIONAMIENTO
            SET tipo_persona = 'ESTUDIANTE'
          WHERE tipo_persona IS NULL;
@@ -376,8 +386,20 @@ def _ensure_tables(cursor: Any) -> None:
         )
             ALTER TABLE dbo.CREDENCIAL_APROVISIONAMIENTO
                 ALTER COLUMN tipo_persona VARCHAR(20) NOT NULL;
-        """
-    )
+        IF NOT EXISTS (
+            SELECT 1
+            FROM sys.indexes
+            WHERE object_id = OBJECT_ID(N'dbo.CREDENCIAL_APROVISIONAMIENTO')
+              AND name = N'IX_CREDENCIAL_APROVISIONAMIENTO_TIPO_FECHA'
+        )
+            CREATE INDEX IX_CREDENCIAL_APROVISIONAMIENTO_TIPO_FECHA
+                ON dbo.CREDENCIAL_APROVISIONAMIENTO (tipo_persona, fecha_creacion DESC, id DESC);
+            """
+        )
+        connection = getattr(cursor, "connection", None)
+        if connection is not None:
+            connection.commit()
+        _SCHEMA_READY = True
 
 
 def _table_exists(cursor: Any, table_name: str) -> bool:
@@ -481,6 +503,93 @@ def _existing_email_for_cedula(cedula: str) -> str:
         legacy = _legacy_email_for_cedula(cursor, cedula)
         conn.commit()
         return legacy
+
+
+def _existing_emails_for_cedulas(cedulas: list[str]) -> dict[str, str]:
+    unique_cedulas = list(dict.fromkeys(value for value in cedulas if value))
+    if not unique_cedulas:
+        return {}
+    placeholders = ",".join("?" for _ in unique_cedulas)
+    found: dict[str, str] = {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_tables(cursor)
+        cursor.execute(
+            f"""
+            SELECT cedula, correo_institucional
+            FROM dbo.CREDENCIAL_IDENTIDAD
+            WHERE cedula IN ({placeholders})
+            """,
+            *unique_cedulas,
+        )
+        for row in cursor.fetchall():
+            email = _valid_institutional_email(row[1])
+            if email:
+                found[_clean(row[0])] = email
+
+        missing = [cedula for cedula in unique_cedulas if cedula not in found]
+        if missing and _table_exists(cursor, "dbo.CREDENCIALES_CURSO"):
+            missing_placeholders = ",".join("?" for _ in missing)
+            cursor.execute(
+                f"""
+                SELECT cedula, usuario_generado
+                FROM (
+                    SELECT cedula, usuario_generado,
+                           ROW_NUMBER() OVER (PARTITION BY cedula ORDER BY id DESC) AS posicion
+                    FROM dbo.CREDENCIALES_CURSO
+                    WHERE cedula IN ({missing_placeholders})
+                      AND NULLIF(LTRIM(RTRIM(usuario_generado)), '') IS NOT NULL
+                ) historial
+                WHERE posicion = 1
+                """,
+                *missing,
+            )
+            for row in cursor.fetchall():
+                email = _valid_institutional_email(row[1])
+                if email:
+                    found.setdefault(_clean(row[0]), email)
+
+        missing = [cedula for cedula in unique_cedulas if cedula not in found]
+        if missing and _table_exists(cursor, "dbo.DATOS_ESTUD"):
+            missing_placeholders = ",".join("?" for _ in missing)
+            has_email_table = _table_exists(cursor, "dbo.CorreosEstudIntec")
+            email_expression = (
+                "COALESCE(NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(150), ce.CorreoIntec))), N''), "
+                "NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(150), de.correointec))), N''))"
+                if has_email_table
+                else "NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(150), de.correointec))), N'')"
+            )
+            email_join = (
+                "LEFT JOIN dbo.CorreosEstudIntec ce "
+                "ON TRY_CONVERT(int, ce.codestud) = TRY_CONVERT(int, de.codigo_estud)"
+                if has_email_table
+                else ""
+            )
+            cursor.execute(
+                f"""
+                SELECT cedula, correo
+                FROM (
+                    SELECT LTRIM(RTRIM(TRY_CONVERT(varchar(20), de.Cedula_Est))) AS cedula,
+                           {email_expression} AS correo,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY LTRIM(RTRIM(TRY_CONVERT(varchar(20), de.Cedula_Est)))
+                               ORDER BY TRY_CONVERT(int, de.codigo_estud) DESC
+                           ) AS posicion
+                    FROM dbo.DATOS_ESTUD de
+                    {email_join}
+                    WHERE LTRIM(RTRIM(TRY_CONVERT(varchar(20), de.Cedula_Est)))
+                          IN ({missing_placeholders})
+                ) estudiantes
+                WHERE posicion = 1
+                """,
+                *missing,
+            )
+            for row in cursor.fetchall():
+                email = _valid_institutional_email(row[1])
+                if email:
+                    found.setdefault(_clean(row[0]), email)
+        conn.commit()
+    return found
 
 
 def _email_owner(cursor: Any, email: str) -> str:
@@ -694,15 +803,27 @@ def _education_license(
         ):
             return cached[1]
 
-    payload = graph_get(
-        "https://graph.microsoft.com/v1.0/subscribedSkus"
-        "?$select=skuId,skuPartNumber,capabilityStatus,consumedUnits,prepaidUnits,appliesTo"
-    )
-    raw_items = payload.get("value") if isinstance(payload, dict) else None
-    if not isinstance(raw_items, list):
-        raise RuntimeError("Microsoft Graph no devolvió las licencias contratadas")
+    global _SUBSCRIBED_SKUS_CACHE
+    with _LICENSE_CACHE_LOCK:
+        subscribed_cache = _SUBSCRIBED_SKUS_CACHE
+        raw_items = (
+            subscribed_cache[1]
+            if not force_refresh and subscribed_cache and subscribed_cache[0] > now
+            else None
+        )
+    if raw_items is None:
+        payload = graph_get(
+            "https://graph.microsoft.com/v1.0/subscribedSkus"
+            "?$select=skuId,skuPartNumber,capabilityStatus,consumedUnits,prepaidUnits,appliesTo"
+        )
+        payload_items = payload.get("value") if isinstance(payload, dict) else None
+        if not isinstance(payload_items, list):
+            raise RuntimeError("Microsoft Graph no devolvió las licencias contratadas")
+        raw_items = [item for item in payload_items if isinstance(item, dict)]
+        with _LICENSE_CACHE_LOCK:
+            _SUBSCRIBED_SKUS_CACHE = (now + _LICENSE_CACHE_TTL, raw_items)
     license_info = _select_education_license(
-        [item for item in raw_items if isinstance(item, dict)],
+        raw_items,
         person_type,
         target[0],
         target[1],
@@ -841,9 +962,14 @@ async def _moodle_users(client: MoodleClient, field: str, value: str) -> list[di
     return await client.get_users_by_field(field, [value])
 
 
-async def _resolve_email(person: dict[str, Any], operator: str, moodle: MoodleClient) -> str:
+async def _resolve_email(
+    person: dict[str, Any],
+    operator: str,
+    moodle: MoodleClient,
+    known_email: str = "",
+) -> str:
     cedula = str(person["cedula"])
-    existing = await asyncio.to_thread(_existing_email_for_cedula, cedula)
+    existing = known_email or await asyncio.to_thread(_existing_email_for_cedula, cedula)
     if existing:
         reserved = await asyncio.to_thread(_reserve_identity, person, existing, operator)
         if reserved:
@@ -1083,12 +1209,16 @@ async def _provision_person(
     operator: str,
     moodle: MoodleClient,
     education_license: _EducationLicense,
+    known_email: str = "",
 ) -> dict[str, Any]:
-    email = await _resolve_email(person, operator, moodle)
+    email = await _resolve_email(person, operator, moodle, known_email)
     password = _permanent_password(person)
-    graph_user, graph_status, graph_error, graph_created = await _provision_graph(
-        person, email, password
+    graph_result, moodle_result = await asyncio.gather(
+        _provision_graph(person, email, password),
+        _provision_moodle(moodle, person, email, password),
     )
+    graph_user, graph_status, graph_error, graph_created = graph_result
+    moodle_user, moodle_status, moodle_error, moodle_created = moodle_result
 
     license_status = "OMITIDA"
     license_error = ""
@@ -1103,9 +1233,6 @@ async def _provision_person(
             license_status = f"ERROR_LICENCIA_{education_license.person_type}"
             license_error = _graph_error_detail(exc)
 
-    moodle_user, moodle_status, moodle_error, moodle_created = await _provision_moodle(
-        moodle, person, email, password
-    )
     await asyncio.to_thread(
         _update_identity,
         person,
@@ -1150,6 +1277,16 @@ def _record_audit(batch_id: str, mode: str, rows: list[dict[str, Any]], operator
     with get_connection() as conn:
         cursor = conn.cursor()
         _ensure_tables(cursor)
+        query = """
+            INSERT INTO dbo.CREDENCIAL_APROVISIONAMIENTO (
+                lote_id, tipo_persona, modo, fila_origen, cedula, nombres, correo_institucional,
+                estado_graph, error_graph, estado_licencia, error_licencia,
+                estado_moodle, error_moodle, estado_general, clave_emitida,
+                clave_cifrada, observacion, usuario_creacion
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        parameters: list[tuple[Any, ...]] = []
         for row in rows:
             password = str(row.get("clave_permanente") or "")
             encrypted_password = (
@@ -1157,35 +1294,34 @@ def _record_audit(batch_id: str, mode: str, rows: list[dict[str, Any]], operator
                 if row.get("clave_emitida") and password
                 else ""
             )
-            cursor.execute(
-                """
-                INSERT INTO dbo.CREDENCIAL_APROVISIONAMIENTO (
-                    lote_id, tipo_persona, modo, fila_origen, cedula, nombres, correo_institucional,
-                    estado_graph, error_graph, estado_licencia, error_licencia,
-                    estado_moodle, error_moodle, estado_general, clave_emitida,
-                    clave_cifrada, observacion, usuario_creacion
+            parameters.append(
+                (
+                    batch_id,
+                    str(row.get("tipo_persona") or "ESTUDIANTE"),
+                    mode,
+                    row.get("fila_origen"),
+                    str(row.get("cedula") or ""),
+                    _full_name(row),
+                    str(row.get("correo_institucional") or "") or None,
+                    str(row.get("estado_graph") or "ERROR"),
+                    str(row.get("error_graph") or "") or None,
+                    str(row.get("estado_licencia") or "OMITIDA"),
+                    str(row.get("error_licencia") or "") or None,
+                    str(row.get("estado_moodle") or "ERROR"),
+                    str(row.get("error_moodle") or "") or None,
+                    str(row.get("estado_general") or "ERROR"),
+                    1 if row.get("clave_emitida") else 0,
+                    encrypted_password or None,
+                    str(row.get("observacion") or "")[:500] or None,
+                    operator,
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                batch_id,
-                str(row.get("tipo_persona") or "ESTUDIANTE"),
-                mode,
-                row.get("fila_origen"),
-                str(row.get("cedula") or ""),
-                _full_name(row),
-                str(row.get("correo_institucional") or "") or None,
-                str(row.get("estado_graph") or "ERROR"),
-                str(row.get("error_graph") or "") or None,
-                str(row.get("estado_licencia") or "OMITIDA"),
-                str(row.get("error_licencia") or "") or None,
-                str(row.get("estado_moodle") or "ERROR"),
-                str(row.get("error_moodle") or "") or None,
-                str(row.get("estado_general") or "ERROR"),
-                1 if row.get("clave_emitida") else 0,
-                encrypted_password or None,
-                str(row.get("observacion") or "")[:500] or None,
-                operator,
             )
+        if len(parameters) == 1:
+            cursor.execute(query, *parameters[0])
+        elif parameters:
+            if hasattr(cursor, "fast_executemany"):
+                cursor.fast_executemany = True
+            cursor.executemany(query, parameters)
         conn.commit()
 
 
@@ -1539,10 +1675,26 @@ async def analyze_credentials(
 ) -> dict[str, Any]:
     del current_user
     response.headers["Cache-Control"] = "no-store"
-    content = await file.read(_MAX_FILE_BYTES + 1)
-    people = _read_workbook(content, file.filename or "")
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_FILE_BYTES,
+        label="archivo Excel",
+        allowed_extensions={".xlsx"},
+        allowed_content_types={
+            _EXCEL_MEDIA_TYPE,
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
+    people = _read_workbook(content, filename)
     normalized_people = [_normalized_person(person) for person in people]
     cedula_counts = Counter(str(person["cedula"]) for person in normalized_people if person["cedula"])
+    valid_cedulas = [
+        str(person["cedula"])
+        for person in normalized_people
+        if not _person_errors(person) and cedula_counts[str(person["cedula"])] == 1
+    ]
+    existing_emails = await asyncio.to_thread(_existing_emails_for_cedulas, valid_cedulas)
     used_preview: set[str] = set()
     rows: list[dict[str, Any]] = []
     valid_count = 0
@@ -1553,7 +1705,7 @@ async def analyze_credentials(
             errors.append("La cédula está repetida en el archivo")
         proposed_email = ""
         if not errors:
-            existing = await asyncio.to_thread(_existing_email_for_cedula, cedula)
+            existing = existing_emails.get(cedula, "")
             if existing:
                 proposed_email = existing
             else:
@@ -1576,7 +1728,7 @@ async def analyze_credentials(
     return {
         "rows": rows,
         "summary": {"total": len(rows), "validos": valid_count, "errores": len(rows) - valid_count},
-        "filename": file.filename or "credenciales.xlsx",
+        "filename": filename,
     }
 
 
@@ -1589,7 +1741,7 @@ async def provision_credentials(
     response.headers["Cache-Control"] = "no-store"
     operator = _clean(current_user.login)
     batch_id = str(uuid4())
-    moodle = MoodleClient(get_settings())
+    settings = get_settings()
 
     if not _graph_is_configured():
         audience = "profesores" if payload.tipo_persona == "PROFESOR" else "estudiantes"
@@ -1616,8 +1768,7 @@ async def provision_credentials(
         )
 
     seen_cedulas: set[str] = set()
-    results: list[dict[str, Any]] = []
-
+    prepared: list[tuple[dict[str, Any], list[str]]] = []
     for index, model in enumerate(payload.usuarios, start=1):
         person = _normalized_person(model)
         person["tipo_persona"] = payload.tipo_persona
@@ -1627,25 +1778,34 @@ async def provision_credentials(
         if cedula in seen_cedulas:
             errors.append("La cédula está repetida en la solicitud")
         seen_cedulas.add(cedula)
-        if errors:
-            results.append(
-                {
-                    **person, "correo_institucional": "", "clave_permanente": "",
-                    "estado_graph": "NO_PROCESADO", "error_graph": "",
-                    "estado_licencia": "OMITIDA", "error_licencia": "",
-                    "licencia_nombre": education_license.name,
-                    "licencia_sku_part_number": education_license.sku_part_number,
-                    "estado_moodle": "NO_PROCESADO", "error_moodle": "",
-                    "estado_general": "ERROR_VALIDACION", "errores": errors, "clave_emitida": False,
-                    "observacion": "No se generó una contraseña porque la fila no superó la validación.",
-                }
-            )
-            continue
-        try:
-            results.append(await _provision_person(person, operator, moodle, education_license))
-        except Exception as exc:
-            results.append(
-                {
+        prepared.append((person, errors))
+
+    valid_cedulas = [str(person["cedula"]) for person, errors in prepared if not errors]
+    existing_emails = await asyncio.to_thread(_existing_emails_for_cedulas, valid_cedulas)
+    result_slots: list[dict[str, Any] | None] = [None] * len(prepared)
+    semaphore = asyncio.Semaphore(settings.credential_provision_concurrency)
+    moodle_http_client = (
+        httpx.AsyncClient(
+            timeout=httpx.Timeout(float(settings.moodle_timeout_seconds)),
+            verify=bool(settings.moodle_verify_tls),
+        )
+        if _moodle_is_configured()
+        else None
+    )
+    moodle = MoodleClient(settings, moodle_http_client)
+
+    async def provision_one(position: int, person: dict[str, Any]) -> None:
+        async with semaphore:
+            try:
+                result_slots[position] = await _provision_person(
+                    person,
+                    operator,
+                    moodle,
+                    education_license,
+                    existing_emails.get(str(person["cedula"]), ""),
+                )
+            except Exception as exc:
+                result_slots[position] = {
                     **person, "correo_institucional": "", "clave_permanente": "",
                     "estado_graph": "NO_PROCESADO", "error_graph": "",
                     "estado_licencia": "OMITIDA", "error_licencia": "",
@@ -1656,7 +1816,30 @@ async def provision_credentials(
                     "clave_emitida": False,
                     "observacion": "No se generó una contraseña debido al error de aprovisionamiento.",
                 }
-            )
+
+    tasks: list[asyncio.Task[None]] = []
+    for position, (person, errors) in enumerate(prepared):
+        if errors:
+            result_slots[position] = {
+                **person, "correo_institucional": "", "clave_permanente": "",
+                "estado_graph": "NO_PROCESADO", "error_graph": "",
+                "estado_licencia": "OMITIDA", "error_licencia": "",
+                "licencia_nombre": education_license.name,
+                "licencia_sku_part_number": education_license.sku_part_number,
+                "estado_moodle": "NO_PROCESADO", "error_moodle": "",
+                "estado_general": "ERROR_VALIDACION", "errores": errors, "clave_emitida": False,
+                "observacion": "No se generó una contraseña porque la fila no superó la validación.",
+            }
+        else:
+            tasks.append(asyncio.create_task(provision_one(position, person)))
+    try:
+        if tasks:
+            await asyncio.gather(*tasks)
+    finally:
+        if moodle_http_client is not None:
+            await moodle_http_client.aclose()
+
+    results = [result for result in result_slots if result is not None]
 
     await asyncio.to_thread(_record_audit, batch_id, payload.modo, results, operator)
     report_content = await asyncio.to_thread(_report_bytes, batch_id, payload.modo, results, operator)

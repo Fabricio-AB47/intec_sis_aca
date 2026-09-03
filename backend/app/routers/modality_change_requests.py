@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_screen_access
+from app.core.file_security import read_secure_upload
 from app.services.academic_movement_audit import (
     build_snapshot_row,
     cursor_row_dict,
@@ -172,9 +173,14 @@ async def _read_supporting_pdfs(uploads: list[UploadFile]) -> list[dict[str, Any
     total_size = 0
     try:
         for order, upload in enumerate(uploads, start=1):
-            original_filename = Path(upload.filename or f"respaldo-{order}.pdf").name
-            content_type = upload.content_type
-            content = await upload.read(_MAX_DOCUMENT_BYTES + 1)
+            original_filename, content = await read_secure_upload(
+                upload,
+                maximum=_MAX_DOCUMENT_BYTES,
+                label="archivo PDF",
+                allowed_extensions={".pdf"},
+                allowed_content_types={"application/pdf", "application/octet-stream"},
+            )
+            content_type = "application/pdf"
             _validate_pdf_content(original_filename, content_type, content)
             digest = hashlib.sha256(content).hexdigest()
             if digest in hashes:

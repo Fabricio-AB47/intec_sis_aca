@@ -23,6 +23,7 @@ const CruceDatosView = lazyView(() => import('./features/cruce/CruceDatosView'),
 const ExcelValidationView = lazyView(() => import('./features/cruce/ExcelValidationView'), 'ExcelValidationView')
 const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'), 'DashboardView')
 const SistemaAcademicoView = lazyView(() => import('./features/academico/SistemaAcademicoView'), 'SistemaAcademicoView')
+const CurriculumUpdaterView = lazyView(() => import('./features/academico/CurriculumUpdaterView'), 'CurriculumUpdaterView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
 const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
 const InglesView = lazyView(() => import('./features/ingles/InglesView'), 'InglesView')
@@ -249,6 +250,8 @@ function App() {
           onOpenCatalogs={() => app.openGestionSisAcademicoPage('periodos')}
         />
       )
+    } else if (app.activePage === 'actualizar-malla-carrera') {
+      pageContent = <CurriculumUpdaterView displayName={app.displayName} />
     } else if (app.activePage === 'matricula') {
       pageContent = (
         <MatriculaView
@@ -609,6 +612,7 @@ function App() {
           onOpenIngresoVentas={app.openIngresoVentasPage}
           onOpenCruceDatos={app.openCruceDatosPage}
           onOpenValidarExcel={app.openValidarExcelPage}
+          onOpenCurriculumUpdater={app.openCurriculumUpdaterPage}
           onOpenRangoEdades={app.openRangoEdadesPage}
           onOpenFechaGrado={app.openFechaGradoPage}
           onOpenTitulacion={app.openTitulacionPage}

@@ -6,6 +6,7 @@ from xml.etree import ElementTree
 
 from fastapi import HTTPException, UploadFile
 
+from app.core.file_security import read_secure_upload
 from app.services.graph_documents import safe_filename
 
 
@@ -14,16 +15,7 @@ MAX_RIDE_PDF_BYTES = 50 * 1024 * 1024
 
 
 async def read_upload(upload: UploadFile, *, maximum: int, label: str) -> bytes:
-    content = await upload.read(maximum + 1)
-    await upload.close()
-    if not content:
-        raise HTTPException(status_code=400, detail=f"{label} está vacío.")
-    if len(content) > maximum:
-        size_mb = maximum // (1024 * 1024)
-        raise HTTPException(
-            status_code=413,
-            detail=f"{label} supera el límite de {size_mb} MB.",
-        )
+    _, content = await read_secure_upload(upload, maximum=maximum, label=label)
     return content
 
 

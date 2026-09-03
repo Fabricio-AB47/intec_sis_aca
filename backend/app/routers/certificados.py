@@ -30,6 +30,7 @@ from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/certificados", tags=["certificados"])
@@ -43,6 +44,7 @@ _PROMO_EXCLUDED_CODES = {"VGA-ID-2023-114", "VGA-ID-2023-115"}
 _PROMO_EXCLUDED_NAMES = {"A1 - BEGINNER", "A1+ - ELEMENTARY"}
 _GASTRONOMIA_MATRICULA_BASE = 100.0
 _GASTRONOMIA_ARANCEL_BASE = 1000.0
+_MAX_MATRICULA_EXCEL_BYTES = 12 * 1024 * 1024
 
 
 class CertificateGeneratePayload(BaseModel):
@@ -1521,13 +1523,18 @@ async def generate_matricula_from_excel(
     period_code = _clean(periodo)
     if not period_code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione un período')
-    filename = (file.filename or "").lower()
-    if not filename.endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sube un archivo Excel .xlsx")
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='El archivo esta vacío')
+    _, file_bytes = await read_secure_upload(
+        file,
+        maximum=_MAX_MATRICULA_EXCEL_BYTES,
+        label="archivo Excel",
+        allowed_extensions={".xlsx", ".xlsm"},
+        allowed_content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel.sheet.macroenabled.12",
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
 
     rows = _parse_matricula_excel(file_bytes)
     if not rows:

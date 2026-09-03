@@ -129,6 +129,12 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("ingreso-ventas", "Ingresos y ventas", "Movimientos e indicadores financieros.", "Financiero"),
     _screen("cruce-datos", "Cruce de datos", "Comparación de información académica y archivos.", "Herramientas"),
     _screen("validar-excel", "Validar Excel", "Validación estructurada de archivos de carga.", "Herramientas"),
+    _screen(
+        "actualizar-malla-carrera",
+        "Actualizar malla por carrera",
+        "Analizar PEA y sílabos mediante texto u OCR para enriquecer la malla.",
+        "Académico",
+    ),
     _screen("teams", "Movimientos Teams", "Equipos, clases, grabaciones y actividad Microsoft 365.", "Microsoft 365"),
     _screen("teams-matricula", "Matrícula en Teams", "Creación de aulas y matriculación en Microsoft Teams.", "Microsoft 365"),
     _screen(
@@ -368,7 +374,7 @@ _ACADEMIC_PAGES = (
     "matricula-excel-certificados", "renombrar-certificados", "carnet-institucional",
     "evaluacion-docente-avance", "evaluacion-docente-reportes",
     "formato-informe-docente", "practicas-institucionales",
-    "ingles", "expedientes-documentales",
+    "ingles", "expedientes-documentales", "actualizar-malla-carrera",
 )
 
 _ACADEMIC_SIS_FLOWS = _flow_codes(
@@ -418,6 +424,7 @@ _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
     "solicitudes-cambio-carrera": ("ACADEMICO", "SECRETARIA"),
     "solicitudes-cambio-modalidad": ("ACADEMICO", "SECRETARIA"),
     "practicas-institucionales": ("DOCENTE",),
+    "actualizar-malla-carrera": ("ACADEMICO",),
 }
 
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {

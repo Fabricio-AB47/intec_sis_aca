@@ -17,6 +17,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection, get_practices_connection, get_titulation_connection
 from app.services.practices_operations import (
     effective_process_configuration,
@@ -1745,15 +1746,14 @@ async def upload_carta_compromiso(
     current_user: Annotated[SessionUser, Depends(_DOCENTE_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    original_name = _safe_filename(file.filename or "carta_compromiso.pdf")
-    extension = Path(original_name).suffix.lower()
-    if extension != ".pdf":
-        raise HTTPException(status_code=400, detail="Sube la carta compromiso firmada en formato PDF.")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo supera el límite de 12 MB.")
+    raw_name, content = await read_secure_upload(
+        file,
+        maximum=_MAX_UPLOAD_SIZE,
+        label="carta compromiso",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
+    original_name = _safe_filename(raw_name)
 
     try:
         with get_practices_connection() as conn:
@@ -1832,16 +1832,23 @@ async def upload_certificado_preprofesional(
     current_user: Annotated[SessionUser, Depends(_DOCENTE_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    original_name = _safe_filename(file.filename or "certificado_practicas.pdf")
+    raw_name, content = await read_secure_upload(
+        file,
+        maximum=_MAX_UPLOAD_SIZE,
+        label="certificado",
+        allowed_extensions={".pdf", ".jpg", ".jpeg", ".png"},
+        allowed_content_types={
+            "application/pdf",
+            "application/octet-stream",
+            "image/jpeg",
+            "image/png",
+        },
+    )
+    original_name = _safe_filename(raw_name)
     extension = Path(original_name).suffix.lower()
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png"}
     if extension not in allowed_extensions:
         raise HTTPException(status_code=400, detail="Sube el certificado en PDF, JPG o PNG.")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo supera el límite de 12 MB.")
 
     try:
         with get_practices_connection() as conn:
@@ -2329,16 +2336,23 @@ async def upload_admin_authorization(
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     process = _process_code(tipo_proceso_codigo)
-    original_name = _safe_filename(file.filename or "autorizacion_practicas.pdf")
+    raw_name, content = await read_secure_upload(
+        file,
+        maximum=_MAX_UPLOAD_SIZE,
+        label="autorización",
+        allowed_extensions={".pdf", ".jpg", ".jpeg", ".png"},
+        allowed_content_types={
+            "application/pdf",
+            "application/octet-stream",
+            "image/jpeg",
+            "image/png",
+        },
+    )
+    original_name = _safe_filename(raw_name)
     extension = Path(original_name).suffix.lower()
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png"}
     if extension not in allowed_extensions:
         raise HTTPException(status_code=400, detail="Sube la autorización en PDF, JPG o PNG.")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo supera el límite de 12 MB.")
 
     try:
         with get_practices_connection() as conn:

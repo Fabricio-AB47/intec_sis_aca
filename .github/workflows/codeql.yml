@@ -22,18 +22,18 @@ jobs:
         language: [python, javascript-typescript]
     steps:
       - name: Obtener código
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Inicializar CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@5ba2889ada762081db2c4f32a729827dce632c7b # v3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
 
       - name: Construcción automática
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@5ba2889ada762081db2c4f32a729827dce632c7b # v3
 
       - name: Analizar
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@5ba2889ada762081db2c4f32a729827dce632c7b # v3
         with:
           category: "/language:${{ matrix.language }}"

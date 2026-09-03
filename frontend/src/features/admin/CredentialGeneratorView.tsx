@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   analyzeCredentialProvisionWorkbook,
@@ -140,6 +140,11 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
     ESTUDIANTE: [],
     PROFESOR: [],
   })
+  const [historyLoadedByType, setHistoryLoadedByType] = useState<Record<CredentialPersonType, boolean>>({
+    ESTUDIANTE: false,
+    PROFESOR: false,
+  })
+  const [historyLoadingType, setHistoryLoadingType] = useState<CredentialPersonType | null>(null)
   const [workbook, setWorkbook] = useState<File | null>(null)
   const [analysis, setAnalysis] = useState<CredentialAnalysisResponse | null>(null)
   const [person, setPerson] = useState<CredentialProvisionPerson>(EMPTY_PERSON)
@@ -155,29 +160,45 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  async function loadData(silent = false) {
+  const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const [configuration, studentHistory, facultyHistory] = await Promise.all([
-        fetchCredentialProvisionConfig(),
-        fetchCredentialProvisionHistory(100, 'ESTUDIANTE'),
-        fetchCredentialProvisionHistory(100, 'PROFESOR'),
-      ])
+      const configuration = await fetchCredentialProvisionConfig()
       setConfig(configuration)
-      setHistoryByType({
-        ESTUDIANTE: studentHistory.rows || [],
-        PROFESOR: facultyHistory.rows || [],
-      })
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el módulo de credenciales.')
     } finally {
       if (!silent) setLoading(false)
     }
-  }
+  }, [])
+
+  const loadHistory = useCallback(async (type: CredentialPersonType, silent = false) => {
+    if (!silent) setHistoryLoadingType(type)
+    try {
+      const response = await fetchCredentialProvisionHistory(100, type)
+      setHistoryByType((current) => ({ ...current, [type]: response.rows || [] }))
+      setHistoryLoadedByType((current) => ({ ...current, [type]: true }))
+    } catch (apiError) {
+      setHistoryLoadedByType((current) => ({ ...current, [type]: true }))
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo cargar el historial de credenciales.')
+    } finally {
+      if (!silent) setHistoryLoadingType(null)
+    }
+  }, [])
 
   useEffect(() => {
     void loadData()
-  }, [])
+  }, [loadData])
+
+  useEffect(() => {
+    if (
+      activeSection === 'history'
+      && !historyLoadedByType[personType]
+      && historyLoadingType !== personType
+    ) {
+      void loadHistory(personType)
+    }
+  }, [activeSection, historyLoadedByType, historyLoadingType, loadHistory, personType])
 
   useEffect(() => {
     if (!showProcessInfo) return
@@ -281,6 +302,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
       setMessage(response.message)
       if (mode === 'INDIVIDUAL' && response.summary.fallidos === 0) setPerson(EMPTY_PERSON)
       await loadData(true)
+      setHistoryLoadedByType((current) => ({ ...current, [personType]: false }))
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo completar la creación de credenciales.')
     } finally {
@@ -337,7 +359,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
       const blob = await downloadCredentialHistoryReport(row.id)
       downloadBlob(blob, `credencial_${row.tipo_persona.toLowerCase()}_${row.cedula}.xlsx`)
       setMessage(`Documento histórico descargado para ${row.nombres}.`)
-      await loadData(true)
+      await loadHistory(personType, true)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo descargar la credencial histórica.')
     } finally {
@@ -636,7 +658,7 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
               <p className="eyebrow">Auditoría</p>
               <h2>Historial de {audience.plural}</h2>
             </div>
-            <span>{history.length} registro(s)</span>
+            <span>{historyLoadingType === personType ? 'Consultando...' : `${history.length} registro(s)`}</span>
           </div>
           <div className="portal-table-wrap credential-provision-table-wrap">
             <table className="portal-record-table credential-history-table">
@@ -694,7 +716,13 @@ export function CredentialGeneratorView({ displayName }: Readonly<CredentialGene
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={11}>No existen aprovisionamientos registrados.</td></tr>
+                  <tr>
+                    <td colSpan={11}>
+                      {historyLoadingType === personType
+                        ? 'Consultando aprovisionamientos...'
+                        : 'No existen aprovisionamientos registrados.'}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

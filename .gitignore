@@ -45,6 +45,7 @@ dist-ssr/
 # IIS local config
 web.config
 **/web.config
+!frontend/public/web.config
 
 # Logs
 logs/
@@ -69,6 +70,7 @@ temp/
 *.xls
 *.xlsx
 *.csv
+!backend/app/templates/malla_adm_template.xlsx
 !frontend/doc/**
 !frontend/public/plantillas/
 !frontend/public/plantillas/**

@@ -60,6 +60,7 @@ type StudentLayoutProps = {
   onOpenIngresoVentas: () => void
   onOpenCruceDatos: () => void
   onOpenValidarExcel: () => void
+  onOpenCurriculumUpdater: () => void
   onOpenRangoEdades: () => void
   onOpenFechaGrado: () => void
   onOpenTitulacion: () => void
@@ -170,6 +171,7 @@ const academicPages = new Set<Page>([
   'practicas-institucionales',
   'ingles',
   'expedientes-documentales',
+  'actualizar-malla-carrera',
 ])
 const academicSisSections = new Set([
   'estudiantes',
@@ -598,6 +600,7 @@ export function StudentLayout({
   onOpenIngresoVentas,
   onOpenCruceDatos,
   onOpenValidarExcel,
+  onOpenCurriculumUpdater,
   onOpenRangoEdades,
   onOpenFechaGrado,
   onOpenTitulacion,
@@ -754,13 +757,19 @@ export function StudentLayout({
   const updatesMenuGroup: NavGroup = {
     key: 'actualizacion-estados',
     title: 'Actualización',
-    summary: 'Datos, correo, estados y grado',
+    summary: 'Datos, correo, estados, mallas y grado',
     items: [
       {
         label: 'Actualización de datos',
         description: 'Actualizar información personal de estudiantes y docentes.',
         page: 'actualizar-datos-estudiante',
         action: onOpenActualizarDatosEstudiante,
+      },
+      {
+        label: 'Actualizar malla por carrera',
+        description: 'Extraer resultados y contenidos desde PEA y sílabos para enriquecer la malla.',
+        page: 'actualizar-malla-carrera',
+        action: onOpenCurriculumUpdater,
       },
       {
         label: 'Correo INTEC',

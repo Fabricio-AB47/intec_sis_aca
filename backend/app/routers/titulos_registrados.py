@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.core.file_security import read_secure_upload
 from app.core.security import SessionUser, require_roles
 from app.services.graph import get_graph_token
 from app.services.db import get_connection, get_titulation_connection
@@ -26,6 +27,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _UPLOAD_ROOT = _BACKEND_ROOT / "uploads" / "titulos_registrados"
 _INDEX_PATH = _UPLOAD_ROOT / "metadata.json"
 _MAX_FILE_BYTES = 25 * 1024 * 1024
+_MAX_BULK_FILES = 200
 _ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png"}
 _ONEDRIVE_ROOT_FOLDER = "TITULACION GESTION DOCUMENTAL"
 _MODEL_TYPES = {
@@ -578,19 +580,17 @@ async def upload_registered_title(
     clean_model = _clean(modelo)
     if not clean_model:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Ingrese el modelo del título')
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione un archivo')
-    extension = Path(file.filename).suffix.lower()
-    if extension not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato no permitido para el título")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
-    if len(content) > _MAX_FILE_BYTES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo supera 25 MB")
+    content_type = _clean(file.content_type) or "application/octet-stream"
+    original_filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_FILE_BYTES,
+        label="archivo de título",
+        allowed_extensions=_ALLOWED_EXTENSIONS,
+    )
+    extension = Path(original_filename).suffix.lower()
 
     item_id = uuid4().hex
-    filename = f"{datetime.now():%Y%m%d_%H%M%S}_{item_id[:8]}_{_safe_path_name(file.filename, 'titulo')}"
+    filename = f"{datetime.now():%Y%m%d_%H%M%S}_{item_id[:8]}_{_safe_path_name(original_filename, 'titulo')}"
     one_drive_folder = "/".join(
         [
             _ONEDRIVE_ROOT_FOLDER,
@@ -599,7 +599,7 @@ async def upload_registered_title(
         ]
     )
     try:
-        drive_item = _upload_to_onedrive(one_drive_folder, filename, content, _clean(file.content_type) or "application/octet-stream")
+        drive_item = _upload_to_onedrive(one_drive_folder, filename, content, content_type)
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text[:500] if exc.response is not None else str(exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"No se pudo subir el título a OneDrive: {detail}") from exc
@@ -616,8 +616,8 @@ async def upload_registered_title(
         "cedula": _clean(cedula),
         "carrera": _clean(carrera),
         "observacion": _clean(observacion),
-        "filename": _clean(file.filename),
-        "content_type": _clean(file.content_type),
+        "filename": original_filename,
+        "content_type": content_type,
         "size": len(content),
         "storage": "onedrive",
         "onedrive_folder": one_drive_folder,
@@ -663,6 +663,11 @@ async def upload_senescyt_titles_bulk(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione o crea la carpeta destino SENESCYT')
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Seleccione al menos un PDF SENESCYT')
+    if len(files) > _MAX_BULK_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Puede cargar hasta {_MAX_BULK_FILES} archivos PDF por lote.",
+        )
 
     one_drive_folder = "/".join(
         [
@@ -678,22 +683,22 @@ async def upload_senescyt_titles_bulk(
 
     for file in files:
         original_name = _clean(file.filename) or "titulo_senescyt.pdf"
-        extension = Path(original_name).suffix.lower()
-        if extension != ".pdf":
+        try:
+            original_name, content = await read_secure_upload(
+                file,
+                maximum=_MAX_FILE_BYTES,
+                label=f"archivo {original_name}",
+                allowed_extensions={".pdf"},
+                allowed_content_types={"application/pdf", "application/octet-stream"},
+            )
+        except HTTPException as exc:
             results.append(
                 {
                     "archivo": original_name,
                     "estado": "OMITIDO",
-                    "mensaje": "Solo se aceptan archivos PDF para carga masiva SENESCYT.",
+                    "mensaje": str(exc.detail),
                 }
             )
-            continue
-        content = await file.read()
-        if not content:
-            results.append({"archivo": original_name, "estado": "OMITIDO", "mensaje": "El archivo está vacío."})
-            continue
-        if len(content) > _MAX_FILE_BYTES:
-            results.append({"archivo": original_name, "estado": "OMITIDO", "mensaje": "El archivo supera 25 MB."})
             continue
 
         text = _extract_pdf_text(content)

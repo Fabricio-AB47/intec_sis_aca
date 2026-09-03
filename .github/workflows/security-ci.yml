@@ -22,10 +22,10 @@ jobs:
       AUTH_LEGACY_PLAINTEXT_ENABLED: "false"
     steps:
       - name: Obtener código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Configurar Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
           cache: pip
@@ -40,10 +40,20 @@ jobs:
         run: |
           grep -v '^pywin32==' backend/requirements.txt > /tmp/requirements-ci.txt
           python -m pip install --upgrade pip
-          python -m pip install -r /tmp/requirements-ci.txt pip-audit
+          python -m pip install -r /tmp/requirements-ci.txt pip-audit==2.10.1 cyclonedx-bom==7.3.1
 
       - name: Auditar dependencias Python
         run: python -m pip_audit -r /tmp/requirements-ci.txt --strict
+
+      - name: Generar SBOM Python
+        run: cyclonedx-py requirements /tmp/requirements-ci.txt --output-reproducible --output-format JSON --output-file backend-sbom.cdx.json
+
+      - name: Publicar SBOM Python
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-sbom
+          path: backend-sbom.cdx.json
+          if-no-files-found: error
 
       - name: Ejecutar pruebas
         working-directory: backend
@@ -52,12 +62,16 @@ jobs:
   frontend:
     name: Frontend, construcción y dependencias
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Obtener código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
           cache: npm
@@ -71,6 +85,24 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=high
 
+      - name: Generar SBOM Node.js
+        working-directory: frontend
+        run: npm sbom --sbom-format cyclonedx > frontend-sbom.cdx.json
+
+      - name: Publicar SBOM Node.js
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-sbom
+          path: frontend/frontend-sbom.cdx.json
+          if-no-files-found: error
+
       - name: Validar y construir
         working-directory: frontend
         run: npm run build
+
+      - name: Atestiguar build y SBOM
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-path: frontend/dist/**
+          sbom-path: frontend/frontend-sbom.cdx.json

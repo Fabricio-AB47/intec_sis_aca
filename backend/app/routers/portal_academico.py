@@ -49,6 +49,7 @@ from reportlab.platypus import Flowable, Image as PdfImage, Indenter, KeepTogeth
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.integrations.moodle.exceptions import MoodleError
 from app.routers.moodle import get_moodle_read_service
 from app.services.db import get_connection, get_finance_connection
@@ -2505,6 +2506,45 @@ def _validate_signed_teacher_document_pdf(content: bytes, label: str) -> None:
         raise HTTPException(status_code=400, detail=f"El archivo de {label} no contiene un PDF válido")
 
 
+async def _read_teacher_contract_upload(upload: UploadFile) -> tuple[str, bytes]:
+    filename, content = await read_secure_upload(
+        upload,
+        maximum=_TEACHER_CONTRACT_MAX_FILE_SIZE,
+        label="contrato docente",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
+    return _validate_teacher_contract_pdf(filename, content), content
+
+
+async def _read_pkcs12_upload(upload: UploadFile) -> bytes:
+    _, content = await read_secure_upload(
+        upload,
+        maximum=_TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE,
+        label="certificado PKCS#12",
+        allowed_extensions={".p12", ".pfx"},
+        allowed_content_types={
+            "application/octet-stream",
+            "application/pkcs12",
+            "application/x-pkcs12",
+            "application/x-pkcs7-certificates",
+        },
+    )
+    return content
+
+
+async def _read_signed_teacher_pdf(upload: UploadFile, label: str) -> bytes:
+    _, content = await read_secure_upload(
+        upload,
+        maximum=_SIGNED_TEACHER_DOCUMENT_MAX_FILE_SIZE,
+        label=f"PDF firmado de {label}",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
+    _validate_signed_teacher_document_pdf(content, label)
+    return content
+
+
 async def _teacher_invoice_backup_documents(
     factura_xml: UploadFile | None,
     ride_pdf: UploadFile | None,
@@ -3211,8 +3251,7 @@ async def teacher_analyze_contract_document(
     current_user: Annotated[SessionUser, Depends(_TEACHER_ACCESS)],
     contrato: Annotated[UploadFile, File()],
 ) -> dict[str, Any]:
-    pdf_bytes = await contrato.read()
-    original_name = _validate_teacher_contract_pdf(contrato.filename, pdf_bytes)
+    original_name, pdf_bytes = await _read_teacher_contract_upload(contrato)
     identity = _teacher_contract_identity(current_user)
     analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(pdf_bytes))
     _validate_teacher_contract_analysis(analysis, identity)
@@ -3234,20 +3273,12 @@ async def teacher_sign_uploaded_contract_document(
     firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
     firma_contacto: Annotated[str, Form(max_length=200)] = "",
 ) -> StreamingResponse:
-    contract_bytes = await contrato.read()
-    original_name = _validate_teacher_contract_pdf(contrato.filename, contract_bytes)
+    original_name, contract_bytes = await _read_teacher_contract_upload(contrato)
     identity = _teacher_contract_identity(current_user)
     analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(contract_bytes))
     _validate_teacher_contract_analysis(analysis, identity)
 
-    certificate_name = _clean(certificado.filename).lower()
-    if not certificate_name.endswith((".p12", ".pfx")):
-        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
-    certificate_bytes = await certificado.read()
-    if not certificate_bytes:
-        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
-    if len(certificate_bytes) > _TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+    certificate_bytes = await _read_pkcs12_upload(certificado)
 
     signed_pdf = await _sign_pdf_with_pkcs12(
         pdf_bytes=contract_bytes,
@@ -3316,8 +3347,7 @@ async def teacher_upload_contract_document(
             detail=f"La modalidad del contrato debe ser {expected}, según el período seleccionado.",
         )
 
-    pdf_bytes = await contrato.read()
-    original_name = _validate_teacher_contract_pdf(contrato.filename, pdf_bytes)
+    original_name, pdf_bytes = await _read_teacher_contract_upload(contrato)
     analysis = _parse_teacher_contract_text(_extract_teacher_contract_pdf_text(pdf_bytes))
     _validate_teacher_contract_analysis(analysis, identity, assignment)
     if analysis.get("numero_contrato") and _contract_text_key(analysis["numero_contrato"]) != _contract_text_key(numero_contrato):
@@ -3569,14 +3599,7 @@ async def teacher_sign_contract_document(
     firma_ubicacion: Annotated[str, Form(max_length=120)] = "Quito, Ecuador",
     firma_contacto: Annotated[str, Form(max_length=200)] = "",
 ) -> StreamingResponse:
-    certificate_name = _clean(certificado.filename).lower()
-    if not certificate_name.endswith((".p12", ".pfx")):
-        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
-    certificate_bytes = await certificado.read()
-    if not certificate_bytes:
-        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
-    if len(certificate_bytes) > _TEACHER_CONTRACT_CERTIFICATE_MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+    certificate_bytes = await _read_pkcs12_upload(certificado)
 
     identity = _teacher_contract_identity(current_user)
     created_path: Path | None = None
@@ -8540,16 +8563,24 @@ async def _read_compliance_evidence(
     evidence_labels = labels or []
     for index, upload in enumerate(uploads or []):
         if not upload.filename:
+            await upload.close()
             continue
-        content_type = (upload.content_type or "").lower()
-        if content_type and not content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="Las evidencias deben ser imágenes")
-        content = await upload.read()
-        if len(content) > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Cada captura debe pesar máximo 5 MB")
+        filename, content = await read_secure_upload(
+            upload,
+            maximum=5 * 1024 * 1024,
+            label="captura de evidencia",
+            allowed_extensions={".jpg", ".jpeg", ".png", ".webp", ".gif"},
+            allowed_content_types={
+                "application/octet-stream",
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/gif",
+            },
+        )
         evidence_images.append(
             {
-                "label": evidence_labels[index] if index < len(evidence_labels) else upload.filename,
+                "label": evidence_labels[index] if index < len(evidence_labels) else filename,
                 "content": content,
             }
         )
@@ -8620,16 +8651,16 @@ def _pdf_pages_as_compliance_evidence(
 
 async def _read_signed_grade_report_evidence(upload: UploadFile | None) -> list[dict[str, Any]]:
     if upload is None or not upload.filename:
+        if upload is not None:
+            await upload.close()
         return []
-    filename = _clean(upload.filename).lower()
-    content_type = _clean(upload.content_type).lower()
-    if not filename.endswith(".pdf") and content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="El reporte de notas firmado debe ser un archivo PDF")
-    content = await upload.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El reporte de notas firmado está vacío")
-    if len(content) > 25 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="El reporte de notas firmado debe pesar máximo 25 MB")
+    _, content = await read_secure_upload(
+        upload,
+        maximum=25 * 1024 * 1024,
+        label="reporte de notas firmado",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
     return _pdf_pages_as_compliance_evidence(content)
 
 
@@ -9514,11 +9545,7 @@ async def teacher_sign_academic_planning_pdf(
         raise HTTPException(status_code=400, detail="Los porcentajes de evaluación deben sumar 100%")
     if not any(unit.temas for unit in payload.unidades):
         raise HTTPException(status_code=400, detail="Debe registrar al menos un tema en la planificación")
-    if not certificado.filename or not certificado.filename.lower().endswith((".p12", ".pfx")):
-        raise HTTPException(status_code=400, detail="Seleccione un certificado PKCS#12 con extensión .p12 o .pfx")
-    certificate_bytes = await certificado.read()
-    if not certificate_bytes or len(certificate_bytes) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="El certificado está vacío o supera el máximo de 2 MB")
+    certificate_bytes = await _read_pkcs12_upload(certificado)
     codigo_doc = _teacher_code(current_user)
     meta = _teacher_course_report_meta(
         codigo_doc,
@@ -9720,14 +9747,7 @@ async def teacher_sign_student_grade_report(
     cod_anio_basica: Annotated[int | None, Form()] = None,
     cod_jornada: Annotated[int | None, Form()] = None,
 ) -> StreamingResponse:
-    certificate_name = _clean(certificado.filename).lower()
-    if not certificate_name.endswith((".p12", ".pfx")):
-        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
-    certificate_bytes = await certificado.read()
-    if not certificate_bytes:
-        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
-    if len(certificate_bytes) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+    certificate_bytes = await _read_pkcs12_upload(certificado)
 
     pdf_bytes, filename_stem = _build_teacher_student_grade_report_pdf(
         current_user=current_user,
@@ -9893,14 +9913,7 @@ async def teacher_sign_compliance_report(
     evidencia: Annotated[list[UploadFile] | None, File()] = None,
     reporte_notas_firmado: Annotated[UploadFile | None, File()] = None,
 ) -> StreamingResponse:
-    certificate_name = _clean(certificado.filename).lower()
-    if not certificate_name.endswith((".p12", ".pfx")):
-        raise HTTPException(status_code=400, detail="Seleccione un certificado con extensión .p12 o .pfx")
-    certificate_bytes = await certificado.read()
-    if not certificate_bytes:
-        raise HTTPException(status_code=400, detail="El archivo de certificado está vacío")
-    if len(certificate_bytes) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="El archivo .p12 debe pesar máximo 2 MB")
+    certificate_bytes = await _read_pkcs12_upload(certificado)
 
     evidence_images = await _read_compliance_evidence(evidencia, evidencia_label)
     evidence_images.extend(await _read_signed_grade_report_evidence(reporte_notas_firmado))
@@ -10033,9 +10046,9 @@ async def teacher_signed_documents_archive(
     nombre_materia: Annotated[str, Form()] = "",
     codigo_periodo: Annotated[list[str] | None, Form()] = None,
 ) -> StreamingResponse:
-    compliance_pdf = await informe.read()
-    grades_pdf = await notas.read()
-    contract_pdf = await contrato.read()
+    compliance_pdf = await _read_signed_teacher_pdf(informe, "informe de cumplimiento")
+    grades_pdf = await _read_signed_teacher_pdf(notas, "reporte de notas")
+    contract_pdf = await _read_signed_teacher_pdf(contrato, "contrato")
     invoice_documents = await _teacher_invoice_backup_documents(factura_xml, ride_pdf)
     archive_bytes = _signed_teacher_documents_archive(
         compliance_pdf,

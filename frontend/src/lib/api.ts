@@ -95,6 +95,8 @@ import type {
   ComplianceInvoiceBackupUploadResponse,
   ComplianceDocumentsResponse,
   ComplianceDocumentType,
+  CurriculumAnalysisResponse,
+  CurriculumGenerateUpdate,
   IntegrationDatabaseEvent,
   IntegrationHistoryDetail,
   IntegrationHistoryPage,
@@ -3915,6 +3917,37 @@ export async function fetchPracticasPeriodoDesignaciones(
 ): Promise<PracticasPeriodoDesignacionesResponse> {
   const params = new URLSearchParams({ tipo_proceso: tipoProceso })
   return request<PracticasPeriodoDesignacionesResponse>(`/api/practicas/admin/designaciones-periodo?${params.toString()}`)
+}
+
+export async function analyzeCurriculumWorkbook(
+  workbook: File,
+  academicFiles: File[],
+  careerName: string,
+): Promise<CurriculumAnalysisResponse> {
+  const formData = new FormData()
+  formData.set('workbook', workbook)
+  academicFiles.forEach((file) => formData.append('academic_files', file))
+  formData.set('career_name', careerName.trim())
+  return request<CurriculumAnalysisResponse>('/api/curriculum-updater/analyze', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function generateCurriculumWorkbook(
+  workbook: File,
+  careerName: string,
+  updates: CurriculumGenerateUpdate[],
+): Promise<Blob> {
+  const formData = new FormData()
+  formData.set('workbook', workbook)
+  formData.set('career_name', careerName.trim())
+  formData.set('updates_json', JSON.stringify(updates))
+  return request<Blob>('/api/curriculum-updater/generate', {
+    method: 'POST',
+    body: formData,
+    responseType: 'blob',
+  })
 }
 
 export async function fetchCredentialProvisionConfig(): Promise<CredentialProvisionConfig> {

@@ -7,8 +7,10 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.audit_context import AuditContext, reset_audit_context, set_audit_context
 from app.core.config import get_settings
@@ -23,6 +25,7 @@ from app.routers.certificate_renamer import router as certificate_renamer_router
 from app.routers.career_change_requests import router as career_change_requests_router
 from app.routers.modality_change_requests import router as modality_change_requests_router
 from app.routers.credential_generator import router as credential_generator_router
+from app.routers.curriculum_updater import router as curriculum_updater_router
 from app.routers.document_expedients import router as document_expedients_router
 from app.routers.excel_validator import router as excel_validator_router
 from app.routers.english_exams import router as english_exams_router
@@ -76,6 +79,12 @@ app.add_middleware(
 
 if settings.trusted_hosts_list != ["*"]:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts_list)
+
+if settings.response_gzip_enabled:
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=settings.response_gzip_minimum_size,
+    )
 
 
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -136,9 +145,29 @@ def _cors_for_error(request: Request, response: JSONResponse) -> None:
         response.headers["Vary"] = "Origin"
 
 
+@app.exception_handler(StarletteHTTPException)
+async def log_http_server_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        request_id = getattr(request.state, "request_id", "sin-id")
+        detail = re.sub(r"[\r\n]+", " ", str(exc.detail))[:1000]
+        logger.error(
+            "Error HTTP controlado. request_id=%s status=%s path=%s detail=%s",
+            request_id,
+            exc.status_code,
+            request.url.path,
+            detail,
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
+    )
+
+
 @app.middleware("http")
 async def bind_database_audit_context(request: Request, call_next):
     request_id = _safe_request_id(request.headers.get("X-Request-ID"))
+    request.state.request_id = request_id
     user = None
     session_token = request.cookies.get(settings.session_cookie_name)
     if session_token:
@@ -217,9 +246,7 @@ async def bind_database_audit_context(request: Request, call_next):
             )
             _cors_for_error(request, response)
 
-        must_mask_server_error = response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR or (
-            settings.is_production and response.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        must_mask_server_error = response.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
         if must_mask_server_error and not settings.expose_internal_errors:
             response = JSONResponse(
                 status_code=response.status_code,
@@ -243,6 +270,7 @@ app.include_router(certificate_renamer_router)
 app.include_router(career_change_requests_router)
 app.include_router(modality_change_requests_router)
 app.include_router(credential_generator_router)
+app.include_router(curriculum_updater_router)
 app.include_router(mass_email_router)
 app.include_router(moodle_router)
 app.include_router(excel_validator_router)

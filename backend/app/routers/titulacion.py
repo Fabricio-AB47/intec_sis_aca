@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.routers.students import _MATRICULA_ACTUAL_CTE
 from app.services.db import get_connection, get_practices_connection, get_titulation_connection
 from app.services.practices_operations import ensure_operations_schema, is_approved_practice_outcome
@@ -1973,17 +1974,12 @@ async def upload_titulacion_document(
     doc_type = _clean(tipo_documento_codigo).upper()
     if doc_type not in _DOCUMENT_FORMATS:
         raise HTTPException(status_code=400, detail="Tipo de documento de titulación no válido.")
-    if not file.filename:
-        raise HTTPException(status_code=400, detail='Seleccione un archivo.')
-    extension = Path(file.filename).suffix.lower()
-    if extension not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Formato no permitido.")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail="El archivo supera 30 MB.")
-
+    original_filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_UPLOAD_SIZE,
+        label="documento de titulación",
+        allowed_extensions=_ALLOWED_EXTENSIONS,
+    )
     try:
         with get_titulation_connection() as conn:
             cursor = conn.cursor()
@@ -1994,7 +1990,7 @@ async def upload_titulacion_document(
             folder_key = _safe_filename(_clean(expediente["NumeroIdentificacion"]) or str(expediente_id), str(expediente_id))
             target_dir = _UPLOAD_ROOT / folder_key
             target_dir.mkdir(parents=True, exist_ok=True)
-            stored_name = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}_{_safe_filename(file.filename, 'documento')}"
+            stored_name = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}_{_safe_filename(original_filename, 'documento')}"
             target = (target_dir / stored_name).resolve()
             if _UPLOAD_ROOT.resolve() not in target.parents:
                 raise HTTPException(status_code=400, detail="Ruta de archivo inválida.")
@@ -2022,7 +2018,7 @@ async def upload_titulacion_document(
                 expediente_id,
                 doc_type,
                 _DOCUMENT_FORMATS[doc_type],
-                _clean(file.filename),
+                original_filename,
                 ruta_nube,
                 pyodbc.Binary(sha256(content).digest()),
                 1 if doc_type == "ACTA_GRADO" else 0,

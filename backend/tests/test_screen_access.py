@@ -552,6 +552,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
                 ("ACADEMICO", "solicitudes-cambio-modalidad"),
                 ("SECRETARIA", "solicitudes-cambio-modalidad"),
                 ("DOCENTE", "practicas-institucionales"),
+                ("ACADEMICO", "actualizar-malla-carrera"),
             },
         )
         for statement, _ in cursor.executions:

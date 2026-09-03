@@ -1,3 +1,4 @@
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
@@ -38,6 +39,17 @@ class Settings(BaseSettings):
     login_rate_limit_window_seconds: int = Field(default=300, ge=30, le=3600)
     login_rate_limit_lockout_seconds: int = Field(default=900, ge=30, le=86400)
     evaluation_lookup_rate_limit: int = Field(default=30, ge=1, le=300)
+    rate_limit_backend: Literal["memory", "redis"] = "memory"
+    rate_limit_redis_url: SecretStr | None = Field(default=None, repr=False)
+    rate_limit_redis_prefix: str = Field(default="sisaca", min_length=1, max_length=64)
+    session_revocation_enabled: bool = True
+    response_gzip_enabled: bool = True
+    response_gzip_minimum_size: int = Field(default=1_024, ge=256, le=1_048_576)
+    upload_antimalware_enabled: bool = False
+    upload_antimalware_host: str = "127.0.0.1"
+    upload_antimalware_port: int = Field(default=3310, ge=1, le=65_535)
+    upload_antimalware_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    credential_provision_concurrency: int = Field(default=5, ge=1, le=20)
 
     eval_db_name: str | None = Field(default=None, validation_alias=AliasChoices("DB_NAME1", "B_NAME1"))
     eval_db_user: str | None = Field(default=None, validation_alias=AliasChoices("DB_USER1"))
@@ -335,6 +347,14 @@ class Settings(BaseSettings):
             errors.append("CSRF_PROTECTION_ENABLED y CSRF_REQUIRE_ORIGIN deben estar habilitados")
         if self.expose_internal_errors:
             errors.append("EXPOSE_INTERNAL_ERRORS debe estar deshabilitado")
+        if self.rate_limit_backend != "redis":
+            errors.append("RATE_LIMIT_BACKEND debe usar redis")
+        if self.rate_limit_redis_url is None or not self.rate_limit_redis_url.get_secret_value().strip():
+            errors.append("RATE_LIMIT_REDIS_URL debe estar configurado")
+        if not self.session_revocation_enabled:
+            errors.append("SESSION_REVOCATION_ENABLED debe estar habilitado")
+        if not self.upload_antimalware_enabled:
+            errors.append("UPLOAD_ANTIMALWARE_ENABLED debe estar habilitado")
 
         encrypted_values = {"yes", "true", "mandatory", "strict"}
         trusted_values = {"yes", "true", "1"}

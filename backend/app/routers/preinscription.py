@@ -29,6 +29,7 @@ from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, T
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.complement_sync import sync_preinscription_complements
 from app.services.db import get_connection, get_finance_connection
 from app.services.graph_documents import (
@@ -61,6 +62,7 @@ _PHOTO_MIME_BY_EXTENSION = {
 }
 _PHOTO_MAX_BYTES = 8 * 1024 * 1024
 _SCHOLARSHIP_CONTRACT_MAX_BYTES = 20 * 1024 * 1024
+_PREINSCRIPTION_DOCUMENT_MAX_BYTES = 25 * 1024 * 1024
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 _LOGO_PATH = _PROJECT_ROOT / "frontend" / "public" / "Intec-Logowithslogangray.svg"
@@ -4977,21 +4979,15 @@ async def upload_signed_scholarship_contract(
     current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    filename = _safe_filename(_clean(file.filename) or "contrato-beca-firmado.pdf")
-    content_type = _clean(file.content_type).lower() or "application/pdf"
-    try:
-        content = await file.read(_SCHOLARSHIP_CONTRACT_MAX_BYTES + 1)
-    finally:
-        await file.close()
-    if not filename.lower().endswith(".pdf") or content_type not in {
-        "application/pdf",
-        "application/octet-stream",
-    }:
-        raise HTTPException(status_code=400, detail="El contrato firmado debe ser un archivo PDF")
-    if not content or len(content) > _SCHOLARSHIP_CONTRACT_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="El contrato firmado debe pesar entre 1 byte y 20 MB")
-    if not content.lstrip().startswith(b"%PDF-"):
-        raise HTTPException(status_code=400, detail="El archivo seleccionado no contiene un PDF válido")
+    raw_filename, content = await read_secure_upload(
+        file,
+        maximum=_SCHOLARSHIP_CONTRACT_MAX_BYTES,
+        label="contrato firmado",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
+    filename = _safe_filename(raw_filename)
+    content_type = "application/pdf"
 
     try:
         with get_finance_connection() as conn:
@@ -5600,6 +5596,13 @@ async def upload_preinscription_document(
     if not clean_num:
         raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
+    extension_name, content = await read_secure_upload(
+        file,
+        maximum=_PREINSCRIPTION_DOCUMENT_MAX_BYTES,
+        label="documento de preinscripción",
+    )
+    extension_name = _safe_filename(extension_name)
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -5611,12 +5614,10 @@ async def upload_preinscription_document(
                     detail='Primero, registre la cabecera de matrícula para obtener el código de documentación.',
                 )
             code = item["cabecera"].get("numcodigo") or item["cabecera"].get("num_matricula") or clean_num
-            extension_name = _safe_filename(file.filename or f"{field}.bin")
             target_dir = _PREINSCRIPTION_UPLOAD_ROOT / _safe_filename(str(code))
             target_dir.mkdir(parents=True, exist_ok=True)
             target_name = f"{field}-{extension_name}"
             target_path = target_dir / target_name
-            content = await file.read()
             target_path.write_bytes(content)
             relative_url = f"/uploads/preinscripcion/{_safe_filename(str(code))}/{target_name}"
             cursor.execute(
@@ -5693,16 +5694,20 @@ async def upload_preinscription_carnet_photo(
     if not clean_num:
         raise HTTPException(status_code=400, detail='Debe indicar el identificador num de la preinscripción')
 
-    original_name = _safe_filename(file.filename or "foto-carnet")
-    mime_type = _photo_mime_type(original_name, file.content_type)
-    if not mime_type:
-        raise HTTPException(status_code=400, detail="La foto debe ser una imagen JPG, PNG o WEBP")
-
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail='La imagen esta vacía')
-    if len(content) > _PHOTO_MAX_BYTES:
-        raise HTTPException(status_code=400, detail='La imagen supera el límite de 8 MB')
+    raw_name, content = await read_secure_upload(
+        file,
+        maximum=_PHOTO_MAX_BYTES,
+        label="foto para carné",
+        allowed_extensions={".jpg", ".jpeg", ".png", ".webp"},
+        allowed_content_types={
+            "application/octet-stream",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        },
+    )
+    original_name = _safe_filename(raw_name)
+    mime_type = _photo_mime_type(original_name)
 
     try:
         with get_connection() as conn:

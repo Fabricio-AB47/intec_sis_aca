@@ -25,7 +25,7 @@ from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate
 from svglib.svglib import svg2rlg
 
 from app.core.config import get_settings
-from app.core.rate_limit import RateLimitExceeded, rate_limiter
+from app.core.rate_limit import RateLimitExceeded, RateLimitUnavailable, rate_limiter
 from app.core.security import require_roles
 from app.services.db import get_connection, get_evaluation_connection
 
@@ -4801,6 +4801,11 @@ def get_teacher_evaluation_identity(cedula: str, request: Request) -> dict[str, 
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Demasiadas consultas de evaluación. Intente nuevamente más tarde.",
             headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except RateLimitUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El control de consultas está temporalmente no disponible.",
         ) from exc
 
     try:

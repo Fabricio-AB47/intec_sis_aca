@@ -31,6 +31,7 @@ class SettingsSecurityTests(unittest.TestCase):
             "client_secret",
             "smtp_password",
             "session_secret",
+            "rate_limit_redis_url",
         )
 
         for field_name in sensitive_fields:
@@ -65,6 +66,9 @@ class SettingsSecurityTests(unittest.TestCase):
             cors_origins="https://app.example.edu.ec",
             frontend_base_url="https://app.example.edu.ec",
             graph_delegate_redirect_uri="https://api.example.edu.ec/api/auth/microsoft/callback",
+            rate_limit_backend="redis",
+            rate_limit_redis_url="redis://localhost:6379/0",
+            upload_antimalware_enabled=True,
         )
 
         self.assertTrue(settings.is_production)

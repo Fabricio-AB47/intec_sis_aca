@@ -7,6 +7,10 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.session_revocation import (
+    SessionRevocationUnavailable,
+    session_revocations,
+)
 
 try:
     from argon2 import PasswordHasher
@@ -52,6 +56,8 @@ class SessionProfile(BaseModel):
 
 class SessionUser(SessionProfile):
     perfiles: list[SessionProfile] = Field(default_factory=list)
+    jti: str | None = Field(default=None, exclude=True)
+    exp: int | None = Field(default=None, exclude=True)
 
 
 def verify_password(candidate: str, stored_value: str | None) -> bool:
@@ -135,7 +141,31 @@ def decode_session_token(token: str) -> SessionUser:
             detail='Sesión inválida o expirada',
         ) from exc
 
-    return SessionUser.model_validate(payload)
+    user = SessionUser.model_validate(payload)
+    try:
+        if user.jti and session_revocations.is_revoked(user.jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="La sesión fue cerrada o reemplazada",
+            )
+    except SessionRevocationUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo comprobar la vigencia de la sesión",
+        ) from exc
+    return user
+
+
+def revoke_session(user: SessionUser) -> None:
+    if not user.jti or user.exp is None:
+        return
+    try:
+        session_revocations.revoke(user.jti, user.exp)
+    except SessionRevocationUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo cerrar la sesión de forma segura",
+        ) from exc
 
 
 def set_auth_cookie(response: Response, token: str) -> None:

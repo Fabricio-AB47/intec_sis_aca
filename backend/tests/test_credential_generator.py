@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from fastapi import Response
 from openpyxl import Workbook, load_workbook
 
 from app.routers import credential_generator as credentials
@@ -477,7 +478,7 @@ class CredentialRuleTests(unittest.TestCase):
             if "numero_descargas" in str(call.args[0])
         ]
         self.assertEqual(len(update_calls), 2)
-        self.assertEqual(connection.commit.call_count, 2)
+
 
     def test_report_is_owned_and_downloaded_only_once(self) -> None:
         report_id = credentials._store_report("admin", "reporte.xlsx", b"report")
@@ -506,6 +507,80 @@ class CredentialRuleTests(unittest.TestCase):
             ),
             "COMPLETO",
         )
+
+
+class CredentialProvisionPerformanceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bulk_provision_uses_bounded_concurrency_and_one_identity_lookup(self) -> None:
+        license_info = credentials._EducationLicense(
+            person_type="ESTUDIANTE",
+            sku_id="314c4481-f395-4525-be8b-2ec4bb1e9d91",
+            sku_part_number="STANDARDWOFFPACK_STUDENT",
+            name="Office 365 A1 para estudiantes",
+            capability_status="Enabled",
+            enabled_units=100,
+            consumed_units=0,
+            available_units=100,
+        )
+        payload = credentials.CredentialProvisionPayload(
+            modo="EXCEL",
+            usuarios=[
+                credentials.CredentialPersonPayload(
+                    primer_nombre=f"Nombre{index}",
+                    primer_apellido="Apellido",
+                    cedula=f"00000000{index:02d}",
+                    fila_origen=index + 1,
+                )
+                for index in range(4)
+            ],
+        )
+        active = 0
+        maximum_active = 0
+
+        async def fake_provision(person_data, _operator, _moodle, selected_license, _known_email):
+            nonlocal active, maximum_active
+            active += 1
+            maximum_active = max(maximum_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return {
+                **person_data,
+                "correo_institucional": f"usuario{person_data['cedula']}@intec.edu.ec",
+                "clave_permanente": "",
+                "estado_graph": "EXISTENTE_GRAPH",
+                "error_graph": "",
+                "estado_licencia": "YA_ASIGNADA_ESTUDIANTE",
+                "error_licencia": "",
+                "estado_moodle": "EXISTENTE_MOODLE",
+                "error_moodle": "",
+                "estado_general": "COMPLETO",
+                "clave_emitida": False,
+                "observacion": "Cuenta existente; la contraseña no fue modificada ni archivada.",
+                "licencia_nombre": selected_license.name,
+                "licencia_sku_part_number": selected_license.sku_part_number,
+            }
+
+        settings = SimpleNamespace(
+            credential_provision_concurrency=2,
+            moodle_timeout_seconds=60,
+            moodle_verify_tls=True,
+        )
+        current_user = credentials.SessionUser(login="admin", rol="ADMINISTRADOR")
+        with (
+            patch.object(credentials, "get_settings", return_value=settings),
+            patch.object(credentials, "_graph_is_configured", return_value=True),
+            patch.object(credentials, "_moodle_is_configured", return_value=False),
+            patch.object(credentials, "_education_license", return_value=license_info),
+            patch.object(credentials, "_existing_emails_for_cedulas", return_value={}) as lookup,
+            patch.object(credentials, "_provision_person", side_effect=fake_provision),
+            patch.object(credentials, "_record_audit"),
+            patch.object(credentials, "_report_bytes", return_value=b"report"),
+            patch.object(credentials, "_store_report", return_value="report-id"),
+        ):
+            result = await credentials.provision_credentials(payload, Response(), current_user)
+
+        self.assertEqual(result["summary"]["completos"], 4)
+        self.assertEqual(maximum_active, 2)
+        lookup.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -91,6 +91,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'practicas-institucionales',
   'ingles',
   'expedientes-documentales',
+  'actualizar-malla-carrera',
 ])
 const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'dashboard',
@@ -1253,6 +1254,9 @@ export function useReporteriaApp() {
   const openValidarExcelPage = () => {
     activateAssignedScreen('validar-excel')
   }
+  const openCurriculumUpdaterPage = () => {
+    activateAssignedScreen('actualizar-malla-carrera')
+  }
   const openRangoEdadesPage = () => {
     activateAssignedScreen('rango-edades')
   }
@@ -1424,6 +1428,7 @@ export function useReporteriaApp() {
     openIngresoVentasPage,
     openCruceDatosPage,
     openValidarExcelPage,
+    openCurriculumUpdaterPage,
     openRangoEdadesPage,
     openFechaGradoPage,
     openTitulacionPage,

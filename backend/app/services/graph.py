@@ -1,3 +1,4 @@
+import atexit
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, cast
@@ -11,6 +12,8 @@ _JSON_CONTENT_TYPE = "application/json"
 _DELEGATED_TOKENS: dict[str, dict[str, Any]] = {}
 _APP_TOKEN_CACHE: dict[str, Any] = {}
 _APP_TOKEN_LOCK = Lock()
+_GRAPH_HTTP_CLIENT: httpx.Client | None = None
+_GRAPH_HTTP_CLIENT_LOCK = Lock()
 
 
 _PLACEHOLDER_VALUES = {
@@ -20,6 +23,31 @@ _PLACEHOLDER_VALUES = {
     "replace-with-graph-client-secret",
     "change-me",
 }
+
+
+def _graph_http_client() -> httpx.Client:
+    global _GRAPH_HTTP_CLIENT
+    if _GRAPH_HTTP_CLIENT is not None:
+        return _GRAPH_HTTP_CLIENT
+    with _GRAPH_HTTP_CLIENT_LOCK:
+        if _GRAPH_HTTP_CLIENT is None:
+            _GRAPH_HTTP_CLIENT = httpx.Client(
+                timeout=30.0,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            )
+        return _GRAPH_HTTP_CLIENT
+
+
+def _close_graph_http_client() -> None:
+    global _GRAPH_HTTP_CLIENT
+    with _GRAPH_HTTP_CLIENT_LOCK:
+        client = _GRAPH_HTTP_CLIENT
+        _GRAPH_HTTP_CLIENT = None
+    if client is not None:
+        client.close()
+
+
+atexit.register(_close_graph_http_client)
 
 
 def _is_placeholder(value: str | None) -> bool:
@@ -155,14 +183,13 @@ def graph_post_delegated(login: str, url: str, payload: dict[str, Any] | None = 
         "Authorization": f"Bearer {token}",
         "Content-Type": _JSON_CONTENT_TYPE,
     }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
+    response = _graph_http_client().post(url, headers=headers, json=payload)
+    response.raise_for_status()
 
-        if not response.content:
-            return {"ok": True}
+    if not response.content:
+        return {"ok": True}
 
-        return response.json()
+    return response.json()
 
 
 def get_graph_token() -> str:
@@ -195,10 +222,9 @@ def get_graph_token() -> str:
 def graph_get(url: str) -> dict[str, Any]:
     token = get_graph_token()
     headers = {"Authorization": f"Bearer {token}"}
-    with httpx.Client(timeout=30.0) as client:
-        response = client.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
+    response = _graph_http_client().get(url, headers=headers)
+    response.raise_for_status()
+    return response.json()
 
 
 def graph_get_all(url: str, max_items: int | None = None) -> dict[str, Any]:
@@ -207,21 +233,21 @@ def graph_get_all(url: str, max_items: int | None = None) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     next_url: str | None = url
 
-    with httpx.Client(timeout=30.0) as client:
-        while next_url:
-            response = client.get(next_url, headers=headers)
-            response.raise_for_status()
-            payload = cast(dict[str, Any], response.json())
+    client = _graph_http_client()
+    while next_url:
+        response = client.get(next_url, headers=headers)
+        response.raise_for_status()
+        payload = cast(dict[str, Any], response.json())
 
-            page_items = cast(list[Any], payload.get("value") or [])
-            page_dicts = [cast(dict[str, Any], item) for item in page_items if isinstance(item, dict)]
-            items.extend(page_dicts)
-            if max_items is not None and len(items) >= max_items:
-                items = items[:max_items]
-                break
+        page_items = cast(list[Any], payload.get("value") or [])
+        page_dicts = [cast(dict[str, Any], item) for item in page_items if isinstance(item, dict)]
+        items.extend(page_dicts)
+        if max_items is not None and len(items) >= max_items:
+            items = items[:max_items]
+            break
 
-            next_link = payload.get("@odata.nextLink")
-            next_url = str(next_link) if next_link else None
+        next_link = payload.get("@odata.nextLink")
+        next_url = str(next_link) if next_link else None
 
     return {"value": items, "count": len(items)}
 
@@ -232,14 +258,13 @@ def graph_post(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any
         "Authorization": f"Bearer {token}",
             "Content-Type": _JSON_CONTENT_TYPE,
     }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
+    response = _graph_http_client().post(url, headers=headers, json=payload)
+    response.raise_for_status()
 
-        if not response.content:
-            return {"ok": True}
+    if not response.content:
+        return {"ok": True}
 
-        return response.json()
+    return response.json()
 
 
 def graph_post_with_meta(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -248,19 +273,18 @@ def graph_post_with_meta(url: str, payload: dict[str, Any] | None = None) -> dic
         "Authorization": f"Bearer {token}",
             "Content-Type": _JSON_CONTENT_TYPE,
     }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
+    response = _graph_http_client().post(url, headers=headers, json=payload)
+    response.raise_for_status()
 
-        body: dict[str, Any] = {}
-        if response.content:
-            body = cast(dict[str, Any], response.json())
+    body: dict[str, Any] = {}
+    if response.content:
+        body = cast(dict[str, Any], response.json())
 
-        return {
-            "status_code": response.status_code,
-            "headers": dict(response.headers),
-            "body": body,
-        }
+    return {
+        "status_code": response.status_code,
+        "headers": dict(response.headers),
+        "body": body,
+    }
 
 
 def graph_patch(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -269,11 +293,10 @@ def graph_patch(url: str, payload: dict[str, Any] | None = None) -> dict[str, An
         "Authorization": f"Bearer {token}",
             "Content-Type": _JSON_CONTENT_TYPE,
     }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.patch(url, headers=headers, json=payload)
-        response.raise_for_status()
+    response = _graph_http_client().patch(url, headers=headers, json=payload)
+    response.raise_for_status()
 
-        if not response.content:
-            return {"ok": True}
+    if not response.content:
+        return {"ok": True}
 
-        return response.json()
+    return response.json()

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/certificados/renombrar", tags=["certificados-renombrar"])
@@ -736,7 +737,13 @@ def _zip_pdf_entries(zip_name: str, data: bytes) -> list[tuple[str, bytes]]:
                         detail=f"{Path(raw_name).name} dentro de {zip_name} supera 12 MB.",
                     )
                 entry_name = _safe_filename(f"{Path(zip_name).stem} - {Path(raw_name).name}", f"archivo_{len(entries) + 1}.pdf")
-                entries.append((entry_name, archive.read(info)))
+                entry_data = archive.read(info)
+                if not entry_data.lstrip().startswith(b"%PDF-"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{Path(raw_name).name} no contiene un PDF válido.",
+                    )
+                entries.append((entry_name, entry_data))
     except BadZipFile as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{zip_name} no es un archivo ZIP válido.") from exc
 
@@ -754,8 +761,20 @@ async def _read_files(files: list[UploadFile] | None) -> list[tuple[str, bytes]]
     result: list[tuple[str, bytes]] = []
     for upload in uploads:
         original_name = _clean(upload.filename)
+        maximum = MAX_TOTAL_BYTES if original_name.casefold().endswith(".zip") else MAX_FILE_BYTES
+        original_name, data = await read_secure_upload(
+            upload,
+            maximum=maximum,
+            label="archivo de certificados",
+            allowed_extensions={".pdf", ".zip"},
+            allowed_content_types={
+                "application/pdf",
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/octet-stream",
+            },
+        )
         name = _safe_filename(original_name, f"archivo_{len(result) + 1}.pdf")
-        data = await upload.read()
         if original_name.lower().endswith(".zip"):
             if len(data) > MAX_TOTAL_BYTES:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{name} supera 120 MB.")

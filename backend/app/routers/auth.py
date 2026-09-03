@@ -11,13 +11,14 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
-from app.core.rate_limit import RateLimitExceeded, rate_limiter
+from app.core.rate_limit import RateLimitExceeded, RateLimitUnavailable, rate_limiter
 from app.core.security import (
     SessionProfile,
     SessionUser,
     clear_auth_cookie,
     create_session_token,
     get_current_user,
+    revoke_session,
     set_auth_cookie,
 )
 from app.services.auth import authenticate_user
@@ -111,6 +112,13 @@ def _login_rate_keys(request: Request, login_value: str) -> tuple[str, str]:
     return f"login-ip:{client_ip}", f"login-account:{login_digest}"
 
 
+def _rate_limit_unavailable(exc: RateLimitUnavailable) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="El control de acceso está temporalmente no disponible.",
+    )
+
+
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, response: Response) -> LoginResponse:
     settings = get_settings()
@@ -132,6 +140,8 @@ def login(payload: LoginRequest, request: Request, response: Response) -> LoginR
             detail='Demasiados intentos de acceso. Intente nuevamente más tarde.',
             headers={"Retry-After": str(exc.retry_after)},
         ) from exc
+    except RateLimitUnavailable as exc:
+        raise _rate_limit_unavailable(exc) from exc
 
     try:
         user = SessionUser.model_validate(authenticate_user(payload.login, payload.password))
@@ -140,22 +150,27 @@ def login(payload: LoginRequest, request: Request, response: Response) -> LoginR
         set_auth_cookie(response, token)
         return LoginResponse(**user.model_dump())
     except (ValueError, PermissionError) as exc:
-        rate_limiter.record_failure(
-            ip_key,
-            limit=max(settings.login_rate_limit_attempts * 10, 25),
-            window_seconds=settings.login_rate_limit_window_seconds,
-            lockout_seconds=settings.login_rate_limit_lockout_seconds,
-        )
-        rate_limiter.record_failure(
-            account_key,
-            limit=settings.login_rate_limit_attempts,
-            window_seconds=settings.login_rate_limit_window_seconds,
-            lockout_seconds=settings.login_rate_limit_lockout_seconds,
-        )
+        try:
+            rate_limiter.record_failure(
+                ip_key,
+                limit=max(settings.login_rate_limit_attempts * 10, 25),
+                window_seconds=settings.login_rate_limit_window_seconds,
+                lockout_seconds=settings.login_rate_limit_lockout_seconds,
+            )
+            rate_limiter.record_failure(
+                account_key,
+                limit=settings.login_rate_limit_attempts,
+                window_seconds=settings.login_rate_limit_window_seconds,
+                lockout_seconds=settings.login_rate_limit_lockout_seconds,
+            )
+        except RateLimitUnavailable as rate_exc:
+            raise _rate_limit_unavailable(rate_exc) from rate_exc
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Usuario o contraseña inválidos.',
         ) from exc
+    except RateLimitUnavailable as exc:
+        raise _rate_limit_unavailable(exc) from exc
     except pyodbc.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -189,6 +204,7 @@ def select_profile(
         )
 
     user = SessionUser(**selected.model_dump(), perfiles=profiles)
+    revoke_session(current_user)
     set_auth_cookie(response, create_session_token(user))
     return LoginResponse(**user.model_dump())
 
@@ -256,8 +272,14 @@ def microsoft_status(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> Response:
+def logout(
+    request: Request,
+    response: Response,
+) -> Response:
     settings = get_settings()
+    current_user = getattr(request.state, "session_user", None)
+    if isinstance(current_user, SessionUser):
+        revoke_session(current_user)
     clear_auth_cookie(response)
     response.delete_cookie(
         "ms_delegate_access_token",

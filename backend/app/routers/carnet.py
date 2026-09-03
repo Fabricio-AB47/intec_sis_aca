@@ -19,6 +19,7 @@ from svglib.svglib import svg2rlg
 from reportlab.graphics import renderPDF
 
 from app.core.security import ALLOWED_ROLES, SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/carnet", tags=["carnet"])
@@ -592,13 +593,20 @@ def _save_uploaded_photo(
 
 
 async def _read_photo_file(file: UploadFile) -> tuple[bytes, str, str]:
-    original_name = _safe_filename(file.filename or "foto-carnet")
-    mime_type = _photo_mime_type(original_name, file.content_type)
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail='La imagen esta vacía')
-    if len(data) > _PHOTO_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen no debe superar 8 MB")
+    raw_name, data = await read_secure_upload(
+        file,
+        maximum=_PHOTO_MAX_BYTES,
+        label="imagen",
+        allowed_extensions={".jpg", ".jpeg", ".png", ".webp"},
+        allowed_content_types={
+            "application/octet-stream",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        },
+    )
+    original_name = _safe_filename(raw_name)
+    mime_type = _photo_mime_type(original_name)
     return data, original_name, mime_type
 
 

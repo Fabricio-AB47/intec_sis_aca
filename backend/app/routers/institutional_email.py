@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.security import SessionUser, require_screen_access
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 
@@ -649,8 +650,18 @@ async def analyze_workbook(
     file: UploadFile = File(...),
     _: SessionUser = Depends(_SCREEN_ACCESS),
 ) -> dict[str, Any]:
-    content = await file.read()
-    parsed = _read_workbook(content, file.filename or "")
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_FILE_SIZE,
+        label="archivo Excel",
+        allowed_extensions={".xlsx"},
+        allowed_content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
+    parsed = _read_workbook(content, filename)
     with get_connection() as connection:
         cursor = connection.cursor()
         _ensure_tables(cursor)
@@ -666,8 +677,18 @@ async def apply_workbook(
     file: UploadFile = File(...),
     _: SessionUser = Depends(_SCREEN_ACCESS),
 ) -> dict[str, Any]:
-    content = await file.read()
-    parsed = _read_workbook(content, file.filename or "")
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_FILE_SIZE,
+        label="archivo Excel",
+        allowed_extensions={".xlsx"},
+        allowed_content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
+    parsed = _read_workbook(content, filename)
     connection = get_connection()
     try:
         cursor = connection.cursor()

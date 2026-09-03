@@ -23,6 +23,7 @@ import pyodbc
 from starlette.concurrency import run_in_threadpool
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.complement_sync import sync_person_complements
 from app.services.db import get_connection
 
@@ -5404,8 +5405,13 @@ async def _read_graduation_pdf_uploads(files: list[UploadFile]) -> list[tuple[st
     uploads: list[tuple[str, bytes]] = []
     total_bytes = 0
     for index, upload in enumerate(files, start=1):
-        filename = Path(upload.filename or f"documento-{index}.pdf").name
-        content = await upload.read()
+        filename, content = await read_secure_upload(
+            upload,
+            maximum=_GRADUATION_PDF_MAX_FILE_BYTES,
+            label=f"documento PDF {index}",
+            allowed_extensions={".pdf"},
+            allowed_content_types={"application/pdf", "application/octet-stream"},
+        )
         _validate_graduation_pdf_upload(filename, content)
         total_bytes += len(content)
         if total_bytes > _GRADUATION_PDF_MAX_TOTAL_BYTES:
@@ -5816,8 +5822,12 @@ async def analyze_graduation_senescyt_file(
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    filename = file.filename or ""
-    content = await file.read()
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_GRADUATION_UPLOAD_MAX_BYTES,
+        label="archivo Excel SENESCYT",
+        allowed_extensions={".xlsx", ".xlsm"},
+    )
     _validate_graduation_upload(filename, content)
     parsed = _parse_graduation_senescyt_workbook(content)
     try:
@@ -5883,8 +5893,12 @@ async def import_graduation_dates(
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    filename = file.filename or ""
-    content = await file.read()
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_GRADUATION_UPLOAD_MAX_BYTES,
+        label="archivo Excel SENESCYT",
+        allowed_extensions={".xlsx", ".xlsm"},
+    )
     _validate_graduation_upload(filename, content)
     parsed = _parse_graduation_senescyt_workbook(content)
     try:

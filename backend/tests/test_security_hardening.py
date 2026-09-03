@@ -1,12 +1,17 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jwt
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.core.config import Settings
-from app.core.rate_limit import InMemoryRateLimiter, RateLimitExceeded
+from app.core.rate_limit import (
+    InMemoryRateLimiter,
+    RateLimitExceeded,
+    RateLimitUnavailable,
+    RedisRateLimiter,
+)
 from app.core.security import (
     SessionUser,
     create_session_token,
@@ -17,6 +22,7 @@ from app.core.security import (
     verify_password,
 )
 from app.routers.auth import LoginRequest, _login_rate_keys
+from app.services import graph
 
 
 class SecurityHardeningTests(unittest.TestCase):
@@ -97,6 +103,27 @@ class SecurityHardeningTests(unittest.TestCase):
 
         self.assertLessEqual(len(limiter._entries), 100)
 
+    def test_redis_rate_limiter_uses_atomic_counter(self) -> None:
+        client = MagicMock()
+        client.eval.return_value = [3, 42]
+        limiter = RedisRateLimiter(client, prefix="test")
+
+        with self.assertRaises(RateLimitExceeded) as context:
+            limiter.consume("client", limit=2, window_seconds=60)
+
+        self.assertEqual(context.exception.retry_after, 42)
+        self.assertEqual(client.eval.call_count, 1)
+
+    def test_redis_rate_limiter_fails_closed_when_store_is_unavailable(self) -> None:
+        import redis
+
+        client = MagicMock()
+        client.ttl.side_effect = redis.RedisError("unavailable")
+        limiter = RedisRateLimiter(client, prefix="test")
+
+        with self.assertRaises(RateLimitUnavailable):
+            limiter.check("client", limit=2, window_seconds=60)
+
     def test_account_rate_limit_is_shared_across_source_ips(self) -> None:
         first_request = Request({"type": "http", "client": ("192.0.2.10", 5000)})
         second_request = Request({"type": "http", "client": ("198.51.100.20", 5000)})
@@ -137,6 +164,35 @@ class SecurityHardeningTests(unittest.TestCase):
 
         self.assertIs(current, user)
         decode.assert_not_called()
+
+    def test_revoked_session_token_is_rejected(self) -> None:
+        settings = self.settings()
+        with (
+            patch("app.core.security.get_settings", return_value=settings),
+            patch("app.core.security.session_revocations") as revocations,
+        ):
+            token = create_session_token(self.user())
+            revocations.is_revoked.return_value = True
+
+            with self.assertRaises(HTTPException) as context:
+                decode_session_token(token)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_graph_http_client_is_reused(self) -> None:
+        previous_client = graph._GRAPH_HTTP_CLIENT
+        graph._GRAPH_HTTP_CLIENT = None
+        created_client = MagicMock()
+        try:
+            with patch.object(graph.httpx, "Client", return_value=created_client) as client_factory:
+                first = graph._graph_http_client()
+                second = graph._graph_http_client()
+
+            self.assertIs(first, second)
+            client_factory.assert_called_once()
+        finally:
+            graph._close_graph_http_client()
+            graph._GRAPH_HTTP_CLIENT = previous_client
 
 
 if __name__ == "__main__":

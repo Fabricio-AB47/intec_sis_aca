@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/sisacademico", tags=["sisacademico"])
@@ -4377,12 +4378,12 @@ async def update_student_state_with_document(
     if extension not in _STUDENT_STATE_ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail='Adjunte un documento PDF, imagen, DOC o DOCX')
 
-    file_bytes = await documento.read(_STUDENT_STATE_MAX_FILE_SIZE + 1)
-    await documento.close()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail='El documento esta vacío')
-    if len(file_bytes) > _STUDENT_STATE_MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail='El documento supera el límite de 15 MB')
+    _, file_bytes = await read_secure_upload(
+        documento,
+        maximum=_STUDENT_STATE_MAX_FILE_SIZE,
+        label="documento de respaldo",
+        allowed_extensions=_STUDENT_STATE_ALLOWED_EXTENSIONS,
+    )
 
     saved_path: Path | None = None
     try:

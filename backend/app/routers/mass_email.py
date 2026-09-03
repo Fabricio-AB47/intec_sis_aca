@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.file_security import read_secure_upload
 from app.core.security import SessionUser, require_roles
 from app.routers.certificate_renamer import _cedula_candidates, _extract_pdf_text
 from app.services.db import get_connection
@@ -1056,15 +1057,16 @@ async def _read_attachment_groups(
         nonlocal attachment_count, skipped_attachments
         filename = _clean(upload.filename)
         if not filename:
+            await upload.close()
             return
-        content = await upload.read()
+        content_type = upload.content_type or "application/octet-stream"
+        filename, content = await read_secure_upload(
+            upload,
+            maximum=MAX_ATTACHMENT_BYTES,
+            label=f"archivo {filename}",
+        )
         size = len(content)
-        if size > MAX_ATTACHMENT_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"El archivo {filename} supera el límite individual de 3 MB.",
-            )
-        attachment = _graph_attachment(filename, upload.content_type or "application/octet-stream", content)
+        attachment = _graph_attachment(filename, content_type, content)
         attachment_count += 1
 
         if attachment_scope == "common":
@@ -1196,8 +1198,17 @@ async def analyze_mass_email_excel(
     include_administrativos: Annotated[bool, Form()] = True,
     _: SessionUser = MassEmailAccess,
 ) -> MassEmailExcelResponse:
-    filename = file.filename or "destinatarios.xlsx"
-    content = await file.read()
+    filename, content = await read_secure_upload(
+        file,
+        maximum=MAX_EXCEL_BYTES,
+        label="archivo Excel de destinatarios",
+        allowed_extensions={".xlsx"},
+        allowed_content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
     sheet_name, columns, excel_rows, warnings = _read_mass_email_excel(content, filename)
     detected = _detect_excel_columns(columns)
 

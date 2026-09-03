@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from openpyxl import load_workbook
 
 from app.core.security import SessionUser, require_roles
+from app.core.file_security import read_secure_upload
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/validar-excel", tags=["validar-excel"])
@@ -392,8 +393,18 @@ async def validate_excel(
     file: UploadFile = File(...),
     _: SessionUser = AllowedUser,
 ) -> dict[str, Any]:
-    content = await file.read()
-    headers, excel_rows, warnings = _read_excel(content, file.filename or "archivo.xlsx")
+    filename, content = await read_secure_upload(
+        file,
+        maximum=_MAX_FILE_SIZE,
+        label="archivo Excel",
+        allowed_extensions={".xlsx"},
+        allowed_content_types={
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+            "application/zip",
+        },
+    )
+    headers, excel_rows, warnings = _read_excel(content, filename)
     detected = _detect_columns(headers)
 
     if not any(detected.values()):

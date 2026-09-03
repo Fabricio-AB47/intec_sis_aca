@@ -19,6 +19,7 @@ import pyodbc
 import httpx
 
 from app.core.security import SessionUser, require_screen_access
+from app.core.file_security import read_secure_upload
 from app.services.academic_movement_audit import (
     ensure_academic_movement_audit_schema,
     record_academic_movement,
@@ -1530,12 +1531,14 @@ async def create_career_change_request(
     archivo: UploadFile = File(...),
 ) -> dict[str, Any]:
     selected = _selected_pairs(equivalencias_json)
-    original_filename = archivo.filename or "respaldo.pdf"
-    content_type = archivo.content_type
-    try:
-        content = await archivo.read(_MAX_DOCUMENT_BYTES + 1)
-    finally:
-        await archivo.close()
+    original_filename, content = await read_secure_upload(
+        archivo,
+        maximum=_MAX_DOCUMENT_BYTES,
+        label="archivo PDF",
+        allowed_extensions={".pdf"},
+        allowed_content_types={"application/pdf", "application/octet-stream"},
+    )
+    content_type = "application/pdf"
     _validate_pdf_content(original_filename, content_type, content)
 
     try:

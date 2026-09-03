@@ -89,6 +89,7 @@ export type Page =
   | 'ingreso-ventas'
   | 'cruce-datos'
   | 'validar-excel'
+  | 'actualizar-malla-carrera'
   | 'rango-edades'
   | 'fecha-grado'
   | 'titulacion'
@@ -6635,6 +6636,91 @@ export type ExcelValidationResponse = {
   rows?: ExcelValidationRow[]
   warnings?: string[]
   detail?: string
+}
+
+export type CurriculumProposal = {
+  field: string
+  learning_outcomes: string
+  minimum_contents: string
+}
+
+export type CurriculumPeaUnit = {
+  number: number
+  name: string
+  learning_outcome: string
+}
+
+export type CurriculumPeaDocument = {
+  index: number
+  filename: string
+  document_type: 'PEA' | 'SILABO' | string
+  method: 'TEXTO' | 'OCR' | 'TEXTO+OCR' | 'ERROR' | string
+  page_count: number
+  course_code: string
+  subject_name: string
+  career_name: string
+  field: string
+  learning_outcomes: string
+  minimum_contents: string
+  units: CurriculumPeaUnit[]
+  confidence: number
+  warnings: string[]
+}
+
+export type CurriculumAnalysisRow = {
+  row_number: number
+  subject_name: string
+  period: string
+  curricular_unit: string
+  current: CurriculumProposal
+  document_index: number | null
+  document_indices: number[]
+  source_file: string
+  source_files: string[]
+  match_score: number
+  match_type: string
+  status: string
+  apply_recommended: boolean
+  proposal: CurriculumProposal
+  warnings: string[]
+}
+
+export type CurriculumAnalysisResponse = {
+  workbook: {
+    filename: string
+    career_name: string
+    source_sheet: string
+    target_sheet: string
+    target_exists: boolean
+    target_will_be_created: boolean
+    header_row: number
+    subject_count: number
+    period_count: number
+    warnings: string[]
+  }
+  ocr_available: boolean
+  documents: CurriculumPeaDocument[]
+  rows: CurriculumAnalysisRow[]
+  unmatched_documents: CurriculumPeaDocument[]
+  summary: {
+    subjects: number
+    documents: number
+    ready: number
+    requires_review: number
+    without_pea: number
+    existing_data: number
+    unmatched_documents: number
+  }
+}
+
+export type CurriculumGenerateUpdate = {
+  row_number: number
+  subject_name: string
+  period: string
+  apply: boolean
+  status: string
+  source_file: string
+  proposal: CurriculumProposal
 }
 
 export type AgeRangeCatalogResponse = {
