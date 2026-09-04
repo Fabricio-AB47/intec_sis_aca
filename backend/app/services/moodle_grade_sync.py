@@ -43,6 +43,7 @@ _PARTIAL_LABELS = {
     2: "Segundo parcial",
     3: "Tercer parcial",
 }
+_DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN = "intec.edu.ec"
 _PARTIAL_PATTERNS = {
     1: (
         r"\bP\s*1\b",
@@ -70,32 +71,125 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def normalize_institutional_email(value: Any) -> str:
-    """Normalize an institutional email without introducing fuzzy identity matches."""
-    return normalize_email_identity(value)
+def _institutional_email_domain(value: Any) -> str:
+    domain = _text(value).casefold().lstrip("@").strip()
+    probe = normalize_email_identity(f"identity@{domain}")
+    return probe.rsplit("@", 1)[-1] if probe else _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN
 
 
-def institutional_email_candidates(enrollment: dict[str, Any]) -> list[tuple[str, str]]:
+def normalize_institutional_email(
+    value: Any,
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
+) -> str:
+    """Return an exact institutional identity key without fuzzy or external matches."""
+    email = normalize_email_identity(value)
+    expected_domain = _institutional_email_domain(institutional_domain)
+    if not email or email.rsplit("@", 1)[-1] != expected_domain:
+        return ""
+    local_part = email.split("@", 1)[0]
+    if (
+        len(local_part) > 64
+        or local_part.startswith(".")
+        or local_part.endswith(".")
+        or ".." in local_part
+        or re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+", local_part) is None
+    ):
+        return ""
+    return email
+
+
+def moodle_user_institutional_identity(
+    user: dict[str, Any],
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
+) -> tuple[str, str, str]:
+    """Resolve one unambiguous institutional address from a Moodle account."""
+    email = normalize_institutional_email(user.get("email"), institutional_domain)
+    username = normalize_institutional_email(user.get("username"), institutional_domain)
+    if email and username and email != username:
+        return "", "", "conflicting_email_username"
+    if email:
+        return email, "Moodle.email", "email"
+    if username:
+        return username, "Moodle.username", "username_fallback"
+    return "", "", "without_institutional_identity"
+
+
+def index_moodle_users_by_institutional_email(
+    moodle_users: Sequence[dict[str, Any]],
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
+    users_by_email: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    validation = {
+        "moodle_student_users": 0,
+        "moodle_users_with_institutional_email": 0,
+        "moodle_identity_from_email": 0,
+        "moodle_identity_from_username": 0,
+        "moodle_identity_conflicts": 0,
+        "moodle_users_without_institutional_email": 0,
+        "duplicate_moodle_emails": 0,
+        "unique_moodle_institutional_emails": 0,
+        "moodle_registry_email_reconciled": 0,
+        "moodle_registry_reconciliation_conflicts": 0,
+    }
+    for user in moodle_users:
+        if _is_moodle_student(user):
+            validation["moodle_student_users"] += 1
+        email, _source, status = moodle_user_institutional_identity(
+            user,
+            institutional_domain,
+        )
+        if status == "email":
+            validation["moodle_identity_from_email"] += 1
+        elif status == "username_fallback":
+            validation["moodle_identity_from_username"] += 1
+        elif status == "conflicting_email_username":
+            validation["moodle_identity_conflicts"] += 1
+        else:
+            validation["moodle_users_without_institutional_email"] += 1
+        if not email:
+            continue
+
+        validation["moodle_users_with_institutional_email"] += 1
+        user_id = int(user.get("id") or 0)
+        if user_id <= 0 or not any(
+            int(existing.get("id") or 0) == user_id for existing in users_by_email[email]
+        ):
+            users_by_email[email].append(user)
+
+    validation["duplicate_moodle_emails"] = sum(
+        1 for users in users_by_email.values() if len(users) > 1
+    )
+    validation["unique_moodle_institutional_emails"] = len(users_by_email)
+    return dict(users_by_email), validation
+
+
+def institutional_email_candidates(
+    enrollment: dict[str, Any],
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
+) -> list[tuple[str, str]]:
     """Return only the canonical Moodle identity stored in CorreosEstudIntec."""
-    email = normalize_institutional_email(enrollment.get("registry_email"))
+    email = normalize_institutional_email(
+        enrollment.get("registry_email"),
+        institutional_domain,
+    )
     return [("CorreosEstudIntec", email)] if email else []
 
 
 def match_course_users_by_institutional_email(
     enrollment: dict[str, Any],
     users_by_email: dict[str, list[dict[str, Any]]],
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
 ) -> tuple[list[dict[str, Any]], str, str]:
     """Match one academic enrollment only against users enrolled in the selected Moodle course."""
     matched: dict[tuple[str, Any], dict[str, Any]] = {}
     match_metadata: dict[tuple[str, Any], tuple[str, str]] = {}
-    for source, email in institutional_email_candidates(enrollment):
+    for source, email in institutional_email_candidates(enrollment, institutional_domain):
         for user in users_by_email.get(email, []):
             user_id = int(user.get("id") or 0)
             key = ("id", user_id) if user_id > 0 else (
                 "identity",
-                normalize_institutional_email(user.get("email"))
-                or normalize_institutional_email(user.get("username"))
-                or _text(user.get("fullname")),
+                email,
+                _text(user.get("fullname")),
             )
             matched[key] = user
             match_metadata.setdefault(key, (email, source))
@@ -111,6 +205,183 @@ def _normalized_text(value: Any) -> str:
     text = unicodedata.normalize("NFD", _text(value).upper())
     text = "".join(character for character in text if unicodedata.category(character) != "Mn")
     return " ".join(text.replace("_", " ").replace("-", " ").split())
+
+
+def _person_name_signature(value: Any) -> tuple[str, ...]:
+    return tuple(sorted(re.findall(r"[A-Z0-9]+", _normalized_text(value))))
+
+
+def _identity_number(value: Any) -> str:
+    return "".join(character for character in _text(value) if character.isdigit())
+
+
+def _is_moodle_student(user: dict[str, Any]) -> bool:
+    shortnames = {
+        _text(value).casefold()
+        for value in (user.get("role_shortnames") or [])
+        if _text(value)
+    }
+    for role in user.get("roles") or []:
+        if not isinstance(role, dict):
+            continue
+        shortname = _text(role.get("shortname")).casefold()
+        if shortname:
+            shortnames.add(shortname)
+        if int(role.get("roleid") or role.get("id") or 0) == 5:
+            shortnames.add("student")
+    return "student" in shortnames
+
+
+def _single_edit_difference(left: str, right: str) -> bool:
+    """Accept one insertion, deletion, substitution or adjacent transposition."""
+    if not left or not right or left == right or abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) == len(right):
+        differences = [index for index, pair in enumerate(zip(left, right)) if pair[0] != pair[1]]
+        if len(differences) == 1:
+            return True
+        return bool(
+            len(differences) == 2
+            and differences[1] == differences[0] + 1
+            and left[differences[0]] == right[differences[1]]
+            and left[differences[1]] == right[differences[0]]
+        )
+
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    short_index = 0
+    long_index = 0
+    skipped = False
+    while short_index < len(shorter) and long_index < len(longer):
+        if shorter[short_index] == longer[long_index]:
+            short_index += 1
+            long_index += 1
+            continue
+        if skipped:
+            return False
+        skipped = True
+        long_index += 1
+    return True
+
+
+def reconcile_moodle_registry_identities(
+    moodle_users: Sequence[dict[str, Any]],
+    registry_rows: Sequence[dict[str, Any]],
+    users_by_email: dict[str, list[dict[str, Any]]],
+    institutional_domain: str = _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN,
+) -> tuple[list[dict[str, Any]], int]:
+    """Resolve a unique one-character registry typo using an exact student name."""
+    records_by_student: dict[int, dict[str, Any]] = {}
+    email_owners: dict[str, set[int]] = defaultdict(set)
+    all_registry_emails: set[str] = set()
+    for row in registry_rows:
+        student_code = int(row.get("student_code") or 0)
+        registry_email = normalize_institutional_email(
+            row.get("registry_email"),
+            institutional_domain,
+        )
+        if student_code <= 0 or not registry_email:
+            continue
+        all_registry_emails.add(registry_email)
+        email_owners[registry_email].add(student_code)
+        record = records_by_student.setdefault(
+            student_code,
+            {
+                "student_code": student_code,
+                "student_name": _text(row.get("student_name")),
+                "identity_number": _identity_number(row.get("identity_number")),
+                "emails": set(),
+            },
+        )
+        record["emails"].add(registry_email)
+
+    registry_candidates: list[dict[str, Any]] = []
+    for record in records_by_student.values():
+        emails = record["emails"]
+        if len(emails) != 1:
+            continue
+        registry_email = next(iter(emails))
+        if len(email_owners[registry_email]) != 1:
+            continue
+        signature = _person_name_signature(record["student_name"])
+        if len(signature) < 2:
+            continue
+        registry_candidates.append(
+            {
+                **record,
+                "registry_email": registry_email,
+                "name_signature": signature,
+            }
+        )
+
+    proposals: list[dict[str, Any]] = []
+    conflicts = 0
+    for user in moodle_users:
+        if not _is_moodle_student(user):
+            continue
+        moodle_email, moodle_email_source, status = moodle_user_institutional_identity(
+            user,
+            institutional_domain,
+        )
+        if status not in {"email", "username_fallback"} or not moodle_email:
+            continue
+        if moodle_email in all_registry_emails:
+            continue
+
+        moodle_identity_number = _identity_number(user.get("idnumber"))
+        moodle_name_signature = _person_name_signature(
+            user.get("fullname")
+            or f"{_text(user.get('firstname'))} {_text(user.get('lastname'))}"
+        )
+        moodle_local_part = moodle_email.split("@", 1)[0]
+        candidates: list[tuple[dict[str, Any], str]] = []
+        if len(moodle_identity_number) >= 8:
+            candidates = [
+                (record, "cedula_exacta")
+                for record in registry_candidates
+                if record["identity_number"] == moodle_identity_number
+            ]
+        elif len(moodle_name_signature) >= 2:
+            candidates = [
+                (record, "nombre_exacto_correo_un_caracter")
+                for record in registry_candidates
+                if record["name_signature"] == moodle_name_signature
+                and _single_edit_difference(
+                    moodle_local_part,
+                    record["registry_email"].split("@", 1)[0],
+                )
+            ]
+
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                conflicts += 1
+            continue
+        record, method = candidates[0]
+        registry_email = record["registry_email"]
+        if registry_email in users_by_email:
+            conflicts += 1
+            continue
+        proposals.append(
+            {
+                "user": user,
+                "moodle_email": moodle_email,
+                "moodle_email_source": moodle_email_source,
+                "registry_email": registry_email,
+                "student_code": record["student_code"],
+                "method": method,
+            }
+        )
+
+    proposals_by_registry: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for proposal in proposals:
+        proposals_by_registry[proposal["registry_email"]].append(proposal)
+
+    accepted: list[dict[str, Any]] = []
+    for grouped_proposals in proposals_by_registry.values():
+        if len(grouped_proposals) == 1:
+            accepted.append(grouped_proposals[0])
+        else:
+            conflicts += len(grouped_proposals)
+    return accepted, conflicts
 
 
 def _matter_match_score(course: dict[str, Any], matter: Any) -> int:
@@ -591,6 +862,9 @@ class MoodleGradeSyncService:
     ) -> None:
         self._moodle = moodle
         self._settings = settings or get_settings()
+        self._institutional_email_domain = _institutional_email_domain(
+            getattr(self._settings, "graph_user_domain", _DEFAULT_INSTITUTIONAL_EMAIL_DOMAIN)
+        )
 
     @property
     def enabled(self) -> bool:
@@ -700,7 +974,10 @@ class MoodleGradeSyncService:
             raise MoodleGradeSyncError("No se encontró el curso seleccionado en Moodle")
 
         moodle_users = await self._moodle.get_course_enrolled_users(course_id, refresh=refresh)
-        institutional_emails = self._moodle_course_emails(moodle_users)
+        users_by_email, identity_validation = self._validated_moodle_identity_index(
+            moodle_users
+        )
+        institutional_emails = set(users_by_email)
         academic_options = self._academic_period_options_for_emails(institutional_emails)
         context = self._resolve_course_context(course, academic_options)
 
@@ -733,21 +1010,73 @@ class MoodleGradeSyncService:
                 "CARRERAXESTUD.codigo_estud"
             ),
             "moodle_users": len(moodle_users),
-            "moodle_users_with_email": len(institutional_emails),
+            "moodle_users_with_email": identity_validation[
+                "moodle_users_with_institutional_email"
+            ],
+            "moodle_identity_validation": identity_validation,
             **context,
         }
 
+    def _moodle_course_emails(self, moodle_users: Sequence[dict[str, Any]]) -> set[str]:
+        users_by_email, _validation = index_moodle_users_by_institutional_email(
+            moodle_users,
+            self._institutional_email_domain,
+        )
+        return set(users_by_email)
+
+    def _validated_moodle_identity_index(
+        self,
+        moodle_users: Sequence[dict[str, Any]],
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
+        users_by_email, validation = index_moodle_users_by_institutional_email(
+            moodle_users,
+            self._institutional_email_domain,
+        )
+        if validation["moodle_student_users"] <= 0:
+            return users_by_email, validation
+
+        registry_rows = self._academic_identity_registry()
+        reconciled, reconciliation_conflicts = reconcile_moodle_registry_identities(
+            moodle_users,
+            registry_rows,
+            users_by_email,
+            self._institutional_email_domain,
+        )
+        for reconciliation in reconciled:
+            alias_user = dict(reconciliation["user"])
+            alias_user["_registry_identity_email"] = reconciliation["registry_email"]
+            alias_user["_identity_match_method"] = reconciliation["method"]
+            alias_user["_registry_student_code"] = reconciliation["student_code"]
+            users_by_email[reconciliation["registry_email"]] = [alias_user]
+
+        validation["moodle_registry_email_reconciled"] = len(reconciled)
+        validation["moodle_registry_reconciliation_conflicts"] = reconciliation_conflicts
+        return users_by_email, validation
+
     @staticmethod
-    def _moodle_course_emails(moodle_users: Sequence[dict[str, Any]]) -> set[str]:
-        institutional_emails: set[str] = set()
-        for user in moodle_users:
-            email = (
-                normalize_institutional_email(user.get("email"))
-                or normalize_institutional_email(user.get("username"))
+    def _academic_identity_registry() -> list[dict[str, Any]]:
+        with get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT DISTINCT
+                    TRY_CONVERT(int, email_row.codestud) AS student_code,
+                    TRY_CONVERT(nvarchar(254), email_row.CorreoIntec) AS registry_email,
+                    TRY_CONVERT(nvarchar(50), student.Cedula_Est) AS identity_number,
+                    TRY_CONVERT(nvarchar(255), student.Apellidos_nombre) AS student_name
+                FROM dbo.CorreosEstudIntec AS email_row
+                INNER JOIN dbo.DATOS_ESTUD AS student
+                  ON TRY_CONVERT(int, student.codigo_estud) = TRY_CONVERT(int, email_row.codestud)
+                WHERE TRY_CONVERT(int, email_row.codestud) IS NOT NULL
+                  AND NULLIF(
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(254), email_row.CorreoIntec))),
+                        N''
+                      ) IS NOT NULL
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), student.Estado))))
+                      IN (N'A', N'ACTIVO', N'ACTIVA')
+                """
             )
-            if email:
-                institutional_emails.add(email)
-        return institutional_emails
+            return [_row_to_dict(cursor, row) for row in cursor.fetchall()]
 
     @staticmethod
     def _recommended_period_codes(
@@ -945,7 +1274,10 @@ class MoodleGradeSyncService:
             course_id,
             refresh=refresh,
         )
-        institutional_emails = self._moodle_course_emails(moodle_users)
+        users_by_email, moodle_identity_validation = self._validated_moodle_identity_index(
+            moodle_users
+        )
+        institutional_emails = set(users_by_email)
         if not institutional_emails:
             raise MoodleGradeSyncError(
                 "El curso Moodle no tiene usuarios con un correo institucional válido"
@@ -1052,15 +1384,6 @@ class MoodleGradeSyncService:
         ]
 
         moodle_grades = await self._moodle.get_course_grade_items(course_id, refresh=refresh)
-        users_by_email: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for user in moodle_users:
-            indexed_emails = {
-                normalize_institutional_email(user.get("email")),
-                normalize_institutional_email(user.get("username")),
-            }
-            for email in indexed_emails - {""}:
-                if not any(int(existing.get("id") or 0) == int(user.get("id") or 0) for existing in users_by_email[email]):
-                    users_by_email[email].append(user)
         grades_by_user = {
             int(group.get("userid") or 0): group
             for group in moodle_grades
@@ -1089,16 +1412,22 @@ class MoodleGradeSyncService:
             "matched_by_email": 0,
             "matched_by_registry": 0,
             "matched_by_data_fallback": 0,
+            "matched_by_reconciled_identity": 0,
             "missing_institutional_email": 0,
             "not_enrolled_in_course": 0,
             "ambiguous_users": 0,
+            **moodle_identity_validation,
         }
         for enrollment in enrollments:
-            email_candidates = institutional_email_candidates(enrollment)
+            email_candidates = institutional_email_candidates(
+                enrollment,
+                self._institutional_email_domain,
+            )
             preferred_source, preferred_email = email_candidates[0] if email_candidates else ("Sin registro", "")
             students, matched_email, matched_source = match_course_users_by_institutional_email(
                 enrollment,
                 users_by_email,
+                self._institutional_email_domain,
             )
             base_summary = {
                 "student_code": int(enrollment["student_code"]),
@@ -1107,6 +1436,9 @@ class MoodleGradeSyncService:
                 "email": preferred_email,
                 "email_source": preferred_source,
                 "moodle_email": "",
+                "moodle_email_source": "",
+                "identity_match_method": "",
+                "registry_email_mismatch": False,
                 "moodle_user_id": 0,
                 "course_enrollment_validated": False,
                 "career": _text(enrollment["career"]),
@@ -1143,20 +1475,55 @@ class MoodleGradeSyncService:
                 continue
 
             moodle_user = students[0]
-            moodle_email = (
-                normalize_institutional_email(moodle_user.get("email"))
-                or normalize_institutional_email(moodle_user.get("username"))
+            moodle_email, moodle_email_source, moodle_identity_status = (
+                moodle_user_institutional_identity(
+                    moodle_user,
+                    self._institutional_email_domain,
+                )
             )
+            registry_alias = normalize_institutional_email(
+                moodle_user.get("_registry_identity_email"),
+                self._institutional_email_domain,
+            )
+            expected_registry_email = registry_alias or moodle_email
+            reconciliation_method = _text(moodle_user.get("_identity_match_method"))
+            reconciled_student_code = int(
+                moodle_user.get("_registry_student_code") or 0
+            )
+            if (
+                moodle_identity_status not in {"email", "username_fallback"}
+                or expected_registry_email != matched_email
+                or (
+                    registry_alias
+                    and reconciled_student_code != int(enrollment["student_code"])
+                )
+            ):
+                raise MoodleGradeSyncError(
+                    "La identidad institucional cambió durante la validación del curso Moodle"
+                )
             base_summary.update(
                 {
                     "email": matched_email,
-                    "email_source": matched_source,
+                    "email_source": (
+                        "CorreosEstudIntec · validación cruzada"
+                        if registry_alias
+                        else matched_source
+                    ),
                     "moodle_email": moodle_email,
+                    "moodle_email_source": moodle_email_source,
+                    "identity_match_method": (
+                        reconciliation_method or "correo_institucional_exacto"
+                    ),
+                    "registry_email_mismatch": bool(
+                        registry_alias and registry_alias != moodle_email
+                    ),
                     "moodle_user_id": int(moodle_user.get("id") or 0),
                     "course_enrollment_validated": True,
                 }
             )
             validation_counts["matched_by_email"] += 1
+            if registry_alias:
+                validation_counts["matched_by_reconciled_identity"] += 1
             if matched_source != "CorreosEstudIntec":
                 raise MoodleGradeSyncError(
                     "La identidad de Moodle no fue resuelta desde CorreosEstudIntec"
@@ -1345,6 +1712,22 @@ class MoodleGradeSyncService:
                 current_row = self._current_grade_row(cursor, row_id)
                 if current_row is None:
                     conflicts.extend({**item, "reason": "La matrícula dejó de existir"} for item in row_changes)
+                    continue
+                if any(
+                    not self._same_academic_enrollment(current_row, change)
+                    for change in row_changes
+                ):
+                    conflicts.extend(
+                        {
+                            **item,
+                            "status": "stale_enrollment",
+                            "reason": (
+                                "La asignación académica cambió después de la vista previa; "
+                                "vuelva a validar el curso y el período"
+                            ),
+                        }
+                        for item in row_changes
+                    )
                     continue
 
                 accepted: list[dict[str, Any]] = []
@@ -1956,7 +2339,12 @@ class MoodleGradeSyncService:
         emails = sorted({
             normalized
             for value in institutional_emails
-            if (normalized := normalize_institutional_email(value))
+            if (
+                normalized := normalize_institutional_email(
+                    value,
+                    self._institutional_email_domain,
+                )
+            )
         })
         if not emails:
             return []
@@ -2069,7 +2457,12 @@ class MoodleGradeSyncService:
             {
                 normalized
                 for email in institutional_emails
-                if (normalized := normalize_institutional_email(email))
+                if (
+                    normalized := normalize_institutional_email(
+                        email,
+                        self._institutional_email_domain,
+                    )
+                )
             }
         )
         if not normalized_emails:
@@ -2230,6 +2623,13 @@ class MoodleGradeSyncService:
         cursor.execute(
             """
             SELECT TRY_CONVERT(bigint, num) AS row_id,
+                   TRY_CONVERT(int, codigo_estud) AS student_code,
+                   TRY_CONVERT(int, codigo_periodo) AS period_code,
+                   TRY_CONVERT(int, cod_anio_Basica) AS malla_code,
+                   TRY_CONVERT(int, codigo_materia) AS matter_code,
+                   LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), paralelo))) AS parallel,
+                   TRY_CONVERT(int, NumGrupo) AS group_number,
+                   TRY_CONVERT(int, Num_Matricula) AS enrollment_number,
                    P1Tareas, P1Proyectos, P1Examen,
                    P2Tareas, P2Proyectos, P2Examen,
                    P3Tareas, P3Proyectos, P3Examen,
@@ -2242,6 +2642,28 @@ class MoodleGradeSyncService:
         )
         row = cursor.fetchone()
         return _row_to_dict(cursor, row) if row is not None else None
+
+    @staticmethod
+    def _same_academic_enrollment(
+        current_row: dict[str, Any],
+        change: dict[str, Any],
+    ) -> bool:
+        """Confirm the locked row still belongs to the previewed student and subject."""
+        numeric_fields = (
+            "row_id",
+            "student_code",
+            "period_code",
+            "malla_code",
+            "matter_code",
+            "group_number",
+            "enrollment_number",
+        )
+        return all(
+            int(current_row.get(field) or 0) == int(change.get(field) or 0)
+            for field in numeric_fields
+        ) and _text(current_row.get("parallel")).casefold() == _text(
+            change.get("parallel")
+        ).casefold()
 
     def _current_ledger_value(self, cursor: Any, change: dict[str, Any]) -> Any:
         cursor.execute(
@@ -2435,12 +2857,15 @@ __all__ = [
     "MoodleGradeSyncError",
     "MoodleGradeSyncService",
     "canonical_course_code",
+    "index_moodle_users_by_institutional_email",
     "institutional_email_candidates",
     "match_course_users_by_institutional_email",
+    "moodle_user_institutional_identity",
     "moodle_exam_targets",
     "normalize_institutional_email",
     "normalize_moodle_grade",
     "normalize_period_codes",
     "parse_configured_mappings",
     "practical_exam_targets",
+    "reconcile_moodle_registry_identities",
 ]

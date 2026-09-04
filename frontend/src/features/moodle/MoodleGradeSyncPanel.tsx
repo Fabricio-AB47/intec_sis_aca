@@ -152,6 +152,7 @@ const STATUS_LABELS: Record<string, string> = {
   source_unchanged: 'Sin cambio en Moodle',
   manual_conflict: 'Cambio manual protegido',
   stale_preview: 'Vista previa desactualizada',
+  stale_enrollment: 'Matrícula modificada',
   already_graded: 'Nota existente protegida',
   not_enrolled: 'No matriculado en Moodle',
   missing_institutional_email: 'Sin correo institucional',
@@ -172,6 +173,14 @@ const COURSE_RESOLUTION_STAGES = [
 ]
 
 const COURSE_RESOLUTION_PROGRESS = [20, 45, 70, 90]
+
+function identityMatchLabel(method: string) {
+  if (method === 'cedula_exacta') return 'Cédula exacta verificada'
+  if (method === 'nombre_exacto_correo_un_caracter') {
+    return 'Nombre completo exacto y diferencia de un carácter en el correo'
+  }
+  return 'Correo institucional exacto'
+}
 
 export function MoodleGradeSyncPanel() {
   const [catalog, setCatalog] = useState<MoodleGradeCatalogResponse | null>(null)
@@ -200,6 +209,7 @@ export function MoodleGradeSyncPanel() {
     () => catalogCourses.find((course) => course.id === Number(courseId)) ?? null,
     [catalogCourses, courseId],
   )
+  const identityValidation = selectedCourse?.moodle_identity_validation
   const periodOptions = useMemo(
     () => uniquePeriods(selectedCourse?.periods ?? []),
     [selectedCourse],
@@ -606,6 +616,51 @@ export function MoodleGradeSyncPanel() {
         </label>
       </form>
 
+      {identityValidation && (
+        <div
+          className={`moodle-grade-identity-check ${
+            identityValidation.moodle_identity_conflicts
+              || identityValidation.duplicate_moodle_emails
+              ? 'has-conflicts'
+              : ''
+          }`}
+          aria-label="Validación de identidades institucionales del curso"
+        >
+          <div>
+            <span>Estudiantes Moodle</span>
+            <strong>{identityValidation.moodle_student_users}</strong>
+          </div>
+          <div>
+            <span>Identidades institucionales</span>
+            <strong>{identityValidation.moodle_users_with_institutional_email}</strong>
+          </div>
+          <div>
+            <span>Desde correo Moodle</span>
+            <strong>{identityValidation.moodle_identity_from_email}</strong>
+          </div>
+          <div>
+            <span>Desde usuario Moodle</span>
+            <strong>{identityValidation.moodle_identity_from_username}</strong>
+          </div>
+          <div>
+            <span>Sin correo institucional</span>
+            <strong>{identityValidation.moodle_users_without_institutional_email}</strong>
+          </div>
+          <div>
+            <span>Correos reconciliados</span>
+            <strong>{identityValidation.moodle_registry_email_reconciled}</strong>
+          </div>
+          <div>
+            <span>Conflictos bloqueados</span>
+            <strong>
+              {identityValidation.moodle_identity_conflicts
+                + identityValidation.duplicate_moodle_emails
+                + identityValidation.moodle_registry_reconciliation_conflicts}
+            </strong>
+          </div>
+        </div>
+      )}
+
       {!catalogCourses.length && !loading && (
         <div className="moodle-alert moodle-alert--warning">
           Moodle no devolvió cursos disponibles para la cuenta configurada.
@@ -630,7 +685,9 @@ export function MoodleGradeSyncPanel() {
           <div className="moodle-grade-summary">
             <div><span>Matrículas INTECBDD</span><strong>{preview.course_validation.academic_enrollments}</strong></div>
             <div><span>Usuarios del curso</span><strong>{preview.course_validation.moodle_course_users}</strong></div>
+            <div><span>Correos institucionales</span><strong>{preview.course_validation.moodle_users_with_institutional_email}</strong></div>
             <div><span>Validados por correo</span><strong>{preview.course_validation.matched_by_email}</strong></div>
+            <div><span>Correos reconciliados</span><strong>{preview.course_validation.matched_by_reconciled_identity}</strong></div>
             <div><span>Aplicables</span><strong>{readyCount}</strong></div>
             <div><span>Advertencias</span><strong>{enrollmentWarnings.length}</strong></div>
             <div><span>Escalas corregidas</span><strong>{correctedScaleCount}</strong></div>
@@ -663,7 +720,13 @@ export function MoodleGradeSyncPanel() {
                   <tr key={`${change.row_id}-${change.field}`}>
                     <td>
                       <strong>{change.student}</strong>
-                      <small>{change.email} · {change.email_source}</small>
+                      <small>INTECBDD: {change.email} · {change.email_source}</small>
+                      <small>Moodle: {change.moodle_email} · {change.moodle_email_source}</small>
+                      {change.registry_email_mismatch && (
+                        <small className="moodle-grade-identity-note">
+                          {identityMatchLabel(change.identity_match_method)}
+                        </small>
+                      )}
                     </td>
                     <td>{change.career}<small>{change.period}</small></td>
                     <td>
@@ -731,8 +794,14 @@ export function MoodleGradeSyncPanel() {
                     <strong>{warning.student}:</strong> {warning.reason}
                     <small>
                       {warning.email
-                        ? `${warning.email} · ${warning.email_source}`
+                        ? `INTECBDD: ${warning.email} · ${warning.email_source}`
                         : 'Sin correo institucional registrado'}
+                      {warning.moodle_email && (
+                        <> · Moodle: {warning.moodle_email} · {warning.moodle_email_source}</>
+                      )}
+                      {warning.registry_email_mismatch && (
+                        <> · {identityMatchLabel(warning.identity_match_method)}</>
+                      )}
                     </small>
                   </li>
                 ))}

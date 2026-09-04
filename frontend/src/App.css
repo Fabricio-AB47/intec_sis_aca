@@ -43020,6 +43020,49 @@ body .student-sidebar .logout-button {
   line-height: 1.45;
 }
 
+.moodle-grade-identity-check {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  margin: 14px 0;
+  overflow: hidden;
+  border: 1px solid #bfd6dc;
+  border-left: 4px solid #13808a;
+  border-radius: 6px;
+  background: #f7fbfc;
+}
+
+.moodle-grade-identity-check.has-conflicts {
+  border-left-color: #a92727;
+}
+
+.moodle-grade-identity-check > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 11px 13px;
+  border-right: 1px solid #d6e1e5;
+}
+
+.moodle-grade-identity-check > div:last-child {
+  border-right: 0;
+}
+
+.moodle-grade-identity-check span {
+  color: #647087;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-grade-identity-check strong {
+  color: #102543;
+  font-size: 20px;
+}
+
+.moodle-grade-identity-note {
+  color: #8a5a00 !important;
+  font-weight: 800;
+}
+
 .moodle-grade-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
@@ -44392,6 +44435,10 @@ body .student-sidebar .logout-button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .moodle-grade-identity-check {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .moodle-grade-preview-action {
     grid-column: 1 / -1;
   }
@@ -44459,6 +44506,7 @@ body .student-sidebar .logout-button {
   .moodle-filters,
   .moodle-grade-controls,
   .moodle-grade-summary,
+  .moodle-grade-identity-check,
   .moodle-grade-rule,
   .moodle-account-search,
   .moodle-account-row,
@@ -44483,6 +44531,15 @@ body .student-sidebar .logout-button {
   }
 
   .moodle-grade-summary > div:last-child {
+    border-bottom: 0;
+  }
+
+  .moodle-grade-identity-check > div {
+    border-right: 0;
+    border-bottom: 1px solid #d6e1e5;
+  }
+
+  .moodle-grade-identity-check > div:last-child {
     border-bottom: 0;
   }
 

@@ -859,9 +859,34 @@ export async function fetchMoodleGradeAlerts(
         matched_by_email: Number(response.validation?.matched_by_email ?? 0),
         matched_by_registry: Number(response.validation?.matched_by_registry ?? 0),
         matched_by_data_fallback: Number(response.validation?.matched_by_data_fallback ?? 0),
+        matched_by_reconciled_identity: Number(
+          response.validation?.matched_by_reconciled_identity ?? 0,
+        ),
         missing_institutional_email: Number(response.validation?.missing_institutional_email ?? 0),
         not_enrolled_in_course: Number(response.validation?.not_enrolled_in_course ?? 0),
         ambiguous_users: Number(response.validation?.ambiguous_users ?? 0),
+        moodle_student_users: Number(response.validation?.moodle_student_users ?? 0),
+        moodle_users_with_institutional_email: Number(
+          response.validation?.moodle_users_with_institutional_email ?? 0,
+        ),
+        moodle_identity_from_email: Number(response.validation?.moodle_identity_from_email ?? 0),
+        moodle_identity_from_username: Number(
+          response.validation?.moodle_identity_from_username ?? 0,
+        ),
+        moodle_identity_conflicts: Number(response.validation?.moodle_identity_conflicts ?? 0),
+        moodle_users_without_institutional_email: Number(
+          response.validation?.moodle_users_without_institutional_email ?? 0,
+        ),
+        duplicate_moodle_emails: Number(response.validation?.duplicate_moodle_emails ?? 0),
+        unique_moodle_institutional_emails: Number(
+          response.validation?.unique_moodle_institutional_emails ?? 0,
+        ),
+        moodle_registry_email_reconciled: Number(
+          response.validation?.moodle_registry_email_reconciled ?? 0,
+        ),
+        moodle_registry_reconciliation_conflicts: Number(
+          response.validation?.moodle_registry_reconciliation_conflicts ?? 0,
+        ),
       },
       items: (response.items ?? []).map((item) => ({
         ...item,
@@ -925,6 +950,40 @@ export async function fetchMoodleGradeCourseContext(
     matched_students: Number(response.matched_students ?? 0),
     moodle_users: Number(response.moodle_users ?? 0),
     moodle_users_with_email: Number(response.moodle_users_with_email ?? 0),
+    moodle_identity_validation: response.moodle_identity_validation
+      ? {
+          moodle_student_users: Number(
+            response.moodle_identity_validation.moodle_student_users ?? 0,
+          ),
+          moodle_users_with_institutional_email: Number(
+            response.moodle_identity_validation.moodle_users_with_institutional_email ?? 0,
+          ),
+          moodle_identity_from_email: Number(
+            response.moodle_identity_validation.moodle_identity_from_email ?? 0,
+          ),
+          moodle_identity_from_username: Number(
+            response.moodle_identity_validation.moodle_identity_from_username ?? 0,
+          ),
+          moodle_identity_conflicts: Number(
+            response.moodle_identity_validation.moodle_identity_conflicts ?? 0,
+          ),
+          moodle_users_without_institutional_email: Number(
+            response.moodle_identity_validation.moodle_users_without_institutional_email ?? 0,
+          ),
+          duplicate_moodle_emails: Number(
+            response.moodle_identity_validation.duplicate_moodle_emails ?? 0,
+          ),
+          unique_moodle_institutional_emails: Number(
+            response.moodle_identity_validation.unique_moodle_institutional_emails ?? 0,
+          ),
+          moodle_registry_email_reconciled: Number(
+            response.moodle_identity_validation.moodle_registry_email_reconciled ?? 0,
+          ),
+          moodle_registry_reconciliation_conflicts: Number(
+            response.moodle_identity_validation.moodle_registry_reconciliation_conflicts ?? 0,
+          ),
+        }
+      : undefined,
     resolution_reason: String(response.resolution_reason ?? ''),
     periods: Array.isArray(response.periods) ? response.periods : [],
   }
@@ -964,9 +1023,32 @@ function normalizeMoodleGradePreview(
       matched_by_email: Number(validation?.matched_by_email ?? 0),
       matched_by_registry: Number(validation?.matched_by_registry ?? 0),
       matched_by_data_fallback: Number(validation?.matched_by_data_fallback ?? 0),
+      matched_by_reconciled_identity: Number(
+        validation?.matched_by_reconciled_identity ?? 0,
+      ),
       missing_institutional_email: Number(validation?.missing_institutional_email ?? 0),
       not_enrolled_in_course: Number(validation?.not_enrolled_in_course ?? 0),
       ambiguous_users: Number(validation?.ambiguous_users ?? 0),
+      moodle_student_users: Number(validation?.moodle_student_users ?? 0),
+      moodle_users_with_institutional_email: Number(
+        validation?.moodle_users_with_institutional_email ?? 0,
+      ),
+      moodle_identity_from_email: Number(validation?.moodle_identity_from_email ?? 0),
+      moodle_identity_from_username: Number(validation?.moodle_identity_from_username ?? 0),
+      moodle_identity_conflicts: Number(validation?.moodle_identity_conflicts ?? 0),
+      moodle_users_without_institutional_email: Number(
+        validation?.moodle_users_without_institutional_email ?? 0,
+      ),
+      duplicate_moodle_emails: Number(validation?.duplicate_moodle_emails ?? 0),
+      unique_moodle_institutional_emails: Number(
+        validation?.unique_moodle_institutional_emails ?? 0,
+      ),
+      moodle_registry_email_reconciled: Number(
+        validation?.moodle_registry_email_reconciled ?? 0,
+      ),
+      moodle_registry_reconciliation_conflicts: Number(
+        validation?.moodle_registry_reconciliation_conflicts ?? 0,
+      ),
     },
     changes: Array.isArray(response.changes) ? response.changes : [],
     enrollment_warnings: Array.isArray(response.enrollment_warnings)

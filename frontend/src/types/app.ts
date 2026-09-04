@@ -892,6 +892,19 @@ export type MoodleGradePeriodOption = {
   students: number
 }
 
+export type MoodleInstitutionalIdentityValidation = {
+  moodle_student_users: number
+  moodle_users_with_institutional_email: number
+  moodle_identity_from_email: number
+  moodle_identity_from_username: number
+  moodle_identity_conflicts: number
+  moodle_users_without_institutional_email: number
+  duplicate_moodle_emails: number
+  unique_moodle_institutional_emails: number
+  moodle_registry_email_reconciled: number
+  moodle_registry_reconciliation_conflicts: number
+}
+
 export type MoodleGradeCourseOption = {
   id: number
   name: string
@@ -913,6 +926,7 @@ export type MoodleGradeCourseOption = {
   matched_students?: number
   moodle_users?: number
   moodle_users_with_email?: number
+  moodle_identity_validation?: MoodleInstitutionalIdentityValidation
   resolution_reason?: string
   periods: MoodleGradePeriodOption[]
 }
@@ -939,6 +953,9 @@ export type MoodleGradeChange = {
   email: string
   email_source: string
   moodle_email: string
+  moodle_email_source: string
+  identity_match_method: string
+  registry_email_mismatch: boolean
   moodle_user_id: number
   course_enrollment_validated: boolean
   career: string
@@ -995,6 +1012,9 @@ export type MoodleGradeEnrollmentWarning = {
   email: string
   email_source: string
   moodle_email: string
+  moodle_email_source: string
+  identity_match_method: string
+  registry_email_mismatch: boolean
   moodle_user_id: number
   course_enrollment_validated: boolean
   career: string
@@ -1124,9 +1144,20 @@ export type MoodleGradeCourseValidation = {
   matched_by_email: number
   matched_by_registry: number
   matched_by_data_fallback: number
+  matched_by_reconciled_identity: number
   missing_institutional_email: number
   not_enrolled_in_course: number
   ambiguous_users: number
+  moodle_student_users: number
+  moodle_users_with_institutional_email: number
+  moodle_identity_from_email: number
+  moodle_identity_from_username: number
+  moodle_identity_conflicts: number
+  moodle_users_without_institutional_email: number
+  duplicate_moodle_emails: number
+  unique_moodle_institutional_emails: number
+  moodle_registry_email_reconciled: number
+  moodle_registry_reconciliation_conflicts: number
 }
 
 export type MoodleGradePreviewResponse = {

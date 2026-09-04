@@ -8,14 +8,17 @@ from app.services.moodle_grade_sync import (
     MoodleGradeSyncError,
     MoodleGradeSyncService,
     canonical_course_code,
+    index_moodle_users_by_institutional_email,
     institutional_email_candidates,
     match_course_users_by_institutional_email,
     moodle_exam_targets,
+    moodle_user_institutional_identity,
     normalize_moodle_grade,
     normalize_institutional_email,
     normalize_period_codes,
     parse_configured_mappings,
     practical_exam_targets,
+    reconcile_moodle_registry_identities,
 )
 from app.services.moodle_read_service import MoodleReadService
 
@@ -258,6 +261,171 @@ class MoodleGradeRuleTests(unittest.TestCase):
         self.assertNotEqual(
             normalize_institutional_email("student+1@INTEC.EDU.EC"),
             normalize_institutional_email("student@intec.edu.ec"),
+        )
+
+    def test_institutional_email_rejects_external_and_malformed_addresses(self) -> None:
+        self.assertEqual(normalize_institutional_email("student@gmail.com"), "")
+        self.assertEqual(normalize_institutional_email("student..one@intec.edu.ec"), "")
+        self.assertEqual(normalize_institutional_email(".student@intec.edu.ec"), "")
+        self.assertEqual(normalize_institutional_email("student@sub.intec.edu.ec"), "")
+
+    def test_moodle_identity_uses_username_when_email_is_external(self) -> None:
+        identity = moodle_user_institutional_identity(
+            {
+                "id": 42,
+                "email": "personal@example.com",
+                "username": "STUDENT@INTEC.EDU.EC",
+            }
+        )
+
+        self.assertEqual(
+            identity,
+            ("student@intec.edu.ec", "Moodle.username", "username_fallback"),
+        )
+
+    def test_moodle_identity_rejects_conflicting_institutional_addresses(self) -> None:
+        identity = moodle_user_institutional_identity(
+            {
+                "id": 42,
+                "email": "actual@intec.edu.ec",
+                "username": "otra.persona@intec.edu.ec",
+            }
+        )
+
+        self.assertEqual(identity, ("", "", "conflicting_email_username"))
+
+    def test_moodle_email_index_is_canonical_and_reports_ambiguity(self) -> None:
+        index, validation = index_moodle_users_by_institutional_email(
+            [
+                {
+                    "id": 41,
+                    "email": "personal@example.com",
+                    "username": "student@intec.edu.ec",
+                },
+                {
+                    "id": 42,
+                    "email": "DUPLICATE@INTEC.EDU.EC",
+                    "username": "duplicate@intec.edu.ec",
+                },
+                {
+                    "id": 43,
+                    "email": "duplicate@intec.edu.ec",
+                    "username": "duplicate@intec.edu.ec",
+                },
+                {
+                    "id": 44,
+                    "email": "conflict@intec.edu.ec",
+                    "username": "other@intec.edu.ec",
+                },
+            ]
+        )
+
+        self.assertEqual([user["id"] for user in index["student@intec.edu.ec"]], [41])
+        self.assertEqual(
+            [user["id"] for user in index["duplicate@intec.edu.ec"]],
+            [42, 43],
+        )
+        self.assertNotIn("conflict@intec.edu.ec", index)
+        self.assertEqual(validation["moodle_identity_from_username"], 1)
+        self.assertEqual(validation["moodle_identity_conflicts"], 1)
+        self.assertEqual(validation["duplicate_moodle_emails"], 1)
+
+    def test_unique_student_name_reconciles_one_character_registry_email_typo(self) -> None:
+        moodle_user = {
+            "id": 3188,
+            "email": "nicole.bejarano@intec.edu.ec",
+            "username": "nicole.bejarano@intec.edu.ec",
+            "fullname": "Nicole Estefanía Bejarano Molina",
+            "role_shortnames": ["student"],
+        }
+        users_by_email, validation = index_moodle_users_by_institutional_email(
+            [moodle_user]
+        )
+
+        reconciled, conflicts = reconcile_moodle_registry_identities(
+            [moodle_user],
+            [
+                {
+                    "student_code": 1891,
+                    "registry_email": "nicole.bajarano@intec.edu.ec",
+                    "identity_number": "1750359844",
+                    "student_name": "BEJARANO MOLINA NICOLE ESTEFANÍA",
+                }
+            ],
+            users_by_email,
+        )
+
+        self.assertEqual(validation["moodle_student_users"], 1)
+        self.assertEqual(conflicts, 0)
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(reconciled[0]["student_code"], 1891)
+        self.assertEqual(
+            reconciled[0]["registry_email"],
+            "nicole.bajarano@intec.edu.ec",
+        )
+        self.assertEqual(
+            reconciled[0]["method"],
+            "nombre_exacto_correo_un_caracter",
+        )
+
+    def test_registry_typo_reconciliation_rejects_teacher_or_different_name(self) -> None:
+        registry_rows = [
+            {
+                "student_code": 1891,
+                "registry_email": "nicole.bajarano@intec.edu.ec",
+                "identity_number": "1750359844",
+                "student_name": "BEJARANO MOLINA NICOLE ESTEFANÍA",
+            }
+        ]
+        teacher = {
+            "id": 1,
+            "email": "nicole.bejarano@intec.edu.ec",
+            "fullname": "Nicole Estefanía Bejarano Molina",
+            "role_shortnames": ["editingteacher"],
+        }
+        different_student = {
+            "id": 2,
+            "email": "nicole.bejarano@intec.edu.ec",
+            "fullname": "Nicole Bejarano Otra Persona",
+            "role_shortnames": ["student"],
+        }
+
+        for moodle_user in (teacher, different_student):
+            users_by_email, _ = index_moodle_users_by_institutional_email(
+                [moodle_user]
+            )
+            reconciled, conflicts = reconcile_moodle_registry_identities(
+                [moodle_user],
+                registry_rows,
+                users_by_email,
+            )
+            self.assertEqual(reconciled, [])
+            self.assertEqual(conflicts, 0)
+
+    def test_locked_enrollment_must_keep_previewed_academic_assignment(self) -> None:
+        enrollment = {
+            "row_id": 991,
+            "student_code": 123,
+            "period_code": 1046,
+            "malla_code": 8,
+            "matter_code": 44,
+            "parallel": "A",
+            "group_number": 2,
+            "enrollment_number": 1,
+        }
+
+        self.assertTrue(
+            MoodleGradeSyncService._same_academic_enrollment(
+                dict(enrollment),
+                dict(enrollment),
+            )
+        )
+        changed_subject = {**enrollment, "matter_code": 45}
+        self.assertFalse(
+            MoodleGradeSyncService._same_academic_enrollment(
+                changed_subject,
+                enrollment,
+            )
         )
 
     def test_data_email_is_not_an_identity_without_registry_relation(self) -> None:
