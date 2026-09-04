@@ -15,17 +15,17 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import pyodbc
 from reportlab.graphics import renderPDF
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, KeepInFrame, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
 from app.core.security import SessionUser, require_roles
@@ -161,13 +161,65 @@ class ScholarshipContractProjectionPayload(BaseModel):
     periodicidad: str = Field(default="", max_length=300)
 
 
+def _default_tax_incentive_projection() -> list[ScholarshipContractProjectionPayload]:
+    return [
+        ScholarshipContractProjectionPayload(
+            rubro="Matrícula y arancel",
+            periodicidad="{PORCENTAJE_BECA} del arancel académico durante {PERIODO}",
+        ),
+        ScholarshipContractProjectionPayload(
+            rubro="Ayuda económica",
+            periodicidad="{VALOR_BECA} durante {PERIODO}",
+        ),
+    ]
+
+
 class ScholarshipContractClausePayload(BaseModel):
     titulo: str = Field(default="", max_length=250)
     contenido: str = Field(default="", max_length=6000)
 
 
+class ScholarshipContractTableLabelsPayload(BaseModel):
+    numero_contrato: str = Field(default="No.", max_length=40)
+    identificacion_firma: str = Field(default="C.C.:", max_length=80)
+    becario: str = Field(default="Apellidos y nombres del/la becario/a:", max_length=200)
+    numero_beca: str = Field(default="Beca No.", max_length=120)
+    cedula: str = Field(default="Cédula de ciudadanía / identidad:", max_length=200)
+    telefono: str = Field(default="Teléfono:", max_length=120)
+    nivel_formacion: str = Field(default="Nivel de formación:", max_length=160)
+    carrera_programa: str = Field(default="Carrera/programa:", max_length=160)
+    tipo_beca: str = Field(default="Tipo de beca:", max_length=160)
+    discapacidad: str = Field(default="Discapacidad:", max_length=160)
+    porcentaje_discapacidad: str = Field(default="Porcentaje de discapacidad:", max_length=200)
+    tipo_discapacidad: str = Field(default="Tipo de discapacidad:", max_length=180)
+    beneficio: str = Field(default="Porcentaje de beca y monto otorgado:", max_length=220)
+    beneficio_sufijo: str = Field(default="del valor del arancel vigente", max_length=220)
+    periodo_adjudicacion: str = Field(default="Período de adjudicación:", max_length=180)
+    correo_notificaciones: str = Field(default="Correo INTEC para notificaciones:", max_length=220)
+    nombres: str = Field(default="Apellidos y Nombres:", max_length=160)
+    documento_identidad: str = Field(default="Documento de identidad:", max_length=160)
+    prefijo_documento_identidad: str = Field(default="CÉDULA -", max_length=80)
+    programa: str = Field(default="Programa:", max_length=120)
+    pais: str = Field(default="País:", max_length=120)
+    fecha_fin_financiamiento: str = Field(default="Fecha final financiamiento:", max_length=200)
+    institucion_educacion: str = Field(default="Institución de Educación:", max_length=200)
+    duracion_financiamiento: str = Field(default="Duración financiamiento:", max_length=180)
+    auspiciante: str = Field(default="Auspiciante:", max_length=120)
+    fecha_inicio_estudios: str = Field(default="Fecha inicio estudios:", max_length=180)
+    carrera: str = Field(default="Carrera:", max_length=120)
+    fecha_fin_estudios: str = Field(default="Fecha finalización estudios:", max_length=200)
+    nivel_estudios: str = Field(default="Nivel de estudios:", max_length=160)
+    duracion_estudios: str = Field(default="Duración de estudios:", max_length=180)
+    fecha_inicio_financiamiento: str = Field(default="Fecha inicial financiamiento:", max_length=200)
+    periodo_pago: str = Field(default="Período de pago:", max_length=160)
+    numero: str = Field(default="Nº", max_length=40)
+    rubro: str = Field(default="Rubro", max_length=120)
+    periodicidad_rubro: str = Field(default="Periodicidad del rubro", max_length=180)
+
+
 class ScholarshipContractTemplatePayload(BaseModel):
     titulo_contrato: str = Field(default="CONTRATO DE BECA", max_length=120)
+    texto_completo: str | None = Field(default=None, max_length=60000)
     fecha_contrato: str | None = Field(default=None, max_length=10)
     ciudad: str = Field(default="Quito, D.M.", max_length=120)
     resolucion: str = Field(
@@ -206,6 +258,9 @@ class ScholarshipContractTemplatePayload(BaseModel):
     )
     titulo_tabla_datos: str = Field(default="DATOS BECA", max_length=120)
     titulo_tabla_proyeccion: str = Field(default="PROYECCIÓN DE LA BECA", max_length=120)
+    rotulos_tabla: ScholarshipContractTableLabelsPayload = Field(
+        default_factory=ScholarshipContractTableLabelsPayload,
+    )
     firma_rector_tratamiento: str = Field(default="Ing.", max_length=80)
     firma_rector_nombre: str = Field(default="JAIME RODER ORTEGA PEREIRA", max_length=200)
     firma_rector_titulo: str = Field(default="MGT.", max_length=40)
@@ -237,14 +292,40 @@ class ScholarshipContractTemplatePayload(BaseModel):
 class ScholarshipContractGeneratePayload(BaseModel):
     beca_ids: list[int]
     codigo_periodo: str
-    formato_contrato: Literal["INSTITUCIONAL", "PROGRAMA"] = "INSTITUCIONAL"
+    formato_contrato: Literal["BECA", "INCENTIVOS_TRIBUTARIOS"] = "BECA"
     plantilla: ScholarshipContractTemplatePayload = Field(default_factory=ScholarshipContractTemplatePayload)
+
+    @field_validator("formato_contrato", mode="before")
+    @classmethod
+    def normalize_contract_format(cls, value: Any) -> str:
+        return _canonical_scholarship_contract_format(value)
+
+
+class ScholarshipContractPreviewPayload(BaseModel):
+    beca_id: int | None = None
+    codigo_periodo: str = Field(default="", max_length=50)
+    tipo_beca: str = Field(default="", max_length=150)
+    periodo: str = Field(default="", max_length=220)
+    formato_contrato: Literal["BECA", "INCENTIVOS_TRIBUTARIOS"] = "BECA"
+    plantilla: ScholarshipContractTemplatePayload = Field(default_factory=ScholarshipContractTemplatePayload)
+
+    @field_validator("formato_contrato", mode="before")
+    @classmethod
+    def normalize_contract_format(cls, value: Any) -> str:
+        return _canonical_scholarship_contract_format(value)
 
 
 def _clean(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value).replace("\xa0", " ")).strip()
+
+
+def _canonical_scholarship_contract_format(value: Any) -> Literal["BECA", "INCENTIVOS_TRIBUTARIOS"]:
+    normalized = _clean(value).upper()
+    if normalized in {"INCENTIVOS_TRIBUTARIOS", "PROGRAMA"}:
+        return "INCENTIVOS_TRIBUTARIOS"
+    return "BECA"
 
 
 def _stream_scholarship_contract_archive(bundle: Any, chunk_size: int = 1024 * 1024):
@@ -758,6 +839,36 @@ def _scholarship_contract_base_number(item: dict[str, Any], contract_date: date)
     return f"{initial}{scholarship_id:04d}{period_part}{contract_date.year}"
 
 
+def _scholarship_contract_preview_item(
+    payload: ScholarshipContractPreviewPayload,
+) -> dict[str, Any]:
+    contract_format = _canonical_scholarship_contract_format(payload.formato_contrato)
+    scholarship_type = _clean(payload.tipo_beca) or (
+        "INCENTIVOS TRIBUTARIOS"
+        if contract_format == "INCENTIVOS_TRIBUTARIOS"
+        else "BECA INSTITUCIONAL"
+    )
+    academic_period = _clean(payload.codigo_periodo) or "PERIODO-VISTA-PREVIA"
+    return {
+        "beca_id": 0,
+        "codigo_estud": "VISTA-PREVIA",
+        "cedula": "0000000000",
+        "estudiante": "ESTUDIANTE DE VISTA PREVIA",
+        "codigo_carrera": "",
+        "carrera": "CARRERA DE VISTA PREVIA",
+        "codigo_periodo": academic_period,
+        "periodo": _clean(payload.periodo) or academic_period,
+        "tipo_beca": scholarship_type,
+        "porcentaje_beca": 100,
+        "valor_beca": _ACADEMIC_SEMESTER_COST,
+        "telefono": "0000000000",
+        "nivel_formacion": "TERCER NIVEL - TECNÓLOGO SUPERIOR",
+        "discapacidad": "NO",
+        "porcentaje_discapacidad": "0",
+        "tipo_discapacidad": "NINGUNA",
+    }
+
+
 def _next_scholarship_contract_number(
     cursor: pyodbc.Cursor,
     item: dict[str, Any],
@@ -834,22 +945,14 @@ def _scholarship_period_label(value: Any) -> str:
     return period
 
 
-def _scholarship_contract_template_data(
-    template: ScholarshipContractTemplatePayload | dict[str, Any] | None,
-) -> dict[str, Any]:
-    if template is None:
-        return {}
-    if isinstance(template, BaseModel):
-        return template.model_dump()
-    return dict(template)
-
-
 def _scholarship_contract_template_text(
     template: dict[str, Any],
     field_name: str,
     default: str,
 ) -> str:
-    return _clean(template.get(field_name)) or default
+    if field_name in template:
+        return _clean(template.get(field_name))
+    return default
 
 
 def _scholarship_contract_template_multiline(
@@ -860,6 +963,19 @@ def _scholarship_contract_template_multiline(
     if field_name not in template or template.get(field_name) is None:
         return default
     return str(template.get(field_name) or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _scholarship_contract_table_label(
+    template: dict[str, Any],
+    field_name: str,
+    default: str,
+) -> str:
+    raw_labels = template.get("rotulos_tabla")
+    if isinstance(raw_labels, BaseModel):
+        raw_labels = raw_labels.model_dump()
+    if not isinstance(raw_labels, dict) or field_name not in raw_labels:
+        return default
+    return _clean(raw_labels.get(field_name))
 
 
 def _scholarship_contract_color(
@@ -878,11 +994,11 @@ def _scholarship_contract_color(
 
 def _institutional_scholarship_contract_intro() -> str:
     return (
-        "En la ciudad de {CIUDAD}, a los {FECHA_CONTRATO} comparecen el {RECTOR}, en su calidad de "
-        "rector del Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento "
-        "(INTEC), de conformidad con la {RESOLUCION}; y el/la señor/a {ESTUDIANTE}, con cédula de "
-        "ciudadanía No. {CEDULA}, a quien en adelante se denominará el/la “BECARIO/A”, conforme a las "
-        "cláusulas que se detallan a continuación:"
+        "En la ciudad de {CIUDAD}, a los {FECHA_CONTRATO}, comparecen el {RECTOR}, en su calidad de "
+        "Rector del Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento "
+        "(INTEC), de conformidad con la {RESOLUCION}; y el/la señor(a)(ita) {ESTUDIANTE}, con cédula "
+        "de ciudadanía No. {CEDULA}, a quien en adelante se denominará como el/la “BECARIO/A”, "
+        "conforme a las cláusulas que a continuación se detallan:"
     )
 
 
@@ -896,50 +1012,56 @@ def _institutional_scholarship_contract_clauses() -> list[dict[str, str]]:
                 "establece: “el cobro de aranceles en la educación superior particular contará con "
                 "mecanismos tales como becas, créditos, cuotas de ingreso u otros que permitan la "
                 "integración y equidad social en sus múltiples dimensiones”; el principio de igualdad "
-                "de oportunidades y las demás disposiciones establecidas en la Constitución, en la Ley "
-                "Orgánica de Educación Superior (LOES) y en la normativa aplicable."
+                "de oportunidades y las demás disposiciones establecidas en la Constitución, en la "
+                "Ley Orgánica de Educación Superior (LOES) y demás normativa aplicable."
             ),
         },
         {
             "titulo": "CLÁUSULA SEGUNDA.- OBJETIVO ESPECÍFICO.-",
             "contenido": (
-                "El INTEC otorga la beca de acuerdo con las especificaciones registradas en la tabla "
+                "El INTEC otorga la BECA de acuerdo con las especificaciones registradas en la tabla "
                 "de datos de la beca."
             ),
         },
         {
-            "titulo": "CLÁUSULA TERCERA.- MONTO, RUBROS Y DURACIÓN DE LA BECA.-",
+            "titulo": "CLÁUSULA TERCERA.- MONTO Y RUBROS DE LA BECA.-",
             "contenido": (
                 "El monto y los rubros que cubre la beca dependerán del número de asignaturas, créditos "
-                "u horas matriculadas por el/la estudiante en cada período académico y constarán en su "
-                "estado académico. {ALCANCE_BECA} La beca rige exclusivamente durante el período de "
-                "adjudicación {PERIODO}. No se renovará automáticamente. Para cada período académico "
-                "posterior, la Dirección de Bienestar verificará nuevamente el cumplimiento de los "
-                "requisitos y emitirá la aprobación correspondiente. Cualquier cambio de carrera, "
-                "modalidad, tipo de beca, fuente de financiamiento, porcentaje otorgado o rubro cubierto "
-                "requerirá una nueva validación y la suscripción de un nuevo contrato, que dejará sin "
-                "efecto el último instrumento suscrito por el/la becario/a."
+                "u horas matriculadas por el/la estudiante en cada período académico y constarán en el "
+                "estado académico del/la estudiante. {ALCANCE_BECA}"
+            ),
+        },
+        {
+            "titulo": "CLÁUSULA TERCERA.- DURACIÓN.-",
+            "contenido": (
+                "La beca se otorgará por los períodos académicos ordinarios de duración oficial de la "
+                "carrera. La renovación de la beca estará sujeta a su aprobación por parte de la "
+                "Dirección de Bienestar del INTEC en cada período académico ordinario, se efectuará en "
+                "los mismos términos y condiciones previstos en este contrato y no requerirá la "
+                "suscripción de uno nuevo. En caso de cambio de carrera, modalidad, tipo de beca, fuente "
+                "de financiamiento, porcentaje otorgado o rubro que cubre la beca, se procederá a la "
+                "suscripción de un nuevo contrato, que incluirá dichas modificaciones y dejará sin efecto "
+                "el último contrato suscrito por el/la becario/a."
             ),
         },
         {
             "titulo": "CLÁUSULA CUARTA.- OBLIGACIONES DEL/LA BECARIO/A.-",
             "contenido": (
-                "El/la becario/a se obliga a cumplir las siguientes obligaciones y compromisos:\n"
-                "a) Mantener, durante el período académico, un promedio mínimo de 7/10 sin "
-                "aproximaciones, conforme a la normativa institucional vigente.\n"
+                "El/la becario/a se obliga a cumplir con las siguientes obligaciones y compromisos:\n"
+                "a) Para renovar la beca, deberá mantener en cada período académico un promedio de "
+                "7/10 sin aproximaciones.\n"
                 "b) Cumplir las normas disciplinarias y de convivencia del INTEC.\n"
-                "c) No abandonar su formación académica y comunicar oportunamente cualquier novedad "
-                "que pueda afectar la continuidad del beneficio."
+                "c) No abandonar su formación académica para evitar sanciones económicas."
             ),
         },
         {
             "titulo": "CLÁUSULA QUINTA.- CAMBIO DE CARRERA.-",
             "contenido": (
                 "El/la becario/a podrá realizar el trámite de cambio de carrera según el proceso "
-                "determinado en el Reglamento del Estudiante. Para mantener la beca en la nueva carrera "
+                "determinado en el Reglamento del Estudiante. Para mantener la beca en la nueva carrera, "
                 "deberá acreditar el promedio de renovación establecido en el Reglamento de Becas y "
                 "Ayudas Económicas, según el tipo de beca otorgada. Este beneficio por cambio de carrera "
-                "se aplicará por una sola ocasión y requerirá una nueva validación contractual."
+                "se aplicará por una sola ocasión."
             ),
         },
         {
@@ -947,52 +1069,56 @@ def _institutional_scholarship_contract_clauses() -> list[dict[str, str]]:
             "contenido": (
                 "El INTEC, a través de la Dirección de Bienestar, podrá suspender temporalmente la beca "
                 "o ayuda económica en los siguientes casos:\n"
-                "a) A petición de la parte interesada, se podrá suspender por una sola vez la beca o "
-                "ayuda económica hasta por dos períodos académicos consecutivos, por circunstancias de "
-                "caso fortuito o fuerza mayor debidamente justificadas.\n"
+                "a) A petición de la parte interesada, se podrá suspender por única vez la beca o ayuda "
+                "económica hasta por dos períodos académicos consecutivos, por circunstancias de caso "
+                "fortuito o fuerza mayor debidamente justificadas.\n"
                 "b) Cuando el/la becario/a no apruebe una asignatura, pero cumpla el promedio mínimo "
-                "establecido, podrá solicitar la suspensión temporal para el siguiente período académico. "
-                "Una vez aprobada la asignatura reprobada, la reactivación requerirá autorización de la "
-                "Dirección de Bienestar. El/la becario/a asumirá el pago de dicha asignatura y esta "
-                "salvedad se aplicará máximo por dos ocasiones durante la carrera."
+                "establecido para la renovación, deberá solicitar la suspensión temporal de la beca para "
+                "el siguiente período académico. Una vez que apruebe la asignatura reprobada, se "
+                "procederá, previa autorización de la Dirección de Bienestar del INTEC, a la reactivación "
+                "de la beca. El/la becario/a deberá asumir el pago de dicha asignatura y esta salvedad se "
+                "aplicará máximo por dos ocasiones durante la carrera."
             ),
         },
         {
             "titulo": "CLÁUSULA SÉPTIMA.- SUSPENSIÓN DEFINITIVA.-",
             "contenido": (
-                "Serán causales de suspensión definitiva:\n"
-                "a) No aprobar dos o más asignaturas en el período académico correspondiente;\n"
+                "Serán causales de suspensión definitiva las siguientes:\n"
+                "a) Cuando el/la becario/a o beneficiario/a de una ayuda económica no apruebe dos o más "
+                "asignaturas en el período académico correspondiente;\n"
                 "b) Haber sido sancionado/a por faltas disciplinarias;\n"
-                "c) Comprobarse falsedad o alteración de los documentos o datos presentados para el "
-                "otorgamiento de la beca; y,\n"
-                "d) Incumplir las obligaciones establecidas en el Reglamento de Becas y Ayudas "
-                "Económicas o en el presente contrato.\n"
+                "c) Por la comprobación de falsedad o alteración de los documentos o datos consignados "
+                "para el otorgamiento de la beca o ayuda económica; y,\n"
+                "d) Por incumplimiento de las obligaciones establecidas en el Reglamento de Becas y "
+                "Ayudas Económicas y en el presente contrato.\n"
                 "En estos casos, la Dirección de Bienestar notificará al/la becario/a el incumplimiento "
-                "y le concederá el término de tres días para presentar los argumentos que considere "
-                "procedentes. Transcurrido dicho término, la Coordinación Académica de la carrera pondrá "
-                "el caso en conocimiento de la Dirección de Bienestar para la resolución institucional "
-                "correspondiente. De ser procedente la suspensión definitiva, se dispondrá que el/la "
-                "beneficiario/a restituya los valores financiados e intereses generados. El/la becario/a "
-                "se obliga de manera expresa y sin requerimiento de formalidad alguna a devolver la "
-                "totalidad de los valores que se determinen."
+                "de las obligaciones y le concederá el término de tres días para que presente los "
+                "argumentos que considere procedentes. Transcurrido el término señalado, la Coordinación "
+                "Académica de la carrera pondrá el caso en conocimiento de la Dirección de Bienestar del "
+                "INTEC para la aprobación de la suspensión definitiva y, de ser procedente, dispondrá que "
+                "el/la beneficiario/a restituya los valores financiados e intereses generados. El/la "
+                "becario/a o beneficiario/a se obliga de manera expresa y sin requerimiento de formalidad "
+                "alguna a devolver en su totalidad los valores señalados cuando así se determine."
             ),
         },
         {
             "titulo": "CLÁUSULA OCTAVA.- RENUNCIA A LA BECA O AYUDA ECONÓMICA.-",
             "contenido": (
-                "El/la becario/a podrá renunciar a la beca o ayuda económica por fuerza mayor, caso "
-                "fortuito debidamente motivado o por las situaciones calamitosas previstas en el "
-                "Reglamento de Becas y Ayudas Económicas. La renuncia deberá formalizarse por escrito y "
-                "corresponderá a la Comisión de Becas y Ayudas Económicas aprobar la terminación del "
-                "contrato por mutuo acuerdo. Si el/la becario/a renuncia por otras razones o no presenta "
-                "la carta de renuncia, esta situación se considerará causal de terminación unilateral y "
-                "se aplicarán las consecuencias previstas en la normativa institucional."
+                "El/la becario/a podrá renunciar a la beca o ayuda económica otorgada por fuerza mayor, "
+                "caso fortuito debidamente motivado o por las situaciones calamitosas establecidas en el "
+                "Reglamento de Becas y Ayudas Económicas. Corresponderá a la Comisión de Becas y Ayudas "
+                "Económicas aprobar la terminación del contrato por mutuo acuerdo. Si el/la becario/a "
+                "renuncia por otras razones o no presenta la carta de renuncia, esta situación se "
+                "considerará causal para la terminación unilateral del contrato; en este caso será "
+                "sancionado/a por incumplimiento de las obligaciones contractuales y reglamentarias y no "
+                "podrá postularse ni beneficiarse de otro tipo de beca o renovación."
             ),
         },
         {
             "titulo": "CLÁUSULA NOVENA.- MODIFICACIONES.-",
             "contenido": (
-                "Las condiciones para el otorgamiento de los diversos tipos de becas estarán sujetas a "
+                "Las condiciones para el otorgamiento y renovación de los diversos tipos de becas están "
+                "sujetas a "
                 "las resoluciones modificatorias del Reglamento de Becas y Ayudas Económicas que expida "
                 "el Órgano Colegiado Superior del Instituto Superior Tecnológico de Técnicas Empresariales "
                 "y del Conocimiento (INTEC)."
@@ -1015,10 +1141,10 @@ def _institutional_scholarship_contract_clauses() -> list[dict[str, str]]:
         {
             "titulo": "CLÁUSULA DÉCIMA SEGUNDA.- ACEPTACIÓN Y RATIFICACIÓN.-",
             "contenido": (
-                "Las partes declaran que aceptan los términos y condiciones del presente contrato por "
-                "convenir a sus mutuos intereses, por lo que se ratifican en todo su contenido y, para "
-                "constancia, lo suscriben en dos ejemplares del mismo tenor y valor en la ciudad de "
-                "{CIUDAD}, a los {FECHA_CONTRATO}."
+                "Las partes declaran expresamente que aceptan los términos y condiciones del presente "
+                "contrato por convenir a sus mutuos intereses, por lo que se ratifican en todo su "
+                "contenido y, para muestra de aquello, lo suscriben en dos ejemplares del mismo tenor y "
+                "valor en la ciudad de {CIUDAD}, a los {FECHA_CONTRATO}."
             ),
         },
     ]
@@ -1028,9 +1154,17 @@ def _program_scholarship_contract_intro() -> str:
     return (
         "En la ciudad de {CIUDAD}, a los {FECHA_CONTRATO}, comparecen el {RECTOR}, en su calidad de "
         "Rector del Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento "
-        "(INTEC), de conformidad con la {RESOLUCION}; y el/la señor/a {ESTUDIANTE}, con cédula de "
-        "ciudadanía No. {CEDULA}, a quien en adelante se le denominará como el/la BECARIO/A, conforme "
-        "a las cláusulas que a continuación se detallan:"
+        "(INTEC), de conformidad con la {RESOLUCION}; y el/la señor(a)(ita) {ESTUDIANTE}, con cédula "
+        "de ciudadanía No. {CEDULA}, a quien en adelante se le denominará como el/la “BECARIO/A”, "
+        "conforme a las cláusulas que a continuación se detallan:"
+    )
+
+
+def _tax_incentive_scholarship_program() -> str:
+    return (
+        "Programa de acceso a la educación superior tecnológica por medio de becas y ayudas "
+        "económicas para la población de escasos recursos y vulnerables del Ecuador, en "
+        "coordinación con el sector empresarial ecuatoriano, para estudiar en el INTEC"
     )
 
 
@@ -1039,18 +1173,21 @@ def _program_scholarship_contract_clauses() -> list[dict[str, str]]:
         {
             "titulo": "CLÁUSULA PRIMERA.- ANTECEDENTES.-",
             "contenido": (
-                "Es política del INTEC el otorgamiento de becas y ayudas económicas que aseguren el "
-                "cumplimiento del artículo 356 de la Constitución de la República del Ecuador, que "
-                "establece que el cobro de aranceles en la educación superior particular contará con "
-                "mecanismos tales como becas, créditos, cuotas de ingreso u otros que permitan la "
-                "integración y equidad social en sus múltiples dimensiones; en aplicación del principio "
-                "de igualdad de oportunidades y de la normativa nacional e institucional vigente."
+                "Es política del INTEC otorgar becas y ayudas económicas que aseguren el cumplimiento "
+                "del artículo 356 de la Constitución de la República del Ecuador. Es política del INTEC "
+                "el otorgamiento de becas y ayudas económicas que aseguren el cumplimiento del artículo "
+                "356 de la Constitución de la República del Ecuador, que establece: “el "
+                "cobro de aranceles en la educación superior particular contará con mecanismos tales "
+                "como becas, créditos, cuotas de ingreso u otros que permitan la integración y equidad "
+                "social en sus múltiples dimensiones”; el principio de igualdad de oportunidades y las "
+                "demás disposiciones establecidas en la Constitución, en la Ley Orgánica de Educación "
+                "Superior (LOES) y demás normativa aplicable."
             ),
         },
         {
             "titulo": "CLÁUSULA SEGUNDA.- OBJETO Y NATURALEZA DEL CONTRATO.-",
             "contenido": (
-                "El INTEC otorga la beca de acuerdo con las especificaciones registradas en las tablas "
+                "El INTEC otorga la BECA de acuerdo con las especificaciones registradas en las tablas "
                 "de datos y proyección de la beca."
             ),
         },
@@ -1058,29 +1195,33 @@ def _program_scholarship_contract_clauses() -> list[dict[str, str]]:
             "titulo": "CLÁUSULA TERCERA.- PLAZO DEL CONTRATO.-",
             "contenido": (
                 "El presente contrato rige a partir de su suscripción, sin perjuicio de la fecha de "
-                "adjudicación de la beca, y estará vigente durante {PERIODO}, hasta el cumplimiento de "
-                "las obligaciones y el cierre institucional correspondiente."
+                "adjudicación de la beca, y estará vigente hasta su finiquito."
             ),
         },
         {
             "titulo": "CLÁUSULA CUARTA.- ENTREGA DE RECURSOS Y FORMA DE PAGO.-",
             "contenido": (
-                "La beca denominada {BECA} cuenta con el patrocinio de {AUSPICIANTE}, responsable de "
-                "cubrir el beneficio aprobado del {PORCENTAJE_BECA} por un valor referencial de "
-                "{VALOR_BECA}. {ALCANCE_BECA}"
+                "La beca cuenta con el patrocinio de {AUSPICIANTE}, quien es responsable de cubrir los "
+                "rubros contenidos en el presente contrato."
             ),
         },
         {
             "titulo": "CLÁUSULA QUINTA.- OBLIGACIONES Y COMPROMISOS DE LAS PARTES.-",
             "contenido": (
-                "5.1. OBLIGACIONES DEL INTEC: 1. Realizar el seguimiento y control para el cumplimiento "
-                "de las obligaciones y plazos estipulados en el presente contrato. 2. Aplicar "
-                "exclusivamente los rubros aprobados en la adjudicación. 5.2. OBLIGACIONES DEL/LA "
-                "BECARIO/A: 1. Cumplir con el objeto para el cual se le otorgó la beca. 2. Cumplir con "
-                "las normas, reglamentos y obligaciones académicas establecidas por el INTEC. 3. Mantener "
-                "un promedio mínimo de 7/10. 4. Aprobar la carrera en el plazo establecido. 5. Entregar "
-                "documentación legítima, válida, veraz y legible para el seguimiento de la beca. 6. "
-                "Cuidar los bienes o equipos entregados, cuando corresponda."
+                "5.1. OBLIGACIONES DEL INTEC. Son obligaciones del INTEC las siguientes:\n"
+                "1. Realizar el seguimiento y control para el cumplimiento de las obligaciones y plazos "
+                "estipulados en el presente contrato.\n"
+                "2. Cubrir costos adicionales como inglés, derechos de titulación y otros costos de "
+                "servicio.\n"
+                "5.2. OBLIGACIONES DEL/LA BECARIO/A:\n"
+                "1. Cumplir con el objeto para el cual se le otorgó la beca.\n"
+                "2. Cumplir con las normas, reglamentos y obligaciones académicas establecidas por el "
+                "INTEC.\n"
+                "3. Aprobar la carrera en el plazo establecido en el contrato de financiamiento.\n"
+                "5. Entregar documentación legítima, válida, veraz y legible para el proceso de "
+                "seguimiento de la beca hasta su culminación.\n"
+                "6. Cuidar el equipo tecnológico entregado en este programa para garantizar su "
+                "conectividad y proceso formativo."
             ),
         },
         {
@@ -1088,7 +1229,7 @@ def _program_scholarship_contract_clauses() -> list[dict[str, str]]:
             "contenido": (
                 "En caso de controversias, las partes se someterán a la resolución de un juez de la "
                 "ciudad de {CIUDAD}, conforme a las estipulaciones establecidas en el Código Civil y "
-                "demás normativa aplicable."
+                "demás normativa aplicable para este efecto."
             ),
         },
         {
@@ -1100,6 +1241,123 @@ def _program_scholarship_contract_clauses() -> list[dict[str, str]]:
             ),
         },
     ]
+
+
+def _scholarship_contract_full_text(
+    introduction: str,
+    clauses: list[dict[str, str]],
+    contract_format: str,
+) -> str:
+    parts = [_clean(introduction)] if _clean(introduction) else []
+    for index, clause in enumerate(clauses):
+        if index == 2:
+            parts.append("[[TABLA_DATOS]]")
+            if _canonical_scholarship_contract_format(contract_format) == "INCENTIVOS_TRIBUTARIOS":
+                parts.append("[[TABLA_PROYECCION]]")
+        title = _clean(clause.get("titulo"))
+        content = str(clause.get("contenido") or "").strip()
+        clause_text = "\n".join(value for value in (title, content) if value)
+        if clause_text:
+            parts.append(clause_text)
+    if len(clauses) < 3:
+        parts.append("[[TABLA_DATOS]]")
+        if _canonical_scholarship_contract_format(contract_format) == "INCENTIVOS_TRIBUTARIOS":
+            parts.append("[[TABLA_PROYECCION]]")
+    parts.append("[[FIRMAS]]")
+    return "\n\n".join(parts)
+
+
+def _default_scholarship_contract_template_data(contract_format: str) -> dict[str, Any]:
+    canonical_format = _canonical_scholarship_contract_format(contract_format)
+    institutional_clauses = _institutional_scholarship_contract_clauses()
+    program_clauses = _program_scholarship_contract_clauses()
+    template = ScholarshipContractTemplatePayload().model_dump(mode="json")
+    template.update(
+        {
+            "introduccion_institucional": _institutional_scholarship_contract_intro(),
+            "clausulas_institucionales": institutional_clauses,
+            "introduccion_programa": _program_scholarship_contract_intro(),
+            "clausulas_programa": program_clauses,
+            "texto_completo": _scholarship_contract_full_text(
+                _program_scholarship_contract_intro()
+                if canonical_format == "INCENTIVOS_TRIBUTARIOS"
+                else _institutional_scholarship_contract_intro(),
+                program_clauses
+                if canonical_format == "INCENTIVOS_TRIBUTARIOS"
+                else institutional_clauses,
+                canonical_format,
+            ),
+        }
+    )
+    if canonical_format == "INCENTIVOS_TRIBUTARIOS":
+        template.update(
+            {
+                "titulo_contrato": "CONTRATO DE BECA",
+                "titulo_tabla_datos": "DATOS BECA",
+                "titulo_tabla_proyeccion": "PROYECCIÓN DE LA BECA",
+                "rector_tratamiento": "MGT.",
+                "rector_titulo": "",
+                "programa": _tax_incentive_scholarship_program(),
+                "institucion_educacion": (
+                    "IST de Técnicas Empresariales y del Conocimiento - INTEC"
+                ),
+                "proyeccion": [
+                    item.model_dump(mode="json")
+                    for item in _default_tax_incentive_projection()
+                ],
+            }
+        )
+    else:
+        template["proyeccion"] = []
+    template["titulo_contrato"] = "CONTRATO DE BECA"
+    return template
+
+
+def _resolved_scholarship_contract_template(
+    contract_format: str,
+    template: ScholarshipContractTemplatePayload | dict[str, Any] | None,
+) -> ScholarshipContractTemplatePayload:
+    defaults = _default_scholarship_contract_template_data(contract_format)
+    if template is None:
+        return ScholarshipContractTemplatePayload.model_validate(defaults)
+
+    if isinstance(template, BaseModel):
+        overrides = template.model_dump(mode="json", exclude_unset=True)
+    else:
+        overrides = dict(template)
+
+    override_keys = set(overrides)
+    label_overrides = overrides.pop("rotulos_tabla", None)
+    overrides.pop("titulo_contrato", None)
+    defaults.update(overrides)
+    if isinstance(label_overrides, dict):
+        defaults["rotulos_tabla"] = {
+            **defaults["rotulos_tabla"],
+            **label_overrides,
+        }
+    canonical_format = _canonical_scholarship_contract_format(contract_format)
+    content_fields = (
+        {"introduccion_programa", "clausulas_programa"}
+        if canonical_format == "INCENTIVOS_TRIBUTARIOS"
+        else {"introduccion_institucional", "clausulas_institucionales"}
+    )
+    if "texto_completo" not in override_keys and content_fields & override_keys:
+        introduction_field = (
+            "introduccion_programa"
+            if canonical_format == "INCENTIVOS_TRIBUTARIOS"
+            else "introduccion_institucional"
+        )
+        clauses_field = (
+            "clausulas_programa"
+            if canonical_format == "INCENTIVOS_TRIBUTARIOS"
+            else "clausulas_institucionales"
+        )
+        defaults["texto_completo"] = _scholarship_contract_full_text(
+            str(defaults.get(introduction_field) or ""),
+            _scholarship_contract_clauses(defaults, clauses_field, []),
+            canonical_format,
+        )
+    return ScholarshipContractTemplatePayload.model_validate(defaults)
 
 
 def _scholarship_contract_clauses(
@@ -1152,6 +1410,101 @@ def _scholarship_contract_clause_paragraph(
     return Paragraph(f"<b>{title}</b>{separator}{content}", style)
 
 
+_SCHOLARSHIP_CONTRACT_STRUCTURE_PATTERN = re.compile(
+    r"(?m)^\s*\[\[(TABLA_DATOS|TABLA_PROYECCION|FIRMAS)\]\]\s*$"
+)
+
+
+def _scholarship_contract_complete_text(
+    template: dict[str, Any],
+) -> str | None:
+    if "texto_completo" not in template:
+        return None
+    value = template.get("texto_completo")
+    if value is None:
+        return None
+    return str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _scholarship_contract_ensure_structure_markers(
+    text: str,
+    marker_names: list[str],
+) -> str:
+    normalized = text.strip()
+    for index, marker_name in enumerate(marker_names):
+        marker = f"[[{marker_name}]]"
+        if marker in normalized:
+            continue
+        next_marker = next(
+            (
+                f"[[{next_name}]]"
+                for next_name in marker_names[index + 1 :]
+                if f"[[{next_name}]]" in normalized
+            ),
+            "",
+        )
+        if next_marker:
+            normalized = normalized.replace(next_marker, f"{marker}\n\n{next_marker}", 1)
+        else:
+            normalized = f"{normalized}\n\n{marker}".strip()
+    return normalized
+
+
+def _scholarship_contract_full_text_paragraph(
+    value: str,
+    context: dict[str, Any],
+    style: ParagraphStyle,
+) -> Paragraph | None:
+    text = value.strip()
+    if not text:
+        return None
+    lines = text.splitlines()
+    first_line = lines[0].strip()
+    title_like = (
+        len(lines) > 1
+        and 2 < len(first_line) <= 250
+        and first_line == first_line.upper()
+        and any(character.isalpha() for character in first_line)
+    )
+    if title_like:
+        title = _scholarship_contract_markup(first_line, context)
+        content = _scholarship_contract_markup("\n".join(lines[1:]), context)
+        return Paragraph(f"<b>{title}</b>{' ' if content else ''}{content}", style)
+    return Paragraph(_scholarship_contract_markup(text, context), style)
+
+
+def _scholarship_contract_full_text_story(
+    text: str,
+    context: dict[str, Any],
+    style: ParagraphStyle,
+    structures: dict[str, Flowable],
+) -> list[Any]:
+    complete_text = _scholarship_contract_ensure_structure_markers(
+        text,
+        list(structures),
+    )
+    parts = _SCHOLARSHIP_CONTRACT_STRUCTURE_PATTERN.split(complete_text)
+    story: list[Any] = []
+    inserted_structures: set[str] = set()
+    for index, part in enumerate(parts):
+        if index % 2 == 1:
+            if part in structures and part not in inserted_structures:
+                if story and part != "FIRMAS":
+                    story.append(Spacer(1, 0.02 * cm))
+                story.append(structures[part])
+                inserted_structures.add(part)
+            continue
+        for paragraph_text in re.split(r"\n\s*\n+", part):
+            paragraph = _scholarship_contract_full_text_paragraph(
+                paragraph_text,
+                context,
+                style,
+            )
+            if paragraph is not None:
+                story.append(paragraph)
+    return story
+
+
 def _scholarship_contract_template_history(value: Any) -> dict[str, Any]:
     text = str(value or "").strip()
     if not text:
@@ -1163,14 +1516,22 @@ def _scholarship_contract_template_history(value: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _scholarship_contract_rector(template: dict[str, Any]) -> str:
-    treatment = _scholarship_contract_template_text(template, "rector_tratamiento", "Ingeniero")
+def _scholarship_contract_rector(
+    template: dict[str, Any],
+    default_treatment: str = "Ingeniero",
+    default_title: str = "MGT.",
+) -> str:
+    treatment = _scholarship_contract_template_text(
+        template,
+        "rector_tratamiento",
+        default_treatment,
+    )
     name = _scholarship_contract_template_text(
         template,
         "rector_nombre",
         "JAIME RODER ORTEGA PEREIRA",
     ).upper()
-    title = _scholarship_contract_template_text(template, "rector_titulo", "MGT.")
+    title = _scholarship_contract_template_text(template, "rector_titulo", default_title)
     suffix = f", {title}" if title else ""
     return f"{treatment} {name}{suffix}"
 
@@ -1288,7 +1649,10 @@ def _build_scholarship_contract_pdf(
     contract_date: date,
     template: ScholarshipContractTemplatePayload | dict[str, Any] | None = None,
 ) -> bytes:
-    template_data = _scholarship_contract_template_data(template)
+    template_data = _resolved_scholarship_contract_template(
+        "BECA",
+        template,
+    ).model_dump(mode="json")
     contract_title = _scholarship_contract_template_text(
         template_data,
         "titulo_contrato",
@@ -1346,6 +1710,16 @@ def _build_scholarship_contract_pdf(
         template_data,
         "firma_becario_etiqueta",
         "BECARIO/A",
+    )
+    contract_number_label = _scholarship_contract_table_label(
+        template_data,
+        "numero_contrato",
+        "No.",
+    )
+    signature_identification_label = _scholarship_contract_table_label(
+        template_data,
+        "identificacion_firma",
+        "C.C.:",
     )
     output = BytesIO()
     regular_font, bold_font, italic_font, _ = _scholarship_contract_fonts()
@@ -1470,7 +1844,7 @@ def _build_scholarship_contract_pdf(
         canvas.drawCentredString(
             title_x + title_width / 2,
             title_y + 0.18 * cm,
-            f"{contract_title} - No. {contract_number}",
+            f"{contract_title} - {contract_number_label} {contract_number}".strip(),
         )
 
         if not _SCHOLARSHIP_CONTRACT_BACKGROUND_PATH.is_file():
@@ -1505,6 +1879,7 @@ def _build_scholarship_contract_pdf(
         "PERIODO": period_label,
         "ALCANCE_BECA": _scholarship_contract_scope(item),
         "CARRERA": _clean(item.get("carrera") or item.get("codigo_carrera")).upper(),
+        "AUSPICIANTE": _clean(template_data.get("auspiciante")) or "INTEC",
     }
     introduction = _scholarship_contract_template_multiline(
         template_data,
@@ -1531,18 +1906,27 @@ def _build_scholarship_contract_pdf(
     if len(clauses) > 1:
         story.append(_scholarship_contract_clause_paragraph(clauses[1], contract_context, body_style))
 
+    benefit_suffix = _scholarship_contract_table_label(
+        template_data,
+        "beneficio_sufijo",
+        "del valor del arancel vigente",
+    )
+    benefit_value = (
+        f"<b>{escape(approved_percentage)} &nbsp;&nbsp; - &nbsp;&nbsp; {escape(granted_amount)}</b>"
+        f"{' &nbsp;&nbsp; ' + escape(benefit_suffix) if benefit_suffix else ''}"
+    )
     details = [
         [Paragraph(escape(data_table_title), cell_header), empty_cell, empty_cell, empty_cell, empty_cell],
-        [paragraph("Apellidos y nombres del/la becario/a:", cell_label), paragraph(student_name_upper), empty_cell, empty_cell, paragraph(f"Beca No. {contract_number}")],
-        [paragraph("Cédula de ciudadanía / identidad:", cell_label), paragraph(cedula), empty_cell, paragraph("Teléfono:", cell_label), paragraph(item.get("telefono"))],
-        [paragraph("Nivel de formación:", cell_label), paragraph(_scholarship_education_level(item.get("nivel_formacion"))), empty_cell, empty_cell, empty_cell],
-        [paragraph("Carrera/programa:", cell_label), paragraph((_clean(item.get("carrera")) or _clean(item.get("codigo_carrera"))).upper()), empty_cell, empty_cell, empty_cell],
-        [paragraph("Tipo de beca:", cell_label), paragraph(scholarship_name.upper()), empty_cell, empty_cell, empty_cell],
-        [paragraph("Discapacidad:", cell_label), paragraph(_scholarship_disability(item.get("discapacidad"))), paragraph("Porcentaje de discapacidad:", cell_label), empty_cell, paragraph(_scholarship_disability_percentage(item))],
-        [paragraph("Tipo de discapacidad:", cell_label), paragraph(_scholarship_disability_type(item).upper()), empty_cell, empty_cell, empty_cell],
-        [paragraph("Porcentaje de beca y monto otorgado:", cell_label), Paragraph(f"<b>{escape(approved_percentage)} &nbsp;&nbsp; - &nbsp;&nbsp; {escape(granted_amount)}</b> &nbsp;&nbsp; del valor del arancel vigente", cell_value_regular), empty_cell, empty_cell, empty_cell],
-        [paragraph("Período de adjudicación:", cell_label), paragraph(period_label), empty_cell, empty_cell, empty_cell],
-        [paragraph("Correo INTEC para notificaciones:", cell_label), Paragraph(f'<link href="mailto:{escape(notification_email)}">{escape(notification_email)}</link>', email_style), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "becario", "Apellidos y nombres del/la becario/a:"), cell_label), paragraph(student_name_upper), empty_cell, empty_cell, paragraph(f"{_scholarship_contract_table_label(template_data, 'numero_beca', 'Beca No.')} {contract_number}".strip())],
+        [paragraph(_scholarship_contract_table_label(template_data, "cedula", "Cédula de ciudadanía / identidad:"), cell_label), paragraph(cedula), empty_cell, paragraph(_scholarship_contract_table_label(template_data, "telefono", "Teléfono:"), cell_label), paragraph(item.get("telefono"))],
+        [paragraph(_scholarship_contract_table_label(template_data, "nivel_formacion", "Nivel de formación:"), cell_label), paragraph(_scholarship_education_level(item.get("nivel_formacion"))), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "carrera_programa", "Carrera/programa:"), cell_label), paragraph((_clean(item.get("carrera")) or _clean(item.get("codigo_carrera"))).upper()), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "tipo_beca", "Tipo de beca:"), cell_label), paragraph(scholarship_name.upper()), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "discapacidad", "Discapacidad:"), cell_label), paragraph(_scholarship_disability(item.get("discapacidad"))), paragraph(_scholarship_contract_table_label(template_data, "porcentaje_discapacidad", "Porcentaje de discapacidad:"), cell_label), empty_cell, paragraph(_scholarship_disability_percentage(item))],
+        [paragraph(_scholarship_contract_table_label(template_data, "tipo_discapacidad", "Tipo de discapacidad:"), cell_label), paragraph(_scholarship_disability_type(item).upper()), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "beneficio", "Porcentaje de beca y monto otorgado:"), cell_label), Paragraph(benefit_value, cell_value_regular), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "periodo_adjudicacion", "Período de adjudicación:"), cell_label), paragraph(period_label), empty_cell, empty_cell, empty_cell],
+        [paragraph(_scholarship_contract_table_label(template_data, "correo_notificaciones", "Correo INTEC para notificaciones:"), cell_label), Paragraph(f'<link href="mailto:{escape(notification_email)}">{escape(notification_email)}</link>', email_style), empty_cell, empty_cell, empty_cell],
     ]
     details_table = Table(details, colWidths=[6.75 * cm, 3.50 * cm, 1.50 * cm, 3.00 * cm, 3.60 * cm])
     details_table.setStyle(
@@ -1592,7 +1976,7 @@ def _build_scholarship_contract_pdf(
                 ),
                 Paragraph(
                     f"{escape(scholarship_signature_treatment)} <b>{escape(student_name_upper)}</b><br/>"
-                    f"{escape(scholarship_signature_label)} – C.C.: <b>{escape(cedula)}</b>",
+                    f"{escape(scholarship_signature_label)} – {escape(signature_identification_label)} <b>{escape(cedula)}</b>",
                     signature_style,
                 ),
             ],
@@ -1615,8 +1999,27 @@ def _build_scholarship_contract_pdf(
             ]
         )
     )
-    story.append(signatures)
-    document.build(story, onFirstPage=draw_contract_background, onLaterPages=draw_contract_background)
+    complete_text = _scholarship_contract_complete_text(
+        template_data,
+    )
+    if complete_text is None:
+        story.append(signatures)
+    else:
+        story = _scholarship_contract_full_text_story(
+            complete_text,
+            contract_context,
+            body_style,
+            {
+                "TABLA_DATOS": details_table,
+                "FIRMAS": signatures,
+            },
+        )
+    one_page_story = [KeepInFrame(document.width, document.height, story, mode="shrink")]
+    document.build(
+        one_page_story,
+        onFirstPage=draw_contract_background,
+        onLaterPages=draw_contract_background,
+    )
     return output.getvalue()
 
 
@@ -1626,7 +2029,10 @@ def _build_program_scholarship_contract_pdf(
     contract_date: date,
     template: ScholarshipContractTemplatePayload | dict[str, Any] | None = None,
 ) -> bytes:
-    template_data = _scholarship_contract_template_data(template)
+    template_data = _resolved_scholarship_contract_template(
+        "INCENTIVOS_TRIBUTARIOS",
+        template,
+    ).model_dump(mode="json")
     contract_title = _scholarship_contract_template_text(
         template_data,
         "titulo_contrato",
@@ -1638,7 +2044,11 @@ def _build_program_scholarship_contract_pdf(
         "resolucion",
         "Resolución No. 002-CR-INTEC-2024, de 19 de diciembre de 2024",
     )
-    rector = _scholarship_contract_rector(template_data)
+    rector = _scholarship_contract_rector(
+        template_data,
+        default_treatment="MGT.",
+        default_title="",
+    )
     rector_signature = _scholarship_contract_rector_signature(template_data)
     table_header_color = _scholarship_contract_color(
         template_data,
@@ -1690,19 +2100,25 @@ def _build_program_scholarship_contract_pdf(
         "firma_becario_etiqueta",
         "BECARIO/A",
     )
+    contract_number_label = _scholarship_contract_table_label(
+        template_data,
+        "numero_contrato",
+        "No.",
+    )
+    signature_identification_label = _scholarship_contract_table_label(
+        template_data,
+        "identificacion_firma",
+        "C.C.:",
+    )
     program = _scholarship_contract_template_text(
         template_data,
         "programa",
-        (
-            "Programa de acceso a la educación superior tecnológica por medio de becas y ayudas "
-            "económicas para la población de escasos recursos y vulnerable del Ecuador, en "
-            "coordinación con el sector empresarial ecuatoriano, para estudiar en el INTEC"
-        ),
+        _tax_incentive_scholarship_program(),
     )
     institution = _scholarship_contract_template_text(
         template_data,
         "institucion_educacion",
-        "Instituto Superior Tecnológico de Técnicas Empresariales y del Conocimiento (INTEC)",
+        "IST de Técnicas Empresariales y del Conocimiento - INTEC",
     )
     country = _scholarship_contract_template_text(template_data, "pais", "Ecuador")
     sponsor = _scholarship_contract_template_text(template_data, "auspiciante", "INTEC")
@@ -1742,9 +2158,10 @@ def _build_program_scholarship_contract_pdf(
 
     output = BytesIO()
     regular_font, bold_font, _, _ = _scholarship_contract_fonts()
+    contract_page_size = LETTER
     document = SimpleDocTemplate(
         output,
-        pagesize=A4,
+        pagesize=contract_page_size,
         rightMargin=1.20 * cm,
         leftMargin=1.20 * cm,
         topMargin=2.45 * cm,
@@ -1757,8 +2174,8 @@ def _build_program_scholarship_contract_pdf(
         "ScholarshipProgramBody",
         parent=styles["BodyText"],
         fontName=regular_font,
-        fontSize=6.70,
-        leading=7.60,
+        fontSize=8.15,
+        leading=10.5,
         alignment=TA_JUSTIFY,
         textColor=colors.HexColor("#111111"),
         spaceBefore=0,
@@ -1770,8 +2187,8 @@ def _build_program_scholarship_contract_pdf(
         "ScholarshipProgramCellLabel",
         parent=styles["Normal"],
         fontName=bold_font,
-        fontSize=6.65,
-        leading=7.15,
+        fontSize=7.25,
+        leading=7.85,
         textColor=colors.HexColor("#111111"),
     )
     cell_value = ParagraphStyle(
@@ -1789,8 +2206,8 @@ def _build_program_scholarship_contract_pdf(
         "ScholarshipProgramSignature",
         parent=styles["Normal"],
         fontName=regular_font,
-        fontSize=7.0,
-        leading=7.7,
+        fontSize=7.75,
+        leading=8.4,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#111111"),
     )
@@ -1800,7 +2217,7 @@ def _build_program_scholarship_contract_pdf(
 
     def draw_program_background(canvas: Any, doc: Any) -> None:
         canvas.saveState()
-        page_width, page_height = A4
+        page_width, page_height = contract_page_size
         if _SCHOLARSHIP_CONTRACT_BACKGROUND_PATH.is_file():
             canvas.drawImage(
                 str(_SCHOLARSHIP_CONTRACT_BACKGROUND_PATH),
@@ -1833,7 +2250,7 @@ def _build_program_scholarship_contract_pdf(
         canvas.drawCentredString(
             title_x + title_width / 2,
             title_y + 0.22 * cm,
-            f"{contract_title} No.{contract_number}",
+            f"{contract_title} {contract_number_label} {contract_number}".strip(),
         )
         canvas.setFont(regular_font, 5.8)
         canvas.drawCentredString(page_width / 2, 0.42 * cm, f"Página {doc.page}")
@@ -1889,14 +2306,14 @@ def _build_program_scholarship_contract_pdf(
 
     data_rows = [
         [Paragraph(escape(data_table_title), cell_header), "", "", ""],
-        [paragraph("Apellidos y Nombres", cell_label), paragraph(student_name), paragraph("Documento de identidad", cell_label), paragraph(cedula)],
-        [paragraph("Programa", cell_label), paragraph(program), "", ""],
-        [paragraph("País", cell_label), paragraph(country), paragraph("Fecha final financiamiento", cell_label), paragraph(financing_end)],
-        [paragraph("Institución de Educación", cell_label), paragraph(institution), paragraph("Duración financiamiento", cell_label), paragraph(financing_duration)],
-        [paragraph("Auspiciante", cell_label), paragraph(sponsor), paragraph("Fecha inicio estudios", cell_label), paragraph(study_start)],
-        [paragraph("Carrera", cell_label), paragraph(career), paragraph("Fecha finalización estudios", cell_label), paragraph(study_end)],
-        [paragraph("Nivel de estudios", cell_label), paragraph(education_level), paragraph("Duración de estudios", cell_label), paragraph(study_duration)],
-        [paragraph("Fecha inicial financiamiento", cell_label), paragraph(financing_start), paragraph("Período de pago", cell_label), paragraph(payment_period)],
+        [paragraph(_scholarship_contract_table_label(template_data, "nombres", "Apellidos y Nombres"), cell_label), paragraph(student_name), paragraph(_scholarship_contract_table_label(template_data, "documento_identidad", "Documento de identidad"), cell_label), paragraph(f"{_scholarship_contract_table_label(template_data, 'prefijo_documento_identidad', 'CÉDULA -')} {cedula}".strip())],
+        [paragraph(_scholarship_contract_table_label(template_data, "programa", "Programa"), cell_label), paragraph(program), "", ""],
+        [paragraph(_scholarship_contract_table_label(template_data, "pais", "País"), cell_label), paragraph(country), paragraph(_scholarship_contract_table_label(template_data, "fecha_fin_financiamiento", "Fecha final financiamiento"), cell_label), paragraph(financing_end)],
+        [paragraph(_scholarship_contract_table_label(template_data, "institucion_educacion", "Institución de Educación"), cell_label), paragraph(institution), paragraph(_scholarship_contract_table_label(template_data, "duracion_financiamiento", "Duración financiamiento"), cell_label), paragraph(financing_duration)],
+        [paragraph(_scholarship_contract_table_label(template_data, "auspiciante", "Auspiciante"), cell_label), paragraph(sponsor), paragraph(_scholarship_contract_table_label(template_data, "fecha_inicio_estudios", "Fecha inicio estudios"), cell_label), paragraph(study_start)],
+        [paragraph(_scholarship_contract_table_label(template_data, "carrera", "Carrera"), cell_label), paragraph(career), paragraph(_scholarship_contract_table_label(template_data, "fecha_fin_estudios", "Fecha finalización estudios"), cell_label), paragraph(study_end)],
+        [paragraph(_scholarship_contract_table_label(template_data, "nivel_estudios", "Nivel de estudios"), cell_label), paragraph(education_level), paragraph(_scholarship_contract_table_label(template_data, "duracion_estudios", "Duración de estudios"), cell_label), paragraph(study_duration)],
+        [paragraph(_scholarship_contract_table_label(template_data, "fecha_inicio_financiamiento", "Fecha inicial financiamiento"), cell_label), paragraph(financing_start), paragraph(_scholarship_contract_table_label(template_data, "periodo_pago", "Período de pago"), cell_label), paragraph(payment_period)],
     ]
     data_table = Table(data_rows, colWidths=[3.75 * cm, 5.45 * cm, 3.75 * cm, 5.45 * cm])
     data_table.setStyle(
@@ -1925,21 +2342,28 @@ def _build_program_scholarship_contract_pdf(
     if not projection_items:
         projection_items = [
             {
-                "rubro": "Arancel académico",
-                "periodicidad": f"{percentage:g}% - {granted_amount} durante {period_label}",
+                "rubro": "Matrícula y arancel",
+                "periodicidad": f"{percentage:g}% del arancel académico durante {period_label}",
             },
             {
-                "rubro": "Matrícula",
-                "periodicidad": (
-                    "No cubierta por la Beca INTEC"
-                    if _is_intec_scholarship(item.get("tipo_beca"))
-                    else "Según la aprobación institucional registrada"
-                ),
+                "rubro": "Ayuda económica",
+                "periodicidad": f"{granted_amount} durante {period_label}",
             },
         ]
     projection_rows: list[list[Any]] = [
         [Paragraph(escape(projection_table_title), cell_header), "", ""],
-        [paragraph("Nº", cell_label), paragraph("Rubro", cell_label), paragraph("Periodicidad del rubro", cell_label)],
+        [
+            paragraph(_scholarship_contract_table_label(template_data, "numero", "Nº"), cell_label),
+            paragraph(_scholarship_contract_table_label(template_data, "rubro", "Rubro"), cell_label),
+            paragraph(
+                _scholarship_contract_table_label(
+                    template_data,
+                    "periodicidad_rubro",
+                    "Periodicidad del rubro",
+                ),
+                cell_label,
+            ),
+        ],
     ]
     for index, projection in enumerate(projection_items, start=1):
         raw_projection = (
@@ -1948,8 +2372,13 @@ def _build_program_scholarship_contract_pdf(
         projection_rows.append(
             [
                 paragraph(index),
-                paragraph(raw_projection.get("rubro")),
-                paragraph(raw_projection.get("periodicidad")),
+                paragraph(_scholarship_contract_render_text(raw_projection.get("rubro"), contract_context)),
+                paragraph(
+                    _scholarship_contract_render_text(
+                        raw_projection.get("periodicidad"),
+                        contract_context,
+                    )
+                ),
             ]
         )
     projection_table = Table(projection_rows, colWidths=[1.0 * cm, 7.0 * cm, 10.4 * cm])
@@ -1985,13 +2414,13 @@ def _build_program_scholarship_contract_pdf(
                 ),
                 Paragraph(
                     f"{escape(scholarship_signature_treatment)} <b>{escape(student_name)}</b><br/>"
-                    f"{escape(scholarship_signature_label)} - C.C.: <b>{escape(cedula)}</b>",
+                    f"{escape(scholarship_signature_label)} - {escape(signature_identification_label)} <b>{escape(cedula)}</b>",
                     signature_style,
                 ),
             ],
         ],
         colWidths=[9.2 * cm, 9.2 * cm],
-        rowHeights=[2.55 * cm, None],
+        rowHeights=[4.20 * cm, None],
         splitByRow=0,
     )
     signatures.setStyle(
@@ -2007,8 +2436,28 @@ def _build_program_scholarship_contract_pdf(
             ]
         )
     )
-    story.append(signatures)
-    document.build(story, onFirstPage=draw_program_background, onLaterPages=draw_program_background)
+    complete_text = _scholarship_contract_complete_text(
+        template_data,
+    )
+    if complete_text is None:
+        story.append(signatures)
+    else:
+        story = _scholarship_contract_full_text_story(
+            complete_text,
+            contract_context,
+            body_style,
+            {
+                "TABLA_DATOS": data_table,
+                "TABLA_PROYECCION": projection_table,
+                "FIRMAS": signatures,
+            },
+        )
+    one_page_story = [KeepInFrame(document.width, document.height, story, mode="shrink")]
+    document.build(
+        one_page_story,
+        onFirstPage=draw_program_background,
+        onLaterPages=draw_program_background,
+    )
     return output.getvalue()
 
 
@@ -2019,7 +2468,7 @@ def _build_selected_scholarship_contract_pdf(
     contract_format: str,
     template: ScholarshipContractTemplatePayload | dict[str, Any] | None = None,
 ) -> bytes:
-    if _clean(contract_format).upper() == "PROGRAMA":
+    if _canonical_scholarship_contract_format(contract_format) == "INCENTIVOS_TRIBUTARIOS":
         return _build_program_scholarship_contract_pdf(
             item,
             contract_number,
@@ -4497,7 +4946,7 @@ def _ensure_scholarship_contract_table(cursor: pyodbc.Cursor) -> None:
                 NumeroContrato NVARCHAR(100) NOT NULL,
                 FechaContrato DATE NOT NULL,
                 FormatoContrato VARCHAR(30) NOT NULL
-                    CONSTRAINT DF_ContratoBeca_Formato DEFAULT 'INSTITUCIONAL',
+                    CONSTRAINT DF_ContratoBeca_Formato DEFAULT 'BECA',
                 PlantillaJson NVARCHAR(MAX) NULL,
                 NombreArchivo NVARCHAR(260) NOT NULL,
                 RutaArchivo NVARCHAR(1000) NOT NULL,
@@ -4540,7 +4989,7 @@ def _ensure_scholarship_contract_table(cursor: pyodbc.Cursor) -> None:
             ALTER TABLE bec.ContratoBeca ADD EstadoExpedienteCodigo VARCHAR(30) NULL;
         IF COL_LENGTH(N'bec.ContratoBeca', N'FormatoContrato') IS NULL
             ALTER TABLE bec.ContratoBeca ADD FormatoContrato VARCHAR(30) NOT NULL
-                CONSTRAINT DF_ContratoBeca_Formato DEFAULT 'INSTITUCIONAL';
+                CONSTRAINT DF_ContratoBeca_Formato DEFAULT 'BECA';
         IF COL_LENGTH(N'bec.ContratoBeca', N'PlantillaJson') IS NULL
             ALTER TABLE bec.ContratoBeca ADD PlantillaJson NVARCHAR(MAX) NULL;
 
@@ -4618,18 +5067,10 @@ def _scholarship_contract_candidates(
 @router.get("/becas/contratos/plantilla")
 def get_scholarship_contract_template(
     current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+    formato_contrato: Literal["BECA", "INCENTIVOS_TRIBUTARIOS"] = Query(default="BECA"),
 ) -> dict[str, Any]:
     del current_user
-    template = ScholarshipContractTemplatePayload().model_dump(mode="json")
-    template.update(
-        {
-            "introduccion_institucional": _institutional_scholarship_contract_intro(),
-            "clausulas_institucionales": _institutional_scholarship_contract_clauses(),
-            "introduccion_programa": _program_scholarship_contract_intro(),
-            "clausulas_programa": _program_scholarship_contract_clauses(),
-        }
-    )
-    return template
+    return _default_scholarship_contract_template_data(formato_contrato)
 
 
 @router.get("/becas/contratos/candidatos")
@@ -4703,6 +5144,64 @@ def list_scholarship_contract_candidates(
         raise HTTPException(status_code=503, detail=f"No se pudieron consultar los contratos de beca: {exc}") from exc
 
 
+@router.post("/becas/contratos/vista-previa")
+def preview_scholarship_contract(
+    payload: ScholarshipContractPreviewPayload,
+    current_user: Annotated[SessionUser, Depends(_SCHOLARSHIP_APPROVAL_ACCESS)],
+) -> StreamingResponse:
+    item = _scholarship_contract_preview_item(payload)
+    if payload.beca_id is not None:
+        try:
+            candidates = _scholarship_contract_candidates(
+                current_user,
+                "",
+                "",
+                _clean(payload.codigo_periodo),
+                None,
+            )
+        except pyodbc.Error as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"No se pudo preparar la vista previa del contrato: {exc}",
+            ) from exc
+        selected = next(
+            (candidate for candidate in candidates if int(candidate.get("beca_id") or 0) == payload.beca_id),
+            None,
+        )
+        if selected is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "El estudiante seleccionado ya no corresponde a una beca activa. "
+                    "Actualice el listado antes de generar la vista previa."
+                ),
+            )
+        item = selected
+
+    contract_format = _canonical_scholarship_contract_format(payload.formato_contrato)
+    contract_template = _resolved_scholarship_contract_template(
+        contract_format,
+        payload.plantilla,
+    )
+    contract_date = _date_from_iso(contract_template.fecha_contrato)
+    contract_number = _scholarship_contract_base_number(item, contract_date)
+    pdf_bytes = _build_selected_scholarship_contract_pdf(
+        item,
+        contract_number,
+        contract_date,
+        contract_format,
+        contract_template,
+    )
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="vista-previa-contrato-beca.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.post("/becas/contratos/generar")
 def generate_scholarship_contracts(
     payload: ScholarshipContractGeneratePayload,
@@ -4732,8 +5231,11 @@ def generate_scholarship_contracts(
                 detail="Cada operación debe contener una sola beca y un único período académico",
             )
 
-        contract_format = payload.formato_contrato
-        contract_template = payload.plantilla
+        contract_format = _canonical_scholarship_contract_format(payload.formato_contrato)
+        contract_template = _resolved_scholarship_contract_template(
+            contract_format,
+            payload.plantilla,
+        )
         contract_template_json = json.dumps(
             contract_template.model_dump(mode="json"),
             ensure_ascii=False,
@@ -4910,7 +5412,7 @@ def list_scholarship_contract_history(
                 "valor_beca": float(row.ValorBeca or 0),
                 "numero_contrato": _clean(row.NumeroContrato),
                 "fecha_contrato": _date_text(row.FechaContrato),
-                "formato_contrato": _clean(row.FormatoContrato) or "INSTITUCIONAL",
+                "formato_contrato": _canonical_scholarship_contract_format(row.FormatoContrato),
                 "plantilla": _scholarship_contract_template_history(row.PlantillaJson),
                 "nombre_archivo": _clean(row.NombreArchivo),
                 "hash_sha256": _clean(row.HashSha256),

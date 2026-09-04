@@ -5950,7 +5950,7 @@ export type ScholarshipContractCandidateListResponse = {
   detail?: string
 }
 
-export type ScholarshipContractFormat = 'INSTITUCIONAL' | 'PROGRAMA'
+export type ScholarshipContractFormat = 'BECA' | 'INCENTIVOS_TRIBUTARIOS'
 
 export type ScholarshipContractProjectionItem = {
   rubro: string
@@ -5962,8 +5962,47 @@ export type ScholarshipContractClause = {
   contenido: string
 }
 
+export type ScholarshipContractTableLabels = {
+  numero_contrato: string
+  identificacion_firma: string
+  becario: string
+  numero_beca: string
+  cedula: string
+  telefono: string
+  nivel_formacion: string
+  carrera_programa: string
+  tipo_beca: string
+  discapacidad: string
+  porcentaje_discapacidad: string
+  tipo_discapacidad: string
+  beneficio: string
+  beneficio_sufijo: string
+  periodo_adjudicacion: string
+  correo_notificaciones: string
+  nombres: string
+  documento_identidad: string
+  prefijo_documento_identidad: string
+  programa: string
+  pais: string
+  fecha_fin_financiamiento: string
+  institucion_educacion: string
+  duracion_financiamiento: string
+  auspiciante: string
+  fecha_inicio_estudios: string
+  carrera: string
+  fecha_fin_estudios: string
+  nivel_estudios: string
+  duracion_estudios: string
+  fecha_inicio_financiamiento: string
+  periodo_pago: string
+  numero: string
+  rubro: string
+  periodicidad_rubro: string
+}
+
 export type ScholarshipContractTemplate = {
   titulo_contrato: string
+  texto_completo: string
   fecha_contrato: string | null
   ciudad: string
   resolucion: string
@@ -5990,6 +6029,7 @@ export type ScholarshipContractTemplate = {
   clausulas_programa?: ScholarshipContractClause[]
   titulo_tabla_datos: string
   titulo_tabla_proyeccion: string
+  rotulos_tabla: ScholarshipContractTableLabels
   firma_rector_tratamiento: string
   firma_rector_nombre: string
   firma_rector_titulo: string

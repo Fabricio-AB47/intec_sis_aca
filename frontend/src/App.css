@@ -37652,6 +37652,13 @@ body .student-sidebar .logout-button {
   flex: 0 0 auto;
 }
 
+.scholarship-contracts__template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .scholarship-contracts__format-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -38094,6 +38101,72 @@ body .student-sidebar .logout-button {
   line-height: 1.45;
 }
 
+.scholarship-contract-template-modal__tabs {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #c7d5dc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.scholarship-contract-template-modal__tabs button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-right: 1px solid #c7d5dc;
+  border-bottom: 3px solid transparent;
+  background: #fff;
+  color: #34405d;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.scholarship-contract-template-modal__tabs button:last-child {
+  border-right: 0;
+}
+
+.scholarship-contract-template-modal__tabs button:hover,
+.scholarship-contract-template-modal__tabs button:focus-visible {
+  background: #f2f8f9;
+  outline: none;
+}
+
+.scholarship-contract-template-modal__tabs button.is-active {
+  border-bottom-color: #16879a;
+  background: #eaf5f6;
+  color: #0f6674;
+}
+
+.scholarship-contract-template-modal__tabs button span {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #d9e9ec;
+  color: #34405d;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.scholarship-contract-template-modal__tabs button.is-active span {
+  background: #16879a;
+  color: #fff;
+}
+
+.scholarship-contract-template-modal [role='tabpanel'][hidden] {
+  display: none;
+}
+
 .scholarship-contract-template-modal__status {
   margin: 12px 0 0;
   padding: 10px 14px;
@@ -38114,6 +38187,37 @@ body .student-sidebar .logout-button {
   margin: 0 0 12px;
   color: #111a3a;
   font-size: 17px;
+}
+
+.scholarship-contract-template-modal__fixed-title {
+  margin-bottom: 12px;
+  padding: 11px 14px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #c8d6dd;
+  border-left: 3px solid #a5211c;
+  border-radius: 6px;
+  background: #f7f9fa;
+}
+
+.scholarship-contract-template-modal__fixed-title span {
+  color: #5f6b85;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__fixed-title strong {
+  color: #111a3a;
+  font-size: 16px;
+}
+
+.scholarship-contract-template-modal__opening {
+  padding: 16px;
+  border: 1px solid #b9d6dc;
+  border-top: 3px solid #16879a;
+  border-radius: 8px;
+  background: #f6fafb;
 }
 
 .scholarship-contract-template-modal__grid {
@@ -38336,6 +38440,15 @@ body .student-sidebar .logout-button {
   margin-top: 12px;
 }
 
+.scholarship-contract-template-modal__introduction textarea {
+  min-height: 180px;
+}
+
+.scholarship-contract-template-modal__introduction small {
+  justify-self: end;
+  color: #65708a;
+}
+
 .scholarship-contract-template-modal__introduction > span,
 .scholarship-contract-template-modal__clause label > span {
   color: #5f6b85;
@@ -38513,6 +38626,110 @@ body .student-sidebar .logout-button {
   color: #17613d;
 }
 
+.scholarship-contract-template-modal__clause textarea {
+  min-height: 156px;
+}
+
+.scholarship-contract-template-modal__clause input:disabled,
+.scholarship-contract-template-modal__clause textarea:disabled {
+  background: #eef1f3;
+  color: #6a7488;
+}
+
+.scholarship-contract-template-modal__empty-clauses {
+  margin-top: 12px;
+  min-height: 150px;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  border: 1px dashed #b9cbd3;
+  border-radius: 8px;
+  background: #f8fafb;
+  color: #394560;
+  text-align: center;
+}
+
+.scholarship-contract-template-modal__empty-clauses .ghost-button {
+  width: auto;
+}
+
+.scholarship-contract-template-modal__preview-context {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 0.75fr 1.35fr 1fr;
+  overflow: hidden;
+  border: 1px solid #cfdae1;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.scholarship-contract-template-modal__preview-context > div {
+  min-width: 0;
+  padding: 11px 13px;
+  display: grid;
+  gap: 4px;
+  border-right: 1px solid #cfdae1;
+}
+
+.scholarship-contract-template-modal__preview-context > div:last-child {
+  border-right: 0;
+}
+
+.scholarship-contract-template-modal__preview-context span {
+  color: #5f6b85;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scholarship-contract-template-modal__preview-context strong {
+  color: #111a3a;
+  overflow-wrap: anywhere;
+}
+
+.scholarship-contract-template-modal__pdf-preview {
+  margin-top: 12px;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid #c7d3da;
+  border-radius: 8px;
+  background: #e8ecef;
+}
+
+.scholarship-contract-template-modal__pdf-preview iframe {
+  width: 100%;
+  height: min(64vh, 700px);
+  min-height: 520px;
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+.scholarship-contract-template-modal__preview-state {
+  min-height: 520px;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  color: #5f6b85;
+  font-weight: 800;
+  text-align: center;
+}
+
+.scholarship-contract-template-modal__preview-state.is-error {
+  align-content: center;
+}
+
+.scholarship-contract-template-modal__preview-state .form-error {
+  margin: 0;
+}
+
+.scholarship-contract-template-modal__preview-state .ghost-button {
+  width: auto;
+}
+
 .scholarship-contract-template-modal__actions {
   position: sticky;
   bottom: 0;
@@ -38632,6 +38849,20 @@ body .student-sidebar .logout-button {
     grid-template-columns: 1fr;
   }
 
+  .scholarship-contract-template-modal__tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-contract-template-modal__tabs button {
+    border-right: 0;
+    border-bottom: 1px solid #c7d5dc;
+  }
+
+  .scholarship-contract-template-modal__tabs button.is-active {
+    border-bottom-color: #16879a;
+    box-shadow: inset 3px 0 0 #16879a;
+  }
+
   .scholarship-contracts__template-heading,
   .scholarship-contract-template-modal__section-head {
     align-items: stretch;
@@ -38688,6 +38919,25 @@ body .student-sidebar .logout-button {
 
   .scholarship-contract-template-modal__grid label.is-wide {
     grid-column: auto;
+  }
+
+  .scholarship-contract-template-modal__preview-context {
+    grid-template-columns: 1fr;
+  }
+
+  .scholarship-contract-template-modal__preview-context > div {
+    border-right: 0;
+    border-bottom: 1px solid #cfdae1;
+  }
+
+  .scholarship-contract-template-modal__preview-context > div:last-child {
+    border-bottom: 0;
+  }
+
+  .scholarship-contract-template-modal__pdf-preview,
+  .scholarship-contract-template-modal__pdf-preview iframe,
+  .scholarship-contract-template-modal__preview-state {
+    min-height: 400px;
   }
 
   .scholarship-contract-template-modal {

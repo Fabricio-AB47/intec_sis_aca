@@ -2381,10 +2381,37 @@ export async function fetchScholarshipContractCandidates(
   )
 }
 
-export async function fetchScholarshipContractTemplate(): Promise<ScholarshipContractTemplate> {
+export async function fetchScholarshipContractTemplate(
+  contractFormat: ScholarshipContractFormat = 'BECA',
+): Promise<ScholarshipContractTemplate> {
+  const params = new URLSearchParams({ formato_contrato: contractFormat })
   return request<ScholarshipContractTemplate>(
-    '/api/students/preinscripcion/becas/contratos/plantilla'
+    `/api/students/preinscripcion/becas/contratos/plantilla?${params.toString()}`
   )
+}
+
+export async function previewScholarshipContract(
+  contractFormat: ScholarshipContractFormat,
+  template: ScholarshipContractTemplate,
+  context: {
+    becaId?: number
+    academicPeriod?: string
+    scholarshipType?: string
+    period?: string
+  } = {},
+): Promise<Blob> {
+  return request<Blob>('/api/students/preinscripcion/becas/contratos/vista-previa', {
+    method: 'POST',
+    body: {
+      beca_id: context.becaId,
+      codigo_periodo: context.academicPeriod || '',
+      tipo_beca: context.scholarshipType || '',
+      periodo: context.period || '',
+      formato_contrato: contractFormat,
+      plantilla: template,
+    },
+    responseType: 'blob',
+  })
 }
 
 export async function generateScholarshipContracts(

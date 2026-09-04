@@ -7,10 +7,12 @@ from pypdf import PdfReader
 
 from app.routers.preinscription import (
     ScholarshipContractGeneratePayload,
+    ScholarshipContractPreviewPayload,
     ScholarshipContractTemplatePayload,
     _build_program_scholarship_contract_pdf,
     _build_selected_scholarship_contract_pdf,
     _build_scholarship_contract_pdf,
+    _canonical_scholarship_contract_format,
     _combined_scholarship_seeds,
     _exclude_english_scholarship_items,
     _is_english_career,
@@ -19,8 +21,11 @@ from app.routers.preinscription import (
     _scholarship_contract_clauses,
     _scholarship_contract_generation_selection,
     _scholarship_contract_initial,
+    _scholarship_contract_preview_item,
     _scholarship_contract_scope,
+    get_scholarship_contract_template,
     list_scholarship_contract_candidates,
+    preview_scholarship_contract,
 )
 from app.core.security import SessionUser
 from app.services.screen_access import DEFAULT_ACCESS, SCREEN_CATALOG
@@ -132,6 +137,8 @@ class ScholarshipContractTests(unittest.TestCase):
         self.assertTrue(content.startswith(b"%PDF"))
         reader = PdfReader(BytesIO(content))
         self.assertEqual(len(reader.pages), 1)
+        self.assertAlmostEqual(float(reader.pages[0].mediabox.width), 595.28, delta=0.1)
+        self.assertAlmostEqual(float(reader.pages[0].mediabox.height), 841.89, delta=0.1)
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         self.assertIn("CONTRATO DE BECA - No.", text)
         self.assertIn("ESTUDIANTE DE PRUEBA", text)
@@ -141,15 +148,16 @@ class ScholarshipContractTests(unittest.TestCase):
         self.assertIn("Resolución No. 002-CR-INTEC-2024", text)
         self.assertIn("CLÁUSULA SEGUNDA.- OBJETIVO ESPECÍFICO", text)
         self.assertIn("DATOS BECA", text)
-        self.assertIn("CLÁUSULA TERCERA.- MONTO, RUBROS Y DURACIÓN", text)
+        self.assertIn("CLÁUSULA TERCERA.- MONTO Y RUBROS DE LA BECA", text)
+        self.assertIn("CLÁUSULA TERCERA.- DURACIÓN", text)
         self.assertIn("CLÁUSULA DÉCIMA SEGUNDA.- ACEPTACIÓN Y RATIFICACIÓN", text)
         self.assertIn("Correo INTEC para notificaciones", text)
         self.assertEqual(text.count("Ingeniero JAIME RODER ORTEGA PEREIRA, MGT."), 1)
         self.assertIn("Ing. JAIME RODER ORTEGA PEREIRA, MGT.", text)
         self.assertIn("BECARIO/A – C.C.: 0706442670", text)
-        self.assertEqual(text.count("CLÁUSULA TERCERA"), 1)
-        self.assertIn("La beca rige exclusivamente", text)
-        self.assertIn("adjudicación C1-2026-PC", text)
+        self.assertEqual(text.count("CLÁUSULA TERCERA"), 2)
+        self.assertIn("La renovación de la beca estará", text)
+        self.assertIn("no requerirá la suscripción de uno nuevo", text)
 
     def test_scholarship_number_starts_with_the_first_significant_letter(self) -> None:
         self.assertEqual(_scholarship_contract_initial("Beca INTEC"), "I")
@@ -162,7 +170,7 @@ class ScholarshipContractTests(unittest.TestCase):
         )
         self.assertEqual(number, "I002510602026")
 
-    def test_contract_explicitly_limits_the_scholarship_to_one_period(self) -> None:
+    def test_contract_identifies_the_period_and_renewal_conditions(self) -> None:
         content = _build_scholarship_contract_pdf(
             scholarship_item(periodo="C1-2026-PC MAYO 2026 - SEPTIEMBRE 2026"),
             "I002510602026",
@@ -171,7 +179,8 @@ class ScholarshipContractTests(unittest.TestCase):
 
         text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
         self.assertIn("MAYO-SEPTIEMBRE 2026", text)
-        self.assertIn("No se renovará automáticamente", text)
+        self.assertIn("La renovación de la beca estará", text)
+        self.assertIn("Dirección de Bienestar del INTEC", text)
 
     def test_contract_screen_is_assignable_to_authorized_profiles(self) -> None:
         screen = next(
@@ -197,11 +206,11 @@ class ScholarshipContractTests(unittest.TestCase):
         self.assertEqual(scholarship_ids[-1], 500)
         self.assertEqual(academic_period, "1060")
 
-    def test_contract_generation_accepts_an_editable_program_template(self) -> None:
+    def test_contract_generation_accepts_an_editable_tax_incentive_template(self) -> None:
         payload = ScholarshipContractGeneratePayload(
             beca_ids=[25],
             codigo_periodo="1060",
-            formato_contrato="PROGRAMA",
+            formato_contrato="INCENTIVOS_TRIBUTARIOS",
             plantilla={
                 "titulo_contrato": "Contrato de beca especial",
                 "programa": "Programa institucional de permanencia académica",
@@ -217,9 +226,72 @@ class ScholarshipContractTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(payload.formato_contrato, "PROGRAMA")
+        self.assertEqual(payload.formato_contrato, "INCENTIVOS_TRIBUTARIOS")
         self.assertEqual(payload.plantilla.programa, "Programa institucional de permanencia académica")
         self.assertEqual(len(payload.plantilla.proyeccion), 1)
+
+    def test_contract_preview_uses_sample_data_without_registering_a_contract(self) -> None:
+        payload = ScholarshipContractPreviewPayload(
+            codigo_periodo="1060",
+            tipo_beca="Beca INTEC",
+            periodo="C1-2026-PC",
+            plantilla={
+                "titulo_contrato": "CONTRATO PARA VISTA PREVIA",
+                "introduccion_institucional": "Documento de {ESTUDIANTE} para {PERIODO}.",
+                "clausulas_institucionales": [],
+            },
+        )
+
+        item = _scholarship_contract_preview_item(payload)
+        response = preview_scholarship_contract(
+            payload,
+            SessionUser(login="admin", rol="ADMINISTRADOR"),
+        )
+
+        self.assertEqual(item["estudiante"], "ESTUDIANTE DE VISTA PREVIA")
+        self.assertEqual(item["codigo_periodo"], "1060")
+        self.assertEqual(response.media_type, "application/pdf")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertIn("inline", response.headers["content-disposition"])
+
+    def test_contract_template_returns_independent_defaults_for_both_formats(self) -> None:
+        user = SessionUser(login="admin", rol="ADMINISTRADOR")
+
+        scholarship = get_scholarship_contract_template(user, "BECA")
+        tax_incentive = get_scholarship_contract_template(user, "INCENTIVOS_TRIBUTARIOS")
+
+        self.assertEqual(scholarship["titulo_contrato"], "CONTRATO DE BECA")
+        self.assertEqual(scholarship["proyeccion"], [])
+        self.assertIn("[[TABLA_DATOS]]", scholarship["texto_completo"])
+        self.assertIn("[[FIRMAS]]", scholarship["texto_completo"])
+        self.assertNotIn("[[TABLA_PROYECCION]]", scholarship["texto_completo"])
+        self.assertEqual(
+            tax_incentive["titulo_contrato"],
+            "CONTRATO DE BECA",
+        )
+        self.assertIn("[[TABLA_DATOS]]", tax_incentive["texto_completo"])
+        self.assertIn("[[TABLA_PROYECCION]]", tax_incentive["texto_completo"])
+        self.assertIn("[[FIRMAS]]", tax_incentive["texto_completo"])
+        self.assertEqual(
+            [row["rubro"] for row in tax_incentive["proyeccion"]],
+            ["Matrícula y arancel", "Ayuda económica"],
+        )
+
+    def test_legacy_contract_formats_are_mapped_to_the_current_two_types(self) -> None:
+        self.assertEqual(_canonical_scholarship_contract_format("INSTITUCIONAL"), "BECA")
+        self.assertEqual(_canonical_scholarship_contract_format("PROGRAMA"), "INCENTIVOS_TRIBUTARIOS")
+        self.assertEqual(_canonical_scholarship_contract_format("BECA"), "BECA")
+        legacy_payload = ScholarshipContractGeneratePayload(
+            beca_ids=[25],
+            codigo_periodo="1060",
+            formato_contrato="PROGRAMA",
+        )
+        self.assertEqual(legacy_payload.formato_contrato, "INCENTIVOS_TRIBUTARIOS")
+        schema = ScholarshipContractGeneratePayload.model_json_schema()
+        self.assertEqual(
+            schema["properties"]["formato_contrato"]["enum"],
+            ["BECA", "INCENTIVOS_TRIBUTARIOS"],
+        )
 
     def test_contract_template_preserves_an_extended_clause_order(self) -> None:
         clauses = [
@@ -266,8 +338,8 @@ class ScholarshipContractTests(unittest.TestCase):
                     "periodicidad": "25 % durante el período adjudicado",
                 },
                 {
-                    "rubro": "Matrícula",
-                    "periodicidad": "No cubierta por la Beca INTEC",
+                    "rubro": "Ayuda económica",
+                    "periodicidad": "$ 187,50 durante el período adjudicado",
                 },
             ],
             introduccion_programa="INTRODUCCIÓN EDITADA PARA {ESTUDIANTE} EN {CIUDAD}.",
@@ -279,6 +351,11 @@ class ScholarshipContractTests(unittest.TestCase):
             ],
             titulo_tabla_datos="INFORMACIÓN PERSONALIZADA",
             titulo_tabla_proyeccion="DETALLE PERSONALIZADO",
+            rotulos_tabla={
+                "nombres": "Persona beneficiaria",
+                "rubro": "Concepto financiado",
+                "periodicidad_rubro": "Cobertura",
+            },
             firma_rector_tratamiento="Ing.",
             firma_rector_nombre="JAIME RODER ORTEGA PEREIRA",
             firma_rector_titulo="MGT.",
@@ -302,17 +379,21 @@ class ScholarshipContractTests(unittest.TestCase):
         reader = PdfReader(BytesIO(content))
         self.assertEqual(len(reader.pages), 1)
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        self.assertIn("CONTRATO DE BECA DE PROGRAMA", text)
+        self.assertIn("CONTRATO DE BECA No.", text)
+        self.assertNotIn("CONTRATO DE BECA DE PROGRAMA", text)
         self.assertIn("INFORMACIÓN PERSONALIZADA", text)
         self.assertIn("DETALLE PERSONALIZADO", text)
+        self.assertIn("Persona beneficiaria", text)
+        self.assertIn("Concepto financiado", text)
+        self.assertIn("Cobertura", text)
         self.assertIn("Programa institucional de permanencia académica", text)
         self.assertIn("Arancel académico", text)
-        self.assertIn("No cubierta por la Beca INTEC", text)
+        self.assertIn("Ayuda económica", text)
         self.assertIn("Ambato", text)
         self.assertIn("Ing. JAIME RODER ORTEGA PEREIRA, MGT.", text)
         self.assertIn("INTRODUCCIÓN EDITADA PARA ESTUDIANTE DE PRUEBA EN Ambato", text)
         self.assertIn("CLÁUSULA PERSONALIZADA", text)
-        self.assertIn("BECA INTEC se aplica durante MAYO-SEPTIEMBRE 2026", text)
+        self.assertIn("BECA INTEC se aplica durante MAYO-SEPTIEMBRE 2026", " ".join(text.split()))
         self.assertIn("REPRESENTANTE INSTITUCIONAL", text)
         self.assertIn("Estudiante:", text)
         self.assertIn("PERSONA BECARIA", text)
@@ -356,6 +437,12 @@ class ScholarshipContractTests(unittest.TestCase):
             firma_rector_etiqueta="AUTORIDAD",
             firma_becario_tratamiento="Beneficiario:",
             firma_becario_etiqueta="ESTUDIANTE BECADO",
+            rotulos_tabla={
+                "becario": "Persona beneficiaria:",
+                "beneficio": "Beneficio concedido:",
+                "numero_contrato": "Contrato No.",
+                "identificacion_firma": "Identificación:",
+            },
         )
         content = _build_scholarship_contract_pdf(
             scholarship_item(periodo="C1-2026-PC MAYO 2026 - SEPTIEMBRE 2026"),
@@ -364,9 +451,12 @@ class ScholarshipContractTests(unittest.TestCase):
             template,
         )
 
-        text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
+        reader = PdfReader(BytesIO(content))
+        self.assertEqual(len(reader.pages), 1)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
         normalized_text = " ".join(text.split())
-        self.assertIn("ACUERDO INSTITUCIONAL EDITADO", normalized_text)
+        self.assertIn("CONTRATO DE BECA", normalized_text)
+        self.assertNotIn("ACUERDO INSTITUCIONAL EDITADO", normalized_text)
         self.assertIn("Documento celebrado en Quito, D.M.", normalized_text)
         self.assertIn("PRIMERA CLÁUSULA EDITADA", normalized_text)
         self.assertIn("SEGUNDA CLÁUSULA EDITADA", normalized_text)
@@ -377,6 +467,82 @@ class ScholarshipContractTests(unittest.TestCase):
         self.assertIn("AUTORIDAD", normalized_text)
         self.assertIn("Beneficiario:", normalized_text)
         self.assertIn("ESTUDIANTE BECADO", normalized_text)
+        self.assertIn("Persona beneficiaria:", normalized_text)
+        self.assertIn("Beneficio concedido:", normalized_text)
+        self.assertIn("Identificación:", normalized_text)
+
+    def test_both_contract_formats_use_the_complete_editable_text_and_keep_the_title_fixed(self) -> None:
+        cases = [
+            (
+                "BECA",
+                "[[TABLA_DATOS]]",
+                "CUERPO INSTITUCIONAL TOTALMENTE EDITADO",
+            ),
+            (
+                "INCENTIVOS_TRIBUTARIOS",
+                "[[TABLA_DATOS]]\n\n[[TABLA_PROYECCION]]",
+                "CUERPO DE INCENTIVOS TOTALMENTE EDITADO",
+            ),
+        ]
+        for contract_format, table_markers, custom_body in cases:
+            with self.subTest(contract_format=contract_format):
+                template = ScholarshipContractTemplatePayload(
+                    titulo_contrato="TÍTULO QUE NO DEBE APLICARSE",
+                    texto_completo=(
+                        f"{custom_body} PARA {{ESTUDIANTE}}.\n\n"
+                        "CLÁUSULA ÚNICA EDITADA.-\n"
+                        "Este es todo el texto contractual del período {PERIODO}.\n\n"
+                        f"{table_markers}\n\n"
+                        "CIERRE PERSONALIZADO PARA {CONTRATO}.\n\n"
+                        "[[FIRMAS]]"
+                    ),
+                )
+                content = _build_selected_scholarship_contract_pdf(
+                    scholarship_item(periodo="C1-2026-PC MAYO 2026 - SEPTIEMBRE 2026"),
+                    "I002510602026",
+                    date(2026, 8, 28),
+                    contract_format,
+                    template,
+                )
+
+                text = " ".join(
+                    "\n".join(
+                        page.extract_text() or ""
+                        for page in PdfReader(BytesIO(content)).pages
+                    ).split()
+                )
+                self.assertIn("CONTRATO DE BECA", text)
+                self.assertNotIn("TÍTULO QUE NO DEBE APLICARSE", text)
+                self.assertIn(custom_body, text)
+                self.assertIn("ESTUDIANTE DE PRUEBA", text)
+                self.assertIn("CLÁUSULA ÚNICA EDITADA", text)
+                self.assertIn("CIERRE PERSONALIZADO PARA I002510602026", text)
+                self.assertIn("DATOS BECA", text)
+                self.assertIn("Ing. JAIME RODER ORTEGA PEREIRA, MGT.", text)
+                if contract_format == "INCENTIVOS_TRIBUTARIOS":
+                    self.assertIn("PROYECCIÓN DE LA BECA", text)
+
+    def test_complete_text_restores_required_structures_when_their_markers_are_removed(self) -> None:
+        content = _build_scholarship_contract_pdf(
+            scholarship_item(),
+            "I002510602026",
+            date(2026, 8, 28),
+            ScholarshipContractTemplatePayload(
+                texto_completo="TEXTO CONTRACTUAL SIN MARCADORES ESTRUCTURALES.",
+            ),
+        )
+
+        text = " ".join(
+            "\n".join(
+                page.extract_text() or ""
+                for page in PdfReader(BytesIO(content)).pages
+            ).split()
+        )
+        self.assertIn("TEXTO CONTRACTUAL SIN MARCADORES ESTRUCTURALES", text)
+        self.assertIn("DATOS BECA", text)
+        self.assertIn("BECARIO/A", text)
+        self.assertNotIn("[[TABLA_DATOS]]", text)
+        self.assertNotIn("[[FIRMAS]]", text)
 
     def test_selected_contract_builder_dispatches_both_formats(self) -> None:
         template = ScholarshipContractTemplatePayload()
@@ -384,14 +550,14 @@ class ScholarshipContractTests(unittest.TestCase):
             scholarship_item(),
             "I002510602026",
             date(2026, 8, 28),
-            "INSTITUCIONAL",
+            "BECA",
             template,
         )
         program = _build_selected_scholarship_contract_pdf(
             scholarship_item(),
             "I002510602026",
             date(2026, 8, 28),
-            "PROGRAMA",
+            "INCENTIVOS_TRIBUTARIOS",
             template,
         )
 
@@ -401,8 +567,23 @@ class ScholarshipContractTests(unittest.TestCase):
         program_text = "\n".join(
             page.extract_text() or "" for page in PdfReader(BytesIO(program)).pages
         )
+        institutional_reader = PdfReader(BytesIO(institutional))
+        program_reader = PdfReader(BytesIO(program))
+        self.assertEqual(len(institutional_reader.pages), 1)
+        self.assertEqual(len(program_reader.pages), 1)
+        self.assertAlmostEqual(float(institutional_reader.pages[0].mediabox.width), 595.28, delta=0.1)
+        self.assertAlmostEqual(float(institutional_reader.pages[0].mediabox.height), 841.89, delta=0.1)
+        self.assertAlmostEqual(float(program_reader.pages[0].mediabox.width), 612.0, delta=0.1)
+        self.assertAlmostEqual(float(program_reader.pages[0].mediabox.height), 792.0, delta=0.1)
         self.assertIn("CLÁUSULA DÉCIMA SEGUNDA", institutional_text)
         self.assertIn("PROYECCIÓN DE LA BECA", program_text)
+        self.assertIn("Matrícula y arancel", program_text)
+        self.assertIn("Ayuda económica", program_text)
+        self.assertIn("CLÁUSULA TERCERA.- PLAZO DEL CONTRATO", program_text)
+        self.assertIn("CLÁUSULA CUARTA.- ENTREGA DE RECURSOS Y FORMA DE PAGO", program_text)
+        self.assertIn("5.1. OBLIGACIONES DEL INTEC", program_text)
+        self.assertIn("5.2. OBLIGACIONES DEL/LA BECARIO/A", program_text)
+        self.assertIn("CLÁUSULA SÉPTIMA.- ACEPTACIÓN Y RATIFICACIÓN", program_text)
         self.assertNotEqual(institutional, program)
 
 
