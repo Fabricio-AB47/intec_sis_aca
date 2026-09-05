@@ -19,6 +19,7 @@ from app.routers.english_exams import (
     _MIN_FILE_BYTES,
     _activity_state,
     _component_payload,
+    _graph_upload_range,
     _rubric_grade,
     _safe_filename,
     _safe_video_content_type,
@@ -51,7 +52,7 @@ class EnglishVideoUploadTests(unittest.TestCase):
             _safe_video_content_type("application/pdf")
         self.assertEqual(context.exception.status_code, 400)
 
-    def test_upload_contract_accepts_only_files_between_50_mb_and_2_gb(self) -> None:
+    def test_upload_contract_accepts_only_files_between_3_mb_and_2_gb(self) -> None:
         minimum = UploadSessionPayload(filename="p1.mp4", size=_MIN_FILE_BYTES, content_type="video/mp4")
         maximum = UploadSessionPayload(filename="p1.mp4", size=_MAX_FILE_BYTES, content_type="video/mp4")
 
@@ -61,6 +62,28 @@ class EnglishVideoUploadTests(unittest.TestCase):
             UploadSessionPayload(filename="p1.mp4", size=_MIN_FILE_BYTES - 1, content_type="video/mp4")
         with self.assertRaises(ValidationError):
             UploadSessionPayload(filename="p1.mp4", size=_MAX_FILE_BYTES + 1, content_type="video/mp4")
+
+    def test_graph_upload_range_accepts_aligned_and_final_chunks(self) -> None:
+        chunk_size = 10 * 1024 * 1024
+        total_size = chunk_size + 123
+
+        self.assertEqual(
+            _graph_upload_range(f"bytes 0-{chunk_size - 1}/{total_size}", total_size, chunk_size),
+            (0, chunk_size - 1),
+        )
+        self.assertEqual(
+            _graph_upload_range(f"bytes {chunk_size}-{total_size - 1}/{total_size}", total_size, 123),
+            (chunk_size, total_size - 1),
+        )
+
+    def test_graph_upload_range_rejects_mismatched_or_unaligned_chunks(self) -> None:
+        with self.assertRaises(HTTPException) as mismatch:
+            _graph_upload_range("bytes 0-99/200", 201, 100)
+        self.assertEqual(mismatch.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as unaligned:
+            _graph_upload_range("bytes 0-999/2000", 2000, 1000)
+        self.assertEqual(unaligned.exception.status_code, 400)
 
     def test_activity_state_enforces_start_and_deadline(self) -> None:
         now = datetime(2026, 8, 3, 12, 0, 0)

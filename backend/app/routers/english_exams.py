@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
@@ -12,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pyodbc
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,6 +28,7 @@ from app.services.graph_documents import (
     prepare_expedient as prepare_graph_expedient,
     register_upload_session as register_graph_document_upload,
     set_document_origin as set_graph_document_origin,
+    upload_session as get_graph_document_upload_session,
 )
 from app.services.grade_calculation import calculate_regular_grade_with_recovery
 
@@ -38,6 +41,8 @@ router = APIRouter(
 
 _MIN_FILE_BYTES = 3 * 1024 * 1024
 _MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
+_GRAPH_CHUNK_BYTES = 10 * 1024 * 1024
+_GRAPH_CHUNK_ALIGNMENT_BYTES = 320 * 1024
 _EDIT_WINDOW_MINUTES = 15
 _PASSING_GRADE = Decimal("7.00")
 _LEVEL_NAME = "A2+ - INTERMEDIATE"
@@ -116,6 +121,10 @@ class UploadSessionPayload(BaseModel):
 
 class UploadFinalizePayload(BaseModel):
     upload_id: UUID
+
+
+class UploadStatusPayload(BaseModel):
+    upload_url: str = Field(min_length=1, max_length=8192)
 
 
 class UploadConfirmPayload(BaseModel):
@@ -902,6 +911,89 @@ def _create_graph_upload_session(path: str) -> dict[str, Any]:
         )
         response.raise_for_status()
         return response.json()
+
+
+def _english_graph_upload_session(
+    upload_id: UUID,
+    upload_url: str,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate that a preauthenticated Graph URL belongs to this student's upload."""
+    normalized_url = _clean(upload_url)
+    if not normalized_url.lower().startswith("https://"):
+        raise HTTPException(status_code=400, detail="La sesión de Microsoft Graph no es válida.")
+
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ce.Estado, ce.TamanoEsperado, e.CodigoEstud, e.CarreraXEstudNum
+            FROM ing.CargaExamenIngles ce
+            INNER JOIN ing.ExamenIngles e ON e.ExamenInglesId = ce.ExamenInglesId
+            WHERE ce.CargaExamenInglesId = ?
+            """,
+            str(upload_id),
+        )
+        upload = cursor.fetchone()
+
+    if (
+        not upload
+        or int(upload.CodigoEstud) != int(profile["codigo_estud"])
+        or int(upload.CarreraXEstudNum or 0) != int(profile["carrera_x_estud_num"])
+    ):
+        raise HTTPException(status_code=404, detail="No existe una carga pendiente para este estudiante.")
+    if _clean(upload.Estado) != "CARGA_INICIADA":
+        raise HTTPException(status_code=409, detail="Esta sesión de carga ya fue procesada.")
+
+    session = get_graph_document_upload_session(upload_id)
+    if not session or _clean(session.get("EstadoDocumentoGraphCodigo")) != "CARGA_INICIADA":
+        raise HTTPException(status_code=409, detail="La sesión documental ya no está disponible.")
+    stored_hash = session.get("UploadUrlHash")
+    calculated_hash = hashlib.sha256(normalized_url.encode("utf-8")).digest()
+    if not stored_hash or not hmac.compare_digest(bytes(stored_hash), calculated_hash):
+        raise HTTPException(status_code=403, detail="La sesión de carga no corresponde al archivo solicitado.")
+
+    expected_size = int(upload.TamanoEsperado or 0)
+    if expected_size <= 0 or expected_size != int(session.get("TamanoEsperado") or 0):
+        raise HTTPException(status_code=409, detail="El tamaño registrado para la carga no es consistente.")
+    return {"upload_url": normalized_url, "expected_size": expected_size}
+
+
+def _graph_upload_range(content_range: str, expected_size: int, chunk_size: int) -> tuple[int, int]:
+    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", _clean(content_range))
+    if not match:
+        raise HTTPException(status_code=400, detail="El rango del bloque de carga no es válido.")
+    start, end, total = (int(value) for value in match.groups())
+    if total != expected_size or start > end or end >= total or end - start + 1 != chunk_size:
+        raise HTTPException(status_code=400, detail="El rango no coincide con el archivo seleccionado.")
+    if chunk_size > _GRAPH_CHUNK_BYTES:
+        raise HTTPException(status_code=413, detail="El bloque supera el tamaño permitido.")
+    if end < total - 1 and chunk_size % _GRAPH_CHUNK_ALIGNMENT_BYTES != 0:
+        raise HTTPException(status_code=400, detail="El bloque debe ser múltiplo de 320 KiB.")
+    return start, end
+
+
+def _graph_upload_response(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return payload
+
+
+def _raise_graph_upload_error(response: httpx.Response) -> None:
+    payload = _graph_upload_response(response)
+    graph_error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    detail = _clean(graph_error.get("message")) or "Microsoft Graph rechazó una parte del archivo."
+    if response.status_code in {404, 410}:
+        raise HTTPException(status_code=410, detail="La sesión de carga expiró; inicie nuevamente la carga.")
+    relay_status = response.status_code if response.status_code in {408, 416, 429} or response.status_code >= 500 else 502
+    headers = {}
+    if response.headers.get("Retry-After"):
+        headers["Retry-After"] = response.headers["Retry-After"]
+    raise HTTPException(status_code=relay_status, detail=detail[:1000], headers=headers)
 
 
 def _graph_item_by_path(path: str) -> dict[str, Any]:
@@ -2800,11 +2892,79 @@ def create_student_upload_session(
         "upload_id": str(upload_id),
         "upload_url": graph_session.get("uploadUrl"),
         "expires_at": graph_session.get("expirationDateTime"),
-        "chunk_size": 10 * 1024 * 1024,
+        "chunk_size": _GRAPH_CHUNK_BYTES,
         "min_file_bytes": _MIN_FILE_BYTES,
         "max_file_bytes": _MAX_FILE_BYTES,
         "version": version,
         "component_code": component_code,
+    }
+
+
+@router.post("/student/upload-status/{upload_id}")
+async def student_upload_status(
+    upload_id: UUID,
+    payload: UploadStatusPayload,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+) -> dict[str, Any]:
+    profile = _student_profile(current_user)
+    session = _english_graph_upload_session(upload_id, payload.upload_url, profile)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=30.0)) as client:
+            response = await client.get(session["upload_url"])
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo consultar el avance en Microsoft Graph. Intente nuevamente.",
+        ) from exc
+    if not response.is_success:
+        _raise_graph_upload_error(response)
+    graph_status = _graph_upload_response(response)
+    next_ranges = graph_status.get("nextExpectedRanges") or []
+    return {
+        "completed": bool(graph_status.get("id")) and not next_ranges,
+        "next_expected_ranges": next_ranges,
+    }
+
+
+@router.post("/student/upload-chunk/{upload_id}")
+async def upload_student_chunk(
+    upload_id: UUID,
+    current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
+    upload_url: Annotated[str, Form(min_length=1, max_length=8192)],
+    content_range: Annotated[str, Form(min_length=1, max_length=100)],
+    chunk: Annotated[UploadFile, File()],
+) -> dict[str, Any]:
+    profile = _student_profile(current_user)
+    session = _english_graph_upload_session(upload_id, upload_url, profile)
+    content = await chunk.read(_GRAPH_CHUNK_BYTES + 1)
+    await chunk.close()
+    if not content:
+        raise HTTPException(status_code=400, detail="El bloque de carga está vacío.")
+    _graph_upload_range(content_range, int(session["expected_size"]), len(content))
+
+    try:
+        timeout = httpx.Timeout(10 * 60.0, connect=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.put(
+                session["upload_url"],
+                headers={
+                    "Content-Length": str(len(content)),
+                    "Content-Range": content_range,
+                    "Content-Type": "application/octet-stream",
+                },
+                content=content,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo transferir el bloque a Microsoft Graph. Intente nuevamente.",
+        ) from exc
+    if not response.is_success:
+        _raise_graph_upload_error(response)
+    graph_status = _graph_upload_response(response)
+    return {
+        "completed": response.status_code in {200, 201},
+        "next_expected_ranges": graph_status.get("nextExpectedRanges") or [],
     }
 
 

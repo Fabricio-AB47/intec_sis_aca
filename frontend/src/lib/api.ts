@@ -4940,12 +4940,107 @@ export async function uploadGraphFileChunks(
 }
 
 export async function uploadEnglishFileChunks(
+  uploadId: string,
   uploadUrl: string,
   file: File,
   chunkSize: number,
   onProgress?: (percentage: number) => void,
 ): Promise<void> {
-  return uploadGraphFileChunks(uploadUrl, file, chunkSize, onProgress)
+  type UploadStatus = {
+    completed: boolean
+    next_expected_ranges: string[]
+  }
+
+  const nextOffset = (payload: UploadStatus, fallback: number) => {
+    const match = /^(\d+)/.exec(payload.next_expected_ranges?.[0] || '')
+    if (!match) return payload.completed ? file.size : fallback
+    return Math.min(file.size, Math.max(0, Number(match[1])))
+  }
+
+  const sessionStatus = () => request<UploadStatus>(
+    `/api/english/student/upload-status/${encodeURIComponent(uploadId)}`,
+    { method: 'POST', body: { upload_url: uploadUrl } },
+  )
+
+  const uploadChunk = (
+    chunk: Blob,
+    start: number,
+    endExclusive: number,
+  ): Promise<UploadStatus> => new Promise((resolve, reject) => {
+    const body = new FormData()
+    body.append('upload_url', uploadUrl)
+    body.append('content_range', `bytes ${start}-${endExclusive - 1}/${file.size}`)
+    body.append('chunk', chunk, 'chunk.bin')
+
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', resolveApiPath(`/api/english/student/upload-chunk/${encodeURIComponent(uploadId)}`), true)
+    xhr.withCredentials = true
+    xhr.timeout = 11 * 60 * 1000
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return
+      const chunkProgress = Math.min(chunk.size, event.loaded)
+      onProgress?.(Math.round((Math.min(file.size, start + chunkProgress) / file.size) * 100))
+    }
+    xhr.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null
+      } catch {
+        payload = null
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as UploadStatus)
+        return
+      }
+      const detail = typeof payload === 'object' && payload !== null && 'detail' in payload
+        ? String((payload as { detail?: unknown }).detail || '')
+        : ''
+      reject(new ApiError(detail || `Error HTTP ${xhr.status}`, xhr.status))
+    }
+    xhr.onerror = () => reject(new ApiError('No se pudo conectar con el servidor durante la carga.', 0))
+    xhr.ontimeout = () => reject(new ApiError('La carga agotó el tiempo de espera. Verifique su conexión e intente nuevamente.', 408))
+    xhr.onabort = () => reject(new ApiError('La carga fue interrumpida.', 0))
+    xhr.send(body)
+  })
+
+  let status = await sessionStatus()
+  let offset = nextOffset(status, 0)
+  onProgress?.(Math.round((offset / file.size) * 100))
+
+  while (offset < file.size) {
+    const start = offset
+    const endExclusive = Math.min(start + chunkSize, file.size)
+    const chunk = file.slice(start, endExclusive)
+    let lastError: unknown = null
+
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
+      try {
+        status = await uploadChunk(chunk, start, endExclusive)
+        offset = nextOffset(status, endExclusive)
+        if (offset > start) break
+      } catch (error) {
+        lastError = error
+        if (error instanceof ApiError && [400, 401, 403, 404, 409, 410, 413].includes(error.status)) throw error
+        try {
+          status = await sessionStatus()
+          offset = nextOffset(status, start)
+          if (offset > start) break
+        } catch (statusError) {
+          if (statusError instanceof ApiError && [401, 403, 404, 409, 410].includes(statusError.status)) throw statusError
+        }
+        if (attempt < 6) {
+          await new Promise((resolveDelay) => window.setTimeout(resolveDelay, Math.min(750 * (2 ** (attempt - 1)), 8_000)))
+        }
+      }
+    }
+
+    if (offset <= start) {
+      throw lastError instanceof Error
+        ? lastError
+        : new ApiError('No se pudo transferir el bloque a Microsoft Graph.', 502)
+    }
+    onProgress?.(Math.round((offset / file.size) * 100))
+  }
 }
 
 export async function finalizeEnglishUpload(uploadId: string): Promise<EnglishExam> {

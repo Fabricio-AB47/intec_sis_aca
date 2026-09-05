@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import {
   confirmEnglishDelivery,
   createEnglishUploadSession,
+  ApiError,
   englishExamFileUrl,
   fetchEnglishActivitySchedules,
   fetchEnglishStudentExam,
@@ -302,7 +303,7 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
       const { session } = pending
       if (!session.upload_url) throw new Error('Microsoft Graph no devolvió una sesión válida de carga.')
       if (!pending.uploaded) {
-        await uploadEnglishFileChunks(session.upload_url, selectedFile, session.chunk_size, (progress) => {
+        await uploadEnglishFileChunks(session.upload_id, session.upload_url, selectedFile, session.chunk_size, (progress) => {
           setProgressByCode((current) => ({ ...current, [component.code]: progress }))
         })
         pending.uploaded = true
@@ -333,7 +334,13 @@ function StudentEnglishExam({ displayName }: Readonly<{ displayName: string }>) 
         : `${component.label} reemplazado. Revise el video y confirme la entrega definitiva.`)
     } catch (requestError) {
       const detail = errorMessage(requestError, 'No se pudo completar la carga del video.')
-      setError(`${detail} El video permanece seleccionado; vuelva a pulsar el botón para continuar desde el último bloque recibido.`)
+      if (requestError instanceof ApiError && [404, 410].includes(requestError.status)) {
+        delete pendingUploads.current[component.code]
+        setProgressByCode((current) => ({ ...current, [component.code]: 0 }))
+        setError(`${detail} El video permanece seleccionado; vuelva a pulsar el botón para iniciar una sesión nueva.`)
+      } else {
+        setError(`${detail} El video permanece seleccionado; vuelva a pulsar el botón para continuar desde el último bloque recibido.`)
+      }
     } finally {
       setUploadingCode('')
     }

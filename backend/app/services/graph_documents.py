@@ -699,7 +699,7 @@ def upload_session(session_id: UUID | str) -> dict[str, Any] | None:
                 S.SesionCargaGraphId, S.ExpedienteGraphId, S.DocumentoGraphId,
                 S.TipoDocumentoCodigo, S.EstadoDocumentoGraphCodigo,
                 S.NombreArchivoOriginal, S.NombreArchivoNube, S.RutaGraph,
-                S.ContentType, S.TamanoEsperado, S.FechaExpiracionGraph,
+                S.ContentType, S.TamanoEsperado, S.UploadUrlHash, S.FechaExpiracionGraph,
                 S.UsuarioCarga, E.TipoExpedienteGraphCodigo, E.NumeroIdentificacion,
                 E.CodigoEstud, E.BaseOrigen, E.EsquemaOrigen, E.TablaOrigen, E.OrigenId
             FROM doc.SesionCargaGraph S
