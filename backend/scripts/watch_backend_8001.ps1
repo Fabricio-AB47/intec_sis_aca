@@ -23,7 +23,7 @@ function Get-BackendState {
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if (-not $listener) {
-        return [pscustomobject]@{ Healthy = $false; WorkerCount = 0; Reason = 'sin listener' }
+        return [pscustomobject]@{ Available = $false; HttpHealthy = $false; WorkerCount = 0; Reason = 'sin listener' }
     }
 
     $managerPid = [int]$listener.OwningProcess
@@ -42,21 +42,27 @@ function Get-BackendState {
 
     $workerCount = $workers.Count
     return [pscustomobject]@{
-        Healthy = $httpHealthy -and $workerCount -ge $ExpectedWorkers
+        # Una operacion extensa puede ocupar la sonda HTTP. Mientras exista el
+        # listener y al menos un worker, Uvicorn conserva y recupera el proceso.
+        Available = $workerCount -gt 0
+        HttpHealthy = $httpHealthy
         WorkerCount = $workerCount
-        Reason = if (-not $httpHealthy) { 'health sin respuesta' } else { "$workerCount worker(s)" }
+        Reason = if (-not $httpHealthy) { 'workers ocupados; health sin respuesta' } else { "$workerCount worker(s)" }
     }
 }
 
 $state = Get-BackendState
-if ($state.Healthy) {
+if ($state.Available) {
+    if (-not $state.HttpHealthy) {
+        Write-WatchdogLog "Backend ocupado con $($state.WorkerCount) worker(s); se conserva para no interrumpir procesos largos."
+    }
     exit 0
 }
 
 # Uvicorn puede estar reemplazando un worker; se confirma antes de reiniciar todo.
 Start-Sleep -Seconds 10
 $state = Get-BackendState
-if ($state.Healthy) {
+if ($state.Available) {
     Write-WatchdogLog "Recuperacion automatica completada ($($state.WorkerCount) workers)."
     exit 0
 }
@@ -70,7 +76,7 @@ $deadline = (Get-Date).AddSeconds(90)
 do {
     Start-Sleep -Seconds 2
     $state = Get-BackendState
-    if ($state.Healthy) {
+    if ($state.Available) {
         Write-WatchdogLog "Backend recuperado con $($state.WorkerCount) workers."
         exit 0
     }
