@@ -113,7 +113,15 @@ import type {
   LegacyReportsCatalogResponse,
   LegacyReportResponse,
   ModernizedLegacyReportsCatalogResponse,
+  MoodleAcademicEnrollmentApplyResponse,
+  MoodleAcademicEnrollmentCatalogResponse,
+  MoodleAcademicEnrollmentPreviewResponse,
+  MoodleAcademicEnrollmentSelection,
   MoodleCourseEvaluationsResponse,
+  MoodleCourseCloningApplyResponse,
+  MoodleCourseCloningCatalogResponse,
+  MoodleCourseCloningPayload,
+  MoodleCourseCloningPreviewResponse,
   MoodleEditableContentResponse,
   MoodleEditableContentType,
   MoodleEditableContentUpdateResponse,
@@ -703,6 +711,9 @@ export async function fetchMoodleStatus(): Promise<MoodleStatusResponse> {
     evaluation_date_update_function: response.evaluation_date_update_function ?? '',
     evaluation_date_update_function_available: Boolean(response.evaluation_date_update_function_available),
     evaluation_date_update_reason: response.evaluation_date_update_reason ?? '',
+    course_cloning_enabled: Boolean(response.course_cloning_enabled),
+    course_cloning_functions_available: Boolean(response.course_cloning_functions_available),
+    course_cloning_reason: response.course_cloning_reason ?? '',
     functions_count: Number(response.functions_count ?? 0),
     required_functions: Array.isArray(response.required_functions)
       ? response.required_functions
@@ -757,6 +768,59 @@ export async function fetchMoodleCourseResources(
     `/api/moodle/courses/${encodeURIComponent(String(courseId))}/resources?${params.toString()}`,
     { cache: 'no-store' },
   )
+}
+
+export async function fetchMoodleCourseCloningCatalog(): Promise<MoodleCourseCloningCatalogResponse> {
+  return request<MoodleCourseCloningCatalogResponse>('/api/moodle/course-cloning/catalog', {
+    cache: 'no-store',
+  })
+}
+
+export async function previewMoodleCourseCloning(
+  payload: MoodleCourseCloningPayload,
+): Promise<MoodleCourseCloningPreviewResponse> {
+  return request<MoodleCourseCloningPreviewResponse>('/api/moodle/course-cloning/preview', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function applyMoodleCourseCloning(
+  payload: MoodleCourseCloningPayload,
+): Promise<MoodleCourseCloningApplyResponse> {
+  return request<MoodleCourseCloningApplyResponse>('/api/moodle/course-cloning/apply', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function fetchMoodleAcademicEnrollmentCatalog(): Promise<MoodleAcademicEnrollmentCatalogResponse> {
+  return request<MoodleAcademicEnrollmentCatalogResponse>('/api/moodle/academic-enrollment/catalog', {
+    cache: 'no-store',
+  })
+}
+
+export async function previewMoodleAcademicEnrollment(
+  payload: MoodleAcademicEnrollmentSelection,
+  refresh = false,
+): Promise<MoodleAcademicEnrollmentPreviewResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleAcademicEnrollmentPreviewResponse>(
+    `/api/moodle/academic-enrollment/preview?${params.toString()}`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export async function applyMoodleAcademicEnrollment(
+  payload: MoodleAcademicEnrollmentSelection & {
+    principal_teacher_by_course: Record<number, number>
+    preview_fingerprint: string
+  },
+): Promise<MoodleAcademicEnrollmentApplyResponse> {
+  return request<MoodleAcademicEnrollmentApplyResponse>('/api/moodle/academic-enrollment/apply', {
+    method: 'POST',
+    body: payload,
+  })
 }
 
 export async function fetchMoodleEditableContent(

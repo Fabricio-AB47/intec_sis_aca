@@ -30,6 +30,7 @@ SITE_INFO_FUNCTION = "core_webservice_get_site_info"
 USERS_FUNCTION = "core_user_get_users"
 USERS_BY_FIELD_FUNCTION = "core_user_get_users_by_field"
 COURSES_FUNCTION = "core_course_get_courses_by_field"
+COURSE_CATEGORIES_FUNCTION = "core_course_get_categories"
 COURSE_CONTENTS_FUNCTION = "core_course_get_contents"
 ENROLLED_USERS_FUNCTION = "core_enrol_get_enrolled_users"
 GRADE_ITEMS_FUNCTION = "gradereport_user_get_grade_items"
@@ -38,12 +39,16 @@ UPDATE_USERS_FUNCTION = "core_user_update_users"
 CREATE_USERS_FUNCTION = "core_user_create_users"
 EDIT_SECTION_FUNCTION = "core_course_edit_section"
 UPDATE_INPLACE_EDITABLE_FUNCTION = "core_update_inplace_editable"
+CREATE_CATEGORIES_FUNCTION = "core_course_create_categories"
+DUPLICATE_COURSE_FUNCTION = "core_course_duplicate_course"
+UPDATE_COURSES_FUNCTION = "core_course_update_courses"
 READ_FUNCTIONS = frozenset(
     {
         SITE_INFO_FUNCTION,
         USERS_FUNCTION,
         USERS_BY_FIELD_FUNCTION,
         COURSES_FUNCTION,
+        COURSE_CATEGORIES_FUNCTION,
         COURSE_CONTENTS_FUNCTION,
         ENROLLED_USERS_FUNCTION,
         GRADE_ITEMS_FUNCTION,
@@ -56,6 +61,9 @@ WRITE_FUNCTIONS = frozenset(
         UPDATE_USERS_FUNCTION,
         EDIT_SECTION_FUNCTION,
         UPDATE_INPLACE_EDITABLE_FUNCTION,
+        CREATE_CATEGORIES_FUNCTION,
+        DUPLICATE_COURSE_FUNCTION,
+        UPDATE_COURSES_FUNCTION,
     }
 )
 _FUNCTION_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
@@ -134,6 +142,18 @@ class MoodleClient:
         ):
             raise MoodleWriteDisabledError(
                 "La actualización de fechas de evaluaciones Moodle está deshabilitada"
+            )
+        if (
+            function
+            in {
+                CREATE_CATEGORIES_FUNCTION,
+                DUPLICATE_COURSE_FUNCTION,
+                UPDATE_COURSES_FUNCTION,
+            }
+            and not bool(getattr(self._settings, "moodle_course_cloning_enabled", False))
+        ):
+            raise MoodleWriteDisabledError(
+                "La creación y clonación de cursos Moodle está deshabilitada"
             )
 
     def _evaluation_dates_function(self) -> str:
@@ -333,6 +353,127 @@ class MoodleClient:
         if not isinstance(courses, list):
             raise MoodleInvalidResponseError("La lista de cursos Moodle no tiene el formato esperado")
         return [item for item in courses if isinstance(item, dict)]
+
+    async def get_course_categories(self) -> list[dict[str, Any]]:
+        payload = await self._post(COURSE_CATEGORIES_FUNCTION)
+        if not isinstance(payload, list):
+            raise MoodleInvalidResponseError(
+                "La lista de categorías Moodle no tiene el formato esperado"
+            )
+        return [item for item in payload if isinstance(item, dict)]
+
+    async def create_course_category(
+        self,
+        *,
+        name: str,
+        parent: int,
+        idnumber: str,
+    ) -> dict[str, Any]:
+        clean_name = str(name or "").strip()
+        clean_idnumber = str(idnumber or "").strip()
+        if not clean_name or len(clean_name) > 255:
+            raise MoodleConfigurationError(
+                "El nombre de la categoría debe tener entre 1 y 255 caracteres"
+            )
+        if int(parent) < 0:
+            raise MoodleConfigurationError("La categoría padre no es válida")
+        if not clean_idnumber or len(clean_idnumber) > 100:
+            raise MoodleConfigurationError(
+                "El código de la categoría debe tener entre 1 y 100 caracteres"
+            )
+
+        payload = await self._post(
+            CREATE_CATEGORIES_FUNCTION,
+            {
+                "categories[0][name]": clean_name,
+                "categories[0][parent]": int(parent),
+                "categories[0][idnumber]": clean_idnumber,
+            },
+            write=True,
+        )
+        if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+            raise MoodleInvalidResponseError(
+                "La creación de la categoría Moodle no devolvió un resultado válido"
+            )
+        return payload[0]
+
+    async def duplicate_course(
+        self,
+        *,
+        course_id: int,
+        fullname: str,
+        shortname: str,
+        category_id: int,
+        visible: bool = False,
+    ) -> dict[str, Any]:
+        clean_fullname = str(fullname or "").strip()
+        clean_shortname = str(shortname or "").strip()
+        if int(course_id) <= 0 or int(category_id) <= 0:
+            raise MoodleConfigurationError("El curso o la categoría Moodle no es válido")
+        if not clean_fullname or len(clean_fullname) > 254:
+            raise MoodleConfigurationError(
+                "El nombre del curso debe tener entre 1 y 254 caracteres"
+            )
+        if not clean_shortname or len(clean_shortname) > 255:
+            raise MoodleConfigurationError(
+                "El nombre corto del curso debe tener entre 1 y 255 caracteres"
+            )
+
+        parameters: dict[str, Any] = {
+            "courseid": int(course_id),
+            "fullname": clean_fullname,
+            "shortname": clean_shortname,
+            "categoryid": int(category_id),
+            "visible": 1 if visible else 0,
+        }
+
+        # Moodle 4.3 already defaults to copying activities without user data.
+        # Sending every documented option can fail when a course's dynamic
+        # backup/restore plan does not expose one of those settings.
+
+        payload = await self._post(DUPLICATE_COURSE_FUNCTION, parameters, write=True)
+        if not isinstance(payload, dict) or int(payload.get("id") or 0) <= 0:
+            raise MoodleInvalidResponseError(
+                "La clonación del curso Moodle no devolvió un resultado válido"
+            )
+        return payload
+
+    async def update_course(
+        self,
+        course_id: int,
+        *,
+        idnumber: str,
+        startdate: int,
+        enddate: int | None = None,
+        visible: bool = False,
+    ) -> None:
+        clean_idnumber = str(idnumber or "").strip()
+        if int(course_id) <= 0:
+            raise MoodleConfigurationError("El curso Moodle no es válido")
+        if not clean_idnumber or len(clean_idnumber) > 100:
+            raise MoodleConfigurationError(
+                "El código del curso debe tener entre 1 y 100 caracteres"
+            )
+        if int(startdate) <= 0:
+            raise MoodleConfigurationError("La fecha inicial del curso no es válida")
+        if enddate is not None and int(enddate) <= int(startdate):
+            raise MoodleConfigurationError(
+                "La fecha final debe ser posterior a la fecha inicial"
+            )
+
+        parameters: dict[str, Any] = {
+            "courses[0][id]": int(course_id),
+            "courses[0][idnumber]": clean_idnumber,
+            "courses[0][startdate]": int(startdate),
+            "courses[0][visible]": 1 if visible else 0,
+        }
+        if enddate is not None:
+            parameters["courses[0][enddate]"] = int(enddate)
+        payload = await self._post(UPDATE_COURSES_FUNCTION, parameters, write=True)
+        if payload is not None and not isinstance(payload, (dict, list)):
+            raise MoodleInvalidResponseError(
+                "La actualización del curso Moodle no devolvió un resultado válido"
+            )
 
     async def get_course_contents(self, course_id: int) -> list[dict[str, Any]]:
         payload = await self._post(COURSE_CONTENTS_FUNCTION, {"courseid": int(course_id)})

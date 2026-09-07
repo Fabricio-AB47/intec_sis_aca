@@ -18,6 +18,8 @@ import { MoodleResourcesPanel } from './MoodleResourcesPanel'
 import { MoodleEvaluationDatesPanel } from './MoodleEvaluationDatesPanel'
 import { MoodleGradeSyncPanel } from './MoodleGradeSyncPanel'
 import { MoodleGradeAlertsPanel } from './MoodleGradeAlertsPanel'
+import { MoodleCourseCloningPanel } from './MoodleCourseCloningPanel'
+import { MoodleAcademicEnrollmentPanel } from './MoodleAcademicEnrollmentPanel'
 
 type MoodleViewProps = {
   displayName: string
@@ -275,6 +277,10 @@ export function MoodleView({
               ? 'Consulta y control de cuentas'
               : activeTab === 'alerts'
                 ? 'Seguimiento de calificaciones'
+                : activeTab === 'academic-enrollment'
+                  ? 'Matrícula Moodle - INTECBDD'
+                : activeTab === 'course-cloning'
+                  ? 'Creación de oferta académica'
                 : activeTab === 'evaluation-dates'
                   ? 'Programación de evaluaciones'
                 : 'Consulta administrativa'}
@@ -290,6 +296,24 @@ export function MoodleView({
             onClick={() => selectTab('alerts')}
           >
             Alertas de calificación
+          </button>
+        )}
+        {availableSections.includes('academic-enrollment') && (
+          <button
+            type="button"
+            className={activeTab === 'academic-enrollment' ? 'is-active' : ''}
+            onClick={() => selectTab('academic-enrollment')}
+          >
+            Moodle - Sistema Académico
+          </button>
+        )}
+        {availableSections.includes('course-cloning') && (
+          <button
+            type="button"
+            className={activeTab === 'course-cloning' ? 'is-active' : ''}
+            onClick={() => selectTab('course-cloning')}
+          >
+            Copiar cursos
           </button>
         )}
         {availableSections.includes('courses') && (
@@ -349,6 +373,10 @@ export function MoodleView({
       </nav>
 
       {activeTab === 'alerts' && <MoodleGradeAlertsPanel />}
+
+      {activeTab === 'academic-enrollment' && <MoodleAcademicEnrollmentPanel />}
+
+      {activeTab === 'course-cloning' && <MoodleCourseCloningPanel />}
 
       {activeTab === 'status' && (
         <div className="moodle-section">

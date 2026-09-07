@@ -297,6 +297,13 @@ TITLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
 
 MOODLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("moodle", "alerts", "Alertas de calificación", "Moodle"),
+    _flow(
+        "moodle",
+        "academic-enrollment",
+        "Moodle - Sistema Académico",
+        "Moodle",
+    ),
+    _flow("moodle", "course-cloning", "Copiar cursos", "Moodle"),
     _flow("moodle", "courses", "Cursos", "Moodle"),
     _flow(
         "moodle",
@@ -421,6 +428,8 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # configurados. La migración solo actúa sobre filas creadas automáticamente por
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "moodle/academic-enrollment": ("ADMINISTRADOR",),
+    "moodle/course-cloning": ("ADMINISTRADOR",),
     "solicitudes-cambio-carrera": ("ACADEMICO", "SECRETARIA"),
     "solicitudes-cambio-modalidad": ("ACADEMICO", "SECRETARIA"),
     "practicas-institucionales": ("DOCENTE",),
@@ -506,6 +515,8 @@ _SPLIT_SCREEN_MIGRATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "moodle",
         (
             "moodle/alerts",
+            "moodle/academic-enrollment",
+            "moodle/course-cloning",
             "moodle/courses",
             "moodle/evaluation-dates",
             "moodle/resources",
@@ -750,7 +761,11 @@ def _migrate_new_screen_default_assignments(cursor: Any) -> None:
                   AND target.PantallaCodigo = source.PantallaCodigo
                 WHEN MATCHED
                  AND target.Activo = 0
-                 AND target.UsuarioActualizacion IN (N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL') THEN
+                 AND target.UsuarioActualizacion IN
+                 (
+                    N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL',
+                    N'SISTEMA_MIGRACION', N'SISTEMA_FLUJOS'
+                 ) THEN
                     UPDATE SET
                         target.Activo = 1,
                         target.FechaActualizacion = SYSDATETIME(),

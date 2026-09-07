@@ -1736,9 +1736,15 @@ def _fetch_pensum_by_code(cursor: pyodbc.Cursor, cod_anio_basica: int) -> dict[i
     return {int(row.codigo_materia): _subject_item(row) for row in cursor.fetchall()}
 
 
-def _fetch_existing_codes(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPayload) -> dict[int, dict[str, Any]]:
+def _fetch_existing_codes(
+    cursor: pyodbc.Cursor,
+    payload: AcademicEnrollmentPayload,
+    *,
+    for_update: bool = False,
+) -> dict[int, dict[str, Any]]:
+    table_hint = " WITH (UPDLOCK, HOLDLOCK)" if for_update else ""
     cursor.execute(
-        """
+        f"""
         SELECT
             cxe.codigo_materia,
             cxe.Num_Matricula,
@@ -1755,7 +1761,7 @@ def _fetch_existing_codes(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPayl
             cxe.P3Tareas,
             cxe.P3Proyectos,
             cxe.P3Examen
-        FROM dbo.CARRERAXESTUD cxe
+        FROM dbo.CARRERAXESTUD cxe{table_hint}
         WHERE cxe.codigo_estud = ?
           AND cxe.cod_anio_Basica = ?
           AND cxe.codigo_periodo = ?
@@ -2133,8 +2139,17 @@ def _record_prerequisite_exception(
     )
 
 
-def _next_number(cursor: pyodbc.Cursor, table: str, column: str) -> int:
-    cursor.execute(f"SELECT COALESCE(MAX(TRY_CONVERT(int, {column})), 0) + 1 FROM dbo.{table}")
+def _next_number(
+    cursor: pyodbc.Cursor,
+    table: str,
+    column: str,
+    *,
+    for_update: bool = False,
+) -> int:
+    table_hint = " WITH (UPDLOCK, HOLDLOCK)" if for_update else ""
+    cursor.execute(
+        f"SELECT COALESCE(MAX(TRY_CONVERT(int, {column})), 0) + 1 FROM dbo.{table}{table_hint}"
+    )
     return int(cursor.fetchone()[0] or 1)
 
 
@@ -2163,11 +2178,16 @@ def _next_subject_matricula(
     codigo_estud: int,
     cod_anio_basica: int,
     codigo_materia: int,
+    *,
+    for_update: bool = False,
 ) -> int:
+    table_hint = " WITH (UPDLOCK, HOLDLOCK)" if for_update else ""
     cursor.execute(
-        """
-        SELECT COALESCE(MAX(TRY_CONVERT(int, Num_Matricula)), 0) + 1
-        FROM dbo.CARRERAXESTUD
+        f"""
+        SELECT COUNT(
+            DISTINCT COALESCE(TRY_CONVERT(int, codigo_periodo), -1)
+        ) + 1
+        FROM dbo.CARRERAXESTUD{table_hint}
         WHERE codigo_estud = ?
           AND cod_anio_Basica = ?
           AND codigo_materia = ?
@@ -3140,7 +3160,7 @@ def _save_enrollment_with_cursor(
     cursor.execute(
         """
         SELECT TOP (1) Num_Matricula
-        FROM dbo.CABECERA_MATRICULA
+        FROM dbo.CABECERA_MATRICULA WITH (UPDLOCK, HOLDLOCK)
         WHERE codigo_estud = ?
           AND cod_anio_Basica = ?
           AND codigo_periodo = ?
@@ -3181,8 +3201,8 @@ def _save_enrollment_with_cursor(
             payload.cod_jornada,
         )
 
-    existing = _fetch_existing_codes(cursor, payload)
-    next_reg = _next_number(cursor, "CARRERAXESTUD", "Num_Reg_Mat")
+    existing = _fetch_existing_codes(cursor, payload, for_update=True)
+    next_reg = _next_number(cursor, "CARRERAXESTUD", "Num_Reg_Mat", for_update=True)
     inserted = 0
     updated = 0
     existing_skipped = 0
@@ -3211,6 +3231,7 @@ def _save_enrollment_with_cursor(
                 payload.codigo_estud,
                 payload.cod_anio_basica,
                 code,
+                for_update=True,
             )
             if subject_num_matricula > 3:
                 blocked_by_repetition += 1

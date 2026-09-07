@@ -607,6 +607,9 @@ export type MoodleStatusResponse = {
   evaluation_date_update_function: string
   evaluation_date_update_function_available: boolean
   evaluation_date_update_reason: string
+  course_cloning_enabled: boolean
+  course_cloning_functions_available: boolean
+  course_cloning_reason: string
   functions_count: number
   required_functions: string[]
   missing_required_functions: string[]
@@ -672,6 +675,290 @@ export type MoodlePagedResponse<T> = {
 
 export type MoodleUsersResponse = MoodlePagedResponse<MoodleUser>
 export type MoodleCoursesResponse = MoodlePagedResponse<MoodleCourse>
+
+export type MoodleCourseOfferType = 'REGULAR' | 'HOMOLOGACION'
+
+export type MoodleCourseCloningCapability = {
+  enabled: boolean
+  reason: string
+  required_functions: string[]
+  missing_functions: string[]
+}
+
+export type MoodleCourseCloningTemplate = {
+  course_id: number
+  subject_name: string
+  fullname: string
+  shortname: string
+  idnumber: string
+  category_id: number
+  source_path: string
+  area: string
+  career: string
+  offer_type: MoodleCourseOfferType
+  visible: boolean
+}
+
+export type MoodleCourseCloningCatalogResponse = {
+  current_year: number
+  capability: MoodleCourseCloningCapability
+  catalog_ready: boolean
+  catalog_reason: string
+  template_root: { id: number; name: string; idnumber: string } | null
+  offer_root: { id: number; name: string; idnumber: string } | null
+  templates: MoodleCourseCloningTemplate[]
+  summary: {
+    templates: number
+    regular: number
+    homologation: number
+    ignored_courses: number
+  }
+}
+
+export type MoodleCourseCloningPayload = {
+  template_course_ids: number[]
+  offer_type: MoodleCourseOfferType
+  period_name: string
+  opening_at: string
+  closing_at: string | null
+  parallel: string
+}
+
+export type MoodleCourseCloningCategoryPlan = {
+  id: number
+  name: string
+  idnumber: string
+  path: string
+  status: 'EXISTENTE' | 'POR_CREAR' | 'CONFLICTO'
+  conflict: string
+}
+
+export type MoodleCourseCloningCoursePlan = {
+  template_course_id: number
+  subject_name: string
+  template_shortname: string
+  source_path: string
+  area: string
+  career: string
+  offer_type: MoodleCourseOfferType
+  fullname: string
+  shortname: string
+  idnumber: string
+  destination_path: string
+  destination_category_id: number
+  existing_course_id: number
+  status: 'POR_CLONAR' | 'EXISTENTE' | 'CONFLICTO'
+  conflict: string
+}
+
+export type MoodleCourseCloningPreviewResponse = {
+  ready: boolean
+  capability: MoodleCourseCloningCapability
+  year: number
+  offer_type: MoodleCourseOfferType
+  period_name: string
+  opening_at: string
+  closing_at: string | null
+  categories: MoodleCourseCloningCategoryPlan[]
+  courses: MoodleCourseCloningCoursePlan[]
+  summary: {
+    selected: number
+    to_clone: number
+    existing: number
+    course_conflicts: number
+    categories_to_create: number
+    categories_existing: number
+    category_conflicts: number
+  }
+}
+
+export type MoodleCourseCloningApplyResponse = {
+  ok: boolean
+  message: string
+  created_count: number
+  skipped_count: number
+  error_count: number
+  warning_count: number
+  created_categories: Array<{
+    id: number
+    name: string
+    idnumber: string
+    parent: number
+    path: string
+  }>
+  courses: Array<Omit<MoodleCourseCloningCoursePlan, 'status'> & {
+    course_id?: number
+    destination_category_id?: number
+    destination_path: string
+    status: 'CREADO' | 'CREADO_CON_ADVERTENCIA' | 'OMITIDO' | 'ERROR'
+    message: string
+    audit_recorded: boolean
+  }>
+}
+
+export type MoodleAcademicEnrollmentSelection = {
+  course_ids: number[]
+  period_code: number
+  jornada_code: number
+  career_by_course: Record<number, number>
+}
+
+export type MoodleAcademicEnrollmentCatalogResponse = {
+  periods: Array<{
+    code: number
+    name: string
+    state: string
+    enrollment_type: 'R' | 'H' | 'E'
+    starts_at: string
+    ends_at: string
+    year: number | null
+  }>
+  jornadas: Array<{ code: number; name: string }>
+  rules: {
+    max_courses: number
+    parallel_source: string
+    student_roles: string[]
+    teacher_roles: string[]
+  }
+}
+
+export type MoodleAcademicEnrollmentTeacher = {
+  moodle_user_id: number
+  moodle_name: string
+  moodle_email: string
+  moodle_idnumber: string
+  roles: string[]
+  academic_code: number | null
+  academic_name: string
+  match_source: string
+  status: string
+  message: string
+}
+
+export type MoodleAcademicEnrollmentStudent = MoodleAcademicEnrollmentTeacher & {
+  student_code?: number
+  enrollment_number?: number
+  career_code?: number
+  career_name?: string
+  subject_id?: number
+  subject_code?: string
+  subject_name?: string
+}
+
+export type MoodleAcademicEnrollmentCoursePreview = {
+  course: {
+    id: number
+    name: string
+    shortname: string
+    idnumber: string
+    category: string
+    timemodified: number
+  }
+  parallel: string
+  course_code: string
+  selected_career_code: number | null
+  selected_career_name: string
+  selected_subject_id: number | null
+  subject_candidates: Array<{
+    career_code: number
+    career_name: string
+    subject_id: number
+    subject_code: string
+    subject_name: string
+    level: number | null
+    credits: number
+  }>
+  academic_contexts: Array<{
+    career_code: number
+    career_name: string
+    subject_id: number
+    subject_code: string
+    subject_name: string
+    students: number
+  }>
+  teachers: MoodleAcademicEnrollmentTeacher[]
+  students: MoodleAcademicEnrollmentStudent[]
+  suggested_principal_teacher_code: number | null
+  requires_principal_teacher: boolean
+  errors: string[]
+  warnings: string[]
+  ready: boolean
+  summary: {
+    moodle_students: number
+    ready_students: number
+    existing_students: number
+    blocked_students: number
+    ignored_users: number
+    moodle_teachers: number
+    matched_teachers: number
+    first_enrollments: number
+    second_enrollments: number
+    third_enrollments: number
+  }
+}
+
+export type MoodleAcademicEnrollmentPreviewResponse = {
+  period: {
+    code: number
+    name: string
+    state: string
+    enrollment_type: 'R' | 'H' | 'E'
+    starts_at: string
+    ends_at: string
+  }
+  jornada: { code: number; name: string }
+  courses: MoodleAcademicEnrollmentCoursePreview[]
+  summary: {
+    selected_courses: number
+    ready_courses: number
+    blocked_courses: number
+    moodle_students: number
+    ready_students: number
+    existing_students: number
+    blocked_students: number
+    ignored_users: number
+    matched_teachers: number
+    first_enrollments: number
+    second_enrollments: number
+    third_enrollments: number
+  }
+  can_apply: boolean
+  fingerprint: string
+}
+
+export type MoodleAcademicEnrollmentApplyResponse = {
+  ok: boolean
+  message: string
+  period: MoodleAcademicEnrollmentPreviewResponse['period']
+  jornada: MoodleAcademicEnrollmentPreviewResponse['jornada']
+  courses: Array<{
+    course_id: number
+    course_name: string
+    parallel: string
+    principal_teacher_code: number
+    teachers: number
+    students: Array<{
+      student_code: number
+      name: string
+      status: 'MATRICULADO' | 'EXISTENTE'
+      enrollment_number: number
+    }>
+    inserted: number
+    existing: number
+  }>
+  summary: {
+    courses: number
+    students_inserted: number
+    students_existing: number
+    students_skipped: number
+    first_enrollments: number
+    second_enrollments: number
+    third_enrollments: number
+    teacher_assignments_inserted: number
+    teacher_assignments_existing: number
+    student_teacher_links: number
+  }
+}
 
 export type MoodleCourseContent = {
   type: string
@@ -1593,6 +1880,8 @@ export type DocumentExpedientPrepareResponse = {
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type MoodleSection =
   | 'alerts'
+  | 'academic-enrollment'
+  | 'course-cloning'
   | 'status'
   | 'users'
   | 'courses'

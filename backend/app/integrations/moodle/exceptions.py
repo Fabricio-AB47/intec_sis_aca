@@ -69,6 +69,14 @@ class MoodleEvaluationDateUpdateError(MoodleError):
     pass
 
 
+class MoodleCourseCloningError(MoodleError):
+    pass
+
+
+class MoodleAcademicEnrollmentError(MoodleError):
+    pass
+
+
 class MoodleUserNotConfirmedError(MoodleError):
     pass
 

@@ -96,6 +96,17 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(screen["parent_page"], "moodle")
         self.assertIn("moodle/evaluation-dates", ALL_PAGES)
 
+    def test_moodle_course_cloning_is_independently_assignable(self) -> None:
+        screen = next(
+            item for item in SCREEN_CATALOG
+            if item["page"] == "moodle/course-cloning"
+        )
+
+        self.assertEqual(screen["label"], "Copiar cursos")
+        self.assertEqual(screen["group"], "Moodle")
+        self.assertEqual(screen["parent_page"], "moodle")
+        self.assertIn("moodle/course-cloning", ALL_PAGES)
+
     def test_enrollment_flows_are_independently_assignable(self) -> None:
         enrollment_flows = {
             page
@@ -411,6 +422,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_moodle_is_exposed_as_assignable_subscreens(self) -> None:
         expected = {
             "moodle/alerts",
+            "moodle/academic-enrollment",
+            "moodle/course-cloning",
             "moodle/courses",
             "moodle/evaluation-dates",
             "moodle/grades",
@@ -443,6 +456,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
 
     def test_automatic_moodle_grants_are_removed_only_outside_administration(self) -> None:
         optional_pages = {
+            "moodle/academic-enrollment",
+            "moodle/course-cloning",
             "moodle/courses",
             "moodle/evaluation-dates",
             "moodle/grades",
@@ -547,6 +562,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(
             {params for _, params in cursor.executions},
             {
+                ("ADMINISTRADOR", "moodle/academic-enrollment"),
+                ("ADMINISTRADOR", "moodle/course-cloning"),
                 ("ACADEMICO", "solicitudes-cambio-carrera"),
                 ("SECRETARIA", "solicitudes-cambio-carrera"),
                 ("ACADEMICO", "solicitudes-cambio-modalidad"),
@@ -557,7 +574,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         )
         for statement, _ in cursor.executions:
             self.assertIn(
-                "TARGET.USUARIOACTUALIZACION IN (N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL')",
+                "TARGET.USUARIOACTUALIZACION IN ( N'SISTEMA_CATALOGO', N'SISTEMA_INICIAL', N'SISTEMA_MIGRACION', N'SISTEMA_FLUJOS' )",
                 statement,
             )
             self.assertIn("SISTEMA_PANTALLAS_NUEVAS", statement)

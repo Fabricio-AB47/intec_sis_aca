@@ -81,6 +81,8 @@ const MoodleView = lazyView(() => import('./features/moodle/MoodleView'), 'Moodl
 const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos']
 const moodleSections: MoodleSection[] = [
   'alerts',
+  'academic-enrollment',
+  'course-cloning',
   'courses',
   'evaluation-dates',
   'resources',

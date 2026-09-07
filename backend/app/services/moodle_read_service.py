@@ -16,13 +16,17 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.config import Settings
 from app.integrations.moodle.client import (
+    COURSE_CATEGORIES_FUNCTION,
     COURSE_CONTENTS_FUNCTION,
     COURSES_FUNCTION,
+    CREATE_CATEGORIES_FUNCTION,
+    DUPLICATE_COURSE_FUNCTION,
     EDIT_SECTION_FUNCTION,
     ENROLLED_USERS_FUNCTION,
     GRADE_ITEMS_FUNCTION,
     SITE_INFO_FUNCTION,
     UPDATE_INPLACE_EDITABLE_FUNCTION,
+    UPDATE_COURSES_FUNCTION,
     UPDATE_USERS_FUNCTION,
     USERS_FUNCTION,
     MoodleClient,
@@ -283,6 +287,36 @@ class MoodleReadService:
             UPDATE_INPLACE_EDITABLE_FUNCTION,
         ]
 
+        cloning_required_functions = [
+            COURSES_FUNCTION,
+            COURSE_CATEGORIES_FUNCTION,
+            CREATE_CATEGORIES_FUNCTION,
+            DUPLICATE_COURSE_FUNCTION,
+            UPDATE_COURSES_FUNCTION,
+        ]
+        cloning_missing_functions = [
+            name for name in cloning_required_functions if name not in available_functions
+        ]
+        cloning_configured = bool(
+            self._settings.moodle_enabled
+            and self._settings.moodle_writes_enabled
+            and getattr(self._settings, "moodle_course_cloning_enabled", False)
+        )
+        cloning_enabled = cloning_configured and not cloning_missing_functions
+        if not self._settings.moodle_enabled:
+            cloning_reason = "La integración con Moodle está deshabilitada."
+        elif not self._settings.moodle_writes_enabled:
+            cloning_reason = "Las escrituras en Moodle están deshabilitadas."
+        elif not getattr(self._settings, "moodle_course_cloning_enabled", False):
+            cloning_reason = "La clonación de cursos Moodle está deshabilitada."
+        elif cloning_missing_functions:
+            cloning_reason = (
+                "El servicio Moodle no publica: "
+                + ", ".join(cloning_missing_functions)
+            )
+        else:
+            cloning_reason = "La creación de categorías y clonación está habilitada."
+
         token = self._settings.moodle_token
         configured = bool(
             _as_text(self._settings.moodle_base_url)
@@ -316,12 +350,19 @@ class MoodleReadService:
                 "function_available"
             ],
             "evaluation_date_update_reason": date_capability["reason"],
+            "course_cloning_enabled": cloning_enabled,
+            "course_cloning_functions_available": not cloning_missing_functions,
+            "course_cloning_reason": cloning_reason,
             "functions_count": len(available_functions),
             "required_functions": required_functions,
             "missing_required_functions": [
                 name for name in required_functions if name not in available_functions
             ],
         }
+
+    def invalidate_courses_cache(self) -> None:
+        """Discard course-derived data after Moodle creates a new course."""
+        self._courses_cache = None
 
     async def list_users(
         self,

@@ -34,6 +34,7 @@ def moodle_settings(**overrides: object) -> SimpleNamespace:
         "moodle_writes_enabled": True,
         "moodle_user_status_update_enabled": True,
         "moodle_section_updates_enabled": True,
+        "moodle_course_cloning_enabled": True,
         "moodle_evaluation_dates_update_enabled": True,
         "moodle_evaluation_dates_function": "local_sisaca_bulk_update_evaluation_dates",
         "moodle_timeout_seconds": 5,
@@ -180,6 +181,102 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
             await http_client.aclose()
 
         self.assertEqual(courses[0]["id"], 8)
+
+    async def test_course_cloning_functions_use_safe_moodle_parameters(self) -> None:
+        calls: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"), keep_blank_values=True)
+            function = form["wsfunction"][0]
+            calls.append(function)
+            if function == "core_course_get_categories":
+                return json_response(
+                    request,
+                    [{"id": 4, "name": "CURSOS_BASE_PLANTILLAS", "parent": 0}],
+                )
+            if function == "core_course_create_categories":
+                self.assertEqual(form["categories[0][name]"], ["2027"])
+                self.assertEqual(form["categories[0][parent]"], ["40"])
+                self.assertEqual(form["categories[0][idnumber]"], ["OFA-TICS-Y2027"])
+                return json_response(request, [{"id": 41, "name": "2027"}])
+            if function == "core_course_duplicate_course":
+                self.assertEqual(form["courseid"], ["12"])
+                self.assertEqual(form["fullname"], ["R30 - Seguridad en Redes"])
+                self.assertEqual(form["shortname"], ["R30-SEG-RED"])
+                self.assertEqual(form["categoryid"], ["45"])
+                self.assertEqual(form["visible"], ["0"])
+                self.assertFalse(any(key.startswith("options[") for key in form))
+                return json_response(request, {"id": 99, "shortname": "R30-SEG-RED"})
+            if function == "core_course_update_courses":
+                self.assertEqual(form["courses[0][id]"], ["99"])
+                self.assertEqual(form["courses[0][idnumber]"], ["MAT-SEG-RED-R30"])
+                self.assertEqual(form["courses[0][startdate]"], ["1800000000"])
+                self.assertEqual(form["courses[0][enddate]"], ["1805000000"])
+                self.assertEqual(form["courses[0][visible]"], ["0"])
+                return json_response(request, None)
+            self.fail(f"Función inesperada: {function}")
+
+        client, http_client = await self._client(handler)
+        try:
+            categories = await client.get_course_categories()
+            category = await client.create_course_category(
+                name="2027",
+                parent=40,
+                idnumber="OFA-TICS-Y2027",
+            )
+            course = await client.duplicate_course(
+                course_id=12,
+                fullname="R30 - Seguridad en Redes",
+                shortname="R30-SEG-RED",
+                category_id=45,
+                visible=False,
+            )
+            await client.update_course(
+                99,
+                idnumber="MAT-SEG-RED-R30",
+                startdate=1_800_000_000,
+                enddate=1_805_000_000,
+                visible=False,
+            )
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(categories[0]["id"], 4)
+        self.assertEqual(category["id"], 41)
+        self.assertEqual(course["id"], 99)
+        self.assertEqual(
+            calls,
+            [
+                "core_course_get_categories",
+                "core_course_create_categories",
+                "core_course_duplicate_course",
+                "core_course_update_courses",
+            ],
+        )
+
+    async def test_course_cloning_writes_require_dedicated_flag(self) -> None:
+        called = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return json_response(request, [])
+
+        client, http_client = await self._client(
+            handler,
+            moodle_course_cloning_enabled=False,
+        )
+        try:
+            with self.assertRaises(MoodleWriteDisabledError):
+                await client.create_course_category(
+                    name="2027",
+                    parent=0,
+                    idnumber="OFA-Y2027",
+                )
+        finally:
+            await http_client.aclose()
+
+        self.assertFalse(called)
 
     async def test_get_course_contents(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:

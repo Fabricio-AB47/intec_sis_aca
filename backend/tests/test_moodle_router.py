@@ -13,6 +13,7 @@ from app.integrations.moodle.exceptions import (
     MoodleApiError,
     MoodleConfigurationError,
     MoodleConnectionError,
+    MoodleCourseCloningError,
     MoodleDisabledError,
     MoodleInstitutionalEmailNotFoundError,
     MoodleResultLimitExceededError,
@@ -20,7 +21,9 @@ from app.integrations.moodle.exceptions import (
     MoodleWriteDisabledError,
 )
 from app.routers.moodle import (
+    _MOODLE_ACADEMIC_ENROLLMENT_ACCESS,
     _MOODLE_ALERTS_ACCESS,
+    _MOODLE_COURSE_CLONING_ACCESS,
     _MOODLE_COURSES_ACCESS,
     _MOODLE_EVALUATION_DATES_ACCESS,
     _MOODLE_GRADES_ACCESS,
@@ -28,6 +31,8 @@ from app.routers.moodle import (
     _MOODLE_STATUS_ACCESS,
     _MOODLE_USERS_ACCESS,
     get_moodle_grade_alert_service,
+    get_moodle_academic_enrollment_service,
+    get_moodle_course_cloning_service,
     get_moodle_grade_sync_service,
     get_moodle_read_service,
     router,
@@ -44,6 +49,9 @@ def administrative_user() -> SessionUser:
 
 
 class FakeMoodleService:
+    def __init__(self) -> None:
+        self.course_cache_invalidations = 0
+
     async def get_status(self):
         return {"enabled": True, "configured": True, "reachable": True, "site_name": "Moodle"}
 
@@ -144,6 +152,9 @@ class FakeMoodleService:
             MoodleFileStream(response=response),
         )
 
+    def invalidate_courses_cache(self) -> None:
+        self.course_cache_invalidations += 1
+
 
 class FailingMoodleService(FakeMoodleService):
     def __init__(self, error: Exception) -> None:
@@ -175,6 +186,55 @@ class FakeMoodleGradeAlertService:
         return {"role": user.rol, "refresh": refresh, "summary": {"total": 0}}
 
 
+class FakeMoodleCourseCloningService:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.previews: list[dict] = []
+        self.applies: list[dict] = []
+
+    async def catalog(self):
+        if self.error:
+            raise self.error
+        return {"catalog_ready": True, "templates": []}
+
+    async def preview(self, payload: dict):
+        if self.error:
+            raise self.error
+        self.previews.append(payload)
+        return {"ready": True, "received": payload}
+
+    async def apply(self, payload: dict, **kwargs):
+        if self.error:
+            raise self.error
+        self.applies.append({"payload": payload, **kwargs})
+        return {"ok": True, "created_count": len(payload["template_course_ids"])}
+
+
+class FakeMoodleAcademicEnrollmentService:
+    def __init__(self) -> None:
+        self.previews: list[dict] = []
+        self.applies: list[dict] = []
+
+    async def catalog(self):
+        return {
+            "periods": [{"code": 1060, "name": "C1-2026-PCFF"}],
+            "jornadas": [{"code": 2, "name": "Nocturno"}],
+            "rules": {"max_courses": 25},
+        }
+
+    async def preview(self, **kwargs):
+        self.previews.append(kwargs)
+        return {
+            "can_apply": True,
+            "fingerprint": "a" * 64,
+            "received": kwargs,
+        }
+
+    async def apply(self, **kwargs):
+        self.applies.append(kwargs)
+        return {"ok": True, "received": kwargs}
+
+
 class MoodleRouterTests(unittest.TestCase):
     def _client(
         self,
@@ -182,6 +242,8 @@ class MoodleRouterTests(unittest.TestCase):
         access_dependency=None,
         grade_service=None,
         alert_service=None,
+        cloning_service=None,
+        academic_enrollment_service=None,
     ) -> TestClient:
         app = FastAPI()
         app.include_router(router)
@@ -193,12 +255,20 @@ class MoodleRouterTests(unittest.TestCase):
         app.dependency_overrides[_MOODLE_GRADES_ACCESS] = access
         app.dependency_overrides[_MOODLE_ALERTS_ACCESS] = access
         app.dependency_overrides[_MOODLE_EVALUATION_DATES_ACCESS] = access
+        app.dependency_overrides[_MOODLE_COURSE_CLONING_ACCESS] = access
+        app.dependency_overrides[_MOODLE_ACADEMIC_ENROLLMENT_ACCESS] = access
         app.dependency_overrides[get_moodle_read_service] = lambda: service or FakeMoodleService()
         app.dependency_overrides[get_moodle_grade_sync_service] = (
             lambda: grade_service or FakeMoodleGradeSyncService()
         )
         app.dependency_overrides[get_moodle_grade_alert_service] = (
             lambda: alert_service or FakeMoodleGradeAlertService()
+        )
+        app.dependency_overrides[get_moodle_course_cloning_service] = (
+            lambda: cloning_service or FakeMoodleCourseCloningService()
+        )
+        app.dependency_overrides[get_moodle_academic_enrollment_service] = (
+            lambda: academic_enrollment_service or FakeMoodleAcademicEnrollmentService()
         )
         return TestClient(app)
 
@@ -248,6 +318,135 @@ class MoodleRouterTests(unittest.TestCase):
         received = response.json()["received"]
         self.assertEqual(received["visibility"], "visible")
         self.assertEqual(received["category_id"], 4)
+
+    def test_course_cloning_catalog_preview_and_apply(self) -> None:
+        read_service = FakeMoodleService()
+        cloning_service = FakeMoodleCourseCloningService()
+        payload = {
+            "template_course_ids": [101, 101, 102],
+            "offer_type": "REGULAR",
+            "period_name": " R30 ",
+            "opening_at": "2027-01-11T08:00:00-05:00",
+            "closing_at": "2027-03-12T22:00:00-05:00",
+            "parallel": " A ",
+        }
+
+        with self._client(
+            service=read_service,
+            cloning_service=cloning_service,
+        ) as client:
+            catalog_response = client.get("/api/moodle/course-cloning/catalog")
+            preview_response = client.post(
+                "/api/moodle/course-cloning/preview",
+                json=payload,
+            )
+            apply_response = client.post(
+                "/api/moodle/course-cloning/apply",
+                json=payload,
+            )
+
+        self.assertEqual(catalog_response.status_code, 200)
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(apply_response.status_code, 200)
+        self.assertEqual(cloning_service.previews[0]["template_course_ids"], [101, 102])
+        self.assertEqual(cloning_service.previews[0]["period_name"], "R30")
+        self.assertEqual(cloning_service.previews[0]["parallel"], "A")
+        self.assertEqual(cloning_service.applies[0]["actor"], "admin@example.edu")
+        self.assertEqual(read_service.course_cache_invalidations, 1)
+
+    def test_course_cloning_rejects_invalid_dates_and_unknown_fields(self) -> None:
+        payload = {
+            "template_course_ids": [101],
+            "offer_type": "REGULAR",
+            "period_name": "R30",
+            "opening_at": "2027-03-12T22:00:00-05:00",
+            "closing_at": "2027-01-11T08:00:00-05:00",
+            "parallel": "",
+            "unexpected": True,
+        }
+
+        with self._client() as client:
+            response = client.post("/api/moodle/course-cloning/preview", json=payload)
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_academic_enrollment_catalog_preview_and_apply(self) -> None:
+        service = FakeMoodleAcademicEnrollmentService()
+        with self._client(academic_enrollment_service=service) as client:
+            catalog_response = client.get("/api/moodle/academic-enrollment/catalog")
+            preview_response = client.post(
+                "/api/moodle/academic-enrollment/preview?refresh=true",
+                json={
+                    "course_ids": [1330, 1330, 1332],
+                    "period_code": 1060,
+                    "jornada_code": 2,
+                    "career_by_course": {"1330": 12, "1332": 12},
+                },
+            )
+            apply_response = client.post(
+                "/api/moodle/academic-enrollment/apply",
+                json={
+                    "course_ids": [1330, 1332],
+                    "period_code": 1060,
+                    "jornada_code": 2,
+                    "career_by_course": {"1330": 12, "1332": 12},
+                    "principal_teacher_by_course": {"1330": 100, "1332": 111},
+                    "preview_fingerprint": "a" * 64,
+                },
+            )
+
+        self.assertEqual(catalog_response.status_code, 200)
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(apply_response.status_code, 200)
+        self.assertEqual(service.previews[0]["course_ids"], [1330, 1332])
+        self.assertEqual(service.previews[0]["period_code"], 1060)
+        self.assertEqual(service.previews[0]["career_by_course"], {1330: 12, 1332: 12})
+        self.assertTrue(service.previews[0]["refresh"])
+        self.assertEqual(service.applies[0]["career_by_course"], {1330: 12, 1332: 12})
+        self.assertEqual(service.applies[0]["principal_teacher_by_course"], {1330: 100, 1332: 111})
+        self.assertEqual(service.applies[0]["actor"], "admin@example.edu")
+
+    def test_academic_enrollment_requires_period_and_valid_preview(self) -> None:
+        with self._client() as client:
+            missing_period = client.post(
+                "/api/moodle/academic-enrollment/preview",
+                json={"course_ids": [1330], "jornada_code": 2},
+            )
+            invalid_fingerprint = client.post(
+                "/api/moodle/academic-enrollment/apply",
+                json={
+                    "course_ids": [1330],
+                    "period_code": 1060,
+                    "jornada_code": 2,
+                    "preview_fingerprint": "incorrecto",
+                },
+            )
+
+        self.assertEqual(missing_period.status_code, 422)
+        self.assertEqual(invalid_fingerprint.status_code, 422)
+
+    def test_academic_enrollment_rejects_career_for_unselected_course(self) -> None:
+        with self._client() as client:
+            response = client.post(
+                "/api/moodle/academic-enrollment/preview",
+                json={
+                    "course_ids": [1330],
+                    "period_code": 1060,
+                    "jornada_code": 2,
+                    "career_by_course": {"1332": 12},
+                },
+            )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_course_cloning_conflict_returns_409(self) -> None:
+        cloning_service = FakeMoodleCourseCloningService(
+            MoodleCourseCloningError("La plantilla ya tiene un destino incompatible")
+        )
+        with self._client(cloning_service=cloning_service) as client:
+            response = client.get("/api/moodle/course-cloning/catalog")
+
+        self.assertEqual(response.status_code, 409)
 
     def test_course_resources_endpoint_loads_selected_course(self) -> None:
         with self._client() as client:

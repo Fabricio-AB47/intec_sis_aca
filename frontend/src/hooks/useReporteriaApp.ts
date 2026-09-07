@@ -223,7 +223,7 @@ function enrollmentMode(value: string | null): AcademicEnrollmentMode {
 }
 
 function moodleSection(value: string | null): MoodleSection {
-  return ['alerts', 'status', 'users', 'courses', 'resources', 'evaluation-dates', 'grades'].includes(value || '')
+  return ['alerts', 'academic-enrollment', 'course-cloning', 'status', 'users', 'courses', 'resources', 'evaluation-dates', 'grades'].includes(value || '')
     ? value as MoodleSection
     : 'status'
 }
