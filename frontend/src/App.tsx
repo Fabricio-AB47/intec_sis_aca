@@ -85,6 +85,7 @@ const moodleSections: MoodleSection[] = [
   'course-cloning',
   'courses',
   'evaluation-dates',
+  'manual-enrollment',
   'resources',
   'grades',
   'status',

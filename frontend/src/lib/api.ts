@@ -135,6 +135,12 @@ import type {
   MoodleGradeCourseOption,
   MoodleGradeHistoryResponse,
   MoodleGradePreviewResponse,
+  MoodleManualEnrollmentApplyResponse,
+  MoodleManualEnrollmentCatalogResponse,
+  MoodleManualEnrollmentPreviewResponse,
+  MoodleManualEnrollmentRole,
+  MoodleManualEnrollmentSearchResponse,
+  MoodleManualEnrollmentSelection,
   MoodleSectionNameUpdateResponse,
   MoodleSectionVisibilityUpdateResponse,
   MoodleStatusResponse,
@@ -818,6 +824,47 @@ export async function applyMoodleAcademicEnrollment(
   },
 ): Promise<MoodleAcademicEnrollmentApplyResponse> {
   return request<MoodleAcademicEnrollmentApplyResponse>('/api/moodle/academic-enrollment/apply', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function fetchMoodleManualEnrollmentCatalog(): Promise<MoodleManualEnrollmentCatalogResponse> {
+  return request<MoodleManualEnrollmentCatalogResponse>('/api/moodle/manual-enrollment/catalog', {
+    cache: 'no-store',
+  })
+}
+
+export async function searchMoodleManualEnrollment(
+  payload: {
+    course_id: number
+    role: MoodleManualEnrollmentRole
+    names: string[]
+  },
+  refresh = false,
+): Promise<MoodleManualEnrollmentSearchResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleManualEnrollmentSearchResponse>(
+    `/api/moodle/manual-enrollment/search?${params.toString()}`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export async function previewMoodleManualEnrollment(
+  payload: MoodleManualEnrollmentSelection,
+  refresh = false,
+): Promise<MoodleManualEnrollmentPreviewResponse> {
+  const params = new URLSearchParams({ refresh: refresh ? 'true' : 'false' })
+  return request<MoodleManualEnrollmentPreviewResponse>(
+    `/api/moodle/manual-enrollment/preview?${params.toString()}`,
+    { method: 'POST', body: payload },
+  )
+}
+
+export async function applyMoodleManualEnrollment(
+  payload: MoodleManualEnrollmentSelection & { preview_fingerprint: string },
+): Promise<MoodleManualEnrollmentApplyResponse> {
+  return request<MoodleManualEnrollmentApplyResponse>('/api/moodle/manual-enrollment/apply', {
     method: 'POST',
     body: payload,
   })

@@ -532,6 +532,24 @@ class MoodleReadService:
         entry, _cached = await self._courses(refresh=refresh)
         return [dict(item) for item in entry.items]
 
+    async def get_all_users(self, *, refresh: bool = False) -> list[dict[str, Any]]:
+        """Return the normalized Moodle directory for controlled identity matching."""
+        entry, _cached = await self._users(refresh=refresh)
+        return [dict(item) for item in entry.items]
+
+    async def get_users_by_ids(self, user_ids: list[int]) -> list[dict[str, Any]]:
+        """Resolve an explicit selection without scanning the complete directory."""
+        normalized_ids = list(
+            dict.fromkeys(int(user_id) for user_id in user_ids if int(user_id) > 0)
+        )
+        if not normalized_ids:
+            return []
+        raw_users = await self._client.get_users_by_field(
+            "id",
+            [str(user_id) for user_id in normalized_ids],
+        )
+        return [self._normalize_user(item) for item in raw_users]
+
     async def get_course_enrolled_emails(
         self,
         course_id: int,

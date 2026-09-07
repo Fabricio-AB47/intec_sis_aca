@@ -27,6 +27,7 @@ from app.integrations.moodle.exceptions import (
     MoodleInvalidResponseError,
     MoodleInstitutionalEmailNotFoundError,
     MoodleInstitutionalEmailValidationError,
+    MoodleManualEnrollmentError,
     MoodleResultLimitExceededError,
     MoodleResourceNotFoundError,
     MoodleSectionNotFoundError,
@@ -41,15 +42,18 @@ from app.services.moodle_academic_enrollment import MoodleAcademicEnrollmentServ
 from app.services.moodle_course_cloning import MoodleCourseCloningService
 from app.services.moodle_grade_alerts import MoodleGradeAlertService
 from app.services.moodle_grade_sync import MoodleGradeSyncError, MoodleGradeSyncService
+from app.services.moodle_manual_enrollment import MoodleManualEnrollmentService
 
 router = APIRouter(prefix="/api/moodle", tags=["moodle"])
 _MOODLE_STATUS_ACCESS = require_screen_access("moodle/status")
 _MOODLE_USERS_ACCESS = require_screen_access("moodle/users")
 _MOODLE_ACADEMIC_ENROLLMENT_ACCESS = require_screen_access("moodle/academic-enrollment")
+_MOODLE_MANUAL_ENROLLMENT_ACCESS = require_screen_access("moodle/manual-enrollment")
 _MOODLE_COURSES_ACCESS = require_any_screen_access(
     "moodle/courses",
     "moodle-teams",
     "moodle/academic-enrollment",
+    "moodle/manual-enrollment",
 )
 _MOODLE_RESOURCES_ACCESS = require_screen_access("moodle/resources")
 _MOODLE_GRADES_ACCESS = require_screen_access("moodle/grades")
@@ -226,6 +230,53 @@ class MoodleAcademicEnrollmentApplyPayload(MoodleAcademicEnrollmentSelectionPayl
         return self
 
 
+class MoodleManualEnrollmentSearchPayload(BaseModel):
+    course_id: int = Field(ge=1)
+    role: Literal["student", "teacher"]
+    names: list[str] = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("names")
+    @classmethod
+    def validate_names(cls, value: list[str]) -> list[str]:
+        clean: list[str] = []
+        seen: set[str] = set()
+        for name in value:
+            normalized = " ".join(str(name or "").strip().split())
+            if not normalized:
+                continue
+            if len(normalized) > 256:
+                raise ValueError("Cada nombre puede tener hasta 256 caracteres")
+            identity = normalized.casefold()
+            if identity not in seen:
+                seen.add(identity)
+                clean.append(normalized)
+        if not clean:
+            raise ValueError("Ingrese al menos un nombre para buscar")
+        return clean
+
+
+class MoodleManualEnrollmentSelectionPayload(BaseModel):
+    course_id: int = Field(ge=1)
+    role: Literal["student", "teacher"]
+    user_ids: list[int] = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("user_ids")
+    @classmethod
+    def validate_user_ids(cls, value: list[int]) -> list[int]:
+        unique = list(dict.fromkeys(value))
+        if any(user_id <= 0 for user_id in unique):
+            raise ValueError("Los usuarios Moodle deben ser válidos")
+        return unique
+
+
+class MoodleManualEnrollmentApplyPayload(MoodleManualEnrollmentSelectionPayload):
+    preview_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+
+
 @lru_cache(maxsize=1)
 def get_moodle_read_service() -> MoodleReadService:
     return MoodleReadService(get_settings())
@@ -251,6 +302,11 @@ def get_moodle_academic_enrollment_service() -> MoodleAcademicEnrollmentService:
     return MoodleAcademicEnrollmentService(get_moodle_read_service())
 
 
+@lru_cache(maxsize=1)
+def get_moodle_manual_enrollment_service() -> MoodleManualEnrollmentService:
+    return MoodleManualEnrollmentService(get_settings(), get_moodle_read_service())
+
+
 def _raise_http_error(exc: Exception) -> None:
     request_id = get_audit_context().request_id
     headers = {"X-Request-ID": request_id} if request_id else None
@@ -272,6 +328,7 @@ def _raise_http_error(exc: Exception) -> None:
             MoodleEvaluationDateUpdateError,
             MoodleCourseCloningError,
             MoodleAcademicEnrollmentError,
+            MoodleManualEnrollmentError,
             MoodleGradeSyncError,
         ),
     ):
@@ -414,6 +471,76 @@ async def moodle_academic_enrollment_catalog(
 ):
     try:
         return await service.catalog()
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/manual-enrollment/catalog")
+async def moodle_manual_enrollment_catalog(
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_MANUAL_ENROLLMENT_ACCESS),
+    service: MoodleManualEnrollmentService = Depends(get_moodle_manual_enrollment_service),
+):
+    try:
+        return await service.catalog()
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/manual-enrollment/search")
+async def search_moodle_manual_enrollment(
+    payload: MoodleManualEnrollmentSearchPayload,
+    _request: Request,
+    refresh: bool = False,
+    _user: SessionUser = Depends(_MOODLE_MANUAL_ENROLLMENT_ACCESS),
+    service: MoodleManualEnrollmentService = Depends(get_moodle_manual_enrollment_service),
+):
+    try:
+        return await service.search(
+            course_id=payload.course_id,
+            role=payload.role,
+            names=payload.names,
+            refresh=refresh,
+        )
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/manual-enrollment/preview")
+async def preview_moodle_manual_enrollment(
+    payload: MoodleManualEnrollmentSelectionPayload,
+    _request: Request,
+    refresh: bool = False,
+    _user: SessionUser = Depends(_MOODLE_MANUAL_ENROLLMENT_ACCESS),
+    service: MoodleManualEnrollmentService = Depends(get_moodle_manual_enrollment_service),
+):
+    try:
+        return await service.preview(
+            course_id=payload.course_id,
+            role=payload.role,
+            user_ids=payload.user_ids,
+            refresh=refresh,
+        )
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/manual-enrollment/apply")
+async def apply_moodle_manual_enrollment(
+    payload: MoodleManualEnrollmentApplyPayload,
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_MANUAL_ENROLLMENT_ACCESS),
+    service: MoodleManualEnrollmentService = Depends(get_moodle_manual_enrollment_service),
+):
+    try:
+        return await service.apply(
+            course_id=payload.course_id,
+            role=payload.role,
+            user_ids=payload.user_ids,
+            preview_fingerprint=payload.preview_fingerprint,
+            actor=_user.login,
+            actor_id=_user.id_usuario,
+        )
     except Exception as exc:
         _raise_http_error(exc)
 
@@ -724,10 +851,14 @@ __all__ = [
     "_MOODLE_COURSES_ACCESS",
     "_MOODLE_EVALUATION_DATES_ACCESS",
     "_MOODLE_GRADES_ACCESS",
+    "_MOODLE_MANUAL_ENROLLMENT_ACCESS",
     "_MOODLE_RESOURCES_ACCESS",
     "_MOODLE_STATUS_ACCESS",
     "_MOODLE_USERS_ACCESS",
     "MoodleSectionNamePayload",
+    "MoodleManualEnrollmentApplyPayload",
+    "MoodleManualEnrollmentSearchPayload",
+    "MoodleManualEnrollmentSelectionPayload",
     "MoodleAcademicEnrollmentApplyPayload",
     "MoodleAcademicEnrollmentSelectionPayload",
     "MoodleCourseCloningPayload",
@@ -736,6 +867,7 @@ __all__ = [
     "MoodleSectionVisibilityPayload",
     "MoodleGradeSelectionPayload",
     "get_moodle_grade_alert_service",
+    "get_moodle_manual_enrollment_service",
     "get_moodle_academic_enrollment_service",
     "get_moodle_course_cloning_service",
     "get_moodle_grade_sync_service",

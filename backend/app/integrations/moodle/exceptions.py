@@ -77,6 +77,10 @@ class MoodleAcademicEnrollmentError(MoodleError):
     pass
 
 
+class MoodleManualEnrollmentError(MoodleError):
+    pass
+
+
 class MoodleUserNotConfirmedError(MoodleError):
     pass
 

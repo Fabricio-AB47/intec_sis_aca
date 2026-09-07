@@ -42,6 +42,7 @@ UPDATE_INPLACE_EDITABLE_FUNCTION = "core_update_inplace_editable"
 CREATE_CATEGORIES_FUNCTION = "core_course_create_categories"
 DUPLICATE_COURSE_FUNCTION = "core_course_duplicate_course"
 UPDATE_COURSES_FUNCTION = "core_course_update_courses"
+MANUAL_ENROL_USERS_FUNCTION = "enrol_manual_enrol_users"
 READ_FUNCTIONS = frozenset(
     {
         SITE_INFO_FUNCTION,
@@ -64,6 +65,7 @@ WRITE_FUNCTIONS = frozenset(
         CREATE_CATEGORIES_FUNCTION,
         DUPLICATE_COURSE_FUNCTION,
         UPDATE_COURSES_FUNCTION,
+        MANUAL_ENROL_USERS_FUNCTION,
     }
 )
 _FUNCTION_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
@@ -154,6 +156,13 @@ class MoodleClient:
         ):
             raise MoodleWriteDisabledError(
                 "La creación y clonación de cursos Moodle está deshabilitada"
+            )
+        if (
+            function == MANUAL_ENROL_USERS_FUNCTION
+            and not bool(getattr(self._settings, "moodle_manual_enrollment_enabled", False))
+        ):
+            raise MoodleWriteDisabledError(
+                "La matrícula manual de usuarios Moodle está deshabilitada"
             )
 
     def _evaluation_dates_function(self) -> str:
@@ -283,7 +292,7 @@ class MoodleClient:
 
     async def get_users_by_field(self, field: str, values: list[str]) -> list[dict[str, Any]]:
         normalized_field = str(field or "").strip().casefold()
-        if normalized_field not in {"email", "idnumber", "username"}:
+        if normalized_field not in {"id", "email", "idnumber", "username"}:
             raise MoodleConfigurationError("El campo de búsqueda de usuarios Moodle no es válido")
 
         normalized_values = list(
@@ -499,6 +508,37 @@ class MoodleClient:
                 "La matrícula del curso Moodle no tiene el formato esperado"
             )
         return [item for item in payload if isinstance(item, dict)]
+
+    async def manual_enrol_users(self, enrolments: list[dict[str, Any]]) -> None:
+        if not enrolments:
+            return
+        if len(enrolments) > 100:
+            raise MoodleConfigurationError(
+                "La matrícula Moodle admite hasta 100 usuarios por solicitud"
+            )
+
+        parameters: dict[str, Any] = {}
+        for index, enrolment in enumerate(enrolments):
+            role_id = int(enrolment.get("roleid") or 0)
+            user_id = int(enrolment.get("userid") or 0)
+            course_id = int(enrolment.get("courseid") or 0)
+            if min(role_id, user_id, course_id) <= 0:
+                raise MoodleConfigurationError(
+                    "La matrícula Moodle contiene un curso, usuario o rol no válido"
+                )
+            parameters[f"enrolments[{index}][roleid]"] = role_id
+            parameters[f"enrolments[{index}][userid]"] = user_id
+            parameters[f"enrolments[{index}][courseid]"] = course_id
+
+        payload = await self._post(
+            MANUAL_ENROL_USERS_FUNCTION,
+            parameters,
+            write=True,
+        )
+        if payload is not None and not isinstance(payload, (dict, list)):
+            raise MoodleInvalidResponseError(
+                "La matrícula manual Moodle no devolvió un resultado válido"
+            )
 
     async def get_course_grade_items(
         self,

@@ -27,6 +27,7 @@ from app.routers.moodle import (
     _MOODLE_COURSES_ACCESS,
     _MOODLE_EVALUATION_DATES_ACCESS,
     _MOODLE_GRADES_ACCESS,
+    _MOODLE_MANUAL_ENROLLMENT_ACCESS,
     _MOODLE_RESOURCES_ACCESS,
     _MOODLE_STATUS_ACCESS,
     _MOODLE_USERS_ACCESS,
@@ -34,6 +35,7 @@ from app.routers.moodle import (
     get_moodle_academic_enrollment_service,
     get_moodle_course_cloning_service,
     get_moodle_grade_sync_service,
+    get_moodle_manual_enrollment_service,
     get_moodle_read_service,
     router,
 )
@@ -235,6 +237,28 @@ class FakeMoodleAcademicEnrollmentService:
         return {"ok": True, "received": kwargs}
 
 
+class FakeMoodleManualEnrollmentService:
+    def __init__(self) -> None:
+        self.searches: list[dict] = []
+        self.previews: list[dict] = []
+        self.applies: list[dict] = []
+
+    async def catalog(self):
+        return {"capability": {"enabled": True}, "courses": [], "roles": []}
+
+    async def search(self, **kwargs):
+        self.searches.append(kwargs)
+        return {"queries": [], "received": kwargs}
+
+    async def preview(self, **kwargs):
+        self.previews.append(kwargs)
+        return {"can_apply": True, "preview_fingerprint": "b" * 64, "received": kwargs}
+
+    async def apply(self, **kwargs):
+        self.applies.append(kwargs)
+        return {"ok": True, "received": kwargs}
+
+
 class MoodleRouterTests(unittest.TestCase):
     def _client(
         self,
@@ -244,6 +268,7 @@ class MoodleRouterTests(unittest.TestCase):
         alert_service=None,
         cloning_service=None,
         academic_enrollment_service=None,
+        manual_enrollment_service=None,
     ) -> TestClient:
         app = FastAPI()
         app.include_router(router)
@@ -257,6 +282,7 @@ class MoodleRouterTests(unittest.TestCase):
         app.dependency_overrides[_MOODLE_EVALUATION_DATES_ACCESS] = access
         app.dependency_overrides[_MOODLE_COURSE_CLONING_ACCESS] = access
         app.dependency_overrides[_MOODLE_ACADEMIC_ENROLLMENT_ACCESS] = access
+        app.dependency_overrides[_MOODLE_MANUAL_ENROLLMENT_ACCESS] = access
         app.dependency_overrides[get_moodle_read_service] = lambda: service or FakeMoodleService()
         app.dependency_overrides[get_moodle_grade_sync_service] = (
             lambda: grade_service or FakeMoodleGradeSyncService()
@@ -269,6 +295,9 @@ class MoodleRouterTests(unittest.TestCase):
         )
         app.dependency_overrides[get_moodle_academic_enrollment_service] = (
             lambda: academic_enrollment_service or FakeMoodleAcademicEnrollmentService()
+        )
+        app.dependency_overrides[get_moodle_manual_enrollment_service] = (
+            lambda: manual_enrollment_service or FakeMoodleManualEnrollmentService()
         )
         return TestClient(app)
 
@@ -423,6 +452,61 @@ class MoodleRouterTests(unittest.TestCase):
             )
 
         self.assertEqual(missing_period.status_code, 422)
+        self.assertEqual(invalid_fingerprint.status_code, 422)
+
+    def test_manual_enrollment_catalog_search_preview_and_apply(self) -> None:
+        service = FakeMoodleManualEnrollmentService()
+        with self._client(manual_enrollment_service=service) as client:
+            catalog_response = client.get("/api/moodle/manual-enrollment/catalog")
+            search_response = client.post(
+                "/api/moodle/manual-enrollment/search?refresh=true",
+                json={
+                    "course_id": 1330,
+                    "role": "student",
+                    "names": [" Ana  López ", "ana lópez"],
+                },
+            )
+            preview_response = client.post(
+                "/api/moodle/manual-enrollment/preview",
+                json={"course_id": 1330, "role": "student", "user_ids": [21, 21, 22]},
+            )
+            apply_response = client.post(
+                "/api/moodle/manual-enrollment/apply",
+                json={
+                    "course_id": 1330,
+                    "role": "teacher",
+                    "user_ids": [31],
+                    "preview_fingerprint": "b" * 64,
+                },
+            )
+
+        self.assertEqual(catalog_response.status_code, 200)
+        self.assertEqual(search_response.status_code, 200)
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(apply_response.status_code, 200)
+        self.assertEqual(service.searches[0]["names"], ["Ana López"])
+        self.assertTrue(service.searches[0]["refresh"])
+        self.assertEqual(service.previews[0]["user_ids"], [21, 22])
+        self.assertEqual(service.applies[0]["role"], "teacher")
+        self.assertEqual(service.applies[0]["actor"], "admin@example.edu")
+
+    def test_manual_enrollment_rejects_invalid_role_and_fingerprint(self) -> None:
+        with self._client() as client:
+            invalid_role = client.post(
+                "/api/moodle/manual-enrollment/search",
+                json={"course_id": 1330, "role": "manager", "names": ["Ana López"]},
+            )
+            invalid_fingerprint = client.post(
+                "/api/moodle/manual-enrollment/apply",
+                json={
+                    "course_id": 1330,
+                    "role": "student",
+                    "user_ids": [21],
+                    "preview_fingerprint": "incorrecto",
+                },
+            )
+
+        self.assertEqual(invalid_role.status_code, 422)
         self.assertEqual(invalid_fingerprint.status_code, 422)
 
     def test_academic_enrollment_rejects_career_for_unselected_course(self) -> None:

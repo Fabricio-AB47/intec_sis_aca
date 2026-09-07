@@ -427,6 +427,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             "moodle/courses",
             "moodle/evaluation-dates",
             "moodle/grades",
+            "moodle/manual-enrollment",
             "moodle/resources",
             "moodle/status",
             "moodle/users",
@@ -461,6 +462,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             "moodle/courses",
             "moodle/evaluation-dates",
             "moodle/grades",
+            "moodle/manual-enrollment",
             "moodle/resources",
             "moodle/status",
             "moodle/users",
@@ -564,6 +566,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             {
                 ("ADMINISTRADOR", "moodle/academic-enrollment"),
                 ("ADMINISTRADOR", "moodle/course-cloning"),
+                ("ADMINISTRADOR", "moodle/manual-enrollment"),
                 ("ACADEMICO", "solicitudes-cambio-carrera"),
                 ("SECRETARIA", "solicitudes-cambio-carrera"),
                 ("ACADEMICO", "solicitudes-cambio-modalidad"),

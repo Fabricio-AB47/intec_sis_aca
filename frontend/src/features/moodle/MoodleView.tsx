@@ -20,6 +20,7 @@ import { MoodleGradeSyncPanel } from './MoodleGradeSyncPanel'
 import { MoodleGradeAlertsPanel } from './MoodleGradeAlertsPanel'
 import { MoodleCourseCloningPanel } from './MoodleCourseCloningPanel'
 import { MoodleAcademicEnrollmentPanel } from './MoodleAcademicEnrollmentPanel'
+import { MoodleManualEnrollmentPanel } from './MoodleManualEnrollmentPanel'
 
 type MoodleViewProps = {
   displayName: string
@@ -281,6 +282,8 @@ export function MoodleView({
                   ? 'Matrícula Moodle - INTECBDD'
                 : activeTab === 'course-cloning'
                   ? 'Creación de oferta académica'
+                : activeTab === 'manual-enrollment'
+                  ? 'Matrícula directa en Moodle'
                 : activeTab === 'evaluation-dates'
                   ? 'Programación de evaluaciones'
                 : 'Consulta administrativa'}
@@ -323,6 +326,15 @@ export function MoodleView({
             onClick={() => selectTab('courses')}
           >
             Cursos
+          </button>
+        )}
+        {availableSections.includes('manual-enrollment') && (
+          <button
+            type="button"
+            className={activeTab === 'manual-enrollment' ? 'is-active' : ''}
+            onClick={() => selectTab('manual-enrollment')}
+          >
+            Matricular usuarios
           </button>
         )}
         {availableSections.includes('status') && (
@@ -377,6 +389,8 @@ export function MoodleView({
       {activeTab === 'academic-enrollment' && <MoodleAcademicEnrollmentPanel />}
 
       {activeTab === 'course-cloning' && <MoodleCourseCloningPanel />}
+
+      {activeTab === 'manual-enrollment' && <MoodleManualEnrollmentPanel />}
 
       {activeTab === 'status' && (
         <div className="moodle-section">

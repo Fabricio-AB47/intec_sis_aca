@@ -960,6 +960,137 @@ export type MoodleAcademicEnrollmentApplyResponse = {
   }
 }
 
+export type MoodleManualEnrollmentRole = 'student' | 'teacher'
+
+export type MoodleManualEnrollmentCapability = {
+  enabled: boolean
+  configured: boolean
+  reason: string
+  missing_functions: string[]
+}
+
+export type MoodleManualEnrollmentCourse = {
+  id: number
+  fullname: string
+  shortname: string
+  idnumber: string
+  category: string
+  visible: boolean
+}
+
+export type MoodleManualEnrollmentRoleItem = {
+  id: number
+  name: string
+  shortname: string
+}
+
+export type MoodleManualEnrollmentCatalogResponse = {
+  capability: MoodleManualEnrollmentCapability
+  roles: Array<{
+    key: MoodleManualEnrollmentRole
+    label: string
+    role_id: number
+  }>
+  courses: MoodleManualEnrollmentCourse[]
+  limits: {
+    names: number
+    candidates_per_name: number
+  }
+}
+
+export type MoodleManualEnrollmentCandidate = {
+  id: number
+  fullname: string
+  firstname: string
+  lastname: string
+  email: string
+  username: string
+  idnumber: string
+  account_status: 'ACTIVO' | 'SUSPENDIDO' | 'NO_CONFIRMADO'
+  enrollment_status: 'EXISTENTE' | 'OTRO_ROL' | 'NO_MATRICULADO' | 'SUSPENDIDA'
+  current_roles: MoodleManualEnrollmentRoleItem[]
+  already_target_role: boolean
+  selectable: boolean
+  match_type: string
+  match_score: number
+}
+
+export type MoodleManualEnrollmentSearchResponse = {
+  course: MoodleManualEnrollmentCourse
+  role: MoodleManualEnrollmentRole
+  role_label: string
+  role_id: number
+  capability: MoodleManualEnrollmentCapability
+  queries: Array<{
+    index: number
+    query: string
+    status: 'UNICO' | 'AMBIGUO' | 'NO_ENCONTRADO'
+    selected_user_id: number | null
+    candidates: MoodleManualEnrollmentCandidate[]
+  }>
+  summary: {
+    queries: number
+    unique: number
+    ambiguous: number
+    not_found: number
+    selected_users: number
+  }
+}
+
+export type MoodleManualEnrollmentSelection = {
+  course_id: number
+  role: MoodleManualEnrollmentRole
+  user_ids: number[]
+}
+
+export type MoodleManualEnrollmentPreviewItem = {
+  id: number
+  fullname: string
+  email: string
+  username: string
+  status: 'LISTO' | 'EXISTENTE' | 'BLOQUEADO'
+  action: 'MATRICULAR' | 'ASIGNAR_ROL' | 'NINGUNA'
+  message: string
+  current_roles: MoodleManualEnrollmentRoleItem[]
+}
+
+export type MoodleManualEnrollmentPreviewResponse = {
+  course: MoodleManualEnrollmentCourse
+  role: MoodleManualEnrollmentRole
+  role_label: string
+  role_id: number
+  capability: MoodleManualEnrollmentCapability
+  items: MoodleManualEnrollmentPreviewItem[]
+  summary: {
+    selected: number
+    ready: number
+    existing: number
+    blocked: number
+    new_enrollments: number
+    role_additions: number
+  }
+  preview_fingerprint: string
+  can_apply: boolean
+}
+
+export type MoodleManualEnrollmentApplyResponse = {
+  ok: boolean
+  course: MoodleManualEnrollmentCourse
+  role: MoodleManualEnrollmentRole
+  role_label: string
+  items: Array<Omit<MoodleManualEnrollmentPreviewItem, 'status'> & {
+    status: 'MATRICULADO' | 'EXISTENTE'
+  }>
+  summary: {
+    processed: number
+    enrolled: number
+    existing: number
+    failed: number
+  }
+  audit_recorded: boolean
+  warning: string
+}
+
 export type MoodleCourseContent = {
   type: string
   filename: string
@@ -1882,6 +2013,7 @@ export type MoodleSection =
   | 'alerts'
   | 'academic-enrollment'
   | 'course-cloning'
+  | 'manual-enrollment'
   | 'status'
   | 'users'
   | 'courses'

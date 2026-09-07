@@ -1692,6 +1692,13 @@ export function StudentLayout({
         action: () => onOpenMoodle('evaluation-dates'),
       },
       {
+        label: 'Matricular usuarios',
+        description: 'Buscar personas y asignarlas como estudiantes o docentes en un curso Moodle.',
+        page: 'moodle',
+        moodleSection: 'manual-enrollment',
+        action: () => onOpenMoodle('manual-enrollment'),
+      },
+      {
         label: 'Moodle - Sistema Académico',
         description: 'Matricular cursos, estudiantes y docentes en INTECBDD.',
         page: 'moodle',

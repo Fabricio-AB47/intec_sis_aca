@@ -35,6 +35,7 @@ def moodle_settings(**overrides: object) -> SimpleNamespace:
         "moodle_user_status_update_enabled": True,
         "moodle_section_updates_enabled": True,
         "moodle_course_cloning_enabled": True,
+        "moodle_manual_enrollment_enabled": True,
         "moodle_evaluation_dates_update_enabled": True,
         "moodle_evaluation_dates_function": "local_sisaca_bulk_update_evaluation_dates",
         "moodle_timeout_seconds": 5,
@@ -338,6 +339,49 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
             await http_client.aclose()
 
         self.assertEqual(users[0]["email"], "estudiante@intec.edu.ec")
+
+    async def test_manual_enrol_users_serializes_role_user_and_course(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"))
+            self.assertEqual(form["wsfunction"], ["enrol_manual_enrol_users"])
+            self.assertEqual(form["enrolments[0][roleid]"], ["5"])
+            self.assertEqual(form["enrolments[0][userid]"], ["21"])
+            self.assertEqual(form["enrolments[0][courseid]"], ["12"])
+            self.assertEqual(form["enrolments[1][roleid]"], ["3"])
+            return json_response(request, None)
+
+        client, http_client = await self._client(handler)
+        try:
+            await client.manual_enrol_users(
+                [
+                    {"roleid": 5, "userid": 21, "courseid": 12},
+                    {"roleid": 3, "userid": 22, "courseid": 12},
+                ]
+            )
+        finally:
+            await http_client.aclose()
+
+    async def test_manual_enrol_users_requires_dedicated_flag(self) -> None:
+        called = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return json_response(request, None)
+
+        client, http_client = await self._client(
+            handler,
+            moodle_manual_enrollment_enabled=False,
+        )
+        try:
+            with self.assertRaises(MoodleWriteDisabledError):
+                await client.manual_enrol_users(
+                    [{"roleid": 5, "userid": 21, "courseid": 12}]
+                )
+        finally:
+            await http_client.aclose()
+
+        self.assertFalse(called)
 
     async def test_get_course_grade_items(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:

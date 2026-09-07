@@ -156,6 +156,20 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("MOODLE_COURSE_CLONING_ENABLED"),
     )
+    moodle_manual_enrollment_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("MOODLE_MANUAL_ENROLLMENT_ENABLED"),
+    )
+    moodle_student_role_id: int = Field(
+        default=5,
+        ge=1,
+        validation_alias=AliasChoices("MOODLE_STUDENT_ROLE_ID"),
+    )
+    moodle_teacher_role_id: int = Field(
+        default=3,
+        ge=1,
+        validation_alias=AliasChoices("MOODLE_TEACHER_ROLE_ID"),
+    )
     moodle_evaluation_dates_update_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("MOODLE_EVALUATION_DATES_UPDATE_ENABLED"),
