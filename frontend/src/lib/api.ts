@@ -365,18 +365,29 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     resolvedHeaders.set('Content-Type', 'application/json')
   }
 
-  let response: Response
-  try {
-    response = await fetch(resolveApiPath(path), {
-      credentials: credentials ?? 'include',
-      headers: resolvedHeaders,
-      body: resolvedBody,
-      ...rest,
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
+  const method = String(rest.method || 'GET').toUpperCase()
+  const maxAttempts = method === 'GET' ? 3 : 1
+  let response: Response | null = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      response = await fetch(resolveApiPath(path), {
+        credentials: credentials ?? 'include',
+        headers: resolvedHeaders,
+        body: resolvedBody,
+        ...rest,
+      })
+      if (![502, 503, 504].includes(response.status) || attempt === maxAttempts) break
+      await response.body?.cancel()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      response = null
+      if (attempt === maxAttempts) break
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, attempt * 750))
+  }
+  if (!response) {
     throw new ApiError(
-      'No se pudo conectar con el servidor. Verifique que el backend esté activo e intente nuevamente.',
+      'No se pudo conectar con el servidor. La solicitud puede reintentarse en unos segundos.',
       0,
     )
   }
@@ -385,8 +396,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const payload = responseType === 'blob' && response.ok ? await response.blob() : await readResponsePayload(response)
 
   if (!response.ok) {
+    const contentType = response.headers.get('Content-Type')?.toLowerCase() || ''
+    const htmlGatewayResponse = typeof payload === 'string'
+      && (contentType.includes('text/html') || /^\s*<!?doctype\s+html|^\s*<html/i.test(payload))
+    const gatewayDetail = [502, 503, 504].includes(response.status)
+      ? 'El servicio se está recuperando temporalmente. Espere unos segundos y vuelva a intentar.'
+      : `Error HTTP ${response.status}`
     const rawDetail: unknown = typeof payload === 'string'
-      ? payload
+      ? (htmlGatewayResponse ? gatewayDetail : payload)
       : (payload as ErrorPayload | null)?.detail || `Error HTTP ${response.status}`
     const detail =
       typeof rawDetail === 'string'
