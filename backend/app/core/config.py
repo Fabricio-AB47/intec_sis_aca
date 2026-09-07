@@ -152,6 +152,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("MOODLE_SECTION_UPDATES_ENABLED"),
     )
+    moodle_course_cloning_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MOODLE_COURSE_CLONING_ENABLED"),
+    )
     moodle_evaluation_dates_update_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("MOODLE_EVALUATION_DATES_UPDATE_ENABLED"),

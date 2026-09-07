@@ -1186,6 +1186,420 @@
   margin: 0;
 }
 
+/* Creación controlada de oferta académica desde plantillas Moodle. */
+.moodle-course-cloning .moodle-section__heading p {
+  max-width: 860px;
+  margin: 7px 0 0;
+  color: #46536c;
+}
+
+.moodle-cloning-step,
+.moodle-cloning-review,
+.moodle-cloning-result {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.moodle-cloning-step__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 68px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-cloning-step__heading > div {
+  min-width: 0;
+}
+
+.moodle-cloning-step__heading span:not(.moodle-cloning-status) {
+  display: block;
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-cloning-step__heading h3 {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.moodle-cloning-type {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 14px 16px 0;
+  overflow: hidden;
+  border: 1px solid #c8d5db;
+  border-radius: 8px;
+}
+
+.moodle-cloning-type button {
+  display: grid;
+  min-height: 58px;
+  place-content: center;
+  gap: 3px;
+  padding: 8px 14px;
+  border: 0;
+  border-right: 1px solid #c8d5db;
+  border-radius: 0;
+  background: #fff;
+  color: #263550;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.moodle-cloning-type button:last-child {
+  border-right: 0;
+}
+
+.moodle-cloning-type button.is-active {
+  background: #e5f2f3;
+  color: #0d6670;
+  box-shadow: inset 0 -3px 0 #13808a;
+}
+
+.moodle-cloning-type small {
+  color: #647087;
+  font-size: 11px;
+}
+
+.moodle-cloning-filters {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.6fr) minmax(190px, 0.8fr) minmax(260px, 1.4fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.moodle-cloning-filters label,
+.moodle-cloning-destination-fields label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-cloning-filters label > span,
+.moodle-cloning-destination-fields label > span,
+.moodle-cloning-route-example > span {
+  color: #647087;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-cloning-filters input,
+.moodle-cloning-filters select,
+.moodle-cloning-destination-fields input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #172541;
+  font: inherit;
+}
+
+.moodle-cloning-filters input:focus,
+.moodle-cloning-filters select:focus,
+.moodle-cloning-destination-fields input:focus {
+  border-color: #13808a;
+  outline: 3px solid rgba(19, 128, 138, 0.12);
+}
+
+.moodle-cloning-filter-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.moodle-cloning-template-list {
+  display: grid;
+  max-height: 390px;
+  overflow-y: auto;
+  border-top: 1px solid #d8e0e4;
+}
+
+.moodle-cloning-template-list > label {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 0.9fr) minmax(280px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e0e6e9;
+  background: #fff;
+  cursor: pointer;
+}
+
+.moodle-cloning-template-list > label:last-of-type {
+  border-bottom: 0;
+}
+
+.moodle-cloning-template-list > label.is-selected {
+  background: #edf7f8;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-cloning-template-list input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #13808a;
+}
+
+.moodle-cloning-template-list label > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.moodle-cloning-template-list strong,
+.moodle-cloning-template-list b,
+.moodle-cloning-template-list small {
+  overflow-wrap: anywhere;
+}
+
+.moodle-cloning-template-list b {
+  color: #263550;
+  font-size: 13px;
+}
+
+.moodle-cloning-template-list small,
+.moodle-cloning-destination-fields small,
+.moodle-cloning-plan-list small {
+  color: #647087;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-cloning-destination-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.moodle-cloning-route-example {
+  display: grid;
+  gap: 5px;
+  margin: 0 16px 16px;
+  padding: 11px 13px;
+  border-left: 4px solid #13808a;
+  background: #eef6f7;
+}
+
+.moodle-cloning-route-example strong {
+  overflow-wrap: anywhere;
+  color: #17304d;
+  font-size: 13px;
+}
+
+.moodle-cloning-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.moodle-cloning-actions > span {
+  margin-right: auto;
+  color: #526078;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.moodle-cloning-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  border-bottom: 1px solid #d8e0e4;
+}
+
+.moodle-cloning-summary > div {
+  display: grid;
+  min-height: 72px;
+  align-content: center;
+  gap: 4px;
+  padding: 10px 14px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-cloning-summary > div:last-child {
+  border-right: 0;
+}
+
+.moodle-cloning-summary span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-cloning-summary strong {
+  font-size: 19px;
+}
+
+.moodle-cloning-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.moodle-cloning-review-grid > div {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-cloning-review-grid > div:last-child {
+  border-right: 0;
+}
+
+.moodle-cloning-review-grid h4 {
+  margin: 0 0 10px;
+}
+
+.moodle-cloning-plan-list {
+  display: grid;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #d8e0e4;
+  border-radius: 8px;
+}
+
+.moodle-cloning-result > .moodle-cloning-plan-list {
+  margin: 16px;
+}
+
+.moodle-cloning-plan-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 54px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #e0e6e9;
+}
+
+.moodle-cloning-plan-list > div:last-child {
+  border-bottom: 0;
+}
+
+.moodle-cloning-plan-list strong,
+.moodle-cloning-plan-list small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-cloning-plan-list small {
+  grid-column: 2;
+}
+
+.moodle-cloning-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid #b8cbd2;
+  border-radius: 6px;
+  background: #eef3f5;
+  color: #40506a;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.moodle-cloning-status.is-success {
+  border-color: #9dcdb6;
+  background: #e8f6ee;
+  color: #135c3d;
+}
+
+.moodle-cloning-status.is-warning,
+.moodle-cloning-status.is-pending {
+  border-color: #e5c47e;
+  background: #fff7e7;
+  color: #76500a;
+}
+
+.moodle-cloning-status.is-error {
+  border-color: #e6aaa7;
+  background: #fff0ef;
+  color: #8d201d;
+}
+
+@media (max-width: 1100px) {
+  .moodle-cloning-filters,
+  .moodle-cloning-destination-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .moodle-cloning-filter-actions {
+    align-self: stretch;
+  }
+
+  .moodle-cloning-filter-actions .moodle-button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .moodle-course-cloning {
+    padding: 14px;
+  }
+
+  .moodle-course-cloning .moodle-section__heading,
+  .moodle-cloning-step__heading,
+  .moodle-cloning-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-course-cloning .moodle-section__heading .moodle-button,
+  .moodle-cloning-actions .moodle-button {
+    width: 100%;
+  }
+
+  .moodle-cloning-filters,
+  .moodle-cloning-destination-fields,
+  .moodle-cloning-review-grid,
+  .moodle-cloning-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-cloning-template-list > label {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .moodle-cloning-template-list > label > span:last-child {
+    grid-column: 2;
+  }
+
+  .moodle-cloning-review-grid > div,
+  .moodle-cloning-summary > div {
+    border-right: 0;
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-cloning-review-grid > div:last-child,
+  .moodle-cloning-summary > div:last-child {
+    border-bottom: 0;
+  }
+}
+
 .practicas-process-selector {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -45877,6 +46291,716 @@ body .student-sidebar .logout-button {
   .credential-preview {
     border-top: 1px solid rgba(141, 187, 199, 0.45);
     border-left-width: 4px;
+  }
+}
+
+/* Matrícula masiva Moodle -> sistema académico. */
+.moodle-academic-enrollment .moodle-section__heading p {
+  max-width: 880px;
+  margin: 7px 0 0;
+  color: #46536c;
+}
+
+.moodle-academic-step,
+.moodle-academic-review,
+.moodle-academic-result {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.moodle-academic-step__heading {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-academic-step__heading > div {
+  min-width: 0;
+}
+
+.moodle-academic-step__heading span:not(.moodle-academic-status) {
+  display: block;
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-academic-step__heading h3 {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.moodle-academic-destination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.moodle-academic-destination label,
+.moodle-academic-course-search label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.moodle-academic-destination label > span,
+.moodle-academic-course-search label > span {
+  color: #4d5d75;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-academic-destination select,
+.moodle-academic-course-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #172541;
+  font: inherit;
+}
+
+.moodle-academic-destination select:focus,
+.moodle-academic-course-search input:focus {
+  border-color: #13808a;
+  outline: 3px solid rgba(19, 128, 138, 0.12);
+}
+
+.moodle-academic-destination small,
+.moodle-academic-course-list small,
+.moodle-academic-contexts small,
+.moodle-academic-teachers small,
+.moodle-academic-students td small {
+  color: #647087;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-academic-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.moodle-academic-course-search {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.moodle-academic-course-list {
+  display: grid;
+  max-height: 390px;
+  overflow-y: auto;
+  border-top: 1px solid #d8e0e4;
+}
+
+.moodle-academic-course-list > label {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 1.15fr) minmax(220px, 0.85fr);
+  min-height: 68px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e0e6e9;
+  background: #fff;
+  cursor: pointer;
+}
+
+.moodle-academic-course-list > label:last-of-type {
+  border-bottom: 0;
+}
+
+.moodle-academic-course-list > label.is-selected {
+  background: #edf7f8;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-academic-course-list input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #13808a;
+}
+
+.moodle-academic-course-list label > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.moodle-academic-course-list strong,
+.moodle-academic-course-list b,
+.moodle-academic-course-list small {
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-course-list b {
+  color: #263550;
+  font-size: 13px;
+}
+
+.moodle-academic-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #c9dce2;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.moodle-academic-actions > span {
+  margin-right: auto;
+  color: #526078;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.moodle-academic-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  border-bottom: 1px solid #d8e0e4;
+}
+
+.moodle-academic-summary > div,
+.moodle-academic-summary > button {
+  display: grid;
+  min-height: 72px;
+  align-content: center;
+  gap: 4px;
+  padding: 10px 14px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-academic-summary > :last-child {
+  border-right: 0;
+}
+
+.moodle-academic-summary__button {
+  width: 100%;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: #fff;
+  color: #14213d;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.moodle-academic-summary__button:hover {
+  background: #eef7f8;
+  box-shadow: inset 0 -3px #13808a;
+}
+
+.moodle-academic-summary__button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid rgba(19, 128, 138, 0.2);
+  outline-offset: -3px;
+}
+
+.moodle-academic-summary span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-academic-summary strong {
+  font-size: 19px;
+}
+
+.moodle-academic-summary__button small {
+  color: #13727a;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.moodle-academic-review-list {
+  display: grid;
+}
+
+.moodle-academic-review-list > article {
+  min-width: 0;
+  border-bottom: 1px solid #c9dce2;
+  background: #fff;
+}
+
+.moodle-academic-review-list > article:last-child {
+  border-bottom: 0;
+}
+
+.moodle-academic-review-list > article.is-ready {
+  box-shadow: inset 4px 0 #16815d;
+}
+
+.moodle-academic-review-list > article.is-blocked {
+  box-shadow: inset 4px 0 #a82f2b;
+}
+
+.moodle-academic-review-list article > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 15px 18px;
+  border-bottom: 1px solid #e0e6e9;
+}
+
+.moodle-academic-review-list h4 {
+  margin: 7px 0 4px;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+}
+
+.moodle-academic-review-list header p {
+  margin: 0;
+  color: #59677d;
+  font-size: 13px;
+}
+
+.moodle-academic-course-counts {
+  display: grid;
+  min-width: 130px;
+  gap: 2px;
+  text-align: right;
+}
+
+.moodle-academic-course-counts strong {
+  font-size: 22px;
+}
+
+.moodle-academic-course-counts span {
+  color: #647087;
+  font-size: 12px;
+}
+
+.moodle-academic-errors {
+  display: grid;
+  gap: 4px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #ecc7c4;
+  background: #fff4f3;
+  color: #84211e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.moodle-academic-warnings {
+  display: grid;
+  gap: 4px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #ead39b;
+  background: #fff9e9;
+  color: #71500a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.moodle-academic-career-selection {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  border-bottom: 1px solid #e0e6e9;
+  background: #f9fbfc;
+}
+
+.moodle-academic-career-selection > label,
+.moodle-academic-career-selection > div {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 5px;
+  min-height: 92px;
+  padding: 12px 18px;
+  border-right: 1px solid #e0e6e9;
+}
+
+.moodle-academic-career-selection > :last-child {
+  border-right: 0;
+}
+
+.moodle-academic-career-selection span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-academic-career-selection select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #172541;
+  font: inherit;
+}
+
+.moodle-academic-career-selection select:focus {
+  border-color: #13808a;
+  outline: 3px solid rgba(19, 128, 138, 0.12);
+}
+
+.moodle-academic-career-selection strong,
+.moodle-academic-career-selection small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-career-selection small {
+  color: #647087;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-academic-contexts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  border-bottom: 1px solid #e0e6e9;
+}
+
+.moodle-academic-contexts > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 18px;
+  border-right: 1px solid #e0e6e9;
+}
+
+.moodle-academic-contexts > div:last-child {
+  border-right: 0;
+}
+
+.moodle-academic-contexts span,
+.moodle-academic-teachers h5 {
+  margin: 0;
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-academic-contexts strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.moodle-academic-teachers {
+  display: grid;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e0e6e9;
+}
+
+.moodle-academic-teachers > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-left: 3px solid #16815d;
+  background: #f6faf8;
+}
+
+.moodle-academic-teachers > label.is-invalid {
+  border-left-color: #a82f2b;
+  background: #fff7f6;
+}
+
+.moodle-academic-teachers input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #13808a;
+}
+
+.moodle-academic-teachers label > span:not(.moodle-academic-status) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.moodle-academic-teachers strong,
+.moodle-academic-teachers small {
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-students summary {
+  padding: 13px 18px;
+  color: #20304c;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.moodle-academic-students[open] summary {
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-academic-students td > strong,
+.moodle-academic-students td > small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-students td .moodle-academic-status {
+  margin-bottom: 4px;
+}
+
+.moodle-academic-status {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border: 1px solid #b8cbd2;
+  border-radius: 6px;
+  background: #eef3f5;
+  color: #40506a;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.moodle-academic-status.is-success {
+  border-color: #9dcdb6;
+  background: #e8f6ee;
+  color: #135c3d;
+}
+
+.moodle-academic-status.is-warning {
+  border-color: #e5c47e;
+  background: #fff7e7;
+  color: #76500a;
+}
+
+.moodle-academic-status.is-error {
+  border-color: #e6aaa7;
+  background: #fff0ef;
+  color: #8d201d;
+}
+
+.moodle-confirm-dialog.moodle-academic-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1380px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+
+.moodle-academic-detail .moodle-confirm-dialog__header {
+  position: relative;
+  z-index: 2;
+  align-items: center;
+}
+
+.moodle-academic-detail .moodle-confirm-dialog__header > div {
+  min-width: 0;
+}
+
+.moodle-academic-detail .moodle-confirm-dialog__header h2 {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-detail__body {
+  min-height: 0;
+  padding: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.moodle-academic-detail__context {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.45fr) minmax(260px, 2fr) minmax(180px, 1fr);
+  border-bottom: 1px solid #d8e0e4;
+  background: #f8fafb;
+}
+
+.moodle-academic-detail__context > div {
+  display: grid;
+  min-width: 0;
+  min-height: 70px;
+  align-content: center;
+  gap: 4px;
+  padding: 11px 16px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-academic-detail__context > div:last-child {
+  border-right: 0;
+}
+
+.moodle-academic-detail__context span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.moodle-academic-detail__context strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #14213d;
+  font-size: 14px;
+}
+
+.moodle-academic-detail__context > div:first-child strong {
+  font-size: 22px;
+}
+
+.moodle-academic-detail__table {
+  min-width: 1080px;
+}
+
+.moodle-academic-detail__table td {
+  vertical-align: top;
+  line-height: 1.4;
+}
+
+.moodle-academic-detail__table td > strong,
+.moodle-academic-detail__table td > small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-academic-detail__table td > small {
+  margin-top: 4px;
+  color: #647087;
+}
+
+.moodle-academic-detail__table td .moodle-academic-status {
+  margin-bottom: 2px;
+}
+
+@media (max-width: 900px) {
+  .moodle-academic-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .moodle-academic-summary > div {
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-academic-summary > button {
+    border-bottom: 1px solid #d8e0e4;
+  }
+}
+
+@media (max-width: 720px) {
+  .moodle-academic-enrollment {
+    padding: 14px;
+  }
+
+  .moodle-academic-enrollment .moodle-section__heading,
+  .moodle-academic-step__heading,
+  .moodle-academic-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-academic-enrollment .moodle-section__heading .moodle-button,
+  .moodle-academic-actions .moodle-button {
+    width: 100%;
+  }
+
+  .moodle-academic-destination,
+  .moodle-academic-course-search,
+  .moodle-academic-summary,
+  .moodle-academic-review-list article > header {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-academic-selection-actions {
+    width: 100%;
+  }
+
+  .moodle-academic-selection-actions .moodle-button {
+    flex: 1;
+  }
+
+  .moodle-academic-course-list > label {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .moodle-academic-course-list > label > span:last-child {
+    grid-column: 2;
+  }
+
+  .moodle-academic-course-counts {
+    text-align: left;
+  }
+
+  .moodle-academic-contexts,
+  .moodle-academic-career-selection,
+  .moodle-academic-teachers > label {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-academic-contexts > div,
+  .moodle-academic-career-selection > label,
+  .moodle-academic-career-selection > div,
+  .moodle-academic-summary > div,
+  .moodle-academic-summary > button {
+    border-right: 0;
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-confirm-dialog.moodle-academic-detail {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .moodle-academic-detail .moodle-confirm-dialog__header {
+    gap: 10px;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+  }
+
+  .moodle-academic-detail .moodle-confirm-dialog__header h2 {
+    font-size: 1.08rem;
+  }
+
+  .moodle-academic-detail__context {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-academic-detail__context > div {
+    min-height: 58px;
+    border-right: 0;
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-academic-detail__context > div:last-child {
+    border-bottom: 0;
   }
 }
 

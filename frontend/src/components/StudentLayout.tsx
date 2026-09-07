@@ -1654,7 +1654,7 @@ export function StudentLayout({
   const moodleMenuGroup: NavGroup = {
     key: 'moodle',
     title: 'Moodle',
-    summary: 'Cursos, recursos, notas, estado y usuarios',
+    summary: 'Copiar cursos, recursos, notas, estado y usuarios',
     items: [
       {
         label: 'Alertas de calificación',
@@ -1662,6 +1662,13 @@ export function StudentLayout({
         page: 'moodle',
         moodleSection: 'alerts',
         action: () => onOpenMoodle('alerts'),
+      },
+      {
+        label: 'Copiar cursos',
+        description: 'Copiar plantillas Regular u Homologación hacia la oferta académica.',
+        page: 'moodle',
+        moodleSection: 'course-cloning',
+        action: () => onOpenMoodle('course-cloning'),
       },
       {
         label: 'Cursos',
@@ -1683,6 +1690,13 @@ export function StudentLayout({
         page: 'moodle',
         moodleSection: 'evaluation-dates',
         action: () => onOpenMoodle('evaluation-dates'),
+      },
+      {
+        label: 'Moodle - Sistema Académico',
+        description: 'Matricular cursos, estudiantes y docentes en INTECBDD.',
+        page: 'moodle',
+        moodleSection: 'academic-enrollment',
+        action: () => onOpenMoodle('academic-enrollment'),
       },
       {
         label: 'Recursos por curso',

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -13,9 +14,11 @@ from app.core.audit_context import get_audit_context
 from app.core.config import get_settings
 from app.core.security import SessionUser, require_any_screen_access, require_screen_access
 from app.integrations.moodle.exceptions import (
+    MoodleAcademicEnrollmentError,
     MoodleApiError,
     MoodleConfigurationError,
     MoodleConnectionError,
+    MoodleCourseCloningError,
     MoodleCourseNotFoundError,
     MoodleDisabledError,
     MoodleEvaluationDateUpdateError,
@@ -34,17 +37,25 @@ from app.integrations.moodle.exceptions import (
     MoodleWriteDisabledError,
 )
 from app.services.moodle_read_service import MoodleReadService
+from app.services.moodle_academic_enrollment import MoodleAcademicEnrollmentService
+from app.services.moodle_course_cloning import MoodleCourseCloningService
 from app.services.moodle_grade_alerts import MoodleGradeAlertService
 from app.services.moodle_grade_sync import MoodleGradeSyncError, MoodleGradeSyncService
 
 router = APIRouter(prefix="/api/moodle", tags=["moodle"])
 _MOODLE_STATUS_ACCESS = require_screen_access("moodle/status")
 _MOODLE_USERS_ACCESS = require_screen_access("moodle/users")
-_MOODLE_COURSES_ACCESS = require_any_screen_access("moodle/courses", "moodle-teams")
+_MOODLE_ACADEMIC_ENROLLMENT_ACCESS = require_screen_access("moodle/academic-enrollment")
+_MOODLE_COURSES_ACCESS = require_any_screen_access(
+    "moodle/courses",
+    "moodle-teams",
+    "moodle/academic-enrollment",
+)
 _MOODLE_RESOURCES_ACCESS = require_screen_access("moodle/resources")
 _MOODLE_GRADES_ACCESS = require_screen_access("moodle/grades")
 _MOODLE_ALERTS_ACCESS = require_screen_access("moodle/alerts")
 _MOODLE_EVALUATION_DATES_ACCESS = require_screen_access("moodle/evaluation-dates")
+_MOODLE_COURSE_CLONING_ACCESS = require_screen_access("moodle/course-cloning")
 
 
 class MoodleUserStatusPayload(BaseModel):
@@ -136,6 +147,85 @@ class MoodleGradeSelectionPayload(BaseModel):
         return self
 
 
+class MoodleCourseCloningPayload(BaseModel):
+    template_course_ids: list[int] = Field(min_length=1, max_length=50)
+    offer_type: Literal["REGULAR", "HOMOLOGACION"]
+    period_name: str = Field(min_length=2, max_length=40)
+    opening_at: datetime
+    closing_at: datetime | None = None
+    parallel: str = Field(default="", max_length=20)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("template_course_ids")
+    @classmethod
+    def validate_template_course_ids(cls, value: list[int]) -> list[int]:
+        unique = list(dict.fromkeys(value))
+        if any(course_id <= 0 for course_id in unique):
+            raise ValueError("Los cursos plantilla deben ser válidos")
+        return unique
+
+    @field_validator("period_name", "parallel")
+    @classmethod
+    def trim_text(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "MoodleCourseCloningPayload":
+        same_timezone_kind = bool(self.opening_at.tzinfo) == bool(
+            self.closing_at.tzinfo if self.closing_at is not None else None
+        )
+        if (
+            self.closing_at is not None
+            and same_timezone_kind
+            and self.closing_at <= self.opening_at
+        ):
+            raise ValueError("La fecha final debe ser posterior a la fecha inicial")
+        return self
+
+
+class MoodleAcademicEnrollmentSelectionPayload(BaseModel):
+    course_ids: list[int] = Field(min_length=1, max_length=25)
+    period_code: int = Field(ge=1)
+    jornada_code: int = Field(default=2, ge=1)
+    career_by_course: dict[int, int] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("course_ids")
+    @classmethod
+    def validate_course_ids(cls, value: list[int]) -> list[int]:
+        unique = list(dict.fromkeys(value))
+        if any(course_id <= 0 for course_id in unique):
+            raise ValueError("Los cursos Moodle deben ser válidos")
+        return unique
+
+    @model_validator(mode="after")
+    def validate_career_courses(self) -> "MoodleAcademicEnrollmentSelectionPayload":
+        selected = set(self.course_ids)
+        unknown_courses = sorted(set(self.career_by_course) - selected)
+        if unknown_courses:
+            raise ValueError("La selección de carreras contiene cursos no seleccionados")
+        if any(career_code <= 0 for career_code in self.career_by_course.values()):
+            raise ValueError("Los códigos de carrera deben ser válidos")
+        return self
+
+
+class MoodleAcademicEnrollmentApplyPayload(MoodleAcademicEnrollmentSelectionPayload):
+    principal_teacher_by_course: dict[int, int] = Field(default_factory=dict)
+    preview_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_teacher_courses(self) -> "MoodleAcademicEnrollmentApplyPayload":
+        selected = set(self.course_ids)
+        unknown_courses = sorted(set(self.principal_teacher_by_course) - selected)
+        if unknown_courses:
+            raise ValueError("La selección de docentes contiene cursos no seleccionados")
+        if any(teacher_code <= 0 for teacher_code in self.principal_teacher_by_course.values()):
+            raise ValueError("Los códigos de docentes principales deben ser válidos")
+        return self
+
+
 @lru_cache(maxsize=1)
 def get_moodle_read_service() -> MoodleReadService:
     return MoodleReadService(get_settings())
@@ -149,6 +239,16 @@ def get_moodle_grade_sync_service() -> MoodleGradeSyncService:
 @lru_cache(maxsize=1)
 def get_moodle_grade_alert_service() -> MoodleGradeAlertService:
     return MoodleGradeAlertService(get_moodle_grade_sync_service(), concurrency=16)
+
+
+@lru_cache(maxsize=1)
+def get_moodle_course_cloning_service() -> MoodleCourseCloningService:
+    return MoodleCourseCloningService(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_moodle_academic_enrollment_service() -> MoodleAcademicEnrollmentService:
+    return MoodleAcademicEnrollmentService(get_moodle_read_service())
 
 
 def _raise_http_error(exc: Exception) -> None:
@@ -167,7 +267,13 @@ def _raise_http_error(exc: Exception) -> None:
         status_code = status.HTTP_404_NOT_FOUND
     elif isinstance(
         exc,
-        (MoodleSectionUpdateError, MoodleEvaluationDateUpdateError, MoodleGradeSyncError),
+        (
+            MoodleSectionUpdateError,
+            MoodleEvaluationDateUpdateError,
+            MoodleCourseCloningError,
+            MoodleAcademicEnrollmentError,
+            MoodleGradeSyncError,
+        ),
     ):
         status_code = status.HTTP_409_CONFLICT
     elif isinstance(
@@ -284,6 +390,104 @@ async def moodle_courses(
             category_id=category_id,
             refresh=refresh,
         )
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/course-cloning/catalog")
+async def moodle_course_cloning_catalog(
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_COURSE_CLONING_ACCESS),
+    service: MoodleCourseCloningService = Depends(get_moodle_course_cloning_service),
+):
+    try:
+        return await service.catalog()
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/academic-enrollment/catalog")
+async def moodle_academic_enrollment_catalog(
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_ACADEMIC_ENROLLMENT_ACCESS),
+    service: MoodleAcademicEnrollmentService = Depends(get_moodle_academic_enrollment_service),
+):
+    try:
+        return await service.catalog()
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/academic-enrollment/preview")
+async def preview_moodle_academic_enrollment(
+    payload: MoodleAcademicEnrollmentSelectionPayload,
+    _request: Request,
+    refresh: bool = False,
+    _user: SessionUser = Depends(_MOODLE_ACADEMIC_ENROLLMENT_ACCESS),
+    service: MoodleAcademicEnrollmentService = Depends(get_moodle_academic_enrollment_service),
+):
+    try:
+        return await service.preview(
+            course_ids=payload.course_ids,
+            period_code=payload.period_code,
+            jornada_code=payload.jornada_code,
+            career_by_course=payload.career_by_course,
+            refresh=refresh,
+        )
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/academic-enrollment/apply")
+async def apply_moodle_academic_enrollment(
+    payload: MoodleAcademicEnrollmentApplyPayload,
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_ACADEMIC_ENROLLMENT_ACCESS),
+    service: MoodleAcademicEnrollmentService = Depends(get_moodle_academic_enrollment_service),
+):
+    try:
+        return await service.apply(
+            course_ids=payload.course_ids,
+            period_code=payload.period_code,
+            jornada_code=payload.jornada_code,
+            career_by_course=payload.career_by_course,
+            principal_teacher_by_course=payload.principal_teacher_by_course,
+            preview_fingerprint=payload.preview_fingerprint,
+            actor=_user.login,
+        )
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/course-cloning/preview")
+async def preview_moodle_course_cloning(
+    payload: MoodleCourseCloningPayload,
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_COURSE_CLONING_ACCESS),
+    service: MoodleCourseCloningService = Depends(get_moodle_course_cloning_service),
+):
+    try:
+        return await service.preview(payload.model_dump())
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/course-cloning/apply")
+async def apply_moodle_course_cloning(
+    payload: MoodleCourseCloningPayload,
+    _request: Request,
+    _user: SessionUser = Depends(_MOODLE_COURSE_CLONING_ACCESS),
+    service: MoodleCourseCloningService = Depends(get_moodle_course_cloning_service),
+    read_service: MoodleReadService = Depends(get_moodle_read_service),
+):
+    try:
+        result = await service.apply(
+            payload.model_dump(),
+            actor=_user.login,
+            actor_id=_user.id_usuario,
+        )
+        read_service.invalidate_courses_cache()
+        return result
     except Exception as exc:
         _raise_http_error(exc)
 
@@ -514,7 +718,9 @@ async def moodle_course_resource_file(
 
 
 __all__ = [
+    "_MOODLE_ACADEMIC_ENROLLMENT_ACCESS",
     "_MOODLE_ALERTS_ACCESS",
+    "_MOODLE_COURSE_CLONING_ACCESS",
     "_MOODLE_COURSES_ACCESS",
     "_MOODLE_EVALUATION_DATES_ACCESS",
     "_MOODLE_GRADES_ACCESS",
@@ -522,11 +728,16 @@ __all__ = [
     "_MOODLE_STATUS_ACCESS",
     "_MOODLE_USERS_ACCESS",
     "MoodleSectionNamePayload",
+    "MoodleAcademicEnrollmentApplyPayload",
+    "MoodleAcademicEnrollmentSelectionPayload",
+    "MoodleCourseCloningPayload",
     "MoodleEvaluationDateUpdatePayload",
     "MoodleEvaluationDatesPayload",
     "MoodleSectionVisibilityPayload",
     "MoodleGradeSelectionPayload",
     "get_moodle_grade_alert_service",
+    "get_moodle_academic_enrollment_service",
+    "get_moodle_course_cloning_service",
     "get_moodle_grade_sync_service",
     "get_moodle_read_service",
     "router",
