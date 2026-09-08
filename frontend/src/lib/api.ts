@@ -222,6 +222,11 @@ import type {
   ScholarshipContractUploadResponse,
   ScreenAccessResponse,
   ScreenAccessRole,
+  SecretariaCandidatesResponse,
+  SecretariaCaseDetailResponse,
+  SecretariaDashboardResponse,
+  SecretariaHomologationClassification,
+  SecretariaStage,
   SisAcademicoCatalogResponse,
   SisAcademicoListResponse,
   SisAcademicoRecordResponse,
@@ -5359,6 +5364,71 @@ export function documentExpedientFileUrl(
   action: 'open' | 'download',
 ): string {
   return resolveApiPath(`/api/document-expedients/files/${documentGraphId}/${action}`)
+}
+
+export async function fetchSecretariaDashboard(): Promise<SecretariaDashboardResponse> {
+  return request<SecretariaDashboardResponse>('/api/secretaria-general/dashboard', { cache: 'no-store' })
+}
+
+export async function fetchSecretariaCandidates(params: {
+  search?: string
+  stage?: SecretariaStage
+  onlyMissingDocuments?: boolean
+  page?: number
+  pageSize?: number
+} = {}): Promise<SecretariaCandidatesResponse> {
+  const query = new URLSearchParams({
+    stage: params.stage || 'TODOS',
+    page: String(params.page || 1),
+    page_size: String(params.pageSize || 25),
+  })
+  if (params.search?.trim()) query.set('search', params.search.trim())
+  if (params.onlyMissingDocuments) query.set('only_missing_documents', 'true')
+  return request<SecretariaCandidatesResponse>(`/api/secretaria-general/candidates?${query.toString()}`, {
+    cache: 'no-store',
+  })
+}
+
+export async function ensureSecretariaCase(codigoEstud: number): Promise<SecretariaCaseDetailResponse> {
+  return request<SecretariaCaseDetailResponse>('/api/secretaria-general/cases', {
+    method: 'POST',
+    body: { codigo_estud: codigoEstud },
+  })
+}
+
+export async function fetchSecretariaCase(caseId: number): Promise<SecretariaCaseDetailResponse> {
+  return request<SecretariaCaseDetailResponse>(`/api/secretaria-general/cases/${caseId}`, { cache: 'no-store' })
+}
+
+export async function syncSecretariaCase(caseId: number): Promise<SecretariaCaseDetailResponse> {
+  return request<SecretariaCaseDetailResponse>(`/api/secretaria-general/cases/${caseId}/sync`, {
+    method: 'POST',
+  })
+}
+
+export async function updateSecretariaHomologationClassification(
+  caseId: number,
+  tipoHomologacion: SecretariaHomologationClassification,
+): Promise<SecretariaCaseDetailResponse> {
+  return request<SecretariaCaseDetailResponse>(
+    `/api/secretaria-general/cases/${caseId}/homologation-classification`,
+    { method: 'PUT', body: { tipo_homologacion: tipoHomologacion } },
+  )
+}
+
+export async function reviewSecretariaRequirement(
+  caseId: number,
+  requirementId: number,
+  payload: {
+    estado: 'VALIDADO' | 'OBSERVADO' | 'RECHAZADO' | 'PRESENTE'
+    observacion: string
+    documento_presentado_id?: number | null
+  },
+): Promise<SecretariaCaseDetailResponse> {
+  return request<SecretariaCaseDetailResponse>(
+    `/api/secretaria-general/cases/${caseId}/requirements/${requirementId}/review`,
+    { method: 'POST', body: payload },
+  )
 }
 
 export async function fetchCareerChangeCatalog(query = ''): Promise<CareerChangeCatalogResponse> {

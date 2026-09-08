@@ -374,3 +374,18 @@ def get_integration_control_connection() -> pyodbc.Connection:
         trust_cert=settings.integration_control_db_trust_cert,
         label="INTEGRATION_CONTROL",
     )
+
+
+def get_secretaria_connection() -> pyodbc.Connection:
+    settings = get_settings()
+    return _get_complement_connection(
+        database=settings.secretaria_db_name,
+        user=settings.secretaria_db_user,
+        password=settings.secretaria_db_password,
+        host=settings.secretaria_db_host,
+        port=settings.secretaria_db_port,
+        driver=settings.secretaria_db_driver,
+        encrypt=settings.secretaria_db_encrypt,
+        trust_cert=settings.secretaria_db_trust_cert,
+        label="SECRETARIA",
+    )

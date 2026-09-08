@@ -41,6 +41,7 @@ from app.routers.practicas_operativas import router as practicas_operativas_rout
 from app.routers.preinscription import UPLOAD_ROOT, router as preinscription_router
 from app.routers.senescyt import router as senescyt_router
 from app.routers.screen_access import router as screen_access_router
+from app.routers.secretaria_general import router as secretaria_general_router
 from app.routers.sisacademico_admin import router as sisacademico_admin_router
 from app.routers.students import router as students_router
 from app.routers.teams import router as teams_router
@@ -283,6 +284,7 @@ app.include_router(academic_system_router)
 app.include_router(preinscription_router)
 app.include_router(senescyt_router)
 app.include_router(screen_access_router)
+app.include_router(secretaria_general_router)
 app.include_router(legacy_reports_router)
 app.include_router(sisacademico_admin_router)
 app.include_router(portal_academico_router)

@@ -413,17 +413,136 @@ def _matter_match_score(course: dict[str, Any], matter: Any) -> int:
 
 
 def canonical_course_code(value: Any) -> str:
-    """Normalize only formatting noise; internal code segments remain exact."""
-    return re.sub(r"[-_/.\s]+$", "", _text(value).upper())
+    """Normalize separators and Unicode noise without changing code characters."""
+    normalized = unicodedata.normalize("NFD", _text(value).upper())
+    normalized = "".join(
+        character
+        for character in normalized
+        if unicodedata.category(character) != "Mn"
+    )
+    return re.sub(r"[^A-Z0-9]+", "-", normalized).strip("-")
 
 
 def _course_code_segments(value: Any) -> tuple[str, ...]:
     """Split a course code into exact segments without confusing 1 with 10 or 12."""
-    return tuple(segment for segment in re.split(r"[^A-Z0-9]+", _text(value).upper()) if segment)
+    return tuple(segment for segment in canonical_course_code(value).split("-") if segment)
+
+
+def _course_code_key(value: Any) -> str:
+    """Return the separator-free key used to join a resolved code with PENSUM."""
+    return "".join(_course_code_segments(value))
+
+
+_CODE_ALPHA_CONFUSABLES = str.maketrans(
+    {
+        "0": "O",
+        "1": "I",
+        "5": "S",
+        "6": "G",
+        "8": "B",
+    }
+)
+
+
+def _ordered_subsequence(expected: str, candidate: str) -> bool:
+    candidate_index = 0
+    for character in expected:
+        candidate_index = candidate.find(character, candidate_index)
+        if candidate_index < 0:
+            return False
+        candidate_index += 1
+    return True
+
+
+def _alpha_code_match_quality(
+    expected_segments: Sequence[str],
+    candidate_segments: Sequence[str],
+) -> int:
+    expected = "".join(expected_segments).translate(_CODE_ALPHA_CONFUSABLES)
+    candidate = "".join(candidate_segments).translate(_CODE_ALPHA_CONFUSABLES)
+    if (
+        not expected
+        or not candidate
+        or not expected.isalpha()
+        or not candidate.isalpha()
+    ):
+        return 0
+    if expected == candidate:
+        return 300
+    extra_characters = len(candidate) - len(expected)
+    if expected in candidate and 0 <= extra_characters <= 8:
+        return 260 - (extra_characters * 4)
+    if 0 <= extra_characters <= 8 and _ordered_subsequence(expected, candidate):
+        return 220 - (extra_characters * 5)
+    if abs(extra_characters) <= 1 and _single_edit_difference(expected, candidate):
+        return 180
+    return 0
+
+
+def _same_numeric_code_segment(left: str, right: str) -> bool:
+    if not left.isdigit() or not right.isdigit():
+        return False
+    return (left.lstrip("0") or "0") == (right.lstrip("0") or "0")
+
+
+def _fuzzy_course_code_match_score(
+    candidate_segments: Sequence[str],
+    expected_segments: Sequence[str],
+) -> int:
+    """Accept controlled code noise while keeping year and subject anchors strict."""
+    if (
+        len(expected_segments) != 4
+        or any(segment.isdigit() for segment in expected_segments[:2])
+        or not all(segment.isdigit() for segment in expected_segments[2:])
+    ):
+        return 0
+
+    expected_year = expected_segments[2]
+    expected_subject = expected_segments[3]
+    best_score = 0
+    for subject_index, candidate_subject in enumerate(candidate_segments):
+        if not _same_numeric_code_segment(candidate_subject, expected_subject):
+            continue
+        for year_index in range(subject_index):
+            candidate_year = candidate_segments[year_index]
+            if not candidate_year.isdigit() or len(candidate_year) != len(expected_year):
+                continue
+            year_differences = sum(
+                left != right
+                for left, right in zip(candidate_year, expected_year, strict=True)
+            )
+            if year_differences > 1 or subject_index - year_index > 2:
+                continue
+
+            alpha_quality = max(
+                (
+                    _alpha_code_match_quality(
+                        expected_segments[:2],
+                        candidate_segments[start:year_index],
+                    )
+                    for start in range(max(0, year_index - 4), year_index)
+                ),
+                default=0,
+            )
+            if alpha_quality <= 0:
+                continue
+
+            year_quality = 300 if year_differences == 0 else 120
+            subject_quality = 100 if candidate_subject == expected_subject else 80
+            suffix_size = len(candidate_segments) - subject_index - 1
+            best_score = max(
+                best_score,
+                6_000
+                + alpha_quality
+                + year_quality
+                + subject_quality
+                - min(suffix_size, 100),
+            )
+    return best_score
 
 
 def _course_code_match_score(course: dict[str, Any], academic_code: Any) -> int:
-    """Match a PENSUM code inside Moodle metadata while allowing only extra suffixes."""
+    """Match a PENSUM code exactly first and then with controlled tolerance."""
     expected = canonical_course_code(academic_code)
     expected_segments = _course_code_segments(expected)
     if not expected or len(expected_segments) < 2:
@@ -450,6 +569,11 @@ def _course_code_match_score(course: dict[str, Any], academic_code: Any) -> int:
             best_score = max(
                 best_score,
                 position_score + expected_size * 10 - min(suffix_size, 100),
+            )
+        if field in {"idnumber", "shortname"}:
+            best_score = max(
+                best_score,
+                _fuzzy_course_code_match_score(candidate_segments, expected_segments),
             )
     return best_score
 
@@ -1175,6 +1299,7 @@ class MoodleGradeSyncService:
             if score == best_code_score and score > 0
         }
         matched_codes = set(best_codes) if len(best_codes) == 1 else set()
+        ambiguous_match = len(best_codes) > 1
         match_method = "codigo_pensum_y_correointec" if matched_codes else ""
 
         if not matched_codes:
@@ -1195,13 +1320,18 @@ class MoodleGradeSyncService:
             }
             if len(best_matters) == 1:
                 matched_matter = next(iter(best_matters))
-                matched_codes = {
+                matter_codes = {
                     canonical_course_code(option.get("course_code"))
                     for option in academic_options
                     if _normalized_text(option.get("matter")) == matched_matter
                     and canonical_course_code(option.get("course_code"))
                 }
-                match_method = "asignatura_pensum_y_correointec"
+                if len(matter_codes) == 1:
+                    matched_codes = matter_codes
+                    ambiguous_match = False
+                    match_method = "asignatura_pensum_y_correointec"
+                elif matter_codes:
+                    ambiguous_match = True
 
         matched_options = [
             dict(option)
@@ -1227,6 +1357,11 @@ class MoodleGradeSyncService:
             reason = (
                 "Ningún correo del curso Moodle coincide exactamente con CorreoIntec y una "
                 "matrícula activa enlazada por codestud en CARRERAXESTUD"
+            )
+        elif ambiguous_match:
+            reason = (
+                "Los metadatos del curso Moodle coinciden con más de un código único de "
+                "PENSUM; corrija el nombre corto o el número ID del curso"
             )
         elif not matched_codes:
             reason = (
@@ -2465,8 +2600,21 @@ class MoodleGradeSyncService:
                 )
             }
         )
-        if not normalized_emails:
+        normalized_course_codes = {
+            normalized
+            for value in course_codes
+            if (normalized := canonical_course_code(value))
+        }
+        normalized_course_keys = sorted(
+            {
+                code_key
+                for value in normalized_course_codes
+                if (code_key := _course_code_key(value))
+            }
+        )
+        if not normalized_emails or not normalized_course_keys:
             return []
+        course_key_placeholders = ", ".join("?" for _ in normalized_course_keys)
 
         with get_connection() as connection:
             cursor = connection.cursor()
@@ -2482,7 +2630,7 @@ class MoodleGradeSyncService:
                 [(email,) for email in normalized_emails],
             )
             cursor.execute(
-                """
+                f"""
                 WITH EmailRegistry AS (
                     SELECT DISTINCT
                         TRY_CONVERT(int, email_row.codestud) AS student_code,
@@ -2508,6 +2656,76 @@ class MoodleGradeSyncService:
                       ON moodle.email = email_registry.registry_email
                     GROUP BY email_registry.registry_email
                     HAVING COUNT(DISTINCT email_registry.student_code) = 1
+                ),
+                RankedStudentProfiles AS (
+                    SELECT
+                        TRY_CONVERT(int, student.codigo_estud) AS student_code,
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), student.Cedula_Est)))
+                            AS student_identity,
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), student.Apellidos_nombre)))
+                            AS student_name,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY TRY_CONVERT(int, student.codigo_estud)
+                            ORDER BY
+                                COALESCE(
+                                    TRY_CONVERT(datetime2, student.FechaMigracion),
+                                    CONVERT(datetime2, '19000101')
+                                ) DESC,
+                                COALESCE(TRY_CONVERT(bigint, student.NumMigracion), -1) DESC,
+                                CASE WHEN NULLIF(
+                                    LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), student.Cedula_Est))),
+                                    N''
+                                ) IS NULL THEN 1 ELSE 0 END,
+                                LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), student.Cedula_Est))) DESC
+                        ) AS profile_rank
+                    FROM dbo.DATOS_ESTUD AS student
+                    INNER JOIN (
+                        SELECT DISTINCT student_code
+                        FROM UniqueMoodleIdentity
+                    ) AS selected_student
+                      ON selected_student.student_code =
+                         TRY_CONVERT(int, student.codigo_estud)
+                    WHERE TRY_CONVERT(int, student.codigo_estud) IS NOT NULL
+                      AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), student.Estado))))
+                          IN (N'A', N'ACTIVO', N'ACTIVA')
+                ),
+                StudentProfiles AS (
+                    SELECT student_code, student_identity, student_name
+                    FROM RankedStudentProfiles
+                    WHERE profile_rank = 1
+                ),
+                PensumNormalized AS (
+                    SELECT
+                        TRY_CONVERT(int, pensum.Cod_AnioBasica) AS career_code,
+                        TRY_CONVERT(int, pensum.codigo_materia) AS matter_code,
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), pensum.cod_materia)))
+                            AS course_code,
+                        LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), pensum.Nomb_Materia)))
+                            AS matter_name,
+                        UPPER(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), pensum.cod_materia))),
+                                N'-', N''), N'_', N''), N'/', N''), N'.', N''),
+                                N' ', N''), NCHAR(160), N''), NCHAR(8211), N''),
+                                NCHAR(8212), N'')
+                        ) AS course_code_key
+                    FROM dbo.PENSUM AS pensum
+                    WHERE TRY_CONVERT(int, pensum.Cod_AnioBasica) IS NOT NULL
+                      AND TRY_CONVERT(int, pensum.codigo_materia) IS NOT NULL
+                      AND NULLIF(
+                            LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), pensum.cod_materia))),
+                            N''
+                          ) IS NOT NULL
+                ),
+                PensumCatalog AS (
+                    SELECT
+                        career_code,
+                        matter_code,
+                        course_code_key,
+                        MAX(course_code) AS course_code,
+                        MAX(matter_name) AS matter_name
+                    FROM PensumNormalized
+                    GROUP BY career_code, matter_code, course_code_key
                 )
                 SELECT
                     TRY_CONVERT(bigint, ce.num) AS row_id,
@@ -2519,13 +2737,13 @@ class MoodleGradeSyncService:
                     TRY_CONVERT(int, ce.Num_Matricula) AS enrollment_number,
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ce.paralelo))) AS parallel,
                     TRY_CONVERT(int, ce.NumGrupo) AS group_number,
-                    TRY_CONVERT(nvarchar(100), pen.cod_materia) AS course_code,
-                    TRY_CONVERT(nvarchar(255), pen.Nomb_Materia) AS matter_name,
+                    pen.course_code,
+                    pen.matter_name,
                     TRY_CONVERT(nvarchar(255), car.Nombre_Basica) AS career,
                     TRY_CONVERT(nvarchar(255), per.Detalle_Periodo) AS period_name,
                     UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), per.TipoMatricula)))) AS period_type,
-                    TRY_CONVERT(nvarchar(50), de.Cedula_Est) AS student_identity,
-                    TRY_CONVERT(nvarchar(255), de.Apellidos_nombre) AS student_name,
+                    de.student_identity,
+                    de.student_name,
                     email_registry.registry_email AS institutional_email,
                     email_registry.registry_email AS registry_email,
                     ce.P1Tareas, ce.P1Proyectos, ce.P1Examen,
@@ -2534,27 +2752,32 @@ class MoodleGradeSyncService:
                     ce.teoriaHomo, ce.practicahomo, ce.Recuperacion,
                     ce.PromedioFinal AS final_grade, ce.caprueba AS approval
                 FROM UniqueMoodleIdentity AS email_registry
-                INNER JOIN dbo.DATOS_ESTUD AS de
-                  ON TRY_CONVERT(int, de.codigo_estud) = email_registry.student_code
+                INNER JOIN StudentProfiles AS de
+                  ON de.student_code = email_registry.student_code
                 INNER JOIN dbo.CARRERAXESTUD AS ce
                   ON TRY_CONVERT(int, ce.codigo_estud) = email_registry.student_code
-                INNER JOIN dbo.PENSUM AS pen
-                  ON TRY_CONVERT(int, pen.Cod_AnioBasica) = TRY_CONVERT(int, ce.cod_anio_Basica)
-                 AND TRY_CONVERT(int, pen.codigo_materia) = TRY_CONVERT(int, ce.codigo_materia)
+                INNER JOIN PensumCatalog AS pen
+                  ON pen.career_code = TRY_CONVERT(int, ce.cod_anio_Basica)
+                 AND pen.matter_code = TRY_CONVERT(int, ce.codigo_materia)
                 INNER JOIN dbo.PERIODO AS per
                   ON TRY_CONVERT(int, per.cod_periodo) = TRY_CONVERT(int, ce.codigo_periodo)
                 LEFT JOIN dbo.CARRERAS AS car
                   ON TRY_CONVERT(int, car.Cod_AnioBasica) = TRY_CONVERT(int, ce.cod_anio_Basica)
                 WHERE TRY_CONVERT(int, ce.codigo_periodo) = ?
-                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(20), de.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(10), per.TipoMatricula)))) IN (N'R', N'H')
+                  AND pen.course_code_key IN ({course_key_placeholders})
                 """,
                 period_code,
+                *normalized_course_keys,
             )
             rows = [_row_to_dict(cursor, row) for row in cursor.fetchall()]
-        filtered = [row for row in rows if canonical_course_code(row["course_code"]) in course_codes]
+        rows = [
+            row
+            for row in rows
+            if canonical_course_code(row.get("course_code")) in normalized_course_codes
+        ]
         unique_rows: dict[int, dict[str, Any]] = {}
-        for row in filtered:
+        for row in rows:
             row_id = int(row.get("row_id") or 0)
             student_code = int(row.get("student_code") or 0)
             registry_student_code = int(row.get("registry_student_code") or 0)
@@ -2565,7 +2788,24 @@ class MoodleGradeSyncService:
                     "La identidad institucional no coincide con el código único del estudiante"
                 )
             if row_id in unique_rows:
-                raise MoodleGradeSyncError("La relación entre matrícula y pensum no es única")
+                previous = unique_rows[row_id]
+                relation_fields = (
+                    "student_code",
+                    "malla_code",
+                    "matter_code",
+                    "period_code",
+                    "parallel",
+                    "course_code",
+                )
+                if all(
+                    canonical_course_code(previous.get(field))
+                    == canonical_course_code(row.get(field))
+                    for field in relation_fields
+                ):
+                    continue
+                raise MoodleGradeSyncError(
+                    "La matrícula coincide con más de una relación académica distinta en PENSUM"
+                )
             unique_rows[row_id] = row
         return sorted(unique_rows.values(), key=lambda item: (_normalized_text(item["student_name"]), item["row_id"]))
 

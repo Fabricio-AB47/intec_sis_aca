@@ -112,12 +112,143 @@ export type Page =
   | 'portal-estudiante-calificaciones'
   | 'ingles'
   | 'expedientes-documentales'
+  | 'secretaria-general'
   | 'portal-docente'
   | 'portal-docente-informe'
   | 'portal-docente-planificacion'
   | 'portal-docente-contratos'
   | 'formato-informe-docente'
   | 'practicas-institucionales'
+
+export type SecretariaStage = 'TODOS' | 'PROXIMO' | 'EGRESADO' | 'GRADUADO'
+export type SecretariaHomologationClassification = 'INTERNA_ART81' | 'EXTERNA_ART82' | 'EXTERNA_ART83'
+
+export type SecretariaCaseSummary = {
+  case_id: number
+  case_code: string
+  status: string
+  missing: number
+  observed: number
+  progress: number
+}
+
+export type SecretariaCandidate = {
+  codigo_estud: number
+  numero_identificacion: string
+  apellidos_nombres: string
+  correo_institucional: string
+  estado_academico: string
+  fecha_grado: string | null
+  cod_anio_basica: string
+  nombre_carrera: string
+  codigo_periodo: string
+  nombre_periodo: string
+  tipo_matricula: 'R' | 'H'
+  materias_pensum: number
+  materias_aprobadas: number
+  promedio_aprobadas: number | null
+  porcentaje_malla: number
+  etapa_academica: Exclude<SecretariaStage, 'TODOS'>
+  secretaria: SecretariaCaseSummary | null
+}
+
+export type SecretariaCandidatesResponse = {
+  items: SecretariaCandidate[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export type SecretariaDashboardResponse = {
+  candidates: {
+    total: number
+    proximos: number
+    egresados: number
+    graduados: number
+  }
+  cases: {
+    expedientes: number
+    en_validacion: number
+    observados: number
+    aprobados: number
+    documentos_faltantes: number
+    estudiantes_con_faltantes: number
+  }
+}
+
+export type SecretariaCase = {
+  case_id: number
+  case_code: string
+  case_type: string
+  status: string
+  status_name: string
+  codigo_estud: number
+  numero_identificacion: string
+  apellidos_nombres: string
+  codigo_carrera: string
+  nombre_carrera: string
+  codigo_periodo: string
+  nombre_periodo: string
+  enrollment_type: 'R' | 'H'
+  homologation_classification: SecretariaHomologationClassification | null
+  stage: Exclude<SecretariaStage, 'TODOS'>
+  approved_subjects: number
+  required_subjects: number
+  academic_progress: number
+  average: number | null
+  graduation_date: string | null
+  required_documents: number
+  validated_documents: number
+  missing_documents: number
+  observed_documents: number
+  document_progress: number
+  opened_at: string
+  updated_at: string | null
+}
+
+export type SecretariaRequirement = {
+  requisito_id: number
+  tipo_documento_codigo: string
+  tipo_documento: string
+  instruccion: string
+  es_obligatorio: boolean
+  es_aplicable: boolean
+  estado: string
+  observacion: string | null
+  fecha_revision: string | null
+  usuario_revision: string | null
+  documento_presentado_id: number | null
+  documento_graph_id: number | null
+  nombre_archivo: string | null
+  content_type: string | null
+  tamano_bytes: number | null
+  sistema_origen: string | null
+  estado_origen: string | null
+  ruta_referencia: string | null
+  fecha_documento: string | null
+  usuario_carga: string | null
+  usuario_sincronizacion: string | null
+  total_evidencias: number | null
+}
+
+export type SecretariaObservation = {
+  observacion_id: number
+  requisito_id: number | null
+  tipo: string
+  observacion: string
+  es_sistema: boolean
+  fecha: string
+  usuario: string
+}
+
+export type SecretariaCaseDetailResponse = {
+  case: SecretariaCase
+  requirements: SecretariaRequirement[]
+  observations: SecretariaObservation[]
+  created?: boolean
+  sync?: { detected: number; synchronized: number }
+}
 
 export type CareerChangeCatalogStudent = {
   codigo_estud: number
@@ -1928,6 +2059,8 @@ export type DocumentExpedientStudent = {
   career_code: string
   career: string
   period_code: string
+  period_name: string
+  enrollment_type: 'R' | 'H'
   status: string
 }
 

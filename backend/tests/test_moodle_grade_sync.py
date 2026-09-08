@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.services.moodle_grade_sync import (
     MoodleGradeSyncError,
     MoodleGradeSyncService,
+    _course_code_match_score,
     canonical_course_code,
     index_moodle_users_by_institutional_email,
     institutional_email_candidates,
@@ -475,21 +476,27 @@ class MoodleGradeRuleTests(unittest.TestCase):
             )
 
         enrollment_query = enrollment_cursor.statements[-1]
-        self.assertLess(
-            enrollment_query.index("INNER JOIN #MoodleInstitutionalEmails AS moodle"),
-            enrollment_query.index("INNER JOIN dbo.DATOS_ESTUD AS de"),
-        )
         self.assertIn("WITH EmailRegistry AS", enrollment_query)
+        self.assertIn("RankedStudentProfiles AS", enrollment_query)
+        self.assertIn(
+            "PARTITION BY TRY_CONVERT(int, student.codigo_estud)",
+            enrollment_query,
+        )
+        self.assertIn("WHERE profile_rank = 1", enrollment_query)
+        self.assertIn("PensumNormalized AS", enrollment_query)
+        self.assertIn("PensumCatalog AS", enrollment_query)
         self.assertIn("FROM UniqueMoodleIdentity AS email_registry", enrollment_query)
         self.assertNotIn("registry_rank = 1", enrollment_query)
         self.assertIn(
-            "TRY_CONVERT(int, de.codigo_estud) = email_registry.student_code",
+            "de.student_code = email_registry.student_code",
             enrollment_query,
         )
         self.assertIn(
             "TRY_CONVERT(int, ce.codigo_estud) = email_registry.student_code",
             enrollment_query,
         )
+        self.assertIn("pen.course_code_key IN (?)", enrollment_query)
+        self.assertEqual(enrollment_cursor.parameters[-1], (1060, "VGAES202390"))
         self.assertNotIn("de.correointec", enrollment_query.casefold())
 
     def test_student_is_matched_only_with_users_from_the_selected_course(self) -> None:
@@ -1837,6 +1844,103 @@ class MoodleGradeRuleTests(unittest.TestCase):
 
     def test_course_code_only_trims_formatting_suffix(self) -> None:
         self.assertEqual(canonical_course_code("VGA-CG-2023-75-"), "VGA-CG-2023-75")
+
+    def test_course_code_normalizes_unicode_and_mixed_separators(self) -> None:
+        self.assertEqual(
+            canonical_course_code("  vga – cg / 2023 _ 071... "),
+            "VGA-CG-2023-071",
+        )
+
+    def test_course_code_tolerates_controlled_character_noise(self) -> None:
+        score = _course_code_match_score(
+            {"shortname": "VwGA-dsdswCG-2023-71-R232026"},
+            "VGA-CG-2023-71",
+        )
+
+        self.assertGreater(score, 0)
+
+    def test_course_code_tolerates_one_different_year_character(self) -> None:
+        score = _course_code_match_score(
+            {"idnumber": "VGA-CG-2025-71-R11"},
+            "VGA-CG-2023-71",
+        )
+
+        self.assertGreater(score, 0)
+
+    def test_course_code_never_confuses_different_subject_numbers(self) -> None:
+        score = _course_code_match_score(
+            {"shortname": "VGA-CG-2023-71"},
+            "VGA-CG-2023-07",
+        )
+
+        self.assertEqual(score, 0)
+
+    def test_course_code_does_not_treat_copy_suffix_as_subject_number(self) -> None:
+        score = _course_code_match_score(
+            {"shortname": "VGA-CG-03-H2-2025_1"},
+            "VGA-CG-2023-01",
+        )
+
+        self.assertEqual(score, 0)
+
+    def test_exact_course_code_wins_over_a_similar_pensum_code(self) -> None:
+        settings = SimpleNamespace(
+            moodle_enabled=True,
+            moodle_reads_enabled=True,
+            moodle_grade_sync_enabled=True,
+        )
+        service = MoodleGradeSyncService(object(), settings)
+        context = service._resolve_course_context(
+            {"shortname": "VGA-CG-2025-71-R11", "displayname": "Sistemas Operativos"},
+            [
+                {
+                    "period_code": 1033,
+                    "period_type": "R",
+                    "course_code": "VGA-CG-2023-71",
+                    "matter": "Sistemas Operativos",
+                    "students": 40,
+                },
+                {
+                    "period_code": 1060,
+                    "period_type": "R",
+                    "course_code": "VGA-CG-2025-71",
+                    "matter": "Sistemas Operativos",
+                    "students": 20,
+                },
+            ],
+        )
+
+        self.assertEqual(context["matched_course_code"], "VGA-CG-2025-71")
+
+    def test_subject_name_fallback_rejects_multiple_unique_codes(self) -> None:
+        settings = SimpleNamespace(
+            moodle_enabled=True,
+            moodle_reads_enabled=True,
+            moodle_grade_sync_enabled=True,
+        )
+        service = MoodleGradeSyncService(object(), settings)
+        context = service._resolve_course_context(
+            {"shortname": "CURSO-SIN-CODIGO", "displayname": "Sistemas Operativos"},
+            [
+                {
+                    "period_code": 1033,
+                    "period_type": "R",
+                    "course_code": "VGA-CG-2023-71",
+                    "matter": "Sistemas Operativos",
+                    "students": 40,
+                },
+                {
+                    "period_code": 1060,
+                    "period_type": "R",
+                    "course_code": "VGA-CG-2025-71",
+                    "matter": "Sistemas Operativos",
+                    "students": 20,
+                },
+            ],
+        )
+
+        self.assertFalse(context["has_academic_match"])
+        self.assertIn("más de un código único", context["resolution_reason"])
 
     def test_course_context_accepts_moodle_suffix_after_exact_pensum_code(self) -> None:
         settings = SimpleNamespace(

@@ -21,7 +21,10 @@ type ExpedientesDocumentalesViewProps = {
   role: string
   initialIdentification?: string
   moduleFilter?: string[]
+  documentTypeFilter?: string[]
   embedded?: boolean
+  embeddedTitle?: string
+  embeddedDescription?: string
   onClose?: () => void
 }
 
@@ -35,9 +38,20 @@ type ExpedientSectionProps = {
 const MAX_FILE_BYTES = 1024 * 1024 * 1024
 const ACCEPTED_FILES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jpg,.jpeg,.png,.webp,.mp3,.wav,.m4a,.mp4,.mov,.mkv,.webm,.xml'
 const REVIEW_ROLES = new Set(['ADMINISTRADOR', 'ACADEMICO', 'BIENESTAR', 'SECRETARIA', 'FINANCIERO'])
-const INVOICE_FILE_RULES: Record<string, { accept: string; extension: string }> = {
-  FACTURA_XML: { accept: '.xml,application/xml,text/xml', extension: '.xml' },
-  RIDE_FACTURA: { accept: '.pdf,application/pdf', extension: '.pdf' },
+const PDF_FILE_RULES: Record<string, { accept: string; extension: string }> = {
+  CEDULA: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  TITULO_BACHILLER: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  CERTIFICADO_NO_ADEUDAMIENTO: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  RECORD_ACADEMICO_FIRMADO: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  CERTIFICADO_PRACTICAS: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  CERTIFICADO_VINCULACION: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  DOCUMENTO_INGLES: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  DOCUMENTO_CERTIFICACIONES: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  DOCUMENTOS_UNIVERSIDAD_ORIGEN: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  DOCUMENTO_HOMOLOGACION: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  HOMOLOGACION_ARTICULO_81: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  HOMOLOGACION_ARTICULO_82: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  HOMOLOGACION_ARTICULO_83: { accept: '.pdf,application/pdf', extension: '.pdf' },
 }
 
 function normalizedRole(value: string) {
@@ -82,9 +96,8 @@ function statusClass(status: string) {
   return 'document-expedient-status document-expedient-status--pending'
 }
 
-function acceptedFiles(moduleCode: string, documentType: string) {
-  if (moduleCode === 'FACTURACION') return INVOICE_FILE_RULES[documentType]?.accept || ''
-  return ACCEPTED_FILES
+function acceptedFiles(documentType: string) {
+  return PDF_FILE_RULES[documentType]?.accept || ACCEPTED_FILES
 }
 
 function ExpedientSection({
@@ -115,7 +128,7 @@ function ExpedientSection({
   }, [defaultDocumentType, module.origin_id])
 
   async function prepareFolder() {
-    if (!module.origin_id || !['PRACTICAS', 'VINCULACION'].includes(module.module_code)) return
+    if (!module.origin_id || !module.upload_enabled) return
     setPreparing(true)
     setError('')
     setMessage('')
@@ -148,13 +161,11 @@ function ExpedientSection({
       setError(`El archivo supera el límite de ${fileSize(maxFileBytes)}.`)
       return
     }
-    const invoiceRule = module.module_code === 'FACTURACION'
-      ? INVOICE_FILE_RULES[documentType]
-      : undefined
-    if (invoiceRule && !selected.name.toLowerCase().endsWith(invoiceRule.extension)) {
+    const fileRule = PDF_FILE_RULES[documentType]
+    if (fileRule && !selected.name.toLowerCase().endsWith(fileRule.extension)) {
       setFile(null)
       setFileInputKey((value) => value + 1)
-      setError(`El tipo documental seleccionado requiere un archivo ${invoiceRule.extension.toUpperCase()}.`)
+      setError(`El tipo documental seleccionado requiere un archivo ${fileRule.extension.toUpperCase()}.`)
       return
     }
     setFile(selected)
@@ -210,11 +221,11 @@ function ExpedientSection({
         </div>
       </header>
 
-      {module.origin_id && ['PRACTICAS', 'VINCULACION'].includes(module.module_code) ? (
+      {module.origin_id && module.upload_enabled ? (
         <div className="document-expedient-folder-actions">
           <div>
-            <strong>Carpeta documental del proceso</strong>
-            <small>Se reutiliza la carpeta del estudiante identificada por su cédula; no se crean duplicados.</small>
+            <strong>Carpeta documental institucional</strong>
+            <small>Se reutiliza la carpeta del estudiante identificada por su cédula y se conserva la trazabilidad.</small>
           </div>
           <div className="document-expedient-actions">
             {folderUrl ? <a className="ghost-button" href={folderUrl} target="_blank" rel="noreferrer">Abrir carpeta</a> : null}
@@ -250,7 +261,7 @@ function ExpedientSection({
               <tr key={document.document_graph_id}>
                 <td><strong>{document.name}</strong><small>ID Graph {document.document_graph_id}</small></td>
                 <td>{document.document_type_code || '-'}</td>
-                <td><strong>Version {document.version}</strong><small>{document.status || '-'}</small></td>
+                <td><strong>Versión {document.version}</strong><small>{document.status || '-'}</small></td>
                 <td><strong>{fileSize(document.size)}</strong><small>{dateTime(document.uploaded_at)}</small></td>
                 <td>{document.uploaded_by || '-'}</td>
                 <td>
@@ -287,7 +298,7 @@ function ExpedientSection({
             <input
               key={fileInputKey}
               type="file"
-              accept={acceptedFiles(module.module_code, documentType)}
+              accept={acceptedFiles(documentType)}
               disabled={uploading}
               onChange={(event) => selectFile(event.target.files?.[0] || null)}
             />
@@ -318,7 +329,10 @@ export function ExpedientesDocumentalesView({
   role,
   initialIdentification = '',
   moduleFilter = [],
+  documentTypeFilter = [],
   embedded = false,
+  embeddedTitle = 'Documentos de prácticas y vinculación',
+  embeddedDescription = 'Cree la carpeta y gestione los documentos del proceso con trazabilidad en Microsoft 365.',
   onClose,
 }: Readonly<ExpedientesDocumentalesViewProps>) {
   const isReviewer = REVIEW_ROLES.has(normalizedRole(role))
@@ -385,11 +399,11 @@ export function ExpedientesDocumentalesView({
       <header className={embedded ? 'document-expedient-embedded-header' : 'student-topbar document-expedients-hero'}>
         <div>
           <p className="eyebrow">{embedded ? 'Expediente del proceso' : 'Documentos'}</p>
-          <h2>{embedded ? 'Documentos de prácticas y vinculación' : 'Expedientes documentales'}</h2>
+          <h2>{embedded ? embeddedTitle : 'Expedientes documentales'}</h2>
           <p className="report-description">
             {embedded
-              ? 'Cree la carpeta y gestione los documentos del proceso con trazabilidad en Microsoft 365.'
-              : 'Archivos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE con trazabilidad en Microsoft 365.'}
+              ? embeddedDescription
+              : 'Documentos de Inglés, titulación, prácticas, vinculación, becas, solicitudes, Secretaría y certificados de no adeudamiento con trazabilidad en Microsoft 365.'}
           </p>
         </div>
         {embedded ? (
@@ -435,22 +449,39 @@ export function ExpedientesDocumentalesView({
           <section className="document-expedient-student-summary">
             <div><span>Estudiante</span><strong>{context.student.name}</strong><small>Código {context.student.code}</small></div>
             <div><span>Cédula</span><strong>{context.student.identification}</strong><small>{context.student.email || 'Sin correo registrado'}</small></div>
-            <div><span>Carrera</span><strong>{context.student.career || 'Sin carrera registrada'}</strong><small>{context.student.period_code || 'Sin período registrado'}</small></div>
+            <div>
+              <span>Carrera</span>
+              <strong>{context.student.career || 'Sin carrera registrada'}</strong>
+              <small>
+                {context.student.period_name || context.student.period_code || 'Sin período registrado'} · Matrícula{' '}
+                {context.student.enrollment_type === 'H' ? 'Homologación' : 'Regular'}
+              </small>
+            </div>
             <div><span>Registro documental</span><strong>{context.total_documents} documento(s)</strong><small>{context.total_expedients} expediente(s) abierto(s)</small></div>
           </section>
 
           <div className="document-expedient-modules">
             {context.expedients
               .filter((module) => moduleFilter.length === 0 || moduleFilter.includes(module.module_code))
-              .map((module) => (
-              <ExpedientSection
-                key={`${module.module_code}-${module.origin_id || 'sin-expediente'}`}
-                identification={selectedIdentification}
-                maxFileBytes={context.max_file_bytes || MAX_FILE_BYTES}
-                module={module}
-                onReload={() => loadContext(selectedIdentification)}
-              />
-            ))}
+              .map((module) => {
+                const allowedTypes = new Set(documentTypeFilter.map((code) => code.toUpperCase()))
+                const scopedModule = documentTypeFilter.length === 0
+                  ? module
+                  : {
+                      ...module,
+                      document_types: module.document_types.filter((type) => allowedTypes.has(type.code.toUpperCase())),
+                      documents: module.documents.filter((document) => allowedTypes.has(document.document_type_code.toUpperCase())),
+                    }
+                return (
+                  <ExpedientSection
+                    key={`${module.module_code}-${module.origin_id || 'sin-expediente'}`}
+                    identification={selectedIdentification}
+                    maxFileBytes={context.max_file_bytes || MAX_FILE_BYTES}
+                    module={scopedModule}
+                    onReload={() => loadContext(selectedIdentification)}
+                  />
+                )
+              })}
           </div>
         </>
       ) : null}

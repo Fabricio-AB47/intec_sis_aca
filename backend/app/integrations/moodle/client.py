@@ -69,6 +69,14 @@ WRITE_FUNCTIONS = frozenset(
     }
 )
 _FUNCTION_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
+_OPTIONAL_FUNCTION_UNAVAILABLE_CODES = frozenset(
+    {
+        "accessexception",
+        "accessdenied",
+        "nopermissions",
+        "requireloginerror",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -88,6 +96,8 @@ class MoodleClient:
     def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
         self._http_client = http_client
+        self._advertised_functions: frozenset[str] | None = None
+        self._unavailable_optional_functions: set[str] = set()
 
     @property
     def endpoint(self) -> str:
@@ -179,6 +189,7 @@ class MoodleClient:
         parameters: Mapping[str, Any] | None = None,
         *,
         write: bool = False,
+        optional: bool = False,
     ) -> Any:
         if write:
             self._validate_write_access(function)
@@ -246,8 +257,17 @@ class MoodleClient:
                 raise MoodleInvalidResponseError("Moodle devolvió una respuesta no válida") from exc
 
         if isinstance(payload, dict) and payload.get("exception"):
-            error_code = str(payload.get("errorcode") or "unknown").strip()
+            error_code = str(payload.get("errorcode") or "unknown").strip().casefold()
             message = self._safe_remote_message(payload.get("message"))
+            if optional and error_code in _OPTIONAL_FUNCTION_UNAVAILABLE_CODES:
+                self._unavailable_optional_functions.add(function)
+                logger.info(
+                    "Función opcional Moodle no disponible function=%s errorcode=%s request_id=%s",
+                    function,
+                    error_code,
+                    request_id,
+                )
+                return None
             logger.warning(
                 "Error de API Moodle function=%s errorcode=%s request_id=%s",
                 function,
@@ -268,6 +288,13 @@ class MoodleClient:
         payload = await self._post(SITE_INFO_FUNCTION)
         if not isinstance(payload, dict):
             raise MoodleInvalidResponseError("La información del sitio Moodle no tiene el formato esperado")
+        functions = payload.get("functions")
+        if isinstance(functions, list):
+            self._advertised_functions = frozenset(
+                str(item.get("name") or "").strip()
+                for item in functions
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            )
         return payload
 
     async def get_all_users(self) -> list[dict[str, Any]]:
@@ -493,7 +520,22 @@ class MoodleClient:
         return [item for item in payload if isinstance(item, dict)]
 
     async def get_course_external_urls(self, course_id: int) -> list[dict[str, Any]]:
-        payload = await self._post(URLS_FUNCTION, {"courseids[0]": int(course_id)})
+        if URLS_FUNCTION in self._unavailable_optional_functions:
+            return []
+        if (
+            self._advertised_functions is not None
+            and URLS_FUNCTION not in self._advertised_functions
+        ):
+            self._unavailable_optional_functions.add(URLS_FUNCTION)
+            return []
+
+        payload = await self._post(
+            URLS_FUNCTION,
+            {"courseids[0]": int(course_id)},
+            optional=True,
+        )
+        if payload is None:
+            return []
         urls = payload.get("urls") if isinstance(payload, dict) else None
         if not isinstance(urls, list):
             raise MoodleInvalidResponseError(

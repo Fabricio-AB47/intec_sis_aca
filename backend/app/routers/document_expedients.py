@@ -45,6 +45,7 @@ router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients
 
 _ACCESS = require_roles("ESTUDIANTE", "DOCENTE", "ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _REVIEW_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_DOCUMENT_REVIEW_ROLES = {"ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR"}
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
     ".zip", ".jpg", ".jpeg", ".png", ".webp", ".mp3", ".wav", ".m4a", ".mp4",
@@ -57,21 +58,55 @@ _MODULE_NAMES = {
     "VINCULACION": "Vinculación con la sociedad",
     "BECAS": "Becas",
     "SOLICITUDES": "Solicitudes",
-    "FACTURACION": "Facturas",
+    "FACTURACION": "Facturación",
+    "SECRETARIA": "Secretaría General",
 }
+_ENGLISH_DOCUMENT_TYPES = [
+    {"code": "DOCUMENTO_INGLES", "name": "Documento de Inglés"},
+]
+_TITULATION_ARCHIVE_DOCUMENT_TYPES = [
+    {"code": "DOCUMENTO_HABILITANTE", "name": "Documento habilitante"},
+    {"code": "ACTA_GRADO", "name": "Acta de grado"},
+    {"code": "ACTA_GRADO_FIRMADA", "name": "Acta de grado firmada"},
+    {"code": "TITULO_REGISTRO_SENESCYT", "name": "Registro SENESCYT"},
+    {"code": "TITULO_INTEC", "name": "Título"},
+]
 _SCHOLARSHIP_DOCUMENT_TYPES = [
     {"code": "CONTRATO_BECA_FIRMADO", "name": "Contrato de beca firmado"},
 ]
-_INVOICE_DOCUMENT_TYPES = [
-    {"code": "FACTURA_XML", "name": "Factura electrónica (XML)"},
-    {"code": "RIDE_FACTURA", "name": "RIDE de la factura (PDF)"},
+_PRACTICE_ARCHIVE_DOCUMENT_TYPES = [
+    {"code": "DOCUMENTO_PRACTICAS", "name": "Documento de prácticas preprofesionales"},
+]
+_VINCULATION_ARCHIVE_DOCUMENT_TYPES = [
+    {"code": "DOCUMENTO_VINCULACION", "name": "Documento de vinculación con la sociedad"},
 ]
 _CAREER_CHANGE_DOCUMENT_TYPES = [
     {"code": "RESPALDO_CAMBIO_CARRERA", "name": "Respaldo de cambio de carrera"},
 ]
-_INVOICE_FILE_EXTENSIONS = {
-    "FACTURA_XML": ".xml",
-    "RIDE_FACTURA": ".pdf",
+_NO_DEBT_DOCUMENT_TYPES = [
+    {"code": "CERTIFICADO_NO_ADEUDAMIENTO", "name": "Certificado de no adeudamiento"},
+]
+_SECRETARY_DOCUMENT_TYPES = [
+    {"code": "CEDULA", "name": "Cédula de identidad"},
+    {"code": "TITULO_BACHILLER", "name": "Título de bachiller"},
+    {"code": "CERTIFICADO_NO_ADEUDAMIENTO", "name": "Certificado financiero de no adeudamiento"},
+    {"code": "RECORD_ACADEMICO_FIRMADO", "name": "Récord académico certificado"},
+    {"code": "CERTIFICADO_PRACTICAS", "name": "Documentación de prácticas laborales"},
+    {"code": "CERTIFICADO_VINCULACION", "name": "Documentación de vinculación con la sociedad"},
+    {"code": "DOCUMENTO_INGLES", "name": "Certificado o evidencia de Inglés"},
+]
+_SECRETARY_HOMOLOGATION_DOCUMENT_TYPES = [
+    *_SECRETARY_DOCUMENT_TYPES,
+    {"code": "DOCUMENTO_CERTIFICACIONES", "name": "Documento de certificaciones"},
+    {"code": "DOCUMENTOS_UNIVERSIDAD_ORIGEN", "name": "Documentos de la universidad de origen"},
+    {"code": "DOCUMENTO_HOMOLOGACION", "name": "Documento de homologación"},
+    {"code": "HOMOLOGACION_ARTICULO_81", "name": "Respaldo del artículo 81"},
+    {"code": "HOMOLOGACION_ARTICULO_82", "name": "Respaldo del artículo 82"},
+    {"code": "HOMOLOGACION_ARTICULO_83", "name": "Respaldo del artículo 83"},
+]
+_PDF_FILE_EXTENSIONS = {
+    item["code"]: ".pdf"
+    for item in _SECRETARY_HOMOLOGATION_DOCUMENT_TYPES
 }
 
 
@@ -107,6 +142,12 @@ def _identification(value: Any) -> str:
     return re.sub(r"\D+", "", _clean(value))
 
 
+def _academic_enrollment_type(*values: Any) -> str:
+    normalized = " ".join(_clean(value).upper() for value in values if _clean(value))
+    tokens = set(re.findall(r"[A-ZÁÉÍÓÚÑ]+", normalized))
+    return "H" if "H" in tokens or any(token.startswith("HOMO") for token in tokens) else "R"
+
+
 def _iso(value: Any) -> str | None:
     if not isinstance(value, datetime):
         return None
@@ -134,12 +175,24 @@ def _iso_date(value: Any) -> str | None:
     return parsed.isoformat() if parsed else None
 
 
+def _is_institutional_archive(expedient: dict[str, Any]) -> bool:
+    if bool(expedient.get("institutional_archive")):
+        return True
+    base_origin = _clean(expedient.get("base_origin") or expedient.get("BaseOrigen")).upper()
+    table_origin = _clean(expedient.get("table_origin") or expedient.get("TablaOrigen")).upper()
+    return base_origin == "INTECBDD" and table_origin == "DATOS_ESTUD"
+
+
 def _ensure_document_upload_window(
     expedient: dict[str, Any],
     enforce_window: bool,
     today: date | None = None,
 ) -> None:
-    if not enforce_window or expedient.get("module_code") not in {"PRACTICAS", "VINCULACION"}:
+    if (
+        not enforce_window
+        or _is_institutional_archive(expedient)
+        or expedient.get("module_code") not in {"PRACTICAS", "VINCULACION"}
+    ):
         return
     start = _date_value(expedient.get("upload_start"))
     end = _date_value(expedient.get("upload_end"))
@@ -212,13 +265,19 @@ def _ensure_document_upload_actor(
 ) -> None:
     normalized_role = _role(current_user.rol)
     module = _clean(expedient.get("module_code")).upper()
+    institutional_archive = _is_institutional_archive(expedient)
     if normalized_role == "DOCENTE":
         _ensure_teacher_practice_access(current_user, expedient, for_write=True)
         return
-    if module in {"PRACTICAS", "VINCULACION"}:
+    if module in {"PRACTICAS", "VINCULACION"} and not institutional_archive:
         raise HTTPException(
             status_code=403,
             detail="Solo el docente responsable activo puede cargar documentos de prácticas o vinculación.",
+        )
+    if normalized_role not in _DOCUMENT_REVIEW_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="La carga desde el expediente documental corresponde a un usuario autorizado de revisión.",
         )
 
 
@@ -277,14 +336,25 @@ def _student_profile(current_user: SessionUser, requested_identification: str = 
                 TRY_CONVERT(NVARCHAR(100), Ultimo.cod_anio_Basica) AS CodigoCarrera,
                 TRY_CONVERT(NVARCHAR(500), C.Nombre_Basica) AS Carrera,
                 TRY_CONVERT(NVARCHAR(100), Ultimo.codigo_periodo) AS CodigoPeriodo,
+                TRY_CONVERT(NVARCHAR(250), Ultimo.NombrePeriodo) AS NombrePeriodo,
+                TRY_CONVERT(NVARCHAR(20), Ultimo.TipoMatricula) AS TipoMatricula,
                 TRY_CONVERT(VARCHAR(10), D.Estado) AS Estado
             FROM dbo.DATOS_ESTUD D
             OUTER APPLY
             (
-                SELECT TOP (1) CX.cod_anio_Basica, CX.codigo_periodo
+                SELECT TOP (1)
+                    CX.cod_anio_Basica,
+                    CX.codigo_periodo,
+                    CX.TipoMatricula,
+                    P.Detalle_Periodo AS NombrePeriodo
                 FROM dbo.CARRERAXESTUD CX
+                LEFT JOIN dbo.PERIODO P
+                  ON TRY_CONVERT(NVARCHAR(50), P.cod_periodo) = TRY_CONVERT(NVARCHAR(50), CX.codigo_periodo)
                 WHERE TRY_CONVERT(BIGINT, CX.codigo_estud) = TRY_CONVERT(BIGINT, D.codigo_estud)
-                ORDER BY TRY_CONVERT(INT, CX.codigo_periodo) DESC
+                ORDER BY
+                    ISNULL(CX.Fecha_Matricula, CONVERT(date, '19000101')) DESC,
+                    TRY_CONVERT(BIGINT, CX.codigo_periodo) DESC,
+                    TRY_CONVERT(BIGINT, CX.num) DESC
             ) Ultimo
             LEFT JOIN dbo.CARRERAS C
               ON TRY_CONVERT(INT, C.Cod_AnioBasica) = TRY_CONVERT(INT, Ultimo.cod_anio_Basica)
@@ -310,18 +380,18 @@ def _student_profile(current_user: SessionUser, requested_identification: str = 
         "career_code": _clean(row.CodigoCarrera),
         "career": _clean(row.Carrera),
         "period_code": _clean(row.CodigoPeriodo),
+        "period_name": _clean(row.NombrePeriodo),
+        "enrollment_type": _academic_enrollment_type(
+            row.TipoMatricula,
+            row.CodigoPeriodo,
+            row.NombrePeriodo,
+        ),
         "status": _clean(row.Estado),
     }
 
 
 def _titulation_document_types() -> list[dict[str, str]]:
-    fallback = [
-        {"code": "DOCUMENTO_HABILITANTE", "name": "Documento habilitante"},
-        {"code": "ACTA_GRADO", "name": "Acta de grado"},
-        {"code": "ACTA_GRADO_FIRMADA", "name": "Acta de grado firmada"},
-        {"code": "TITULO_REGISTRO_SENESCYT", "name": "Registro SENESCYT"},
-        {"code": "TITULO_INTEC", "name": "Título"},
-    ]
+    fallback = [dict(item) for item in _TITULATION_ARCHIVE_DOCUMENT_TYPES]
     try:
         with get_titulation_connection() as conn:
             cursor = conn.cursor()
@@ -339,6 +409,66 @@ def _titulation_document_types() -> list[dict[str, str]]:
             return rows or fallback
     except (RuntimeError, pyodbc.Error):
         return fallback
+
+
+def _institutional_document_types(
+    module_code: str,
+    profile: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    static_types = {
+        "INGLES": _ENGLISH_DOCUMENT_TYPES,
+        "TITULACION": _TITULATION_ARCHIVE_DOCUMENT_TYPES,
+        "PRACTICAS": _PRACTICE_ARCHIVE_DOCUMENT_TYPES,
+        "VINCULACION": _VINCULATION_ARCHIVE_DOCUMENT_TYPES,
+        "BECAS": _SCHOLARSHIP_DOCUMENT_TYPES,
+        "SOLICITUDES": _CAREER_CHANGE_DOCUMENT_TYPES,
+        "FACTURACION": _NO_DEBT_DOCUMENT_TYPES,
+    }
+    if module_code == "SECRETARIA":
+        enrollment_type = _academic_enrollment_type(
+            (profile or {}).get("enrollment_type"),
+            (profile or {}).get("period_code"),
+            (profile or {}).get("period_name"),
+        )
+        types = (
+            _SECRETARY_HOMOLOGATION_DOCUMENT_TYPES
+            if enrollment_type == "H"
+            else _SECRETARY_DOCUMENT_TYPES
+        )
+        return [dict(item) for item in types]
+    return [dict(item) for item in static_types.get(module_code, [])]
+
+
+def _institutional_origin_id(profile: dict[str, Any]) -> str:
+    return f"EST-{int(profile['code'])}"
+
+
+def _institutional_expedient(profile: dict[str, Any], module_code: str) -> dict[str, Any]:
+    module = _clean(module_code).upper()
+    if module not in _MODULE_NAMES:
+        raise ValueError("El módulo documental institucional no está configurado.")
+    student_code = int(profile["code"])
+    origin_id = str(student_code) if module == "FACTURACION" else _institutional_origin_id(profile)
+    expedient_code = (
+        f"NO-ADEUDA-{student_code}"
+        if module == "FACTURACION"
+        else f"ARCHIVO-{module}-{student_code}"
+    )
+    return {
+        "module_code": module,
+        "module_name": _MODULE_NAMES[module],
+        "origin_id": origin_id,
+        "domain_expedient_id": None,
+        "expedient_code": expedient_code,
+        "status": "DISPONIBLE",
+        "base_origin": "INTECBDD",
+        "schema_origin": "dbo",
+        "table_origin": "DATOS_ESTUD",
+        "document_types": _institutional_document_types(module, profile),
+        "upload_enabled": True,
+        "upload_message": "",
+        "institutional_archive": True,
+    }
 
 
 def _practice_document_types(process_code: str) -> list[dict[str, str]]:
@@ -372,21 +502,7 @@ def _practice_document_types(process_code: str) -> list[dict[str, str]]:
 
 
 def _invoice_expedient(profile: dict[str, Any]) -> dict[str, Any]:
-    student_code = int(profile["code"])
-    return {
-        "module_code": "FACTURACION",
-        "module_name": _MODULE_NAMES["FACTURACION"],
-        "origin_id": str(student_code),
-        "domain_expedient_id": student_code,
-        "expedient_code": f"FACT-{student_code}",
-        "status": "ABIERTO",
-        "base_origin": "INTECBDD",
-        "schema_origin": "dbo",
-        "table_origin": "DATOS_ESTUD",
-        "document_types": [dict(item) for item in _INVOICE_DOCUMENT_TYPES],
-        "upload_enabled": True,
-        "upload_message": "",
-    }
+    return _institutional_expedient(profile, "FACTURACION")
 
 
 def _scholarship_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -442,8 +558,8 @@ def _scholarship_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
             "period_name": _clean(row.Periodo) or _clean(row.CodigoPeriodo),
             "reference": _clean(row.NumeroContrato),
             "document_types": [dict(item) for item in _SCHOLARSHIP_DOCUMENT_TYPES],
-            "upload_enabled": False,
-            "upload_message": "Cargue el contrato firmado desde Becas > Contratos de beca.",
+            "upload_enabled": True,
+            "upload_message": "",
         }
         for row in rows
         if _clean(row.CodigoPeriodo)
@@ -492,8 +608,8 @@ def _career_change_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
             "period_name": _clean(row.PeriodoDestinoNombre),
             "reference": _clean(row.CarreraDestinoNombre),
             "document_types": [dict(item) for item in _CAREER_CHANGE_DOCUMENT_TYPES],
-            "upload_enabled": False,
-            "upload_message": "El respaldo se carga desde Solicitudes > Cambio de carrera.",
+            "upload_enabled": True,
+            "upload_message": "",
         }
         for row in rows
     ]
@@ -532,9 +648,9 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                             "base_origin": "INTEC_EXPEDIENTE_ESTUDIANTIL",
                             "schema_origin": "ing",
                             "table_origin": "ExamenIngles",
-                            "document_types": [],
-                            "upload_enabled": False,
-                            "upload_message": "La evidencia de Inglés se carga desde Evaluación de Inglés para aplicar el plazo de 15 minutos.",
+                            "document_types": [dict(item) for item in _ENGLISH_DOCUMENT_TYPES],
+                            "upload_enabled": True,
+                            "upload_message": "",
                         }
                     )
     except (RuntimeError, pyodbc.Error):
@@ -553,8 +669,9 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                 """,
                 document,
             )
-            types = _titulation_document_types()
-            for row in cursor.fetchall():
+            titulation_rows = cursor.fetchall()
+            types = _titulation_document_types() if titulation_rows else []
+            for row in titulation_rows:
                 expedients.append(
                     {
                         "module_code": "TITULACION",
@@ -613,10 +730,14 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
                     profile["code"],
                 )
             practice_rows = cursor.fetchall()
-            type_cache = {
-                "PPF": _practice_document_types("PPF"),
-                "VIN": _practice_document_types("VIN"),
-            }
+            type_cache = (
+                {
+                    "PPF": _practice_document_types("PPF"),
+                    "VIN": _practice_document_types("VIN"),
+                }
+                if practice_rows
+                else {}
+            )
             for row in practice_rows:
                 is_practice = _clean(row.TipoProceso).upper() == "PPF"
                 module = "PRACTICAS" if is_practice else "VINCULACION"
@@ -644,6 +765,10 @@ def _domain_expedients(profile: dict[str, Any]) -> list[dict[str, Any]]:
     expedients.extend(_scholarship_expedients(profile))
     expedients.extend(_career_change_expedients(profile))
     expedients.append(_invoice_expedient(profile))
+    existing_modules = {item["module_code"] for item in expedients}
+    for module_code in _MODULE_NAMES:
+        if module_code not in existing_modules:
+            expedients.append(_institutional_expedient(profile, module_code))
     return expedients
 
 
@@ -666,7 +791,8 @@ def _context_payload(profile: dict[str, Any], current_user: SessionUser) -> dict
         expedients = assigned_expedients
 
     for expedient in expedients:
-        if expedient["module_code"] in {"PRACTICAS", "VINCULACION"}:
+        institutional_archive = _is_institutional_archive(expedient)
+        if expedient["module_code"] in {"PRACTICAS", "VINCULACION"} and not institutional_archive:
             if normalized_role != "DOCENTE":
                 expedient["upload_enabled"] = False
                 expedient["upload_message"] = (
@@ -678,11 +804,16 @@ def _context_payload(profile: dict[str, Any], current_user: SessionUser) -> dict
                 except HTTPException as exc:
                     expedient["upload_enabled"] = False
                     expedient["upload_message"] = str(exc.detail)
-        elif normalized_role == "ESTUDIANTE" and expedient["module_code"] == "TITULACION":
+        elif normalized_role not in _DOCUMENT_REVIEW_ROLES:
             expedient["upload_enabled"] = False
-            expedient["upload_message"] = (
-                "Los documentos oficiales de titulación son cargados por Secretaría o el área Académica."
-            )
+            if expedient["module_code"] == "TITULACION":
+                expedient["upload_message"] = (
+                    "Los documentos oficiales de titulación son cargados por Secretaría o el área Académica."
+                )
+            else:
+                expedient["upload_message"] = (
+                    "El documento es cargado por Secretaría o por un usuario autorizado de revisión."
+                )
     graph_rows = list_documents(profile["identification"])
     documents_by_origin: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in graph_rows:
@@ -703,29 +834,19 @@ def _context_payload(profile: dict[str, Any], current_user: SessionUser) -> dict
                 "uploaded_by": _clean(row.get("UsuarioCarga")),
             }
         )
+    archive_origin = _institutional_origin_id(profile)
+    archived_documents_attached: set[str] = set()
     for expedient in expedients:
-        expedient["documents"] = documents_by_origin.get(
-            (expedient["module_code"], expedient["origin_id"]),
-            [],
-        )
+        module_code = expedient["module_code"]
+        documents = list(documents_by_origin.get((module_code, expedient["origin_id"]), []))
+        if (
+            not _is_institutional_archive(expedient)
+            and module_code not in archived_documents_attached
+        ):
+            documents.extend(documents_by_origin.get((module_code, archive_origin), []))
+            archived_documents_attached.add(module_code)
+        expedient["documents"] = documents
 
-    existing_modules = {item["module_code"] for item in expedients}
-    for module, name in _MODULE_NAMES.items():
-        if module not in existing_modules:
-            expedients.append(
-                {
-                    "module_code": module,
-                    "module_name": name,
-                    "origin_id": "",
-                    "domain_expedient_id": None,
-                    "expedient_code": "",
-                    "status": "SIN_EXPEDIENTE",
-                    "document_types": [],
-                    "documents": [],
-                    "upload_enabled": False,
-                    "upload_message": "Primero debe abrirse el expediente en el módulo correspondiente.",
-                }
-            )
     expedients.sort(key=lambda item: list(_MODULE_NAMES).index(item["module_code"]))
     return {
         "student": profile,
@@ -741,6 +862,8 @@ def _validate_origin(profile: dict[str, Any], module_code: str, origin_id: str) 
     for item in _domain_expedients(profile):
         if item["module_code"] == module and item["origin_id"] == _clean(origin_id):
             return item
+    if module in _MODULE_NAMES and _clean(origin_id) == _institutional_origin_id(profile):
+        return _institutional_expedient(profile, module)
     raise HTTPException(status_code=404, detail="El expediente indicado no pertenece al estudiante.")
 
 
@@ -763,14 +886,14 @@ def _validate_upload_filename(
         normalized = safe_filename(filename, _ALLOWED_EXTENSIONS)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if expedient.get("module_code") != "FACTURACION":
+    expected_extension = _PDF_FILE_EXTENSIONS.get(document_type_code)
+    if not expected_extension:
         return normalized
-    expected_extension = _INVOICE_FILE_EXTENSIONS.get(document_type_code)
     if expected_extension and not normalized.lower().endswith(expected_extension):
         document_name = next(
             (
                 item["name"]
-                for item in _INVOICE_DOCUMENT_TYPES
+                for item in expedient.get("document_types", [])
                 if item["code"] == document_type_code
             ),
             document_type_code,
@@ -789,15 +912,16 @@ def _register_domain_document(
     audit_user: str,
 ) -> int:
     module = _clean(session["TipoExpedienteGraphCodigo"])
-    origin_id = int(session["OrigenId"])
     type_code = _clean(session["TipoDocumentoCodigo"])
     name = _clean(session["NombreArchivoOriginal"])
     web_url = _clean(graph_document.get("graph_web_url"))
     content_type = _clean(graph_document.get("content_type"))
     size = int(graph_document.get("size") or 0)
 
-    if module == "FACTURACION":
+    if _is_institutional_archive(session) or module in {"INGLES", "BECAS", "SOLICITUDES"}:
         return int(graph_document["document_graph_id"])
+
+    origin_id = int(session["OrigenId"])
 
     if module == "TITULACION":
         with get_titulation_connection() as conn:
@@ -1053,8 +1177,6 @@ def prepare_document_expedient(
     if is_student and payload.identification and _identification(payload.identification) != _identification(current_user.cedula):
         raise HTTPException(status_code=403, detail="El estudiante solo puede preparar su propio expediente.")
     module_code = _clean(payload.module_code).upper()
-    if module_code not in {"PRACTICAS", "VINCULACION"}:
-        raise HTTPException(status_code=400, detail="Este proceso solo prepara expedientes de prácticas o vinculación.")
 
     profile = _student_profile(current_user, payload.identification)
     expedient = _validate_origin(profile, module_code, payload.origin_id)
@@ -1186,25 +1308,16 @@ def finalize_document_upload(
     session = upload_session(payload.upload_id)
     if not session:
         raise HTTPException(status_code=404, detail='No existe la sesión de carga indicada.')
-    session_module = _clean(session.get("TipoExpedienteGraphCodigo")).upper()
-    if session_module in {"PRACTICAS", "VINCULACION"} and _role(current_user.rol) != "DOCENTE":
-        raise HTTPException(
-            status_code=403,
-            detail="Solo el docente responsable activo puede finalizar cargas de prácticas o vinculación.",
-        )
-    if _role(current_user.rol) == "ESTUDIANTE" and _identification(current_user.cedula) != _identification(session["NumeroIdentificacion"]):
-        raise HTTPException(status_code=403, detail='La sesión no pertenece al estudiante autenticado.')
-    if _role(current_user.rol) == "DOCENTE":
-        if _clean(session.get("UsuarioCarga")).casefold() != _clean(current_user.login).casefold():
-            raise HTTPException(status_code=403, detail="La sesión de carga no pertenece al docente autenticado.")
-        profile = _student_profile(current_user, _clean(session.get("NumeroIdentificacion")))
-        expedient = _validate_origin(
-            profile,
-            _clean(session.get("TipoExpedienteGraphCodigo")),
-            _clean(session.get("OrigenId")),
-        )
-        _ensure_document_upload_actor(current_user, expedient)
-        _ensure_document_upload_window(expedient, True)
+    if _clean(session.get("UsuarioCarga")).casefold() != _clean(current_user.login).casefold():
+        raise HTTPException(status_code=403, detail="La sesión de carga no pertenece al usuario autenticado.")
+    profile = _student_profile(current_user, _clean(session.get("NumeroIdentificacion")))
+    expedient = _validate_origin(
+        profile,
+        _clean(session.get("TipoExpedienteGraphCodigo")),
+        _clean(session.get("OrigenId")),
+    )
+    _ensure_document_upload_actor(current_user, expedient)
+    _ensure_document_upload_window(expedient, _role(current_user.rol) == "DOCENTE")
     if _clean(session["EstadoDocumentoGraphCodigo"]) == "CARGADO":
         raise HTTPException(status_code=409, detail="La carga ya fue finalizada.")
     try:
@@ -1216,7 +1329,7 @@ def finalize_document_upload(
             graph_item=graph_item,
             edit_deadline=None,
             audit_user=current_user.login,
-            append_document=_clean(session["TipoExpedienteGraphCodigo"]) == "FACTURACION",
+            append_document=False,
         )
         domain_document_id = _register_domain_document(session, graph_document, graph_item, current_user.login)
         set_document_origin(int(graph_document["document_graph_id"]), domain_document_id)

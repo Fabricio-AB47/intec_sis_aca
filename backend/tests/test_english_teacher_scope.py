@@ -15,6 +15,8 @@ from app.routers.english_exams import (
     _default_component_instructions,
     _ensure_components,
     _ensure_exam,
+    _ensure_schema,
+    _exam_select,
     _require_teacher_exam_scope,
     _reviewer_enrollments,
     _reviewer_periods,
@@ -76,8 +78,41 @@ class EnglishTeacherScopeTests(unittest.TestCase):
     def test_document_creation_uses_trigger_safe_identity_output(self) -> None:
         source = getsource(finalize_student_upload)
 
-        self.assertIn("OUTPUT INSERTED.DocumentoId", source)
+        self.assertIn("OUTPUT INSERTED.DocumentoExpedienteId", source)
         self.assertIn("INTO @DocumentoCreado", source)
+        self.assertIn("EstadoDocumentoId", source)
+        self.assertIn("TipoDocumentoId", source)
+        self.assertIn("RutaNube", source)
+        self.assertNotIn("OUTPUT INSERTED.DocumentoId", source)
+        self.assertNotIn("TipoDocumentoCodigo", source)
+        self.assertNotIn("EstadoCodigo", source)
+        self.assertNotIn("UrlArchivo", source)
+
+    def test_english_schema_uses_canonical_expedient_and_document_keys(self) -> None:
+        cursor = MagicMock()
+
+        _ensure_schema(cursor)
+
+        schema_sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
+        self.assertIn(
+            "REFERENCES exp.ExpedienteEstudiantil(ExpedienteEstudiantilId)",
+            schema_sql,
+        )
+        self.assertIn(
+            "REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId)",
+            schema_sql,
+        )
+        self.assertNotIn("ex.ExpedienteId =", schema_sql)
+        self.assertNotIn("DocumentoExpediente(DocumentoId)", schema_sql)
+
+    def test_exam_query_joins_the_canonical_expedient_key(self) -> None:
+        query = _exam_select("e.ExamenInglesId = ?")
+
+        self.assertIn(
+            "ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId",
+            query,
+        )
+        self.assertNotIn("ex.ExpedienteId =", query)
 
     def test_teacher_scope_requires_assignment_and_real_student_enrollment(self):
         sql = " ".join(_TEACHER_ENROLLMENT_SCOPE_SQL.split())

@@ -26,6 +26,7 @@ const SistemaAcademicoView = lazyView(() => import('./features/academico/Sistema
 const CurriculumUpdaterView = lazyView(() => import('./features/academico/CurriculumUpdaterView'), 'CurriculumUpdaterView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
 const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
+const SecretariaGeneralView = lazyView(() => import('./features/secretaria/SecretariaGeneralView'), 'SecretariaGeneralView')
 const InglesView = lazyView(() => import('./features/ingles/InglesView'), 'InglesView')
 const ActualizarDatosEstudianteView = lazyView(() => import('./features/matricula/ActualizarDatosEstudianteView'), 'ActualizarDatosEstudianteView')
 const ActualizarCorreoIntecView = lazyView(() => import('./features/matricula/ActualizarCorreoIntecView'), 'ActualizarCorreoIntecView')
@@ -477,6 +478,13 @@ function App() {
       )
     } else if (app.activePage === 'expedientes-documentales') {
       pageContent = <ExpedientesDocumentalesView displayName={app.displayName} role={app.session.rol} />
+    } else if (app.activePage === 'secretaria-general') {
+      pageContent = (
+        <SecretariaGeneralView
+          displayName={app.displayName}
+          role={app.session.rol}
+        />
+      )
     } else if (app.activePage === 'portal-docente') {
       pageContent = <PortalDocenteView displayName={app.displayName} />
     } else if (app.activePage === 'portal-docente-informe') {
@@ -584,6 +592,7 @@ function App() {
           onOpenPortalEstudiante={app.openPortalEstudiantePage}
           onOpenIngles={app.openInglesPage}
           onOpenExpedientesDocumentales={app.openExpedientesDocumentalesPage}
+          onOpenSecretariaGeneral={app.openSecretariaGeneralPage}
           onOpenPortalDocente={app.openPortalDocentePage}
           onOpenPortalDocenteInforme={app.openPortalDocenteInformePage}
           onOpenPortalDocentePlanificacion={app.openPortalDocentePlanificacionPage}

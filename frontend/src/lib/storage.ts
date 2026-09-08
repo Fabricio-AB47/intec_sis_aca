@@ -53,6 +53,7 @@ function isPage(value: string): value is Page {
     value === 'portal-estudiante-calificaciones' ||
     value === 'ingles' ||
     value === 'expedientes-documentales' ||
+    value === 'secretaria-general' ||
     value === 'portal-docente' ||
     value === 'portal-docente-informe' ||
     value === 'portal-docente-planificacion' ||

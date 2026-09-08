@@ -123,6 +123,22 @@ class Settings(BaseSettings):
     integration_control_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("INTEGRATION_CONTROL_DB_ENCRYPT", "DB_ENCRYPT8"))
     integration_control_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("INTEGRATION_CONTROL_DB_TRUST_CERT", "DB_TRUST_CERT8"))
 
+    secretaria_db_name: str = Field(
+        default="INTEC_SECRETARIA_GENERAL",
+        validation_alias=AliasChoices("SECRETARIA_DB_NAME"),
+    )
+    secretaria_db_user: str | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_USER"))
+    secretaria_db_password: str | None = Field(
+        default=None,
+        repr=False,
+        validation_alias=AliasChoices("SECRETARIA_DB_PASSWORD"),
+    )
+    secretaria_db_host: str | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_HOST"))
+    secretaria_db_port: int | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_PORT"))
+    secretaria_db_driver: str | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_DRIVER"))
+    secretaria_db_encrypt: str | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_ENCRYPT"))
+    secretaria_db_trust_cert: str | None = Field(default=None, validation_alias=AliasChoices("SECRETARIA_DB_TRUST_CERT"))
+
     moodle_base_url: str = Field(
         default="https://aulasintec.ec",
         validation_alias=AliasChoices("MOODLE_BASE_URL"),
@@ -390,6 +406,12 @@ class Settings(BaseSettings):
                 self.integration_control_db_driver,
                 self.integration_control_db_encrypt,
                 self.integration_control_db_trust_cert,
+            ),
+            (
+                "SECRETARIA_DB",
+                self.secretaria_db_driver,
+                self.secretaria_db_encrypt,
+                self.secretaria_db_trust_cert,
             ),
         )
         for label, driver, encrypt, trust_cert in database_transports:

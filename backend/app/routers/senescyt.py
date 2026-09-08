@@ -483,7 +483,7 @@ def _find_student_row(codigo_estud: str) -> pd.Series:
         dataframe["codigoEstud"].astype(str).str.strip() == str(codigo_estud).strip()
     ]
     if matches.empty:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado en datos SENECYT.")
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado en los datos de SENESCYT.")
     return matches.iloc[0]
 
 
@@ -675,7 +675,7 @@ def search_senescyt_students(
     try:
         dataframe = _load_normalized_students()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error buscando estudiantes SENECYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al buscar estudiantes en SENESCYT: {exc}") from exc
 
     text = q.strip().casefold()
     if text:
@@ -776,7 +776,7 @@ def senescyt_students_report(
     try:
         report = _build_report()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error generando reporte SENECYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al generar el reporte de SENESCYT: {exc}") from exc
     return {
         "generated_at": report["generated_at"],
         "summary": report["summary"],
@@ -812,7 +812,7 @@ def senescyt_students_export(
                 )
         output.seek(0)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error exportando reporte SENECYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error al exportar el reporte de SENESCYT: {exc}") from exc
 
     filename = f"senescyt_estudiantes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return StreamingResponse(

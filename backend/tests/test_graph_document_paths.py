@@ -47,6 +47,7 @@ class GraphDocumentPathTests(unittest.TestCase):
             "VINCULACION": "VINCULACION CON LA SOCIEDAD",
             "SOLICITUDES": "SOLICITUDES",
             "FACTURACION": "FACTURAS",
+            "SECRETARIA": "SECRETARIA GENERAL",
         }
         for module, folder in expected_folders.items():
             with self.subTest(module=module):

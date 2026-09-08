@@ -29,6 +29,7 @@ type StudentLayoutProps = {
   onOpenPortalEstudiante: (section?: PortalStudentSection) => void
   onOpenIngles: () => void
   onOpenExpedientesDocumentales: () => void
+  onOpenSecretariaGeneral: () => void
   onOpenPortalDocente: () => void
   onOpenPortalDocenteInforme: () => void
   onOpenPortalDocentePlanificacion: () => void
@@ -206,7 +207,7 @@ const academicReportKeys = new Set(['notas_carrera_materia', 'evaluacion_docente
 const financialReportKeys = new Set(['provincia', 'genero', 'carrera', 'periodo', 'graduados_2025'])
 const admissionsPages = new Set<Page>(['dashboard', 'preinscripcion', 'gestion-sisacademico'])
 const admissionsSisSections = new Set(['preinscripciones', 'estudiantes', 'cabecera_matricula', 'pagos_matricula', 'datos_factura'])
-const secretaryPages = new Set<Page>(['solicitudes-cambio-carrera', 'solicitudes-cambio-modalidad', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
+const secretaryPages = new Set<Page>(['secretaria-general', 'solicitudes-cambio-carrera', 'solicitudes-cambio-modalidad', 'practicas-institucionales', 'fecha-grado', 'senescyt-estudiantes', 'titulacion', 'titulacion-proceso', 'titulacion-responsables', 'titulos-registrados', 'expedientes-documentales', 'informe-cumplimiento'])
 
 function normalizeRoleKey(role: string) {
   return role
@@ -400,6 +401,7 @@ function groupIconName(groupKey: string): GroupIconName {
     'practicas-estudiante': 'briefcase',
     idiomas: 'academic',
     'expedientes-documentales': 'certificate',
+    secretaria: 'certificate',
     'portal-docente': 'teacher',
     administracion: 'users',
     desempeno: 'academic',
@@ -569,6 +571,7 @@ export function StudentLayout({
   onOpenPortalEstudiante,
   onOpenIngles,
   onOpenExpedientesDocumentales,
+  onOpenSecretariaGeneral,
   onOpenPortalDocente,
   onOpenPortalDocenteInforme,
   onOpenPortalDocentePlanificacion,
@@ -1169,11 +1172,11 @@ export function StudentLayout({
     },
     {
       key: 'datos-senecyt',
-      title: 'Datos SENECYT',
+      title: 'Datos SENESCYT',
       summary: 'Estudiantes, docentes y faltantes',
       items: [
         {
-          label: 'Reportes SENECYT',
+          label: 'Reportes SENESCYT',
           description: 'Genere Excel por carrera y faltantes para estudiantes y docentes.',
           page: 'senescyt-estudiantes',
           action: onOpenSenescytEstudiantes,
@@ -2198,11 +2201,17 @@ export function StudentLayout({
 
   const secretaryMenuGroups: NavGroup[] = [
     {
-      key: 'inicio',
-      title: 'Inicio',
-      summary: 'Ciclo institucional',
+      key: 'secretaria',
+      title: 'Secretaría',
+      summary: 'Expedientes de egreso y grado',
       items: [
-        { label: 'Sistema académico', description: 'Prácticas, egreso y titulación.', page: 'sistema-academico', action: onOpenSistemaAcademico },
+        { label: 'Secretaría General', description: 'Validar expedientes de estudiantes próximos a graduarse y graduados.', page: 'secretaria-general', action: onOpenSecretariaGeneral },
+        {
+          label: 'Expedientes documentales',
+          description: 'Buscar estudiantes y gestionar sus documentos y certificados de no adeudamiento en Microsoft 365.',
+          page: 'expedientes-documentales',
+          action: onOpenExpedientesDocumentales,
+        },
       ],
     },
     {
@@ -2401,7 +2410,7 @@ export function StudentLayout({
         label: 'Expedientes documentales',
         description: normalizedRole === 'ESTUDIANTE'
           ? 'Consultar documentos y cargar evidencias habilitadas de sus procesos.'
-          : 'Buscar estudiantes y gestionar documentos, facturas XML y RIDE en Microsoft 365.',
+          : 'Buscar estudiantes y gestionar sus documentos y certificados de no adeudamiento en Microsoft 365.',
         page: 'expedientes-documentales',
         action: onOpenExpedientesDocumentales,
       },
@@ -2454,7 +2463,7 @@ export function StudentLayout({
               ? executiveMenuGroups
               : normalizedRole === 'FINANCIERO'
                 ? financialMenuGroups
-                : [admissionsMenuGroup, auditMenuGroup, requestsMenuGroup, updatesMenuGroup, enrollmentMenuGroup, ...adminMenuGroups, moodleMenuGroup, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
+                : [admissionsMenuGroup, auditMenuGroup, requestsMenuGroup, updatesMenuGroup, enrollmentMenuGroup, ...secretaryMenuGroups, ...adminMenuGroups, moodleMenuGroup, assignableUtilitiesMenuGroup, documentExpedientsMenuGroup]
 
   const roleScopedMenuGroups = roleMenuGroups
     .filter((group) => isAdministrator || group.key !== 'flujo-academico')

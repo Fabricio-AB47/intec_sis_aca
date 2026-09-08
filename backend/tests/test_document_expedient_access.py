@@ -12,6 +12,7 @@ from app.routers.document_expedients import (
     _ensure_document_upload_actor,
     _ensure_document_upload_window,
     _ensure_teacher_practice_access,
+    _institutional_expedient,
     _invoice_expedient,
     _validate_upload_filename,
 )
@@ -83,13 +84,64 @@ class DocumentExpedientAccessTests(unittest.TestCase):
             _ensure_document_upload_actor(teacher, expedient)
         access.assert_called_once_with(teacher, expedient, for_write=True)
 
-    def test_practice_restriction_does_not_change_other_student_expedients(self) -> None:
+    def test_student_cannot_upload_official_documents_from_general_archive(self) -> None:
         student = SessionUser(login="estudiante@intec.edu.ec", rol="ESTUDIANTE")
 
-        _ensure_document_upload_actor(
-            student,
-            {"module_code": "FACTURACION", "origin_id": "123", "status": "ABIERTO"},
-        )
+        with self.assertRaises(HTTPException) as context:
+            _ensure_document_upload_actor(
+                student,
+                {
+                    "module_code": "FACTURACION",
+                    "origin_id": "123",
+                    "status": "DISPONIBLE",
+                    "base_origin": "INTECBDD",
+                    "table_origin": "DATOS_ESTUD",
+                },
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+
+    def test_reviewer_can_upload_to_institutional_practice_archive(self) -> None:
+        reviewer = SessionUser(login="secretaria@intec.edu.ec", rol="SECRETARIA")
+        expedient = _institutional_expedient({"code": 123}, "PRACTICAS")
+
+        _ensure_document_upload_actor(reviewer, expedient)
+
+    def test_reviewer_context_enables_every_institutional_archive(self) -> None:
+        reviewer = SessionUser(login="secretaria@intec.edu.ec", rol="SECRETARIA")
+        profile = {
+            "code": 100,
+            "identification": "0102030405",
+            "name": "ESTUDIANTE PRUEBA",
+            "email": "estudiante@intec.edu.ec",
+        }
+        with patch(
+            "app.routers.document_expedients.get_titulation_connection",
+            side_effect=RuntimeError,
+        ):
+            expedients = [
+                _institutional_expedient(profile, module)
+                for module in (
+                    "INGLES",
+                    "TITULACION",
+                    "PRACTICAS",
+                    "VINCULACION",
+                    "BECAS",
+                    "SOLICITUDES",
+                    "FACTURACION",
+                    "SECRETARIA",
+                )
+            ]
+
+        with (
+            patch("app.routers.document_expedients._domain_expedients", return_value=expedients),
+            patch("app.routers.document_expedients.list_documents", return_value=[]),
+        ):
+            context = _context_payload(profile, reviewer)
+
+        self.assertEqual(len(context["expedients"]), 8)
+        self.assertTrue(all(item["upload_enabled"] for item in context["expedients"]))
+        self.assertTrue(all(item["document_types"] for item in context["expedients"]))
 
     def test_student_practice_context_is_read_only(self) -> None:
         student = SessionUser(login="estudiante@intec.edu.ec", rol="ESTUDIANTE")
@@ -133,7 +185,7 @@ class DocumentExpedientAccessTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 409)
 
-    def test_invoice_expedient_reuses_student_identity(self) -> None:
+    def test_no_debt_expedient_reuses_student_identity(self) -> None:
         expedient = _invoice_expedient(
             {
                 "code": 123,
@@ -144,30 +196,68 @@ class DocumentExpedientAccessTests(unittest.TestCase):
 
         self.assertEqual(expedient["module_code"], "FACTURACION")
         self.assertEqual(expedient["origin_id"], "123")
-        self.assertEqual(expedient["expedient_code"], "FACT-123")
+        self.assertEqual(expedient["expedient_code"], "NO-ADEUDA-123")
         self.assertEqual(
             [item["code"] for item in expedient["document_types"]],
-            ["FACTURA_XML", "RIDE_FACTURA"],
+            ["CERTIFICADO_NO_ADEUDAMIENTO"],
         )
 
-    def test_invoice_upload_formats_are_strict(self) -> None:
+    def test_no_debt_certificate_requires_pdf(self) -> None:
         expedient = _invoice_expedient({"code": 123})
 
         self.assertEqual(
-            _validate_upload_filename(expedient, "FACTURA_XML", "factura-001.xml"),
-            "factura-001.xml",
+            _validate_upload_filename(
+                expedient,
+                "CERTIFICADO_NO_ADEUDAMIENTO",
+                "certificado-no-adeudamiento.pdf",
+            ),
+            "certificado-no-adeudamiento.pdf",
         )
-        self.assertEqual(
-            _validate_upload_filename(expedient, "RIDE_FACTURA", "ride-001.pdf"),
-            "ride-001.pdf",
-        )
-        with self.assertRaises(HTTPException) as xml_context:
-            _validate_upload_filename(expedient, "FACTURA_XML", "factura-001.pdf")
-        with self.assertRaises(HTTPException) as ride_context:
-            _validate_upload_filename(expedient, "RIDE_FACTURA", "ride-001.xml")
+        with self.assertRaises(HTTPException) as context:
+            _validate_upload_filename(
+                expedient,
+                "CERTIFICADO_NO_ADEUDAMIENTO",
+                "certificado-no-adeudamiento.xml",
+            )
 
-        self.assertEqual(xml_context.exception.status_code, 400)
-        self.assertEqual(ride_context.exception.status_code, 400)
+        self.assertEqual(context.exception.status_code, 400)
+
+    def test_secretary_archive_contains_the_regular_graduation_documents(self) -> None:
+        expedient = _institutional_expedient({"code": 123}, "SECRETARIA")
+
+        self.assertEqual(expedient["module_name"], "Secretaría General")
+        self.assertEqual(
+            [item["code"] for item in expedient["document_types"]],
+            [
+                "CEDULA",
+                "TITULO_BACHILLER",
+                "CERTIFICADO_NO_ADEUDAMIENTO",
+                "RECORD_ACADEMICO_FIRMADO",
+                "CERTIFICADO_PRACTICAS",
+                "CERTIFICADO_VINCULACION",
+                "DOCUMENTO_INGLES",
+            ],
+        )
+        with self.assertRaises(HTTPException):
+            _validate_upload_filename(expedient, "RECORD_ACADEMICO_FIRMADO", "record.docx")
+
+    def test_homologation_archive_keeps_the_complete_graduation_checklist(self) -> None:
+        expedient = _institutional_expedient(
+            {"code": 123, "enrollment_type": "H"},
+            "SECRETARIA",
+        )
+
+        codes = {item["code"] for item in expedient["document_types"]}
+        self.assertEqual(len(codes), 13)
+        self.assertIn("CERTIFICADO_PRACTICAS", codes)
+        self.assertIn("CERTIFICADO_VINCULACION", codes)
+        self.assertIn("DOCUMENTO_INGLES", codes)
+        self.assertIn("DOCUMENTO_CERTIFICACIONES", codes)
+        self.assertIn("DOCUMENTOS_UNIVERSIDAD_ORIGEN", codes)
+        self.assertIn("DOCUMENTO_HOMOLOGACION", codes)
+        self.assertIn("HOMOLOGACION_ARTICULO_81", codes)
+        self.assertIn("HOMOLOGACION_ARTICULO_82", codes)
+        self.assertIn("HOMOLOGACION_ARTICULO_83", codes)
 
 
 if __name__ == "__main__":

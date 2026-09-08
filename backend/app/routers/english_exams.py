@@ -214,7 +214,7 @@ def _require_teacher_exam_scope(
         SELECT TOP (1) 1
         FROM ing.ExamenIngles e
         INNER JOIN exp.ExpedienteEstudiantil ex
-            ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+            ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
         WHERE e.ExamenInglesId = ?
           AND e.Activo = 1
           AND {_TEACHER_ENROLLMENT_SCOPE_SQL}
@@ -1140,7 +1140,7 @@ def _ensure_schema(cursor: Any) -> None:
                 FechaActualizacion DATETIME2 NULL,
                 UsuarioActualizacion NVARCHAR(256) COLLATE Modern_Spanish_CI_AS NULL,
                 CONSTRAINT FK_ExamenIngles_Expediente FOREIGN KEY (ExpedienteEstudiantilId)
-                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteId),
+                    REFERENCES exp.ExpedienteEstudiantil(ExpedienteEstudiantilId),
                 CONSTRAINT CK_ExamenIngles_Nota CHECK (NotaFinal IS NULL OR (NotaFinal >= 0 AND NotaFinal <= 10))
             );
             EXEC(N'CREATE UNIQUE INDEX UX_ExamenIngles_MatriculaActiva
@@ -1171,7 +1171,7 @@ def _ensure_schema(cursor: Any) -> None:
                    CodigoPeriodo = COALESCE(e.CodigoPeriodo, TRY_CONVERT(INT, ex.CodigoPeriodo))
             FROM ing.ExamenIngles e
             INNER JOIN exp.ExpedienteEstudiantil ex
-                ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+                ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
             WHERE e.CodigoCarrera IS NULL OR e.CodigoPeriodo IS NULL;
         ');
 
@@ -1390,7 +1390,7 @@ def _ensure_schema(cursor: Any) -> None:
                 CONSTRAINT FK_CargaExamenIngles_Componente FOREIGN KEY (ComponenteExamenInglesId)
                     REFERENCES ing.ComponenteExamenIngles(ComponenteExamenInglesId),
                 CONSTRAINT FK_CargaExamenIngles_Documento FOREIGN KEY (DocumentoExpedienteId)
-                    REFERENCES doc.DocumentoExpediente(DocumentoId),
+                    REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId),
                 CONSTRAINT CK_CargaExamenIngles_Tamano_V3 CHECK (TamanoEsperado > 0 AND TamanoEsperado <= 2147483648)
             );
             CREATE UNIQUE INDEX UX_CargaExamenIngles_Version
@@ -1696,7 +1696,7 @@ def _ensure_schema(cursor: Any) -> None:
                 UsuarioCarga NVARCHAR(256) NULL,
                 FechaCarga DATETIME2 NOT NULL CONSTRAINT DF_DocumentoVersion_Fecha DEFAULT SYSUTCDATETIME(),
                 CONSTRAINT FK_DocumentoVersion_Documento FOREIGN KEY (DocumentoExpedienteId)
-                    REFERENCES doc.DocumentoExpediente(DocumentoId),
+                    REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId),
                 CONSTRAINT UQ_DocumentoVersion_Numero UNIQUE (DocumentoExpedienteId, NumeroVersion)
             );
         END;
@@ -2040,13 +2040,13 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
     draft_state_id = _catalog_id(cursor, "cat.EstadoExpediente", "BORRADOR", "EstadoExpedienteId")
     cursor.execute(
         """
-        SELECT TOP (1) ExpedienteId
+        SELECT TOP (1) ExpedienteEstudiantilId
         FROM exp.ExpedienteEstudiantil
         WHERE TipoExpedienteId = ? AND PersonaId = ? AND Activo = 1
           AND TRY_CONVERT(INT, CodigoCarrera) = ?
           AND TRY_CONVERT(INT, CodigoPeriodo) = ?
           AND TipoOferta = ?
-        ORDER BY ExpedienteId DESC
+        ORDER BY ExpedienteEstudiantilId DESC
         """,
         type_id,
         person_id,
@@ -2062,7 +2062,7 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
             UPDATE exp.ExpedienteEstudiantil
                SET CodigoEstud = ?, NumeroIdentificacion = ?, CodigoCarrera = ?, CodigoPeriodo = ?, TipoOferta = ?,
                    FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
-             WHERE ExpedienteId = ?
+             WHERE ExpedienteEstudiantilId = ?
             """,
             profile["codigo_estud"],
             profile["cedula"],
@@ -2076,16 +2076,16 @@ def _ensure_exam(cursor: Any, profile: dict[str, Any], audit_user: str) -> int:
         cursor.execute(
             """
             SET NOCOUNT ON;
-            DECLARE @ExpedienteCreado TABLE (ExpedienteId BIGINT NOT NULL);
+            DECLARE @ExpedienteCreado TABLE (ExpedienteEstudiantilId BIGINT NOT NULL);
 
             INSERT INTO exp.ExpedienteEstudiantil
                 (TipoExpedienteId, EstadoExpedienteId, PersonaId, CodigoEstud,
                  NumeroIdentificacion, CodigoCarrera, CodigoPeriodo, TipoOferta, UsuarioApertura)
-            OUTPUT INSERTED.ExpedienteId
-                INTO @ExpedienteCreado (ExpedienteId)
+            OUTPUT INSERTED.ExpedienteEstudiantilId
+                INTO @ExpedienteCreado (ExpedienteEstudiantilId)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 
-            SELECT ExpedienteId FROM @ExpedienteCreado;
+            SELECT ExpedienteEstudiantilId FROM @ExpedienteCreado;
             """,
             type_id,
             draft_state_id,
@@ -2492,7 +2492,8 @@ def _exam_select(where_clause: str) -> str:
             COALESCE(pensum.Nomb_Materia, e.Nivel, N'{_LEVEL_NAME}') AS materia,
             periodo.Detalle_Periodo AS detalle_periodo
         FROM ing.ExamenIngles e
-        INNER JOIN exp.ExpedienteEstudiantil ex ON ex.ExpedienteId = e.ExpedienteEstudiantilId
+        INNER JOIN exp.ExpedienteEstudiantil ex
+            ON ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId
         INNER JOIN core.Persona p ON p.PersonaId = ex.PersonaId
         LEFT JOIN INTECBDD.dbo.CARRERAS c
             ON TRY_CONVERT(INT, c.Cod_AnioBasica) = TRY_CONVERT(INT, e.CodigoCarrera)
@@ -3090,12 +3091,26 @@ def finalize_student_upload(
             replaced_graph_item_id = _clean(previous.GraphItemId)
 
         loaded_state = "CARGADO"
+        loaded_state_id = _catalog_id(
+            cursor,
+            "cat.EstadoDocumento",
+            loaded_state,
+            "EstadoDocumentoId",
+        )
+        document_type_id = _catalog_id(
+            cursor,
+            "cat.TipoDocumento",
+            "EVIDENCIA_EXAMEN_INGLES",
+            "TipoDocumentoId",
+        )
         cursor.execute(
             """
-            SELECT TOP (1) documento.DocumentoId AS DocumentoExpedienteId, documento.VersionActual
+            SELECT TOP (1)
+                documento.DocumentoExpedienteId,
+                documento.VersionActual
             FROM ing.CargaExamenIngles carga
             INNER JOIN doc.DocumentoExpediente documento
-                ON documento.DocumentoId = carga.DocumentoExpedienteId
+                ON documento.DocumentoExpedienteId = carga.DocumentoExpedienteId
             WHERE carga.ComponenteExamenInglesId = ? AND documento.Activo = 1
             ORDER BY carga.NumeroVersion DESC
             """,
@@ -3113,12 +3128,12 @@ def finalize_student_upload(
             cursor.execute(
                 """
                 UPDATE doc.DocumentoExpediente
-                   SET EstadoCodigo = ?, NombreArchivo = ?, UrlArchivo = ?, ContentType = ?,
+                   SET EstadoDocumentoId = ?, NombreArchivo = ?, RutaNube = ?, ContentType = ?,
                        TamanoBytes = ?, VersionActual = ?, ObservacionActual = ?,
                        FechaCarga = SYSUTCDATETIME(), UsuarioCarga = ?, FechaRevision = NULL, UsuarioRevision = NULL
-                 WHERE DocumentoId = ?
+                 WHERE DocumentoExpedienteId = ?
                 """,
-                loaded_state,
+                loaded_state_id,
                 _clean(upload.NombreArchivoOriginal),
                 web_url,
                 mime_type,
@@ -3133,21 +3148,21 @@ def finalize_student_upload(
             cursor.execute(
                 """
                 SET NOCOUNT ON;
-                DECLARE @DocumentoCreado TABLE (DocumentoId BIGINT NOT NULL);
+                DECLARE @DocumentoCreado TABLE (DocumentoExpedienteId BIGINT NOT NULL);
 
                 INSERT INTO doc.DocumentoExpediente
-                    (ExpedienteId, TipoDocumentoCodigo, EstadoCodigo, NombreArchivo,
-                     UrlArchivo, ContentType, TamanoBytes, OrigenCarga, VersionActual,
+                    (ExpedienteEstudiantilId, TipoDocumentoId, EstadoDocumentoId, NombreArchivo,
+                     RutaNube, ContentType, TamanoBytes, OrigenCarga, VersionActual,
                      ObservacionActual, UsuarioCarga)
-                OUTPUT INSERTED.DocumentoId
-                    INTO @DocumentoCreado (DocumentoId)
+                OUTPUT INSERTED.DocumentoExpedienteId
+                    INTO @DocumentoCreado (DocumentoExpedienteId)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'MICROSOFT_GRAPH', 1, ?, ?)
 
-                SELECT DocumentoId FROM @DocumentoCreado;
+                SELECT DocumentoExpedienteId FROM @DocumentoCreado;
                 """,
                 int(upload.ExpedienteEstudiantilId),
-                "EVIDENCIA_EXAMEN_INGLES",
-                loaded_state,
+                document_type_id,
+                loaded_state_id,
                 _clean(upload.NombreArchivoOriginal),
                 web_url,
                 mime_type,
@@ -3332,7 +3347,7 @@ def confirm_student_delivery(
                 """
                 UPDATE doc.DocumentoExpediente
                    SET ObservacionActual = N'Entrega definitiva de evaluación de Inglés.'
-                 WHERE DocumentoId = ?
+                 WHERE DocumentoExpedienteId = ?
                 """,
                 int(delivery.DocumentoExpedienteId),
             )
@@ -3341,7 +3356,7 @@ def confirm_student_delivery(
             UPDATE exp.ExpedienteEstudiantil
                SET EstadoExpedienteId = ?, FechaActualizacion = SYSUTCDATETIME(),
                    UsuarioActualizacion = ?
-             WHERE ExpedienteId = ?
+             WHERE ExpedienteEstudiantilId = ?
             """,
             review_state_id,
             current_user.login,
@@ -3947,14 +3962,20 @@ def reopen_submission(
             int(component.ComponenteExamenInglesId),
         )
         if component.documento_id:
+            observed_state_id = _catalog_id(
+                cursor,
+                "cat.EstadoDocumento",
+                "OBSERVADO",
+                "EstadoDocumentoId",
+            )
             cursor.execute(
                 """
                 UPDATE doc.DocumentoExpediente
-                   SET EstadoCodigo = ?, ObservacionActual = ?,
+                   SET EstadoDocumentoId = ?, ObservacionActual = ?,
                        FechaRevision = SYSUTCDATETIME(), UsuarioRevision = ?
-                 WHERE DocumentoId = ?
+                 WHERE DocumentoExpedienteId = ?
                 """,
-                "OBSERVADO",
+                observed_state_id,
                 f"Entrega reabierta: {reason}",
                 current_user.login,
                 int(component.documento_id),
@@ -4066,6 +4087,12 @@ def publish_rubric_grade(
         approved = grade >= _PASSING_GRADE
         component_state = "APROBADO" if approved else "REPROBADO"
         document_state = "VALIDADO" if approved else "OBSERVADO"
+        document_state_id = _catalog_id(
+            cursor,
+            "cat.EstadoDocumento",
+            document_state,
+            "EstadoDocumentoId",
+        )
         evaluator_name = _clean(current_user.nombres) or current_user.login
         previous_state = _clean(component.EstadoRevision)
         cursor.execute(
@@ -4090,11 +4117,11 @@ def publish_rubric_grade(
             cursor.execute(
                 """
                 UPDATE doc.DocumentoExpediente
-                   SET EstadoCodigo = ?, ObservacionActual = NULLIF(?, N''),
+                   SET EstadoDocumentoId = ?, ObservacionActual = NULLIF(?, N''),
                        FechaRevision = SYSUTCDATETIME(), UsuarioRevision = ?
-                 WHERE DocumentoId = ?
+                 WHERE DocumentoExpedienteId = ?
                 """,
-                document_state,
+                document_state_id,
                 _clean(component.ObservacionBorrador),
                 current_user.login,
                 int(component.documento_id),
@@ -4148,7 +4175,7 @@ def publish_rubric_grade(
                    ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
             INNER JOIN ing.ExamenIngles e
-                ON e.ExpedienteEstudiantilId = ex.ExpedienteId
+                ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,
@@ -4232,6 +4259,12 @@ def grade_submission(
         component_approved = grade >= _PASSING_GRADE
         component_state = "APROBADO" if component_approved else "REPROBADO"
         document_state = "VALIDADO" if component_approved else "OBSERVADO"
+        document_state_id = _catalog_id(
+            cursor,
+            "cat.EstadoDocumento",
+            document_state,
+            "EstadoDocumentoId",
+        )
         evaluator_name = _clean(current_user.nombres) or current_user.login
         cursor.execute(
             """
@@ -4257,13 +4290,14 @@ def grade_submission(
         cursor.execute(
             """
             UPDATE d
-               SET d.EstadoCodigo = ?, d.ObservacionActual = NULLIF(?, N''),
+               SET d.EstadoDocumentoId = ?, d.ObservacionActual = NULLIF(?, N''),
                    d.FechaRevision = SYSUTCDATETIME(), d.UsuarioRevision = ?
             FROM doc.DocumentoExpediente d
-            INNER JOIN ing.CargaExamenIngles ce ON ce.DocumentoExpedienteId = d.DocumentoId
+            INNER JOIN ing.CargaExamenIngles ce
+                ON ce.DocumentoExpedienteId = d.DocumentoExpedienteId
             WHERE ce.ComponenteExamenInglesId = ? AND ce.Activo = 1
             """,
-            document_state,
+            document_state_id,
             payload.observation.strip(),
             current_user.login,
             int(component.ComponenteExamenInglesId),
@@ -4314,7 +4348,8 @@ def grade_submission(
             UPDATE ex
                SET ex.EstadoExpedienteId = ?, ex.FechaActualizacion = SYSUTCDATETIME(), ex.UsuarioActualizacion = ?
             FROM exp.ExpedienteEstudiantil ex
-            INNER JOIN ing.ExamenIngles e ON e.ExpedienteEstudiantilId = ex.ExpedienteId
+            INNER JOIN ing.ExamenIngles e
+                ON e.ExpedienteEstudiantilId = ex.ExpedienteEstudiantilId
             WHERE e.ExamenInglesId = ?
             """,
             expediente_state_id,

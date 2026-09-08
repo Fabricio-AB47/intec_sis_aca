@@ -102,6 +102,7 @@ const FINANCIAL_ALLOWED_PAGES = new Set<Page>([
   'carnet-institucional',
 ])
 const SECRETARIA_ALLOWED_PAGES = new Set<Page>([
+  'secretaria-general',
   'solicitudes-cambio-carrera',
   'solicitudes-cambio-modalidad',
   'practicas-institucionales',
@@ -161,7 +162,7 @@ function defaultPageForRole(role?: string, assignedPages: ScreenPermissionCode[]
   if (normalizedRole === 'ESTUDIANTE') preferredPage = 'portal-estudiante'
   else if (normalizedRole === 'DOCENTE') preferredPage = 'portal-docente'
   else if (normalizedRole === 'FINANCIERO') preferredPage = 'preinscripcion'
-  else if (normalizedRole === 'SECRETARIA') preferredPage = 'practicas-institucionales'
+  else if (normalizedRole === 'SECRETARIA') preferredPage = 'secretaria-general'
 
   if (
     eligibleAssignedPages !== null
@@ -1128,6 +1129,9 @@ export function useReporteriaApp() {
   const openExpedientesDocumentalesPage = () => {
     activateAssignedScreen('expedientes-documentales')
   }
+  const openSecretariaGeneralPage = () => {
+    activateAssignedScreen('secretaria-general')
+  }
   const openSistemaAcademicoPage = () => {
     if (!activateAssignedScreen('sistema-academico')) return
     if (!dashboardMatricula && !dashboardMatriculaLoading) {
@@ -1390,6 +1394,7 @@ export function useReporteriaApp() {
     openPortalEstudiantePage,
     openInglesPage,
     openExpedientesDocumentalesPage,
+    openSecretariaGeneralPage,
     setPortalStudentSection,
     openPortalDocentePage,
     openPortalDocenteInformePage,

@@ -27,6 +27,7 @@ GRAPH_MODULE_FOLDERS = {
     "VINCULACION": "VINCULACION CON LA SOCIEDAD",
     "SOLICITUDES": "SOLICITUDES",
     "FACTURACION": "FACTURAS",
+    "SECRETARIA": "SECRETARIA GENERAL",
 }
 GRAPH_EXPEDIENT_TYPES = {
     "BECAS": (
@@ -55,7 +56,11 @@ GRAPH_EXPEDIENT_TYPES = {
     ),
     "FACTURACION": (
         "Facturación",
-        "Facturas electrónicas XML y representaciones impresas RIDE del estudiante.",
+        "Certificados de no adeudamiento del estudiante.",
+    ),
+    "SECRETARIA": (
+        "Secretaría General",
+        "Documentos oficiales para la verificación del expediente de grado.",
     ),
 }
 

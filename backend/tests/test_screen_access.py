@@ -567,6 +567,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
                 ("ADMINISTRADOR", "moodle/academic-enrollment"),
                 ("ADMINISTRADOR", "moodle/course-cloning"),
                 ("ADMINISTRADOR", "moodle/manual-enrollment"),
+                ("ADMINISTRADOR", "secretaria-general"),
+                ("SECRETARIA", "secretaria-general"),
                 ("ACADEMICO", "solicitudes-cambio-carrera"),
                 ("SECRETARIA", "solicitudes-cambio-carrera"),
                 ("ACADEMICO", "solicitudes-cambio-modalidad"),
@@ -582,6 +584,16 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             )
             self.assertIn("SISTEMA_PANTALLAS_NUEVAS", statement)
             self.assertNotIn("WHEN MATCHED AND TARGET.ACTIVO = 1", statement)
+
+    def test_secretaria_general_is_independently_assignable(self) -> None:
+        screen = next(item for item in SCREEN_CATALOG if item["page"] == "secretaria-general")
+
+        self.assertEqual(screen["label"], "Secretaría General")
+        self.assertEqual(screen["group"], "Secretaría")
+        self.assertIn("expedientes", screen["description"].lower())
+        self.assertIn("secretaria-general", ALL_PAGES)
+        self.assertIn("secretaria-general", DEFAULT_ACCESS["SECRETARIA"])
+        self.assertNotIn("secretaria-general", DEFAULT_ACCESS["ESTUDIANTE"])
 
     def test_complete_role_screen_matrix_avoids_repeating_migrations(self) -> None:
         class CountRow:

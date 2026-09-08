@@ -322,6 +322,63 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(urls[0]["id"], 70)
         self.assertEqual(urls[0]["coursemodule"], 44)
 
+    async def test_missing_advertised_url_function_skips_optional_request(self) -> None:
+        requests: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"))
+            function = form["wsfunction"][0]
+            requests.append(function)
+            self.assertEqual(function, "core_webservice_get_site_info")
+            return json_response(
+                request,
+                {
+                    "sitename": "Campus de prueba",
+                    "functions": [{"name": "core_course_get_contents"}],
+                },
+            )
+
+        client, http_client = await self._client(handler)
+        try:
+            await client.get_site_info()
+            urls = await client.get_course_external_urls(12)
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(urls, [])
+        self.assertEqual(requests, ["core_webservice_get_site_info"])
+
+    async def test_optional_url_access_exception_is_cached_without_warning(self) -> None:
+        request_count = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return json_response(
+                request,
+                {
+                    "exception": "required_capability_exception",
+                    "errorcode": "accessexception",
+                    "message": "Access control exception",
+                },
+            )
+
+        client, http_client = await self._client(handler)
+        logger_name = "app.integrations.moodle.client"
+        try:
+            with self.assertLogs(logger_name, level=logging.INFO) as captured:
+                first = await client.get_course_external_urls(12)
+                second = await client.get_course_external_urls(13)
+        finally:
+            await http_client.aclose()
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(first, [])
+        self.assertEqual(second, [])
+        self.assertEqual(request_count, 1)
+        self.assertIn("Función opcional Moodle no disponible", logs)
+        self.assertNotIn("Error de API Moodle", logs)
+
     async def test_get_course_enrolled_users(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             form = parse_qs(request.content.decode("utf-8"))

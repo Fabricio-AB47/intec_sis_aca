@@ -193,7 +193,13 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
         "Matrícula vigente, evidencias por parcial y calificaciones de idiomas.",
         "Calificaciones",
     ),
-    _screen("expedientes-documentales", "Expedientes documentales", "Documentos de Inglés, titulación, prácticas, vinculación y facturas XML/RIDE almacenados en Microsoft 365.", "Documentos"),
+    _screen("expedientes-documentales", "Expedientes documentales", "Documentos académicos y certificados de no adeudamiento almacenados en Microsoft 365.", "Documentos"),
+    _screen(
+        "secretaria-general",
+        "Secretaría General",
+        "Validación de expedientes de estudiantes próximos a graduarse, egresados y graduados.",
+        "Secretaría",
+    ),
     _screen("portal-docente", "Cursos y calificaciones docentes", "Cursos asignados, estudiantes y registro de calificaciones.", "Portal docente"),
     _screen("portal-docente-informe", "Informe docente", "Informe de cumplimiento y firma electrónica.", "Portales"),
     _screen("portal-docente-planificacion", "Sílabo y PEA", "Planificación académica y firma electrónica.", "Portales"),
@@ -429,6 +435,7 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # configurados. La migración solo actúa sobre filas creadas automáticamente por
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "secretaria-general": ("ADMINISTRADOR", "SECRETARIA"),
     "moodle/academic-enrollment": ("ADMINISTRADOR",),
     "moodle/course-cloning": ("ADMINISTRADOR",),
     "moodle/manual-enrollment": ("ADMINISTRADOR",),
@@ -474,7 +481,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     ),
     "SECRETARIA": _combine_pages(
         (
-            "practicas-institucionales", "fecha-grado",
+            "secretaria-general", "practicas-institucionales", "fecha-grado",
             "senescyt-estudiantes", "titulacion", "titulacion-proceso",
             "titulacion-responsables", "titulos-registrados", "expedientes-documentales",
             "solicitudes-cambio-carrera", "solicitudes-cambio-modalidad",
