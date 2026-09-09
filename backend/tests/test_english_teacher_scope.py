@@ -232,9 +232,19 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIsNone(sql)
         self.assertEqual(params, [])
 
-    def test_direct_teacher_access_is_rejected_outside_assigned_career(self):
+    @patch("app.routers.english_exams.get_connection")
+    def test_direct_teacher_access_is_rejected_outside_assigned_career(self, connection_factory):
         cursor = MagicMock()
-        cursor.fetchone.return_value = None
+        cursor.fetchone.return_value = SimpleNamespace(
+            CodigoEstud=800,
+            CarreraXEstudNum=5001,
+            CodigoCarrera=12,
+            CodigoMateria=331,
+            CodigoPeriodo=1034,
+            Paralelo="PBS1",
+        )
+        academic_cursor = connection_factory.return_value.__enter__.return_value.cursor.return_value
+        academic_cursor.fetchone.return_value = None
         user = SessionUser(
             login="docente@intec.edu.ec",
             nombres="Docente prueba",
@@ -247,12 +257,22 @@ class EnglishTeacherScopeTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 403)
         self.assertIn("carrera y período", context.exception.detail)
-        params = cursor.execute.call_args.args[1:]
-        self.assertEqual(params, (99, 31))
+        self.assertEqual(cursor.execute.call_args.args[1:], (99,))
+        self.assertEqual(academic_cursor.execute.call_args.args[-1], 31)
 
-    def test_direct_teacher_access_is_allowed_inside_assigned_career(self):
+    @patch("app.routers.english_exams.get_connection")
+    def test_direct_teacher_access_is_allowed_inside_assigned_career(self, connection_factory):
         cursor = MagicMock()
-        cursor.fetchone.return_value = (1,)
+        cursor.fetchone.return_value = SimpleNamespace(
+            CodigoEstud=800,
+            CarreraXEstudNum=5001,
+            CodigoCarrera=12,
+            CodigoMateria=331,
+            CodigoPeriodo=1034,
+            Paralelo="PBS1",
+        )
+        academic_cursor = connection_factory.return_value.__enter__.return_value.cursor.return_value
+        academic_cursor.fetchone.return_value = (1,)
         user = SessionUser(
             login="docente@intec.edu.ec",
             nombres="Docente prueba",
@@ -263,6 +283,7 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         _require_teacher_exam_scope(cursor, 99, user)
 
         cursor.execute.assert_called_once()
+        academic_cursor.execute.assert_called_once()
 
     def test_latest_available_period_is_selected_initially(self):
         user = SessionUser(

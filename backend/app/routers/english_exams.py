@@ -210,19 +210,43 @@ def _require_teacher_exam_scope(
     if current_user.codigo_doc is None:
         raise HTTPException(status_code=403, detail="La sesión docente no contiene un código válido.")
     cursor.execute(
-        f"""
-        SELECT TOP (1) 1
-        FROM ing.ExamenIngles e
-        INNER JOIN exp.ExpedienteEstudiantil ex
-            ON ex.ExpedienteId = e.ExpedienteEstudiantilId
-        WHERE e.ExamenInglesId = ?
-          AND e.Activo = 1
-          AND {_TEACHER_ENROLLMENT_SCOPE_SQL}
+        """
+        SELECT CodigoEstud, CarreraXEstudNum, CodigoCarrera,
+               CodigoMateria, CodigoPeriodo, Paralelo
+        FROM ing.ExamenIngles
+        WHERE ExamenInglesId = ? AND Activo = 1
         """,
         exam_id,
-        current_user.codigo_doc,
     )
-    if not cursor.fetchone():
+    exam = cursor.fetchone()
+    if not exam:
+        raise HTTPException(status_code=404, detail="No existe el examen de Inglés.")
+
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        academic_cursor.execute(
+            f"""
+            SELECT TOP (1) 1
+            FROM INTECBDD.dbo.CARRERAXESTUD cx
+            WHERE TRY_CONVERT(BIGINT, cx.num) = TRY_CONVERT(BIGINT, ?)
+              AND TRY_CONVERT(BIGINT, cx.codigo_estud) = TRY_CONVERT(BIGINT, ?)
+              AND TRY_CONVERT(INT, cx.cod_anio_Basica) = TRY_CONVERT(INT, ?)
+              AND TRY_CONVERT(INT, cx.codigo_materia) = TRY_CONVERT(INT, ?)
+              AND TRY_CONVERT(INT, cx.codigo_periodo) = TRY_CONVERT(INT, ?)
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(20), cx.Paralelo)))) =
+                  UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(20), ?))))
+              AND {_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL}
+            """,
+            exam.CarreraXEstudNum,
+            exam.CodigoEstud,
+            exam.CodigoCarrera,
+            exam.CodigoMateria,
+            exam.CodigoPeriodo,
+            exam.Paralelo,
+            current_user.codigo_doc,
+        )
+        assigned = academic_cursor.fetchone()
+    if not assigned:
         raise HTTPException(
             status_code=403,
             detail="El estudiante no pertenece a una carrera y período asignados al docente.",
@@ -3374,25 +3398,28 @@ def reviewer_submissions(
 ) -> dict[str, Any]:
     term = _clean(search)
     normalized_state = _clean(state).upper() or "TODOS"
-    with get_expedient_connection() as conn:
-        cursor = conn.cursor()
-        _ensure_schema(cursor)
-        conn.commit()
-        periods = _reviewer_periods(cursor, current_user)
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        periods = _reviewer_periods(academic_cursor, current_user)
         selected_period = _select_reviewer_period(periods, period_code, current_user)
-        subjects = _reviewer_subjects(cursor, selected_period, current_user)
+        subjects = _reviewer_subjects(academic_cursor, selected_period, current_user)
         selected_subject = _select_reviewer_subject(subjects, subject_code, current_user)
         selected_subject_info = next(
             (item for item in subjects if _clean(item.get("code")) == selected_subject),
             None,
         )
         enrollments = _reviewer_enrollments(
-            cursor,
+            academic_cursor,
             selected_period,
             selected_subject,
             current_user,
             term,
         )
+
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
+        conn.commit()
         enrollment_ids = [int(item["carrera_x_estud_num"]) for item in enrollments]
         rows: list[Any] = []
         for index in range(0, len(enrollment_ids), 1000):
@@ -3654,15 +3681,14 @@ def prepare_reviewer_submission(
 ) -> dict[str, Any]:
     period_code = _clean(payload.period_code)
     subject_code = _clean(payload.subject_code)
-    with get_expedient_connection() as conn:
-        cursor = conn.cursor()
-        _ensure_schema(cursor)
-        periods = _reviewer_periods(cursor, current_user)
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        periods = _reviewer_periods(academic_cursor, current_user)
         selected_period = _select_reviewer_period(periods, period_code, current_user)
-        subjects = _reviewer_subjects(cursor, selected_period, current_user)
+        subjects = _reviewer_subjects(academic_cursor, selected_period, current_user)
         selected_subject = _select_reviewer_subject(subjects, subject_code, current_user)
         profiles = _reviewer_enrollments(
-            cursor,
+            academic_cursor,
             selected_period,
             selected_subject,
             current_user,
@@ -3675,11 +3701,15 @@ def prepare_reviewer_submission(
             ),
             None,
         )
-        if profile is None:
-            raise HTTPException(
-                status_code=403 if current_user.rol == "DOCENTE" else 404,
-                detail="La matrícula de Idiomas no está disponible para el perfil autenticado.",
-            )
+    if profile is None:
+        raise HTTPException(
+            status_code=403 if current_user.rol == "DOCENTE" else 404,
+            detail="La matrícula de Idiomas no está disponible para el perfil autenticado.",
+        )
+
+    with get_expedient_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_schema(cursor)
         exam_id = _ensure_exam(cursor, profile, current_user.login)
         conn.commit()
         _, result = _updated_exam_payload(cursor, exam_id)
