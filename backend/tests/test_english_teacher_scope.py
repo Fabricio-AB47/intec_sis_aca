@@ -78,15 +78,14 @@ class EnglishTeacherScopeTests(unittest.TestCase):
     def test_document_creation_uses_trigger_safe_identity_output(self) -> None:
         source = getsource(finalize_student_upload)
 
-        self.assertIn("OUTPUT INSERTED.DocumentoExpedienteId", source)
+        self.assertIn("OUTPUT INSERTED.DocumentoId", source)
         self.assertIn("INTO @DocumentoCreado", source)
-        self.assertIn("EstadoDocumentoId", source)
-        self.assertIn("TipoDocumentoId", source)
-        self.assertIn("RutaNube", source)
-        self.assertNotIn("OUTPUT INSERTED.DocumentoId", source)
-        self.assertNotIn("TipoDocumentoCodigo", source)
-        self.assertNotIn("EstadoCodigo", source)
-        self.assertNotIn("UrlArchivo", source)
+        self.assertIn("TipoDocumentoCodigo", source)
+        self.assertIn("EstadoCodigo", source)
+        self.assertIn("UrlArchivo", source)
+        self.assertNotIn("OUTPUT INSERTED.DocumentoExpedienteId", source)
+        self.assertNotIn("EstadoDocumentoId", source)
+        self.assertNotIn("TipoDocumentoId", source)
 
     def test_english_schema_uses_canonical_expedient_and_document_keys(self) -> None:
         cursor = MagicMock()
@@ -95,24 +94,24 @@ class EnglishTeacherScopeTests(unittest.TestCase):
 
         schema_sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
         self.assertIn(
-            "REFERENCES exp.ExpedienteEstudiantil(ExpedienteEstudiantilId)",
+            "REFERENCES exp.ExpedienteEstudiantil(ExpedienteId)",
             schema_sql,
         )
         self.assertIn(
-            "REFERENCES doc.DocumentoExpediente(DocumentoExpedienteId)",
+            "REFERENCES doc.DocumentoExpediente(DocumentoId)",
             schema_sql,
         )
-        self.assertNotIn("ex.ExpedienteId =", schema_sql)
-        self.assertNotIn("DocumentoExpediente(DocumentoId)", schema_sql)
+        self.assertIn("ex.ExpedienteId =", schema_sql)
+        self.assertNotIn("DocumentoExpediente(DocumentoExpedienteId)", schema_sql)
 
     def test_exam_query_joins_the_canonical_expedient_key(self) -> None:
         query = _exam_select("e.ExamenInglesId = ?")
 
         self.assertIn(
-            "ex.ExpedienteEstudiantilId = e.ExpedienteEstudiantilId",
+            "ex.ExpedienteId = e.ExpedienteEstudiantilId",
             query,
         )
-        self.assertNotIn("ex.ExpedienteId =", query)
+        self.assertNotIn("ex.ExpedienteEstudiantilId =", query)
 
     def test_teacher_scope_requires_assignment_and_real_student_enrollment(self):
         sql = " ".join(_TEACHER_ENROLLMENT_SCOPE_SQL.split())
