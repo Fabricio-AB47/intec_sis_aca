@@ -22,6 +22,11 @@ from app.services.db import (
     get_practices_connection,
     get_titulation_connection,
 )
+from app.services.english_approval import (
+    ENGLISH_APPROVAL_DOCUMENT_TYPES,
+    english_approval_status,
+    review_english_approval_document,
+)
 from app.services.graph_documents import (
     MAX_DOCUMENT_BYTES,
     complete_upload_session,
@@ -45,6 +50,7 @@ router = APIRouter(prefix="/api/document-expedients", tags=["document-expedients
 
 _ACCESS = require_roles("ESTUDIANTE", "DOCENTE", "ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
 _REVIEW_ACCESS = require_roles("ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR")
+_ENGLISH_REVIEW_ACCESS = require_roles("ACADEMICO", "SECRETARIA", "ADMINISTRADOR")
 _DOCUMENT_REVIEW_ROLES = {"ACADEMICO", "BIENESTAR", "SECRETARIA", "FINANCIERO", "ADMINISTRADOR"}
 _ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
@@ -61,9 +67,7 @@ _MODULE_NAMES = {
     "FACTURACION": "Facturación",
     "SECRETARIA": "Secretaría General",
 }
-_ENGLISH_DOCUMENT_TYPES = [
-    {"code": "DOCUMENTO_INGLES", "name": "Documento de Inglés"},
-]
+_ENGLISH_DOCUMENT_TYPES = [dict(item) for item in ENGLISH_APPROVAL_DOCUMENT_TYPES]
 _TITULATION_ARCHIVE_DOCUMENT_TYPES = [
     {"code": "DOCUMENTO_HABILITANTE", "name": "Documento habilitante"},
     {"code": "ACTA_GRADO", "name": "Acta de grado"},
@@ -106,7 +110,7 @@ _SECRETARY_HOMOLOGATION_DOCUMENT_TYPES = [
 ]
 _PDF_FILE_EXTENSIONS = {
     item["code"]: ".pdf"
-    for item in _SECRETARY_HOMOLOGATION_DOCUMENT_TYPES
+    for item in (*_SECRETARY_HOMOLOGATION_DOCUMENT_TYPES, *_ENGLISH_DOCUMENT_TYPES)
 }
 
 
@@ -128,6 +132,13 @@ class DocumentPreparePayload(BaseModel):
     identification: str = Field(default="", max_length=30)
     module_code: str = Field(min_length=1, max_length=40)
     origin_id: str = Field(min_length=1, max_length=100)
+
+
+class EnglishApprovalReviewPayload(BaseModel):
+    identification: str = Field(min_length=5, max_length=30)
+    document_graph_id: int = Field(gt=0)
+    approved: bool
+    observation: str = Field(default="", max_length=2000)
 
 
 def _clean(value: Any) -> str:
@@ -832,6 +843,9 @@ def _context_payload(profile: dict[str, Any], current_user: SessionUser) -> dict
                 "status": _clean(row.get("EstadoDocumentoGraphCodigo")),
                 "uploaded_at": _iso(row.get("FechaCarga")),
                 "uploaded_by": _clean(row.get("UsuarioCarga")),
+                "reviewed_at": _iso(row.get("FechaRevision")),
+                "reviewed_by": _clean(row.get("UsuarioRevision")),
+                "review_observation": _clean(row.get("ObservacionRevision")),
             }
         )
     archive_origin = _institutional_origin_id(profile)
@@ -1166,6 +1180,55 @@ def expedient_context(
     if _role(current_user.rol) == "ESTUDIANTE" and identification and _identification(identification) != _identification(current_user.cedula):
         raise HTTPException(status_code=403, detail="El estudiante solo puede consultar su propio expediente.")
     return _context_payload(_student_profile(current_user, identification), current_user)
+
+
+@router.get("/english-approval")
+def get_english_approval(
+    current_user: Annotated[SessionUser, Depends(_ENGLISH_REVIEW_ACCESS)],
+    identification: Annotated[str, Query(min_length=5, max_length=30)],
+) -> dict[str, Any]:
+    profile = _student_profile(current_user, identification)
+    try:
+        return english_approval_status(profile["identification"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (RuntimeError, pyodbc.Error) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo consultar la validación documental de Inglés: {exc}",
+        ) from exc
+
+
+@router.put("/english-approval/review")
+def review_english_approval(
+    payload: EnglishApprovalReviewPayload,
+    current_user: Annotated[SessionUser, Depends(_ENGLISH_REVIEW_ACCESS)],
+) -> dict[str, Any]:
+    profile = _student_profile(current_user, payload.identification)
+    try:
+        result = review_english_approval_document(
+            identification=profile["identification"],
+            document_graph_id=payload.document_graph_id,
+            approved=payload.approved,
+            observation=payload.observation,
+            audit_user=current_user.login,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (RuntimeError, pyodbc.Error) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo registrar la revisión documental de Inglés: {exc}",
+        ) from exc
+    action = "validado" if payload.approved else "observado"
+    warning = _clean(result.get("sync_warning"))
+    return {
+        "ok": True,
+        "message": f"Documento {action} correctamente." + (f" {warning}" if warning else ""),
+        "status": result,
+    }
 
 
 @router.post("/prepare")

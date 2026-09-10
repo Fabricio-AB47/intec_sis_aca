@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -31,6 +33,7 @@ class FieldMeta(BaseModel):
     type: str = "text"
     required: bool = False
     readonly: bool = False
+    max_length: int | None = None
     options: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -45,14 +48,29 @@ class SectionMeta(BaseModel):
     detail_fields: list[FieldMeta]
     editable_fields: list[FieldMeta]
     create_fields: list[FieldMeta] = Field(default_factory=list)
+    defaults: dict[str, Any] = Field(default_factory=dict)
 
 
 class SavePayload(BaseModel):
     values: dict[str, Any]
 
 
-def field(name: str, label: str, type_: str = "text", required: bool = False, readonly: bool = False) -> FieldMeta:
-    return FieldMeta(name=name, label=label, type=type_, required=required, readonly=readonly)
+def field(
+    name: str,
+    label: str,
+    type_: str = "text",
+    required: bool = False,
+    readonly: bool = False,
+    max_length: int | None = None,
+) -> FieldMeta:
+    return FieldMeta(
+        name=name,
+        label=label,
+        type=type_,
+        required=required,
+        readonly=readonly,
+        max_length=max_length,
+    )
 
 
 def fields(*items: tuple[str, str, str] | tuple[str, str] | FieldMeta) -> list[FieldMeta]:
@@ -423,34 +441,37 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "table": "[dbo].[CARRERAS]",
         "key_fields": ["Cod_AnioBasica"],
         "list_fields": fields(
+            field("Num", "Registro", "number", readonly=True),
             ("Cod_AnioBasica", 'Código', "number"),
             ("Nombre_Basica", "Carrera"),
             ("Estado", "Estado"),
             ("Abrevia", "Abrevia"),
-            ("tp_escuela", "Tipo escuela"),
+            ("tp_escuela", "Tipo de escuela"),
         ),
         "detail_fields": fields(
+            field("Num", "Registro", "number", readonly=True),
             ("Cod_AnioBasica", 'Código', "number"),
             ("Nombre_Basica", "Carrera"),
             ("Estado", "Estado"),
             ("Abrevia", "Abrevia"),
-            ("tp_escuela", "Tipo escuela"),
+            ("tp_escuela", "Tipo de escuela"),
         ),
         "editable_fields": fields(
-            ("Nombre_Basica", "Carrera"),
-            ("Estado", "Estado"),
-            ("Abrevia", "Abrevia"),
-            ("tp_escuela", "Tipo escuela"),
+            field("Nombre_Basica", "Carrera", required=True, max_length=120),
+            field("Estado", "Estado", max_length=1),
+            field("Abrevia", "Abrevia", max_length=10),
+            field("tp_escuela", "Tipo de escuela", max_length=50),
         ),
         "create_fields": fields(
             field("Cod_AnioBasica", 'Código', "number", required=True),
-            field("Nombre_Basica", "Carrera", required=True),
-            ("Estado", "Estado"),
-            ("Abrevia", "Abrevia"),
-            ("tp_escuela", "Tipo escuela"),
+            field("Nombre_Basica", "Carrera", required=True, max_length=120),
+            field("Estado", "Estado", max_length=1),
+            field("Abrevia", "Abrevia", max_length=10),
+            field("tp_escuela", "Tipo de escuela", max_length=50),
         ),
         "search_fields": ["Cod_AnioBasica", "Nombre_Basica", "Abrevia", "tp_escuela"],
         "order_by": "Nombre_Basica",
+        "defaults": {"Estado": "A"},
     },
     "paralelos": {
         "title": "Paralelos",
@@ -466,10 +487,61 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("num", 'Número', "number"),
             ("paralelo", "Paralelo"),
         ),
-        "editable_fields": fields(("paralelo", "Paralelo")),
-        "create_fields": fields(field("paralelo", "Paralelo", required=True)),
+        "editable_fields": fields(field("paralelo", "Paralelo", required=True, max_length=4)),
+        "create_fields": fields(field("paralelo", "Paralelo", required=True, max_length=4)),
         "search_fields": ["num", "paralelo"],
         "order_by": "paralelo",
+    },
+    "paralelos_horarios": {
+        "title": "Paralelos de horarios",
+        "category": 'Académico',
+        "description": 'Catálogo numérico de paralelos utilizado por HORARIOS.',
+        "table": "[dbo].[Paralelo]",
+        "key_fields": ["codigo_paralelo"],
+        "list_fields": fields(
+            ("codigo_paralelo", 'Código'),
+            ("nombre_paralelo", "Paralelo"),
+            ("activo", "Activo", "bool"),
+        ),
+        "detail_fields": fields(
+            ("codigo_paralelo", 'Código'),
+            ("nombre_paralelo", "Paralelo"),
+            ("activo", "Activo", "bool"),
+        ),
+        "editable_fields": fields(
+            field("nombre_paralelo", "Paralelo", required=True, max_length=5),
+            field("activo", "Activo", "bool", required=True),
+        ),
+        "create_fields": fields(
+            field("codigo_paralelo", 'Código', required=True, max_length=20),
+            field("nombre_paralelo", "Paralelo", required=True, max_length=5),
+            field("activo", "Activo", "bool"),
+        ),
+        "search_fields": ["codigo_paralelo", "nombre_paralelo"],
+        "order_by": "TRY_CONVERT(int, codigo_paralelo), codigo_paralelo",
+        "defaults": {"activo": True},
+    },
+    "dias_semana": {
+        "title": "Días de la semana",
+        "category": 'Académico',
+        "description": 'Catálogo de días utilizado para organizar horarios académicos.',
+        "table": "[dbo].[DIASSEMANA]",
+        "key_fields": ["Cod_dia"],
+        "list_fields": fields(
+            ("Cod_dia", 'Código', "number"),
+            ("Detalle_Dia", "Día"),
+        ),
+        "detail_fields": fields(
+            ("Cod_dia", 'Código', "number"),
+            ("Detalle_Dia", "Día"),
+        ),
+        "editable_fields": fields(field("Detalle_Dia", "Día", required=True, max_length=10)),
+        "create_fields": fields(
+            field("Cod_dia", 'Código', "number", required=True),
+            field("Detalle_Dia", "Día", required=True, max_length=10),
+        ),
+        "search_fields": ["Cod_dia", "Detalle_Dia"],
+        "order_by": "Cod_dia",
     },
     "materias": {
         "title": "Materias y pensum",
@@ -478,15 +550,20 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "table": "[dbo].[PENSUM]",
         "key_fields": ["codigo_materia"],
         "list_fields": fields(
-            ("codigo_materia", 'Código', "number"),
+            ("codigo_materia", 'Código interno', "number"),
             ("Cod_AnioBasica", "Carrera", "number"),
+            ("cod_materia", 'Código único'),
             ("Nomb_Materia", "Materia"),
+            ("Unidad_Organiza", "Unidad"),
             ("Semestre", "Semestre", "number"),
             ("Creditos", 'Créditos', "decimal"),
+            ("Horas", "Horas", "number"),
+            ("NumMalla", "Malla", "number"),
+            ("tipomateria", "Tipo materia"),
             ("estado_mat", "Estado"),
         ),
         "detail_fields": fields(
-            ("codigo_materia", 'Código', "number"),
+            ("codigo_materia", 'Código interno', "number"),
             ("Cod_AnioBasica", "Carrera", "number"),
             ("Unidad_Organiza", "Unidad"),
             ("Nomb_Materia", "Materia"),
@@ -494,58 +571,113 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("Creditos", 'Créditos', "decimal"),
             ("Orden", "Orden", "number"),
             ("NumMalla", "Malla", "number"),
-            ("cod_materia", 'Código textual'),
+            ("cod_materia", 'Código único'),
             ("Horas", "Horas", "number"),
             ("ValorHora", "Valor hora", "decimal"),
             ("ValorHoraVirtual", "Valor hora virtual", "decimal"),
+            ("CombinarMateria", "Combinar materia", "number"),
             ("verreporte", "Ver reporte", "number"),
             ("SecuenciaMateria", "Secuencia"),
             ("tipomateria", "Tipo materia"),
             ("estado_mat", "Estado"),
         ),
         "editable_fields": fields(
-            ("Cod_AnioBasica", "Carrera", "number"),
-            ("Unidad_Organiza", "Unidad"),
-            ("Nomb_Materia", "Materia"),
-            ("Semestre", "Semestre", "number"),
-            ("Creditos", 'Créditos', "decimal"),
-            ("Orden", "Orden", "number"),
-            ("NumMalla", "Malla", "number"),
-            ("cod_materia", 'Código textual'),
-            ("Horas", "Horas", "number"),
-            ("ValorHora", "Valor hora", "decimal"),
-            ("ValorHoraVirtual", "Valor hora virtual", "decimal"),
-            ("verreporte", "Ver reporte", "number"),
-            ("SecuenciaMateria", "Secuencia"),
-            ("tipomateria", "Tipo materia"),
-            ("estado_mat", "Estado"),
-        ),
-        "create_fields": fields(
             field("Cod_AnioBasica", "Carrera", "number", required=True),
-            ("Unidad_Organiza", "Unidad"),
-            field("Nomb_Materia", "Materia", required=True),
+            field("Unidad_Organiza", "Unidad", max_length=50),
+            field("Nomb_Materia", "Materia", required=True, max_length=200),
             field("Semestre", "Semestre", "number", required=True),
             field("Creditos", 'Créditos', "decimal", required=True),
             ("Orden", "Orden", "number"),
             field("NumMalla", "Malla", "number", required=True),
-            ("cod_materia", 'Código textual'),
+            field("cod_materia", 'Código único', max_length=50),
+            field("Horas", "Horas", "number", required=True),
+            field("ValorHora", "Valor hora", "decimal", required=True),
+            field("ValorHoraVirtual", "Valor hora virtual", "decimal", required=True),
+            ("CombinarMateria", "Combinar materia", "number"),
+            field("verreporte", "Ver reporte", "number", required=True),
+            field("SecuenciaMateria", "Secuencia", required=True, max_length=50),
+            field("tipomateria", "Tipo materia", max_length=1),
+            field("estado_mat", "Estado", max_length=50),
+        ),
+        "create_fields": fields(
+            field("Cod_AnioBasica", "Carrera", "number", required=True),
+            field("Unidad_Organiza", "Unidad", max_length=50),
+            field("Nomb_Materia", "Materia", required=True, max_length=200),
+            field("Semestre", "Semestre", "number", required=True),
+            field("Creditos", 'Créditos', "decimal", required=True),
+            ("Orden", "Orden", "number"),
+            field("NumMalla", "Malla", "number", required=True),
+            field("cod_materia", 'Código único', max_length=50),
             field("Horas", "Horas", "number", required=True),
             ("ValorHora", "Valor hora", "decimal"),
             ("ValorHoraVirtual", "Valor hora virtual", "decimal"),
+            ("CombinarMateria", "Combinar materia", "number"),
             ("verreporte", "Ver reporte", "number"),
-            ("SecuenciaMateria", "Secuencia"),
-            ("tipomateria", "Tipo materia"),
-            ("estado_mat", "Estado"),
+            field("SecuenciaMateria", "Secuencia", max_length=50),
+            field("tipomateria", "Tipo materia", max_length=1),
+            field("estado_mat", "Estado", max_length=50),
         ),
         "defaults": {
+            "Orden": 0,
             "ValorHora": 0,
             "ValorHoraVirtual": 0,
+            "CombinarMateria": 0,
             "verreporte": 1,
             "SecuenciaMateria": "0",
-            "estado_mat": "ACTIVO",
+            "estado_mat": "A",
         },
-        "search_fields": ["codigo_materia", "Cod_AnioBasica", "Nomb_Materia", "cod_materia", "estado_mat"],
-        "order_by": "Nomb_Materia",
+        "search_fields": [
+            "codigo_materia",
+            "Cod_AnioBasica",
+            "cod_materia",
+            "Nomb_Materia",
+            "Unidad_Organiza",
+            "Semestre",
+            "NumMalla",
+            "tipomateria",
+            "estado_mat",
+        ],
+        "order_by": (
+            "Semestre ASC, "
+            "CASE WHEN Orden IS NULL THEN 1 ELSE 0 END, "
+            "Orden ASC, Nomb_Materia ASC, codigo_materia ASC"
+        ),
+    },
+    "materias_consecutivas": {
+        "title": "Materias consecutivas",
+        "category": 'Académico',
+        "description": 'Relaciones de continuidad y bloqueo por reprobación entre materias del pensum.',
+        "table": "[dbo].[MATERIAS_CONSECUTIVAS]",
+        "key_fields": ["id"],
+        "list_fields": fields(
+            ("id", "Registro", "number"),
+            ("cod_carrera", "Carrera"),
+            ("cod_materia", "Materia de origen"),
+            ("cod_materia_consecutiva", "Materia consecutiva"),
+            ("bloqueada_por_reprobacion", "Bloquea por reprobación", "bool"),
+        ),
+        "detail_fields": fields(
+            ("id", "Registro", "number"),
+            ("cod_carrera", "Carrera"),
+            ("cod_materia", "Materia de origen"),
+            ("cod_materia_consecutiva", "Materia consecutiva"),
+            ("bloqueada_por_reprobacion", "Bloquea por reprobación", "bool"),
+        ),
+        "editable_fields": fields(
+            field("cod_carrera", "Carrera", required=True, max_length=50),
+            field("cod_materia", "Materia de origen", required=True, max_length=50),
+            field("cod_materia_consecutiva", "Materia consecutiva", required=True, max_length=50),
+            field("bloqueada_por_reprobacion", "Bloquea por reprobación", "bool", required=True),
+        ),
+        "create_fields": fields(
+            field("cod_carrera", "Carrera", required=True, max_length=50),
+            field("cod_materia", "Materia de origen", required=True, max_length=50),
+            field("cod_materia_consecutiva", "Materia consecutiva", required=True, max_length=50),
+            field("bloqueada_por_reprobacion", "Bloquea por reprobación", "bool"),
+        ),
+        "search_fields": ["id", "cod_carrera", "cod_materia", "cod_materia_consecutiva"],
+        "order_by": "TRY_CONVERT(int, cod_carrera), TRY_CONVERT(int, cod_materia), id",
+        "defaults": {"bloqueada_por_reprobacion": True},
     },
     "periodos": {
         "title": 'Períodos académicos',
@@ -565,10 +697,13 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("cod_periodo", 'Código', "number"),
             ("Detalle_Periodo", 'Período'),
             ("Estado", "Estado"),
+            ("Detalle_Reg", "Detalle de registro"),
             ("Periodo", "Etiqueta"),
             ("Orden", "Orden", "number"),
             ("NotaAprobar", "Nota aprobar", "decimal"),
             ("ControlPlataforma", "Control plataforma"),
+            ("VersionCalificacion", 'Versión de calificación', "number"),
+            ("NotaPromedioMax", "Nota promedio máxima", "number"),
             ("VerInscripcion", 'Ver inscripción', "number"),
             ("VerNotas", "Ver notas", "number"),
             ("TipoMatricula", 'Tipo matrícula'),
@@ -579,39 +714,42 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("estado_ed", "Estado ED"),
         ),
         "editable_fields": fields(
-            ("Detalle_Periodo", 'Período'),
-            ("Estado", "Estado"),
-            ("Periodo", "Etiqueta"),
+            field("Detalle_Periodo", 'Período', required=True, max_length=50),
+            field("Estado", "Estado", required=True, max_length=1),
+            field("Detalle_Reg", "Detalle de registro", max_length=30),
+            field("Periodo", "Etiqueta", max_length=15),
             ("Orden", "Orden", "number"),
             ("NotaAprobar", "Nota aprobar", "decimal"),
-            ("ControlPlataforma", "Control plataforma"),
+            field("ControlPlataforma", "Control plataforma", max_length=1),
+            ("VersionCalificacion", 'Versión de calificación', "number"),
+            ("NotaPromedioMax", "Nota promedio máxima", "number"),
             ("VerInscripcion", 'Ver inscripción', "number"),
             ("VerNotas", "Ver notas", "number"),
-            ("TipoMatricula", 'Tipo matrícula'),
+            field("TipoMatricula", 'Tipo matrícula', max_length=50),
             ("VerReporte", "Ver reporte", "number"),
             ("fechain", "Fecha inicio", "date"),
             ("fechafin", "Fecha fin", "date"),
             ("anio", "Año", "number"),
-            ("estado_ed", "Estado ED"),
+            field("estado_ed", "Estado ED", max_length=150),
         ),
         "create_fields": fields(
-            field("Detalle_Periodo", 'Período', required=True),
-            field("Estado", "Estado", required=True),
-            ("Detalle_Reg", "Detalle registro"),
-            ("Periodo", "Etiqueta"),
+            field("Detalle_Periodo", 'Período', required=True, max_length=50),
+            field("Estado", "Estado", required=True, max_length=1),
+            field("Detalle_Reg", "Detalle de registro", max_length=30),
+            field("Periodo", "Etiqueta", max_length=15),
             ("Orden", "Orden", "number"),
             ("NotaAprobar", "Nota aprobar", "decimal"),
-            ("ControlPlataforma", "Control plataforma"),
-            ("VersionCalificacion", 'Versión calificación', "number"),
-            ("NotaPromedioMax", "Nota promedio max", "number"),
+            field("ControlPlataforma", "Control plataforma", max_length=1),
+            ("VersionCalificacion", 'Versión de calificación', "number"),
+            ("NotaPromedioMax", "Nota promedio máxima", "number"),
             ("VerInscripcion", 'Ver inscripción', "number"),
             ("VerNotas", "Ver notas", "number"),
-            ("TipoMatricula", 'Tipo matrícula'),
+            field("TipoMatricula", 'Tipo matrícula', max_length=50),
             ("VerReporte", "Ver reporte", "number"),
             ("fechain", "Fecha inicio", "date"),
             ("fechafin", "Fecha fin", "date"),
             ("anio", "Año", "number"),
-            ("estado_ed", "Estado ED"),
+            field("estado_ed", "Estado ED", max_length=150),
         ),
         "defaults": {
             "NotaAprobar": 10,
@@ -626,6 +764,79 @@ SECTIONS: dict[str, dict[str, Any]] = {
         },
         "search_fields": ["cod_periodo", "Detalle_Periodo", "Periodo", "anio", "TipoMatricula"],
         "order_by": "cod_periodo DESC",
+    },
+    "horarios_academicos": {
+        "title": "Horarios académicos",
+        "category": 'Académico',
+        "description": 'Horario por materia, período, carrera, jornada, paralelo, docente y vigencia.',
+        "table": "[dbo].[HORARIOS]",
+        "key_fields": ["id"],
+        "list_fields": fields(
+            ("id", "Registro", "number"),
+            ("cod_materia", "Materia"),
+            ("cod_periodo", 'Período'),
+            ("cod_carrera", "Carrera"),
+            ("cod_jornada", "Jornada"),
+            ("paralelo", "Paralelo"),
+            ("dia_semana", "Día"),
+            ("hora_inicio", "Inicio", "time"),
+            ("hora_fin", "Fin", "time"),
+            ("codigo_docente", "Docente"),
+        ),
+        "detail_fields": fields(
+            ("id", "Registro", "number"),
+            ("cod_materia", "Materia"),
+            ("cod_periodo", 'Período'),
+            ("cod_carrera", "Carrera"),
+            ("cod_jornada", "Jornada"),
+            ("paralelo", "Paralelo"),
+            ("dia_semana", "Día"),
+            ("hora_inicio", "Hora de inicio", "time"),
+            ("hora_fin", "Hora de fin", "time"),
+            ("codigo_docente", "Docente"),
+            ("fecha_inicio", "Inicio de vigencia", "date"),
+            ("fecha_finalizacion", "Fin de vigencia", "date"),
+        ),
+        "editable_fields": fields(
+            field("cod_materia", "Materia", required=True, max_length=50),
+            field("cod_periodo", 'Período', required=True, max_length=50),
+            field("cod_carrera", "Carrera", required=True, max_length=50),
+            field("cod_jornada", "Jornada", required=True, max_length=50),
+            field("paralelo", "Paralelo", required=True, max_length=10),
+            field("dia_semana", "Día", required=True, max_length=20),
+            field("hora_inicio", "Hora de inicio", "time", required=True),
+            field("hora_fin", "Hora de fin", "time", required=True),
+            field("codigo_docente", "Docente", required=True, max_length=50),
+            field("fecha_inicio", "Inicio de vigencia", "date", required=True),
+            field("fecha_finalizacion", "Fin de vigencia", "date", required=True),
+        ),
+        "create_fields": fields(
+            field("cod_materia", "Materia", required=True, max_length=50),
+            field("cod_periodo", 'Período', required=True, max_length=50),
+            field("cod_carrera", "Carrera", required=True, max_length=50),
+            field("cod_jornada", "Jornada", required=True, max_length=50),
+            field("paralelo", "Paralelo", required=True, max_length=10),
+            field("dia_semana", "Día", required=True, max_length=20),
+            field("hora_inicio", "Hora de inicio", "time", required=True),
+            field("hora_fin", "Hora de fin", "time", required=True),
+            field("codigo_docente", "Docente", required=True, max_length=50),
+            field("fecha_inicio", "Inicio de vigencia", "date", required=True),
+            field("fecha_finalizacion", "Fin de vigencia", "date", required=True),
+        ),
+        "search_fields": [
+            "id",
+            "cod_materia",
+            "cod_periodo",
+            "cod_carrera",
+            "cod_jornada",
+            "paralelo",
+            "dia_semana",
+            "codigo_docente",
+        ],
+        "order_by": (
+            "TRY_CONVERT(int, cod_periodo) DESC, TRY_CONVERT(int, cod_carrera), "
+            "cod_materia, TRY_CONVERT(int, dia_semana), hora_inicio, id"
+        ),
     },
     "matricula_materias": {
         "title": "Materias matriculadas y notas",
@@ -1085,11 +1296,11 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("Cod_Carrera", "Carrera", "number"),
             ("Estado", "Estado"),
         ),
-        "editable_fields": fields(("Estado", "Estado")),
+        "editable_fields": fields(field("Estado", "Estado", required=True, max_length=1)),
         "create_fields": fields(
             field("Malla", "Malla", "number", required=True),
             field("Cod_Carrera", "Carrera", "number", required=True),
-            ("Estado", "Estado"),
+            field("Estado", "Estado", max_length=1),
         ),
         "search_fields": ["Malla", "Cod_Carrera", "Estado"],
         "order_by": "Cod_Carrera, Malla",
@@ -1100,7 +1311,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "category": 'Académico',
         "description": 'Texto, URL y fecha visible por materia homologada y período académico.',
         "table": "[dbo].[MATERIAHOMOTEXTOF]",
-        "key_fields": ["num"],
+        "key_fields": ["cod_materia", "cod_periodo"],
         "list_fields": fields(
             ("num", "Registro", "number"),
             ("cod_materia", 'Código materia'),
@@ -1118,18 +1329,18 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("url", "URL"),
         ),
         "editable_fields": fields(
-            ("cod_materia", 'Código materia'),
-            ("materia", "Materia"),
-            ("cod_periodo", 'Período', "number"),
-            ("textofecha", "Texto fecha", "textarea"),
-            ("url", "URL"),
+            field("cod_materia", 'Código materia', required=True, max_length=50),
+            field("materia", "Materia", max_length=250),
+            field("cod_periodo", 'Período', "number", required=True),
+            field("textofecha", "Texto fecha", "textarea", required=True, max_length=100),
+            field("url", "URL", max_length=100),
         ),
         "create_fields": fields(
-            field("cod_materia", 'Código materia', required=True),
-            ("materia", "Materia"),
+            field("cod_materia", 'Código materia', required=True, max_length=50),
+            field("materia", "Materia", max_length=250),
             field("cod_periodo", 'Período', "number", required=True),
-            field("textofecha", "Texto fecha", "textarea", required=True),
-            ("url", "URL"),
+            field("textofecha", "Texto fecha", "textarea", required=True, max_length=100),
+            field("url", "URL", max_length=100),
         ),
         "search_fields": ["num", "cod_materia", "cod_periodo", "materia", "textofecha", "url"],
         "order_by": "cod_periodo DESC, cod_materia",
@@ -1169,11 +1380,14 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("DetalleJ", "Jornada"),
             ("codmodalidad", "Modalidad", "number"),
         ),
-        "editable_fields": fields(("DetalleJ", "Jornada"), ("codmodalidad", "Modalidad", "number")),
+        "editable_fields": fields(
+            field("DetalleJ", "Jornada", required=True, max_length=50),
+            field("codmodalidad", "Modalidad", "number", required=True),
+        ),
         "create_fields": fields(
             field("NumJ", 'Código', "number", required=True),
-            field("DetalleJ", "Jornada", required=True),
-            ("codmodalidad", "Modalidad", "number"),
+            field("DetalleJ", "Jornada", required=True, max_length=50),
+            field("codmodalidad", "Modalidad", "number", required=True),
         ),
         "search_fields": ["NumJ", "DetalleJ", "codmodalidad"],
         "order_by": "DetalleJ",
@@ -1187,8 +1401,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["NumM"],
         "list_fields": fields(("NumM", 'Código', "number"), ("DetalleM", "Modalidad")),
         "detail_fields": fields(("NumM", 'Código', "number"), ("DetalleM", "Modalidad")),
-        "editable_fields": fields(("DetalleM", "Modalidad")),
-        "create_fields": fields(field("DetalleM", "Modalidad", required=True)),
+        "editable_fields": fields(field("DetalleM", "Modalidad", required=True, max_length=100)),
+        "create_fields": fields(field("DetalleM", "Modalidad", required=True, max_length=100)),
         "search_fields": ["NumM", "DetalleM"],
         "order_by": "DetalleM",
     },
@@ -1349,16 +1563,16 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("estado", "Estado"),
         ),
         "editable_fields": fields(
-            ("fecha_inicio", "Inicio", "datetime"),
-            ("fecha_final", "Fin", "datetime"),
-            ("estado", "Estado"),
+            field("fecha_inicio", "Inicio", "datetime", required=True),
+            field("fecha_final", "Fin", "datetime", required=True),
+            field("estado", "Estado", required=True, max_length=1),
         ),
         "create_fields": fields(
             field("NumNota", "Parcial", "number", required=True),
             field("periodo_acad", 'Período', "number", required=True),
             field("fecha_inicio", "Inicio", "datetime", required=True),
             field("fecha_final", "Fin", "datetime", required=True),
-            ("estado", "Estado"),
+            field("estado", "Estado", max_length=1),
         ),
         "search_fields": ["NumNota", "periodo_acad", "estado"],
         "order_by": "periodo_acad DESC, NumNota",
@@ -1383,15 +1597,15 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("estado", "Estado"),
         ),
         "editable_fields": fields(
-            ("fecha_inicio", "Inicio", "datetime"),
-            ("fecha_final", "Fin", "datetime"),
-            ("estado", "Estado"),
+            field("fecha_inicio", "Inicio", "datetime", required=True),
+            field("fecha_final", "Fin", "datetime", required=True),
+            field("estado", "Estado", required=True, max_length=1),
         ),
         "create_fields": fields(
             field("periodo_acad", 'Período', "number", required=True),
             field("fecha_inicio", "Inicio", "datetime", required=True),
             field("fecha_final", "Fin", "datetime", required=True),
-            ("estado", "Estado"),
+            field("estado", "Estado", max_length=1),
         ),
         "search_fields": ["periodo_acad", "estado"],
         "order_by": "periodo_acad DESC",
@@ -1492,7 +1706,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "category": 'Control académico',
         "description": 'Registro de asistencia por estudiante, materia, período, paralelo, fecha y jornada.',
         "table": "[dbo].[ASISTENCIAESTUD]",
-        "key_fields": ["codigo_estud", "cod_anio_Basica", "codigo_materia", "codigo_periodo", "paralelo", "FechaHora"],
+        "key_fields": ["codigo_estud", "cod_anio_Basica", "codigo_materia", "codigo_periodo", "paralelo", "Fecha"],
         "list_fields": fields(
             ("codigo_estud", 'Código estudiante', "number"),
             ("estudiante_nombre", "Estudiante"),
@@ -1519,22 +1733,22 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("Asistencia", "Asistencia", "number"),
         ),
         "editable_fields": fields(
-            ("FechaHora", "Fecha/hora", "datetime"),
-            ("Fecha", "Fecha", "date"),
-            ("jornada", "Jornada"),
-            ("Hora", "Hora"),
-            ("Asistencia", "Asistencia", "number"),
+            field("FechaHora", "Fecha/hora", "datetime", required=True),
+            field("Fecha", "Fecha", "date", required=True),
+            field("jornada", "Jornada", required=True, max_length=20),
+            field("Hora", "Hora", "time", required=True),
+            field("Asistencia", "Asistencia", "number", required=True),
         ),
         "create_fields": fields(
             field("codigo_estud", "Estudiante", "number", required=True),
             field("cod_anio_Basica", "Carrera", "number", required=True),
             field("codigo_materia", "Materia", "number", required=True),
             field("codigo_periodo", 'Período', "number", required=True),
-            field("paralelo", "Paralelo", required=True),
+            field("paralelo", "Paralelo", required=True, max_length=1),
             ("FechaHora", "Fecha/hora", "datetime"),
             ("Fecha", "Fecha", "date"),
-            ("jornada", "Jornada"),
-            ("Hora", "Hora"),
+            field("jornada", "Jornada", required=True, max_length=20),
+            field("Hora", "Hora", "time", required=True),
             ("Asistencia", "Asistencia", "number"),
         ),
         "search_fields": ["codigo_estud", "cod_anio_Basica", "codigo_materia", "codigo_periodo", "paralelo", "jornada", "Asistencia"],
@@ -1555,8 +1769,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         ),
         "detail_fields": fields(
             ("Cod_Provincia", 'Código'),
-            ("Cod_Pais", 'País'),
-            ("Descripcion_Prov", "Provincia"),
+            field("Cod_Pais", 'País', required=True, max_length=20),
+            field("Descripcion_Prov", "Provincia", required=True, max_length=150),
             ("activo", "Activo", "bool"),
             ("fecha_creacion", 'Fecha creación', "datetime"),
         ),
@@ -1566,9 +1780,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
             ("activo", "Activo", "bool"),
         ),
         "create_fields": fields(
-            field("Cod_Provincia", 'Código', required=True),
-            field("Cod_Pais", 'País', required=True),
-            field("Descripcion_Prov", "Provincia", required=True),
+            field("Cod_Provincia", 'Código', required=True, max_length=20),
+            field("Cod_Pais", 'País', required=True, max_length=20),
+            field("Descripcion_Prov", "Provincia", required=True, max_length=150),
             ("activo", "Activo", "bool"),
             ("fecha_creacion", 'Fecha creación', "datetime"),
         ),
@@ -1584,8 +1798,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["numd"],
         "list_fields": fields(("numd", 'Código', "number"), ("Detalledias", "Detalle")),
         "detail_fields": fields(("numd", 'Código', "number"), ("Detalledias", "Detalle")),
-        "editable_fields": fields(("Detalledias", "Detalle")),
-        "create_fields": fields(field("Detalledias", "Detalle", required=True)),
+        "editable_fields": fields(field("Detalledias", "Detalle", required=True, max_length=500)),
+        "create_fields": fields(field("Detalledias", "Detalle", required=True, max_length=500)),
         "search_fields": ["numd", "Detalledias"],
         "order_by": "Detalledias",
     },
@@ -1597,8 +1811,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "key_fields": ["Numh"],
         "list_fields": fields(("Numh", 'Código', "number"), ("DetalleH", "Detalle")),
         "detail_fields": fields(("Numh", 'Código', "number"), ("DetalleH", "Detalle")),
-        "editable_fields": fields(("DetalleH", "Detalle")),
-        "create_fields": fields(field("DetalleH", "Detalle", required=True)),
+        "editable_fields": fields(field("DetalleH", "Detalle", required=True, max_length=100)),
+        "create_fields": fields(field("DetalleH", "Detalle", required=True, max_length=100)),
         "search_fields": ["Numh", "DetalleH"],
         "order_by": "DetalleH",
     },
@@ -2607,6 +2821,131 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
             """,
         ],
     },
+    "jornadas": {
+        "codmodalidad": [
+            """
+            SELECT TOP (100)
+                TRY_CONVERT(nvarchar(100), NumM) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), NumM), N' - ', LTRIM(RTRIM(DetalleM))) AS option_label
+            FROM dbo.ModalidadMatricula
+            ORDER BY DetalleM
+            """,
+        ],
+    },
+    "horarios_academicos": {
+        "cod_materia": [
+            """
+            WITH materias AS (
+                SELECT
+                    LTRIM(RTRIM(p.cod_materia)) AS option_value,
+                    CONCAT(LTRIM(RTRIM(p.cod_materia)), N' - ', LTRIM(RTRIM(p.Nomb_Materia))) AS option_label,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY LTRIM(RTRIM(p.cod_materia))
+                        ORDER BY p.Semestre, p.Nomb_Materia, p.codigo_materia
+                    ) AS rn
+                FROM dbo.PENSUM p
+                WHERE NULLIF(LTRIM(RTRIM(p.cod_materia)), N'') IS NOT NULL
+            )
+            SELECT TOP (2000) option_value, option_label
+            FROM materias
+            WHERE rn = 1
+            ORDER BY option_label
+            """,
+        ],
+        "cod_periodo": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), cod_periodo) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), cod_periodo), N' - ', LTRIM(RTRIM(Detalle_Periodo))) AS option_label
+            FROM dbo.PERIODO
+            ORDER BY cod_periodo DESC
+            """,
+        ],
+        "cod_carrera": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Cod_AnioBasica), N' - ', LTRIM(RTRIM(Nombre_Basica))) AS option_label
+            FROM dbo.CARRERAS
+            ORDER BY Nombre_Basica
+            """,
+        ],
+        "cod_jornada": [
+            """
+            SELECT TOP (100)
+                TRY_CONVERT(nvarchar(100), NumJ) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), NumJ), N' - ', LTRIM(RTRIM(DetalleJ))) AS option_label
+            FROM dbo.JORNADA
+            ORDER BY DetalleJ
+            """,
+        ],
+        "paralelo": [
+            """
+            SELECT TOP (100)
+                LTRIM(RTRIM(codigo_paralelo)) AS option_value,
+                CONCAT(LTRIM(RTRIM(codigo_paralelo)), N' - ', LTRIM(RTRIM(nombre_paralelo))) AS option_label
+            FROM dbo.Paralelo
+            WHERE activo = 1
+            ORDER BY TRY_CONVERT(int, codigo_paralelo), codigo_paralelo
+            """,
+        ],
+        "dia_semana": [
+            """
+            SELECT TOP (20)
+                TRY_CONVERT(nvarchar(20), Cod_dia) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(20), Cod_dia), N' - ', LTRIM(RTRIM(Detalle_Dia))) AS option_label
+            FROM dbo.DIASSEMANA
+            ORDER BY Cod_dia
+            """,
+            """
+            SELECT option_value, option_label
+            FROM (VALUES
+                (N'1', N'1 - Lunes'),
+                (N'2', N'2 - Martes'),
+                (N'3', N'3 - Miércoles'),
+                (N'4', N'4 - Jueves'),
+                (N'5', N'5 - Viernes'),
+                (N'6', N'6 - Sábado'),
+                (N'7', N'7 - Domingo')
+            ) dias(option_value, option_label)
+            """,
+        ],
+        "codigo_docente": [
+            """
+            SELECT TOP (2000)
+                TRY_CONVERT(nvarchar(100), codigo_doc) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), codigo_doc), N' - ', LTRIM(RTRIM(apellidos_nombre))) AS option_label
+            FROM dbo.DATOSDOCENTE
+            ORDER BY apellidos_nombre
+            """,
+        ],
+    },
+    "carreras": {
+        "Estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activa' AS option_label
+            UNION ALL SELECT N'P', N'P - Inactiva'
+            """,
+        ],
+    },
+    "mallas": {
+        "Cod_Carrera": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Cod_AnioBasica), N' - ', LTRIM(RTRIM(Nombre_Basica))) AS option_label
+            FROM dbo.CARRERAS
+            WHERE Cod_AnioBasica IS NOT NULL
+            ORDER BY Nombre_Basica
+            """,
+        ],
+        "Estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activa' AS option_label
+            UNION ALL SELECT N'P', N'P - Inactiva'
+            """,
+        ],
+    },
     "materias": {
         "Cod_AnioBasica": [
             """
@@ -2620,28 +2959,13 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
         ],
         "Semestre": [
             """
-            SELECT N'1' AS option_value, N'1' AS option_label
-            UNION ALL
-            SELECT N'2', N'2'
-            UNION ALL
-            SELECT N'3', N'3'
-            UNION ALL
-            SELECT N'4', N'4'
+            SELECT TRY_CONVERT(nvarchar(2), semestre) AS option_value,
+                   TRY_CONVERT(nvarchar(2), semestre) AS option_label
+            FROM (VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)) niveles(semestre)
+            ORDER BY semestre
             """,
         ],
         "NumMalla": [
-            """
-            SELECT TOP (500)
-                TRY_CONVERT(nvarchar(100), Malla) AS option_value,
-                CONCAT(
-                    TRY_CONVERT(nvarchar(100), Malla),
-                    N' - ',
-                    COALESCE(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), Nombre))), N'Malla')
-                ) AS option_label
-            FROM dbo.MALLA
-            WHERE Malla IS NOT NULL
-            ORDER BY Malla
-            """,
             """
             SELECT TOP (500)
                 TRY_CONVERT(nvarchar(100), Malla) AS option_value,
@@ -2654,12 +2978,45 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
         ],
         "estado_mat": [
             """
-            SELECT DISTINCT TOP (100)
-                LTRIM(RTRIM(estado_mat)) AS option_value,
-                LTRIM(RTRIM(estado_mat)) AS option_label
-            FROM dbo.PENSUM
-            WHERE NULLIF(LTRIM(RTRIM(estado_mat)), N'') IS NOT NULL
-            ORDER BY option_label
+            SELECT N'A' AS option_value, N'A - Activa' AS option_label
+            UNION ALL SELECT N'P', N'P - Inactiva'
+            """,
+        ],
+    },
+    "materias_consecutivas": {
+        "cod_carrera": [
+            """
+            SELECT TOP (500)
+                TRY_CONVERT(nvarchar(100), Cod_AnioBasica) AS option_value,
+                CONCAT(TRY_CONVERT(nvarchar(100), Cod_AnioBasica), N' - ', LTRIM(RTRIM(Nombre_Basica))) AS option_label
+            FROM dbo.CARRERAS
+            ORDER BY Nombre_Basica
+            """,
+        ],
+        "cod_materia": [
+            """
+            SELECT TOP (2000)
+                TRY_CONVERT(nvarchar(100), p.codigo_materia) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), p.codigo_materia), N' - ', LTRIM(RTRIM(p.Nomb_Materia)),
+                    N' · ', LTRIM(RTRIM(c.Nombre_Basica))
+                ) AS option_label
+            FROM dbo.PENSUM p
+            INNER JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = p.Cod_AnioBasica
+            ORDER BY c.Nombre_Basica, p.Semestre, p.Nomb_Materia
+            """,
+        ],
+        "cod_materia_consecutiva": [
+            """
+            SELECT TOP (2000)
+                TRY_CONVERT(nvarchar(100), p.codigo_materia) AS option_value,
+                CONCAT(
+                    TRY_CONVERT(nvarchar(100), p.codigo_materia), N' - ', LTRIM(RTRIM(p.Nomb_Materia)),
+                    N' · ', LTRIM(RTRIM(c.Nombre_Basica))
+                ) AS option_label
+            FROM dbo.PENSUM p
+            INNER JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = p.Cod_AnioBasica
+            ORDER BY c.Nombre_Basica, p.Semestre, p.Nomb_Materia
             """,
         ],
     },
@@ -2675,7 +3032,7 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
         ],
         "ControlPlataforma": [
             """
-            SELECT N'A' AS option_value, N'A - Abierto'
+            SELECT N'A' AS option_value, N'A - Abierto' AS option_label
             UNION ALL
             SELECT N'P', N'P - Pendiente'
             UNION ALL
@@ -2684,7 +3041,7 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
         ],
         "TipoMatricula": [
             """
-            SELECT N'R' AS option_value, N'R - Regular'
+            SELECT N'R' AS option_value, N'R - Regular' AS option_label
             UNION ALL
             SELECT N'H', N'H - Homologación'
             UNION ALL
@@ -2957,6 +3314,12 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
             ORDER BY cod_periodo DESC
             """,
         ],
+        "estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activa' AS option_label
+            UNION ALL SELECT N'P', N'P - Inactiva'
+            """,
+        ],
     },
     "fechas_autoevaluacion": {
         "periodo_acad": [
@@ -2966,6 +3329,12 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
                 CONCAT(TRY_CONVERT(nvarchar(100), cod_periodo), N' - ', LTRIM(RTRIM(Detalle_Periodo))) AS option_label
             FROM dbo.PERIODO
             ORDER BY cod_periodo DESC
+            """,
+        ],
+        "estado": [
+            """
+            SELECT N'A' AS option_value, N'A - Activa' AS option_label
+            UNION ALL SELECT N'P', N'P - Inactiva'
             """,
         ],
     },
@@ -3041,19 +3410,30 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
                 LTRIM(RTRIM(paralelo)) AS option_value,
                 LTRIM(RTRIM(paralelo)) AS option_label
             FROM dbo.PARALELOS
+            WHERE LEN(RTRIM(paralelo)) <= 1
             ORDER BY paralelo
+            """,
+        ],
+        "jornada": [
+            """
+            SELECT TOP (100)
+                LTRIM(RTRIM(DetalleJ)) AS option_value,
+                LTRIM(RTRIM(DetalleJ)) AS option_label
+            FROM dbo.JORNADA
+            WHERE NULLIF(LTRIM(RTRIM(DetalleJ)), N'') IS NOT NULL
+            ORDER BY DetalleJ
             """,
         ],
     },
     "provincias": {
         "Cod_Pais": [
             """
-            SELECT DISTINCT TOP (100)
-                LTRIM(RTRIM(Cod_Pais)) AS option_value,
-                LTRIM(RTRIM(Cod_Pais)) AS option_label
-            FROM dbo.Provincias
-            WHERE NULLIF(LTRIM(RTRIM(Cod_Pais)), N'') IS NOT NULL
-            ORDER BY Cod_Pais
+            SELECT TOP (500)
+                LTRIM(RTRIM(codigo_pais)) AS option_value,
+                CONCAT(LTRIM(RTRIM(codigo_pais)), N' - ', LTRIM(RTRIM(nombre_pais))) AS option_label
+            FROM dbo.Pais
+            WHERE activo = 1
+            ORDER BY nombre_pais
             """,
         ],
     },
@@ -3303,8 +3683,12 @@ def _serialize_value(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat()
     if isinstance(value, bytes):
         return None
+    if isinstance(value, str):
+        return value.strip()
     return value
 
 
@@ -3961,13 +4345,74 @@ def _normalize_value(value: Any, meta: FieldMeta | None) -> Any:
         return None
     field_type = (meta.type if meta else "text").lower()
     if field_type in {"number", "int"}:
-        return int(value)
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            label = meta.label if meta else "El valor"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{label} debe ser un número entero válido",
+            ) from exc
     if field_type == "decimal":
-        return Decimal(str(value))
+        try:
+            decimal_value = Decimal(str(value))
+            if not decimal_value.is_finite():
+                raise ValueError("non-finite decimal")
+            return decimal_value
+        except Exception as exc:
+            label = meta.label if meta else "El valor"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{label} debe ser un número decimal válido",
+            ) from exc
     if field_type == "bool":
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in {"1", "true", "si", "yes", "on"}
+    if field_type == "date":
+        try:
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            return date.fromisoformat(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            label = meta.label if meta else "La fecha"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{label} debe tener una fecha válida",
+            ) from exc
+    if field_type == "datetime":
+        try:
+            if isinstance(value, datetime):
+                return value.replace(tzinfo=None)
+            parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            label = meta.label if meta else "La fecha y hora"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{label} debe tener una fecha y hora válidas",
+            ) from exc
+    if field_type == "time":
+        try:
+            if isinstance(value, time):
+                return value.replace(tzinfo=None)
+            return time.fromisoformat(str(value).strip()).replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            label = meta.label if meta else "La hora"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{label} debe tener una hora válida",
+            ) from exc
+    if meta and meta.max_length is not None:
+        normalized_text = str(value).strip()
+        if len(normalized_text) > meta.max_length:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{meta.label} no puede superar {meta.max_length} caracteres",
+            )
+        return normalized_text
     return value
 
 
@@ -4007,6 +4452,44 @@ def _lookup_rows(cursor: Any, queries: list[str]) -> list[dict[str, str]]:
     return []
 
 
+_LOOKUP_OPTIONS_TTL_SECONDS = 60.0
+_LOOKUP_OPTIONS_CACHE: dict[str, tuple[float, dict[str, list[dict[str, str]]]]] = {}
+_LOOKUP_OPTIONS_CACHE_LOCK = Lock()
+
+
+def _lookup_options_for_section(section_key: str) -> dict[str, list[dict[str, str]]]:
+    field_queries = LOOKUP_QUERIES.get(section_key)
+    if not field_queries:
+        return {}
+
+    now = monotonic()
+    with _LOOKUP_OPTIONS_CACHE_LOCK:
+        cached = _LOOKUP_OPTIONS_CACHE.get(section_key)
+        if cached and now - cached[0] < _LOOKUP_OPTIONS_TTL_SECONDS:
+            return cached[1]
+
+    section_lookups: dict[str, list[dict[str, str]]] = {}
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            for field_name, queries in field_queries.items():
+                options = _lookup_rows(cursor, queries)
+                if options:
+                    section_lookups[field_name] = options
+    except Exception:
+        return {}
+
+    with _LOOKUP_OPTIONS_CACHE_LOCK:
+        _LOOKUP_OPTIONS_CACHE[section_key] = (now, section_lookups)
+    return section_lookups
+
+
+def _invalidate_lookup_options(*section_keys: str) -> None:
+    with _LOOKUP_OPTIONS_CACHE_LOCK:
+        for section_key in section_keys:
+            _LOOKUP_OPTIONS_CACHE.pop(section_key, None)
+
+
 def _lookup_options_by_section() -> dict[str, dict[str, list[dict[str, str]]]]:
     lookups: dict[str, dict[str, list[dict[str, str]]]] = {}
     try:
@@ -4043,6 +4526,7 @@ def _section_meta(section_key: str, section: dict[str, Any], options: dict[str, 
         detail_fields=_attach_options(section["detail_fields"], options),
         editable_fields=_attach_options(section["editable_fields"], options),
         create_fields=_attach_options(section.get("create_fields", []), options),
+        defaults={name: _serialize_value(value) for name, value in section.get("defaults", {}).items()},
     )
 
 
@@ -4108,7 +4592,7 @@ LEGACY_CLONE_MODULES: list[dict[str, Any]] = [
     {
         "key": "academico",
         "title": 'Catálogos académicos',
-        "description": 'Carreras, pensum, mallas, períodos, jornadas, paralelos y modalidades.',
+        "description": 'Carreras, pensum, continuidad de materias, mallas, horarios, períodos, jornadas, paralelos y modalidades.',
         "source_paths": [
             "Carreras.aspx",
             "Actualiza_Examenes.aspx",
@@ -4123,8 +4607,8 @@ LEGACY_CLONE_MODULES: list[dict[str, Any]] = [
             "Provincias.aspx",
             "Reporteshtml/ActualizarParaleloMatriPeriodo.aspx",
         ],
-        "tables": ["CARRERAS", "PENSUM", "MALLA_PENSUM", "MATERIAHOMOTEXTOF", "PERIODO", "PARALELOS", "JORNADA", "ModalidadMatricula", "Provincias"],
-        "modern_sections": ["carreras", "materias", "mallas", "materia_homo_textof", "periodos", "paralelos", "jornadas", "modalidades", "provincias"],
+        "tables": ["CARRERAS", "PENSUM", "MATERIAS_CONSECUTIVAS", "MALLA_PENSUM", "MATERIAHOMOTEXTOF", "HORARIOS", "DIASSEMANA", "PERIODO", "PARALELOS", "Paralelo", "JORNADA", "ModalidadMatricula", "Provincias"],
+        "modern_sections": ["carreras", "materias", "materias_consecutivas", "mallas", "materia_homo_textof", "horarios_academicos", "dias_semana", "periodos", "paralelos", "paralelos_horarios", "jornadas", "modalidades", "provincias"],
         "modern_routes": ["sisacademico_admin.py"],
         "coverage": "base",
         "notes": "Mantenimiento directo expuesto; reglas complejas se deben mover a endpoints dedicados.",
@@ -4308,10 +4792,13 @@ LEGACY_CLONE_MODULES: list[dict[str, Any]] = [
 
 
 @router.get("/catalog")
-def catalog(_: SessionUser = AllowedEditor) -> dict[str, Any]:
-    section_options = _lookup_options_by_section()
+def catalog(
+    include_options: bool = Query(default=True),
+    _: SessionUser = AllowedEditor,
+) -> dict[str, Any]:
+    section_options = _lookup_options_by_section() if include_options else {}
     sections = [
-        _section_meta(section_key, section, section_options.get(section_key, {})).model_dump()
+        _section_meta(section_key, section, section_options.get(section_key, {})).model_dump(exclude_none=True)
         for section_key, section in SECTIONS.items()
     ]
     categories = sorted({section["category"] for section in SECTIONS.values()})
@@ -4583,12 +5070,157 @@ def legacy_v1_artifacts(_: SessionUser = AllowedEditor) -> dict[str, Any]:
     }
 
 
+def _malla_options_for_career(cursor: Any, career_code: Any) -> list[dict[str, str]]:
+    cursor.execute(
+        """
+        WITH mallas_carrera AS (
+            SELECT Malla
+            FROM dbo.MALLA_PENSUM
+            WHERE Cod_Carrera = ?
+              AND (Estado = 'A' OR Estado IS NULL)
+
+            UNION
+
+            SELECT NumMalla
+            FROM dbo.PENSUM
+            WHERE Cod_AnioBasica = ?
+              AND NumMalla IS NOT NULL
+        )
+        SELECT
+            TRY_CONVERT(nvarchar(100), Malla) AS option_value,
+            CONCAT(TRY_CONVERT(nvarchar(100), Malla), N' - Malla') AS option_label
+        FROM mallas_carrera
+        GROUP BY Malla
+        ORDER BY Malla
+        """,
+        [career_code, career_code],
+    )
+    return [
+        {
+            "value": str(_serialize_value(row[0])),
+            "label": str(_serialize_value(row[1])),
+        }
+        for row in cursor.fetchall()
+        if row[0] is not None
+    ]
+
+
+def _options_with_scoped_mallas(
+    section_key: str,
+    scoped_malla_options: list[dict[str, str]] | None,
+) -> dict[str, list[dict[str, str]]]:
+    options = {
+        field_name: [dict(option) for option in field_options]
+        for field_name, field_options in _lookup_options_for_section(section_key).items()
+    }
+    if scoped_malla_options is not None:
+        options["NumMalla"] = scoped_malla_options
+    return options
+
+
+def _list_academic_catalog_records(
+    section_key: str,
+    section: dict[str, Any],
+    query: str | None,
+    carrera: str | None,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    columns = _selectable_columns(_column_names(section["list_fields"]))
+    select_columns = ", ".join(_quote_column(column) for column in columns)
+    clauses: list[str] = []
+    sql_params: list[Any] = []
+
+    cleaned_career = str(carrera or "").strip()
+    career_code: int | None = None
+    if section_key == "materias" and cleaned_career:
+        career_code = _optional_int_filter(cleaned_career)
+        if career_code is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código de carrera no válido")
+        clauses.append(f"{_quote_column('Cod_AnioBasica')} = ?")
+        sql_params.append(career_code)
+
+    cleaned_query = str(query or "").strip()
+    if cleaned_query:
+        like = f"%{cleaned_query}%"
+        search_parts = [
+            f"CAST({_quote_column(column)} AS nvarchar(max)) LIKE ?"
+            for column in section.get("search_fields", [])
+        ]
+        code_field = STUDENT_CODE_FIELD_BY_SECTION.get(section_key)
+        if code_field:
+            search_parts.append(
+                f"""
+                EXISTS (
+                    SELECT 1
+                    FROM dbo.DATOS_ESTUD datos_estud_busqueda
+                    WHERE TRY_CONVERT(decimal(18, 0), datos_estud_busqueda.codigo_estud)
+                        = TRY_CONVERT(decimal(18, 0), {_quote_column(code_field)})
+                      AND (
+                          CAST(datos_estud_busqueda.Cedula_Est AS nvarchar(max)) LIKE ?
+                          OR CAST(datos_estud_busqueda.Apellidos_nombre AS nvarchar(max)) LIKE ?
+                      )
+                )
+                """
+            )
+        if search_parts:
+            clauses.append(f"({' OR '.join(search_parts)})")
+            sql_params.extend(like for _ in section.get("search_fields", []))
+            if code_field:
+                sql_params.extend([like, like])
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    count_sql = f"SELECT COUNT_BIG(1) FROM {section['table']} {where}"
+    data_sql = f"""
+        SELECT {select_columns}
+        FROM {section["table"]}
+        {where}
+        ORDER BY {section["order_by"]}
+        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+    """
+
+    scoped_malla_options: list[dict[str, str]] | None = None
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(count_sql, sql_params)
+            count_row = cursor.fetchone()
+            total = int(count_row[0] if count_row else 0)
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            effective_page = min(page, total_pages)
+            offset = (effective_page - 1) * page_size
+            cursor.execute(data_sql, [*sql_params, offset, page_size])
+            rows = _rows_from_cursor(cursor, section_key, section["key_fields"])
+            _attach_student_identity(cursor, rows, section_key)
+            if section_key == "materias" and career_code is not None:
+                scoped_malla_options = _malla_options_for_career(cursor, career_code)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='No se pudo consultar la sección') from exc
+
+    options = _options_with_scoped_mallas(section_key, scoped_malla_options)
+    return {
+        "section": _section_meta(section_key, section, options).model_dump(),
+        "rows": rows,
+        "total": total,
+        "page": effective_page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "has_previous": effective_page > 1,
+        "has_next": effective_page < total_pages,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/{section_key}")
 def list_records(
     section_key: str,
     query: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     periodo: str | None = Query(default=None),
+    carrera: str | None = Query(default=None),
+    paginado: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=10, le=100),
     _: SessionUser = AllowedEditor,
@@ -4603,19 +5235,30 @@ def list_records(
             page,
             effective_page_size,
         )
-    del limit
     if section_key == "actualizacion_est":
         return _list_actualizacion_est_records(section, query, None)
     if section_key == "docente_materias":
         return _list_docente_materias_records(section, query)
     if section_key == "cambio_periodo_hr":
         return {
-            "section": _section_meta(section_key, section).model_dump(),
+            "section": _section_meta(section_key, section, _lookup_options_for_section(section_key)).model_dump(),
             "rows": [],
             "total": 0,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    if paginado or (section_key in {"carreras", "materias"} and carrera):
+        effective_page_size = min(limit, 100) if limit else page_size
+        return _list_academic_catalog_records(
+            section_key,
+            section,
+            query,
+            carrera,
+            page,
+            effective_page_size,
+        )
+
+    del limit, carrera, paginado
     columns = _selectable_columns(_column_names(section["list_fields"]))
     select_columns = ", ".join(_quote_column(column) for column in columns)
     sql_params: list[Any] = []
@@ -4659,7 +5302,7 @@ def list_records(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='No se pudo consultar la sección') from exc
     return {
-        "section": _section_meta(section_key, section).model_dump(),
+        "section": _section_meta(section_key, section, _lookup_options_for_section(section_key)).model_dump(),
         "rows": rows,
         "total": len(rows),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -4681,17 +5324,426 @@ def get_record(section_key: str, record_key: str, _: SessionUser = AllowedEditor
         FROM {section["table"]}
         WHERE {_where_clause(section["key_fields"])}
     """
+    scoped_malla_options: list[dict[str, str]] | None = None
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(sql, key_values)
             rows = _rows_from_cursor(cursor, section_key, section["key_fields"])
             _attach_student_identity(cursor, rows, section_key)
+            if section_key == "materias" and rows:
+                scoped_malla_options = _malla_options_for_career(cursor, rows[0].get("Cod_AnioBasica"))
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo consultar el registro") from exc
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    return {"section": _section_meta(section_key, section).model_dump(), "record": rows[0]}
+    return {
+        "section": _section_meta(
+            section_key,
+            section,
+            _options_with_scoped_mallas(section_key, scoped_malla_options),
+        ).model_dump(),
+        "record": rows[0],
+    }
+
+
+def _ensure_pensum_career_exists(cursor: Any, career_code: Any) -> None:
+    cursor.execute(
+        """
+        SELECT TOP (1) 1
+        FROM dbo.CARRERAS
+        WHERE Cod_AnioBasica = ?
+        """,
+        career_code,
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La carrera seleccionada no existe en dbo.CARRERAS",
+        )
+
+
+def _ensure_new_career_code_available(cursor: Any, career_code: Any) -> None:
+    cursor.execute(
+        """
+        SELECT TOP (1) 1
+        FROM dbo.CARRERAS
+        WHERE Cod_AnioBasica = ?
+        """,
+        career_code,
+    )
+    if cursor.fetchone() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe una carrera con el código indicado",
+        )
+
+
+def _ensure_reference(cursor: Any, sql: str, params: list[Any], detail: str) -> None:
+    cursor.execute(sql, params)
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _ensure_subject_malla_relation(
+    cursor: Any,
+    career_code: Any,
+    malla: Any,
+    *,
+    creating: bool,
+) -> None:
+    cursor.execute(
+        """
+        SELECT TOP (1) 1
+        FROM dbo.MALLA_PENSUM
+        WHERE Malla = ? AND Cod_Carrera = ?
+        """,
+        [malla, career_code],
+    )
+    if cursor.fetchone() is not None:
+        return
+
+    if creating:
+        cursor.execute(
+            """
+            SELECT TOP (1) 1
+            FROM dbo.PENSUM
+            WHERE Cod_AnioBasica = ? AND NumMalla = ?
+            """,
+            [career_code, malla],
+        )
+        malla_used_by_pensum = cursor.fetchone() is not None
+
+        cursor.execute(
+            """
+            SELECT TOP (1) 1
+            FROM dbo.MALLA_PENSUM
+            WHERE Cod_Carrera = ?
+            """,
+            [career_code],
+        )
+        career_has_malla = cursor.fetchone() is not None
+        if malla_used_by_pensum or not career_has_malla:
+            cursor.execute(
+                """
+                INSERT INTO dbo.MALLA_PENSUM (Malla, Cod_Carrera, Estado)
+                VALUES (?, ?, 'A')
+                """,
+                [malla, career_code],
+            )
+            return
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="La malla seleccionada no pertenece a la carrera indicada",
+    )
+
+
+def _validate_ordered_range(
+    values: dict[str, Any],
+    start_field: str,
+    end_field: str,
+    detail: str,
+    *,
+    allow_equal: bool = True,
+) -> None:
+    start_value = values.get(start_field)
+    end_value = values.get(end_field)
+    if start_value is None or end_value is None:
+        return
+    valid = start_value <= end_value if allow_equal else start_value < end_value
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _validate_nonnegative(values: dict[str, Any], *field_names: str) -> None:
+    for field_name in field_names:
+        value = values.get(field_name)
+        if value is not None and Decimal(str(value)) < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{field_name} no puede tener un valor negativo",
+            )
+
+
+def _validate_academic_process_values(
+    cursor: Any,
+    section_key: str,
+    values: dict[str, Any],
+    *,
+    record_key_values: list[Any] | None = None,
+    creating: bool = False,
+) -> None:
+    if section_key == "materias":
+        career_code = values.get("Cod_AnioBasica")
+        malla = values.get("NumMalla")
+        if career_code is not None:
+            _ensure_pensum_career_exists(cursor, career_code)
+        if malla is not None and career_code is not None:
+            _ensure_subject_malla_relation(
+                cursor,
+                career_code,
+                malla,
+                creating=creating,
+            )
+        semester = values.get("Semestre")
+        if semester is not None and int(semester) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El semestre debe iniciar en 1")
+        _validate_nonnegative(values, "Creditos", "Horas", "ValorHora", "ValorHoraVirtual")
+        return
+
+    if section_key == "mallas":
+        if values.get("Cod_Carrera") is not None:
+            _ensure_pensum_career_exists(cursor, values.get("Cod_Carrera"))
+        if values.get("Malla") is not None and int(values["Malla"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La malla debe ser mayor que cero")
+        return
+
+    if section_key == "materia_homo_textof":
+        if values.get("cod_materia") is not None:
+            _ensure_reference(
+                cursor,
+                """
+                SELECT TOP (1) 1
+                FROM dbo.PENSUM
+                WHERE LTRIM(RTRIM(cod_materia)) = LTRIM(RTRIM(?))
+                """,
+                [values.get("cod_materia")],
+                "El código de materia no existe en dbo.PENSUM",
+            )
+        if values.get("cod_periodo") is not None:
+            _ensure_reference(
+                cursor,
+                "SELECT TOP (1) 1 FROM dbo.PERIODO WHERE cod_periodo = ?",
+                [values.get("cod_periodo")],
+                "El período seleccionado no existe",
+            )
+        return
+
+    if section_key == "periodos":
+        for name in ("Estado", "ControlPlataforma"):
+            if name in values and values[name] is not None:
+                values[name] = str(values[name]).strip().upper()
+        if values.get("TipoMatricula") is not None:
+            values["TipoMatricula"] = str(values["TipoMatricula"]).strip().upper()
+            if values["TipoMatricula"] not in {"R", "H", "E", "X"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Tipo de matrícula no válido; utilice R, H, E o X",
+                )
+        _validate_ordered_range(
+            values,
+            "fechain",
+            "fechafin",
+            "La fecha final del período no puede ser anterior a la fecha inicial",
+        )
+        _validate_nonnegative(values, "Orden", "NotaAprobar", "VersionCalificacion", "NotaPromedioMax")
+        return
+
+    if section_key in {"fechas_notas", "fechas_autoevaluacion"}:
+        if values.get("periodo_acad") is not None:
+            _ensure_reference(
+                cursor,
+                "SELECT TOP (1) 1 FROM dbo.PERIODO WHERE cod_periodo = ?",
+                [values.get("periodo_acad")],
+                "El período académico seleccionado no existe",
+            )
+        _validate_ordered_range(
+            values,
+            "fecha_inicio",
+            "fecha_final",
+            "La fecha final no puede ser anterior a la fecha inicial",
+        )
+        if section_key == "fechas_notas" and values.get("NumNota") is not None and int(values["NumNota"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El número de parcial debe iniciar en 1")
+        if values.get("estado") is not None:
+            values["estado"] = str(values["estado"]).strip().upper()
+        return
+
+    if section_key == "asistencia_estudiantes":
+        _validate_nonnegative(values, "Asistencia")
+        if creating:
+            _ensure_reference(
+                cursor,
+                """
+                SELECT TOP (1) 1
+                FROM dbo.CARRERAXESTUD
+                WHERE codigo_estud = ?
+                  AND cod_anio_Basica = ?
+                  AND codigo_materia = ?
+                  AND codigo_periodo = ?
+                  AND LTRIM(RTRIM(paralelo)) = LTRIM(RTRIM(?))
+                """,
+                [
+                    values.get("codigo_estud"),
+                    values.get("cod_anio_Basica"),
+                    values.get("codigo_materia"),
+                    values.get("codigo_periodo"),
+                    values.get("paralelo"),
+                ],
+                "No existe una matrícula para el estudiante, materia, período y paralelo indicados",
+            )
+        return
+
+    if section_key == "provincias":
+        if values.get("Cod_Pais") is not None:
+            _ensure_reference(
+                cursor,
+                "SELECT TOP (1) 1 FROM dbo.Pais WHERE codigo_pais = ?",
+                [values.get("Cod_Pais")],
+                "El país seleccionado no existe",
+            )
+        return
+
+    if section_key == "jornadas":
+        if values.get("codmodalidad") is not None:
+            _ensure_reference(
+                cursor,
+                "SELECT TOP (1) 1 FROM dbo.ModalidadMatricula WHERE NumM = ?",
+                [values.get("codmodalidad")],
+                "La modalidad seleccionada no existe",
+            )
+        return
+
+    if section_key == "dias_semana":
+        day_code = values.get("Cod_dia")
+        if day_code is not None and not 1 <= int(day_code) <= 7:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El código del día debe estar entre 1 y 7")
+        return
+
+    if section_key == "materias_consecutivas":
+        career_code = str(values.get("cod_carrera") or "").strip()
+        source_subject = str(values.get("cod_materia") or "").strip()
+        target_subject = str(values.get("cod_materia_consecutiva") or "").strip()
+        if source_subject == target_subject:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La materia de origen y la materia consecutiva deben ser diferentes",
+            )
+        for subject_code, label in (
+            (source_subject, "La materia de origen no pertenece a la carrera seleccionada"),
+            (target_subject, "La materia consecutiva no pertenece a la carrera seleccionada"),
+        ):
+            _ensure_reference(
+                cursor,
+                """
+                SELECT TOP (1) 1
+                FROM dbo.PENSUM
+                WHERE TRY_CONVERT(nvarchar(50), codigo_materia) = ?
+                  AND TRY_CONVERT(nvarchar(50), Cod_AnioBasica) = ?
+                """,
+                [subject_code, career_code],
+                label,
+            )
+        duplicate_sql = """
+            SELECT TOP (1) 1
+            FROM dbo.MATERIAS_CONSECUTIVAS
+            WHERE cod_carrera = ? AND cod_materia = ? AND cod_materia_consecutiva = ?
+        """
+        duplicate_params: list[Any] = [career_code, source_subject, target_subject]
+        if not creating and record_key_values:
+            duplicate_sql += " AND id <> ?"
+            duplicate_params.append(record_key_values[0])
+        cursor.execute(duplicate_sql, duplicate_params)
+        if cursor.fetchone() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La relación entre estas materias ya está registrada",
+            )
+        return
+
+    if section_key == "horarios_academicos":
+        career_code = str(values.get("cod_carrera") or "").strip()
+        _ensure_reference(
+            cursor,
+            """
+            SELECT TOP (1) 1
+            FROM dbo.PENSUM
+            WHERE LTRIM(RTRIM(cod_materia)) = ?
+              AND TRY_CONVERT(nvarchar(50), Cod_AnioBasica) = ?
+            """,
+            [str(values.get("cod_materia") or "").strip(), career_code],
+            "La materia seleccionada no pertenece a la carrera indicada",
+        )
+        references = (
+            ("SELECT TOP (1) 1 FROM dbo.PERIODO WHERE TRY_CONVERT(nvarchar(50), cod_periodo) = ?", "cod_periodo", "El período seleccionado no existe"),
+            ("SELECT TOP (1) 1 FROM dbo.CARRERAS WHERE TRY_CONVERT(nvarchar(50), Cod_AnioBasica) = ?", "cod_carrera", "La carrera seleccionada no existe"),
+            ("SELECT TOP (1) 1 FROM dbo.JORNADA WHERE TRY_CONVERT(nvarchar(50), NumJ) = ?", "cod_jornada", "La jornada seleccionada no existe"),
+            ("SELECT TOP (1) 1 FROM dbo.Paralelo WHERE codigo_paralelo = ? AND activo = 1", "paralelo", "El paralelo seleccionado no existe o está inactivo"),
+            ("SELECT TOP (1) 1 FROM dbo.DATOSDOCENTE WHERE TRY_CONVERT(nvarchar(50), codigo_doc) = ?", "codigo_docente", "El docente seleccionado no existe"),
+        )
+        for sql, field_name, detail in references:
+            _ensure_reference(cursor, sql, [str(values.get(field_name) or "").strip()], detail)
+        day_code = str(values.get("dia_semana") or "").strip()
+        if not day_code.isdigit() or not 1 <= int(day_code) <= 7:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El día de la semana debe estar entre 1 y 7")
+        _validate_ordered_range(
+            values,
+            "fecha_inicio",
+            "fecha_finalizacion",
+            "El fin de vigencia no puede ser anterior al inicio",
+        )
+        _validate_ordered_range(
+            values,
+            "hora_inicio",
+            "hora_fin",
+            "La hora de fin debe ser posterior a la hora de inicio",
+            allow_equal=False,
+        )
+        duplicate_fields = [
+            "cod_materia",
+            "cod_periodo",
+            "cod_carrera",
+            "cod_jornada",
+            "paralelo",
+            "dia_semana",
+            "hora_inicio",
+            "hora_fin",
+            "codigo_docente",
+            "fecha_inicio",
+            "fecha_finalizacion",
+        ]
+        duplicate_sql = f"""
+            SELECT TOP (1) 1
+            FROM dbo.HORARIOS
+            WHERE {' AND '.join(f'{_quote_column(name)} = ?' for name in duplicate_fields)}
+        """
+        duplicate_params = [values.get(name) for name in duplicate_fields]
+        if not creating and record_key_values:
+            duplicate_sql += " AND id <> ?"
+            duplicate_params.append(record_key_values[0])
+        cursor.execute(duplicate_sql, duplicate_params)
+        if cursor.fetchone() is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Este horario ya está registrado")
+
+
+def _write_error(exc: Exception, fallback: str) -> HTTPException:
+    message = str(exc).lower()
+    if any(token in message for token in ("duplicate key", "cannot insert duplicate", "2601", "2627")):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe un registro con la misma clave")
+    if "truncated" in message or "8152" in message:
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uno de los valores supera la longitud permitida por la base de datos",
+        )
+    if "cannot insert the value null" in message or "515" in message:
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Falta completar un campo obligatorio")
+    return HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=fallback)
+
+
+def _invalidate_after_section_change(section_key: str) -> None:
+    dependencies = {
+        "carreras": ("materias", "mallas", "docente_materias", "materias_consecutivas", "horarios_academicos"),
+        "materias": ("docente_materias", "materia_homo_textof", "materias_consecutivas", "horarios_academicos"),
+        "mallas": ("materias",),
+        "periodos": ("materia_homo_textof", "fechas_notas", "fechas_autoevaluacion", "horarios_academicos", "asistencia_estudiantes"),
+        "jornadas": ("docente_materias", "horarios_academicos", "asistencia_estudiantes"),
+        "modalidades": ("jornadas",),
+        "paralelos": ("asistencia_estudiantes",),
+        "paralelos_horarios": ("horarios_academicos",),
+        "dias_semana": ("horarios_academicos",),
+    }
+    _invalidate_lookup_options(section_key, *dependencies.get(section_key, ()))
 
 
 @router.put("/{section_key}/{record_key}")
@@ -4711,7 +5763,13 @@ def update_record(
     updates: dict[str, Any] = {}
     for name, value in payload.values.items():
         if name in editable:
-            updates[name] = _normalize_value(value, editable[name])
+            normalized_value = _normalize_value(value, editable[name])
+            if editable[name].required and (normalized_value is None or normalized_value == ""):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Campo requerido: {editable[name].label}",
+                )
+            updates[name] = normalized_value
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No hay campos editables para guardar")
     if "fecha_modificacion" in _all_read_columns(section) and "fecha_modificacion" in editable:
@@ -4730,11 +5788,22 @@ def update_record(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            _validate_academic_process_values(
+                cursor,
+                section_key,
+                updates,
+                record_key_values=key_values,
+            )
             cursor.execute(sql, params)
             affected = cursor.rowcount
+            if affected == 0:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
             conn.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo guardar el registro") from exc
+        raise _write_error(exc, "No se pudo guardar el registro") from exc
+    _invalidate_after_section_change(section_key)
     return {"ok": True, "message": "Registro actualizado", "affected_rows": affected}
 
 
@@ -4747,7 +5816,10 @@ def _create_docente_with_user(payload: SavePayload) -> dict[str, Any]:
         if meta.required and (value is None or value == ""):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido: {meta.label}")
         if value is not None and value != "":
-            values[name] = _normalize_value(value, meta)
+            normalized_value = _normalize_value(value, meta)
+            if meta.required and (normalized_value is None or normalized_value == ""):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Campo requerido: {meta.label}")
+            values[name] = normalized_value
 
     docente_columns = [
         "codigo_doc",
@@ -4765,6 +5837,12 @@ def _create_docente_with_user(payload: SavePayload) -> dict[str, Any]:
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            _validate_academic_process_values(
+                cursor,
+                "materia_homo_textof",
+                values,
+                creating=True,
+            )
             cursor.execute(
                 f"""
                 INSERT INTO dbo.DATOSDOCENTE ({", ".join(_quote_column(column) for column in insert_columns)})
@@ -4870,9 +5948,12 @@ def _create_or_update_materia_homo_text(payload: SavePayload) -> dict[str, Any]:
                 action = "created"
                 message = "Texto HOMO creado"
             conn.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo guardar el texto HOMO") from exc
+        raise _write_error(exc, "No se pudo guardar el texto HOMO") from exc
 
+    _invalidate_after_section_change("materia_homo_textof")
     return {"ok": True, "message": message, "affected_rows": 1, "action": action}
 
 
@@ -5012,14 +6093,49 @@ def create_record(
         INSERT INTO {section["table"]} ({", ".join(_quote_column(column) for column in columns)})
         VALUES ({", ".join("?" for _ in columns)})
     """
+    created_record: dict[str, Any] | None = None
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            if section_key == "carreras":
+                _ensure_new_career_code_available(cursor, values.get("Cod_AnioBasica"))
+            _validate_academic_process_values(cursor, section_key, values, creating=True)
             cursor.execute(sql, list(values.values()))
+
+            created_key_values: list[Any] | None = None
+            if section_key == "materias":
+                cursor.execute("SELECT SCOPE_IDENTITY()")
+                identity_row = cursor.fetchone()
+                if identity_row and identity_row[0] is not None:
+                    created_key_values = [identity_row[0]]
+            elif section_key == "carreras":
+                created_key_values = [values.get("Cod_AnioBasica")]
+
+            if created_key_values and all(value is not None for value in created_key_values):
+                read_columns = _selectable_columns(_all_read_columns(section))
+                cursor.execute(
+                    f"""
+                    SELECT {", ".join(_quote_column(column) for column in read_columns)}
+                    FROM {section["table"]}
+                    WHERE {_where_clause(section["key_fields"])}
+                    """,
+                    created_key_values,
+                )
+                created_rows = _rows_from_cursor(cursor, section_key, section["key_fields"])
+                if created_rows:
+                    created_record = created_rows[0]
             conn.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"No se pudo crear el registro: {exc}",
-        ) from exc
-    return {"ok": True, "message": "Registro creado"}
+        raise _write_error(exc, "No se pudo crear el registro") from exc
+    _invalidate_after_section_change(section_key)
+    response: dict[str, Any] = {
+        "ok": True,
+        "message": "Registro creado y verificado en la base de datos",
+        "affected_rows": 1,
+    }
+    if created_record:
+        response["record"] = created_record
+        response["record_key"] = created_record.get("_record_key")
+    return response

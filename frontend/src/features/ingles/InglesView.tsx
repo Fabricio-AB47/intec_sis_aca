@@ -26,6 +26,7 @@ import type {
   EnglishUploadSessionResponse,
 } from '../../types/app'
 import { CalificacionesTabs } from '../admin/CalificacionesTabs'
+import { EnglishApprovalDocuments } from './EnglishApprovalDocuments'
 
 type InglesViewProps = {
   displayName: string
@@ -1277,28 +1278,32 @@ export function InglesView({ displayName, role, onOpenSubjectGrades }: Readonly<
   const currentRole = normalizedRole(role)
   const isStudent = currentRole === 'ESTUDIANTE'
   const isAdministrator = currentRole === 'ADMINISTRADOR'
-  const [adminSection, setAdminSection] = useState<'reviews' | 'schedules'>('reviews')
+  const canManageApprovalDocuments = ['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA'].includes(currentRole)
+  const [adminSection, setAdminSection] = useState<'reviews' | 'schedules' | 'documents'>('reviews')
   const managingSchedules = isAdministrator && adminSection === 'schedules'
+  const managingDocuments = canManageApprovalDocuments && adminSection === 'documents'
   return (
     <section className="english-page">
       <header className="student-topbar english-hero">
         <div>
           <p className="eyebrow">Escuela de Idiomas</p>
-          <h2>{isStudent ? 'Evaluación de idiomas' : managingSchedules ? 'Fechas de actividades de idiomas' : 'Calificaciones de idiomas'}</h2>
+          <h2>{isStudent ? 'Evaluación de idiomas' : managingSchedules ? 'Fechas de actividades de idiomas' : managingDocuments ? 'Documentación de aprobación de Inglés' : 'Calificaciones de idiomas'}</h2>
           <p className="report-description">
             {isStudent
               ? 'Entregue los videos de P1, P2 y P3 únicamente para la asignatura y el período en que se encuentra matriculado.'
               : managingSchedules
                 ? 'Actualice el inicio y cierre de P1, P2 y P3 por período y asignatura para cualquier situación administrativa.'
+                : managingDocuments
+                  ? 'Cargue, revise y valide los tres documentos obligatorios para acreditar el nivel A2+ del estudiante.'
                 : 'Revise estudiantes con matrícula vigente y registre la nota de examen de cada parcial, de 0 a 10.'}
           </p>
         </div>
-        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isStudent ? 'Portal estudiante' : managingSchedules ? 'Administración de fechas' : 'Revisión docente'}</span></div></div>
+        <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isStudent ? 'Portal estudiante' : managingSchedules ? 'Administración de fechas' : managingDocuments ? 'Validación documental' : 'Revisión docente'}</span></div></div>
       </header>
       {!isStudent && onOpenSubjectGrades ? (
         <CalificacionesTabs active="idiomas" onOpenSubjects={onOpenSubjectGrades} />
       ) : null}
-      {isAdministrator ? (
+      {isAdministrator || canManageApprovalDocuments ? (
         <nav className="english-admin-tabs" aria-label="Administración de la Escuela de Idiomas">
           <button
             type="button"
@@ -1310,19 +1315,31 @@ export function InglesView({ displayName, role, onOpenSubjectGrades }: Readonly<
           </button>
           <button
             type="button"
-            className={adminSection === 'schedules' ? 'is-active' : ''}
-            onClick={() => setAdminSection('schedules')}
+            className={adminSection === 'documents' ? 'is-active' : ''}
+            onClick={() => setAdminSection('documents')}
           >
-            <span>Fechas de actividades</span>
-            <small>Inicio y cierre de P1, P2 y P3</small>
+            <span>Documentación de aprobación</span>
+            <small>Tres respaldos obligatorios de A2+</small>
           </button>
+          {isAdministrator ? (
+            <button
+              type="button"
+              className={adminSection === 'schedules' ? 'is-active' : ''}
+              onClick={() => setAdminSection('schedules')}
+            >
+              <span>Fechas de actividades</span>
+              <small>Inicio y cierre de P1, P2 y P3</small>
+            </button>
+          ) : null}
         </nav>
       ) : null}
       {isStudent
         ? <StudentEnglishExam displayName={displayName} />
         : managingSchedules
           ? <AdminEnglishActivitySchedules />
-          : <ReviewerEnglishExams />}
+          : managingDocuments
+            ? <EnglishApprovalDocuments displayName={displayName} role={role} />
+            : <ReviewerEnglishExams />}
     </section>
   )
 }

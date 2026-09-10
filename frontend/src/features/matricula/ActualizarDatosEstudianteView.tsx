@@ -20,6 +20,38 @@ type DataUpdateProfileMatch = {
   person: LegacyDataUpdatePerson
 }
 
+type DataUpdateCatalogOption = {
+  value: string
+  label: string
+  parent_value?: string
+}
+
+const TERRITORIAL_DEPENDENCIES: Record<string, { parent: string; parentLabel: string }> = {
+  provinciaNacimeintoId: { parent: 'paisNacionalidadId', parentLabel: 'país de nacionalidad' },
+  cantonNacimeintoId: { parent: 'provinciaNacimeintoId', parentLabel: 'provincia de nacimiento' },
+  codprov: { parent: 'paisResidenciaId', parentLabel: 'país de residencia' },
+  Canton: { parent: 'codprov', parentLabel: 'provincia de residencia' },
+  provinciaSufragio: { parent: 'paisNacionalidadId', parentLabel: 'país de nacionalidad' },
+}
+
+const TERRITORIAL_DESCENDANTS: Record<string, string[]> = {
+  paisNacionalidadId: ['provinciaNacimeintoId', 'cantonNacimeintoId', 'provinciaSufragio'],
+  provinciaNacimeintoId: ['cantonNacimeintoId'],
+  paisResidenciaId: ['codprov', 'Canton'],
+  codprov: ['Canton'],
+}
+
+const TERRITORIAL_CATALOG_FIELDS = new Set([
+  'paisNacionalidadId',
+  'provinciaNacimeintoId',
+  'cantonNacimeintoId',
+  'paisResidenciaId',
+  'codprov',
+  'Canton',
+  'provinciaSufragio',
+  'paisEstudiosId',
+])
+
 const FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
   {
     title: 'Identificación',
@@ -144,7 +176,7 @@ const TEACHER_FIELD_GROUPS: Array<{ title: string; fields: string[] }> = [
   },
   {
     title: 'Contacto y residencia',
-    fields: ['Direccion', 'provinciaSufragio', 'movil', 'correop', 'correo', 'numDomicilio', 'fecha_nac', 'paisNacionalidadId', 'tiposangre'],
+    fields: ['fecha_nac', 'paisNacionalidadId', 'provinciaSufragio', 'Direccion', 'numDomicilio', 'movil', 'correop', 'correo', 'tiposangre'],
   },
   {
     title: 'Discapacidad y salud',
@@ -288,6 +320,65 @@ const STUDENT_FIELD_LABELS: Record<string, string> = {
   correointec: 'Correo institucional',
 }
 
+const TEACHER_FIELD_LABELS: Record<string, string> = {
+  tipoDocumentoId: 'Tipo de documento',
+  cedula_doc: 'Número de documento de identificación',
+  apellidos_nombre: 'Apellidos y nombres',
+  sexo: 'Sexo',
+  generoId: 'Género',
+  estado_civil: 'Estado civil',
+  etniaId: 'Etnia',
+  nacionalidad: 'Pueblo y nacionalidad',
+  Direccion: 'Dirección domiciliaria',
+  provinciaSufragio: 'Provincia de sufragio',
+  movil: 'Celular',
+  correop: 'Correo personal',
+  correo: 'Correo institucional',
+  numDomicilio: 'Número de domicilio',
+  discapacidad: 'Discapacidad',
+  porcen_discapa: 'Porcentaje de discapacidad',
+  tipo_discapa: 'Tipo de discapacidad',
+  carnet_conadis: 'Carné CONADIS',
+  tipoEnfermedadCatastrofica: 'Enfermedad catastrófica',
+  fecha_nac: 'Fecha de nacimiento',
+  paisNacionalidadId: 'País de nacionalidad',
+  nivelFormacion: 'Nivel de formación',
+  fechaIngresoIES: 'Fecha de ingreso a la IES',
+  fechaSalidaIES: 'Fecha de salida de la IES',
+  relacionLaboralIESId: 'Relación laboral con la IES',
+  ingresoConCursoMeritos: 'Ingreso por concurso de méritos',
+  escalafonDocenteId: 'Escalafón docente',
+  cargoDirectivoId: 'Cargo directivo',
+  tiempoDedicacionId: 'Tiempo de dedicación',
+  nombreUnidadAcademica: 'Unidad académica',
+  nroasignaturasdocente: 'Número de asignaturas',
+  nroHorasLaborablesSemanaEnCarreraPrograma: 'Horas laborables por semana',
+  nroHorasClaseSemanaCarreraPrograma: 'Horas de clase por semana',
+  nroHorasInvestigacionSemanaCarreraPrograma: 'Horas de investigación por semana',
+  nroHorasAdministrativasSemanaCarreraPrograma: 'Horas administrativas por semana',
+  nroHorasOtrasActividadesSemanaCarreraPrograma: 'Horas de otras actividades por semana',
+  nroHorasVinculacionSociedad: 'Horas de vinculación con la sociedad',
+  salarioMensual: 'Salario mensual',
+  docenciaTecnicoSuperior: 'Docencia en técnico superior',
+  docenciaTecnologico: 'Docencia en tecnológico',
+  estaEnPeriodoSabatico: 'Se encuentra en período sabático',
+  fechaInicioPeriodoSabatico: 'Inicio del período sabático',
+  estaCursandoEstudiosId: 'Estudios que cursa actualmente',
+  institucionDOndeCursaEstudios: 'Institución donde cursa estudios',
+  paisEstudiosId: 'País donde cursa estudios',
+  tituloAObtener: 'Título que obtendrá',
+  poseeBecaId: 'Posee beca',
+  tipoBecaId: 'Tipo de beca',
+  montoBeca: 'Monto de beca',
+  financiamientoBecaId: 'Financiamiento de la beca',
+  pubRevistasCienInIndexadasId: 'Publica en revistas científicas indexadas',
+  numPubRevistasCientifIndexadas: 'Número de publicaciones indexadas',
+  docenciaTecnologicoUniversitario: 'Docencia en tecnológico universitario',
+  docenciaEspecializacionTecnologica: 'Docencia en especialización tecnológica',
+  docenciaMaestriaTecnologica: 'Docencia en maestría tecnológica',
+  tiposangre: 'Tipo de sangre',
+}
+
 const FALLBACK_FIELD_CATALOGS: Record<string, Array<{ value: string; label: string }>> = {
   tiposangre: [
     { value: '1', label: 'A +' },
@@ -346,6 +437,9 @@ function fieldLabel(field: string, target: LegacyDataUpdateTarget): string {
   if (target === 'estudiantes' && STUDENT_FIELD_LABELS[field]) {
     return STUDENT_FIELD_LABELS[field]
   }
+  if (target === 'docentes' && TEACHER_FIELD_LABELS[field]) {
+    return TEACHER_FIELD_LABELS[field]
+  }
   return field
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -353,23 +447,47 @@ function fieldLabel(field: string, target: LegacyDataUpdateTarget): string {
     .trim()
 }
 
-function inputTypeForField(field: string): string {
-  if (DATE_FIELDS.has(field)) return 'date'
+function inputTypeForField(field: string, dataType?: string): string {
+  if (DATE_FIELDS.has(field) || ['date', 'datetime', 'datetime2', 'smalldatetime'].includes(dataType || '')) return 'date'
   if (NUMERIC_FIELDS.has(field)) return 'text'
   if (field.toLowerCase().includes('correo')) return 'email'
   return 'text'
 }
 
 function optionsWithCurrentValue(
-  options: Array<{ value: string; label: string }> | undefined,
+  options: DataUpdateCatalogOption[] | undefined,
   currentValue: string | number | null | undefined,
-): Array<{ value: string; label: string }> {
+): DataUpdateCatalogOption[] {
   const current = valueText(currentValue).trim()
   const baseOptions = options || []
   if (!current || baseOptions.some((option) => valueText(option.value).trim() === current)) {
     return baseOptions
   }
   return [{ value: current, label: `${current} (valor actual)` }, ...baseOptions]
+}
+
+function sameTerritorialCode(left: string | number | null | undefined, right: string | number | null | undefined): boolean {
+  const leftValue = valueText(left).trim()
+  const rightValue = valueText(right).trim()
+  if (!leftValue || !rightValue) return false
+  if (/^\d+$/.test(leftValue) && /^\d+$/.test(rightValue)) {
+    return Number(leftValue) === Number(rightValue)
+  }
+  return leftValue.toLocaleUpperCase('es-EC') === rightValue.toLocaleUpperCase('es-EC')
+}
+
+function territorialCatalogOptions(
+  field: string,
+  options: DataUpdateCatalogOption[],
+  fields: Record<string, string | number | null>,
+): DataUpdateCatalogOption[] {
+  const dependency = TERRITORIAL_DEPENDENCIES[field]
+  if (!dependency) return options
+  const parentValue = fields[dependency.parent]
+  if (!valueText(parentValue).trim()) return []
+  return options.filter((option) => (
+    !option.parent_value || sameTerritorialCode(option.parent_value, parentValue)
+  ))
 }
 
 function normalizeDocument(value: string | number | null | undefined): string {
@@ -499,6 +617,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
 
   const columns = useMemo(() => detail?.columns || [], [detail?.columns])
   const catalogs = detail?.catalogs || {}
+  const fieldMetadata = detail?.field_metadata || {}
   const visibleColumns = useMemo(
     () => target === 'estudiantes' ? columns.filter((field) => shouldShowStudentField(field, formFields)) : columns,
     [columns, formFields, target],
@@ -611,6 +730,11 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   function updateField(field: string, value: string) {
     setFormFields((current) => {
       const next = { ...current, [field]: value }
+      if (valueText(current[field]) !== value) {
+        for (const descendant of TERRITORIAL_DESCENDANTS[field] || []) {
+          if (descendant in next) next[descendant] = ''
+        }
+      }
       return target === 'estudiantes' ? applyStudentDerivedValues(next) : next
     })
   }
@@ -801,22 +925,45 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                       <h3>{group.title}</h3>
                       <div className="senescyt-update-fields">
                         {group.fields.map((field) => {
-                          const catalogOptions = catalogs[field]?.length ? catalogs[field] : FALLBACK_FIELD_CATALOGS[field]
-                          const fieldOptions = optionsWithCurrentValue(catalogOptions, formFields[field])
-                          const isReadonly = target === 'estudiantes' && STUDENT_READONLY_FIELDS.has(field)
+                          const catalogOptions = catalogs[field]?.length
+                            ? catalogs[field]
+                            : (FALLBACK_FIELD_CATALOGS[field] || [])
+                          const filteredOptions = territorialCatalogOptions(field, catalogOptions, formFields)
+                          const fieldOptions = optionsWithCurrentValue(filteredOptions, formFields[field])
+                          const dependency = TERRITORIAL_DEPENDENCIES[field]
+                          const dependencyValue = dependency ? valueText(formFields[dependency.parent]).trim() : ''
+                          const dependencyMissing = Boolean(dependency && !dependencyValue)
+                          const dependencyWithoutOptions = Boolean(
+                            dependency && dependencyValue && filteredOptions.length === 0,
+                          )
+                          const dependencyUnavailable = dependencyMissing || dependencyWithoutOptions
+                          const isCatalogField = catalogOptions.length > 0 || TERRITORIAL_CATALOG_FIELDS.has(field)
+                          const metadata = fieldMetadata[field]
+                          const isReadonly = Boolean(metadata?.readonly)
+                            || (target === 'estudiantes' && STUDENT_READONLY_FIELDS.has(field))
                           const helpText = target === 'estudiantes' && field === 'correointec'
                             ? 'Correo institucional consultado desde el sistema.'
+                            : dependencyMissing && dependency
+                              ? `Seleccione primero: ${dependency.parentLabel}.`
+                              : dependencyWithoutOptions && dependency
+                                ? `No existen opciones relacionadas con: ${dependency.parentLabel}.`
                             : ''
                           return (
                           <label key={field}>
                             <span>{fieldLabel(field, target)}</span>
-                            {fieldOptions.length ? (
+                            {isCatalogField ? (
                               <select
                                 value={valueText(formFields[field])}
                                 onChange={(event) => updateField(field, event.target.value)}
-                                disabled={isReadonly}
+                                disabled={isReadonly || dependencyUnavailable}
                               >
-                                <option value="">Seleccione</option>
+                                <option value="">
+                                  {dependencyMissing && dependency
+                                    ? `Seleccione ${dependency.parentLabel}`
+                                    : dependencyWithoutOptions
+                                      ? 'Sin opciones relacionadas'
+                                    : 'Seleccione'}
+                                </option>
                                 {fieldOptions.map((option) => (
                                   <option key={`${field}-${option.value}`} value={option.value}>
                                     {option.label}
@@ -825,11 +972,12 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                               </select>
                             ) : (
                               <input
-                                type={inputTypeForField(field)}
+                                type={inputTypeForField(field, metadata?.data_type)}
                                 inputMode={NUMERIC_FIELDS.has(field) ? 'numeric' : undefined}
                                 value={valueText(formFields[field])}
                                 onChange={(event) => updateField(field, event.target.value)}
                                 readOnly={isReadonly}
+                                maxLength={metadata?.max_length || undefined}
                               />
                             )}
                             {helpText ? <small>{helpText}</small> : null}

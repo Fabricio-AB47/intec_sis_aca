@@ -78,6 +78,8 @@ import type {
   ExcelSqlCrossResponse,
   ExcelValidationResponse,
   EnglishActivitySchedulesResponse,
+  EnglishApprovalReviewResponse,
+  EnglishApprovalStatus,
   EnglishExam,
   EnglishSubmissionsResponse,
   EnglishUploadSessionResponse,
@@ -1889,8 +1891,18 @@ export async function downloadLegacyReportWorkbook(filters: LegacyReportFilters 
   return response.blob()
 }
 
-export async function fetchSisAcademicoCatalog(): Promise<SisAcademicoCatalogResponse> {
-  return request<SisAcademicoCatalogResponse>('/api/students/sisacademico/catalog')
+let sisAcademicoCatalogRequest: Promise<SisAcademicoCatalogResponse> | null = null
+
+export function fetchSisAcademicoCatalog(): Promise<SisAcademicoCatalogResponse> {
+  if (!sisAcademicoCatalogRequest) {
+    sisAcademicoCatalogRequest = request<SisAcademicoCatalogResponse>(
+      '/api/students/sisacademico/catalog?include_options=false'
+    ).catch((error) => {
+      sisAcademicoCatalogRequest = null
+      throw error
+    })
+  }
+  return sisAcademicoCatalogRequest
 }
 
 export async function fetchSisAcademicoV1Modules(): Promise<SisAcademicoV1ModulesResponse> {
@@ -1901,12 +1913,22 @@ export async function fetchSisAcademicoV1Artifacts(): Promise<SisAcademicoV1Arti
   return request<SisAcademicoV1ArtifactsResponse>('/api/students/sisacademico/legacy-v1/artifacts')
 }
 
-export async function fetchSisAcademicoRows(
+const sisAcademicoRowsInFlight = new Map<string, Promise<SisAcademicoListResponse>>()
+
+function invalidateSisAcademicoRows(sectionKey: string) {
+  const prefix = `/api/students/sisacademico/${encodeURIComponent(sectionKey)}`
+  for (const url of sisAcademicoRowsInFlight.keys()) {
+    if (url === prefix || url.startsWith(`${prefix}?`)) sisAcademicoRowsInFlight.delete(url)
+  }
+}
+
+export function fetchSisAcademicoRows(
   sectionKey: string,
   query: string = '',
   options: {
     limit?: number
     periodo?: string
+    careerCode?: string
     page?: number
     pageSize?: number
     signal?: AbortSignal
@@ -1919,20 +1941,37 @@ export async function fetchSisAcademicoRows(
   if (options.periodo) {
     params.set('periodo', options.periodo)
   }
+  if (options.careerCode) {
+    params.set('carrera', options.careerCode)
+  }
   if (typeof options.page === 'number' && Number.isFinite(options.page) && options.page > 0) {
     params.set('page', String(Math.trunc(options.page)))
   }
   if (typeof options.pageSize === 'number' && Number.isFinite(options.pageSize) && options.pageSize > 0) {
     params.set('page_size', String(Math.trunc(options.pageSize)))
   }
+  if (options.page || options.pageSize) {
+    params.set('paginado', 'true')
+  }
   if (query) {
     params.set('query', query)
   }
   const queryString = params.toString()
-  return request<SisAcademicoListResponse>(
-    `/api/students/sisacademico/${encodeURIComponent(sectionKey)}${queryString ? `?${queryString}` : ''}`,
-    { signal: options.signal },
-  )
+  const url = `/api/students/sisacademico/${encodeURIComponent(sectionKey)}${queryString ? `?${queryString}` : ''}`
+  if (options.signal) {
+    return request<SisAcademicoListResponse>(url, { signal: options.signal })
+  }
+
+  const pendingRequest = sisAcademicoRowsInFlight.get(url)
+  if (pendingRequest) return pendingRequest
+
+  const nextRequest = request<SisAcademicoListResponse>(url).finally(() => {
+    if (sisAcademicoRowsInFlight.get(url) === nextRequest) {
+      sisAcademicoRowsInFlight.delete(url)
+    }
+  })
+  sisAcademicoRowsInFlight.set(url, nextRequest)
+  return nextRequest
 }
 
 export async function fetchSisAcademicoRecord(
@@ -1949,23 +1988,27 @@ export async function updateSisAcademicoRecord(
   recordKey: string,
   values: Record<string, unknown>
 ): Promise<SisAcademicoSaveResponse> {
-  return request<SisAcademicoSaveResponse>(
+  const response = await request<SisAcademicoSaveResponse>(
     `/api/students/sisacademico/${encodeURIComponent(sectionKey)}/${encodeURIComponent(recordKey)}`,
     {
       method: 'PUT',
       body: { values },
     }
   )
+  invalidateSisAcademicoRows(sectionKey)
+  return response
 }
 
 export async function createSisAcademicoRecord(
   sectionKey: string,
   values: Record<string, unknown>
 ): Promise<SisAcademicoSaveResponse> {
-  return request<SisAcademicoSaveResponse>(`/api/students/sisacademico/${encodeURIComponent(sectionKey)}`, {
+  const response = await request<SisAcademicoSaveResponse>(`/api/students/sisacademico/${encodeURIComponent(sectionKey)}`, {
     method: 'POST',
     body: { values },
   })
+  invalidateSisAcademicoRows(sectionKey)
+  return response
 }
 
 export async function fetchCertificadosCatalog(): Promise<CertificadosCatalogResponse> {
@@ -5356,6 +5399,30 @@ export async function finalizeDocumentExpedientUpload(uploadId: string): Promise
   return request<DocumentExpedientFinalizeResponse>('/api/document-expedients/finalize', {
     method: 'POST',
     body: { upload_id: uploadId },
+  })
+}
+
+export async function fetchEnglishApprovalStatus(identification: string): Promise<EnglishApprovalStatus> {
+  const params = new URLSearchParams({ identification: identification.trim() })
+  return request<EnglishApprovalStatus>(`/api/document-expedients/english-approval?${params.toString()}`, {
+    cache: 'no-store',
+  })
+}
+
+export async function reviewEnglishApprovalDocument(payload: {
+  identification: string
+  documentGraphId: number
+  approved: boolean
+  observation?: string
+}): Promise<EnglishApprovalReviewResponse> {
+  return request<EnglishApprovalReviewResponse>('/api/document-expedients/english-approval/review', {
+    method: 'PUT',
+    body: {
+      identification: payload.identification,
+      document_graph_id: payload.documentGraphId,
+      approved: payload.approved,
+      observation: payload.observation || '',
+    },
   })
 }
 

@@ -349,7 +349,7 @@
 .titulacion-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 2500;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -16249,6 +16249,37 @@
   width: 112px;
 }
 
+.gestion-sis-table.gestion-sis-table--academic-schedules {
+  min-width: 1500px;
+  table-layout: fixed;
+}
+
+.gestion-sis-table--academic-schedules th:nth-child(1) { width: 52px; }
+.gestion-sis-table--academic-schedules th:nth-child(2) { width: 72px; }
+.gestion-sis-table--academic-schedules th:nth-child(3) { width: 250px; }
+.gestion-sis-table--academic-schedules th:nth-child(4) { width: 260px; }
+.gestion-sis-table--academic-schedules th:nth-child(5) { width: 190px; }
+.gestion-sis-table--academic-schedules th:nth-child(6) { width: 135px; }
+.gestion-sis-table--academic-schedules th:nth-child(7) { width: 95px; }
+.gestion-sis-table--academic-schedules th:nth-child(8) { width: 125px; }
+.gestion-sis-table--academic-schedules th:nth-child(9),
+.gestion-sis-table--academic-schedules th:nth-child(10) { width: 86px; }
+.gestion-sis-table--academic-schedules th:nth-child(11) { width: 235px; }
+.gestion-sis-table--academic-schedules th:nth-child(12) { width: 110px; }
+
+.gestion-sis-table--academic-schedules td:nth-child(8),
+.gestion-sis-table--academic-schedules td:nth-child(9),
+.gestion-sis-table--academic-schedules td:nth-child(10),
+.gestion-sis-table--academic-schedules td:nth-child(12) {
+  white-space: nowrap;
+}
+
+.gestion-sis-table--academic-schedules th,
+.gestion-sis-table--academic-schedules td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .gestion-sis-readable-cell {
   display: grid;
   gap: 4px;
@@ -20232,7 +20263,7 @@
 .senescyt-update-subscreen-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 1300;
   display: grid;
   place-items: center;
   padding: 18px;
@@ -20240,7 +20271,7 @@
 }
 
 .data-update-profile-backdrop {
-  z-index: 100;
+  z-index: 1310;
 }
 
 .data-update-profile-selector {
@@ -36815,6 +36846,38 @@ body .student-sidebar .logout-button {
   font-size: 0.88rem;
 }
 
+.titulacion-english-document-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-inline: 16px;
+  padding: 10px 12px;
+  border: 1px solid #bdd7df;
+  border-radius: 8px;
+  background: #eef7f8;
+}
+
+.titulacion-english-document-action > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.titulacion-english-document-action strong { color: #14213d; }
+.titulacion-english-document-action span { color: #5b6980; font-size: 0.82rem; }
+.titulacion-english-document-action .secondary-action { flex: 0 0 auto; }
+
+.titulacion-english-documents-modal {
+  width: min(1450px, 98vw);
+  max-height: 96vh;
+  overflow: auto;
+  border: 1px solid rgba(141, 187, 199, 0.62);
+  border-radius: 8px;
+  background: #f4f6f7;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
 .titulacion-review-modal .titulacion-progress-meter {
   height: 10px;
 }
@@ -36883,7 +36946,7 @@ body .student-sidebar .logout-button {
 }
 
 .titulacion-modal-backdrop--stacked {
-  z-index: 90;
+  z-index: 2510;
   background: rgba(15, 23, 42, 0.5);
 }
 
@@ -37269,6 +37332,21 @@ body .student-sidebar .logout-button {
   .titulacion-review-actions {
     grid-template-columns: 1fr;
   }
+
+  .titulacion-english-document-action,
+  .english-approval-review__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .titulacion-english-document-action .secondary-action,
+  .english-approval-overall {
+    width: 100%;
+  }
+
+  .english-approval-overall { justify-items: start; }
+  .english-approval-grade,
+  .english-approval-requirements article { grid-template-columns: 1fr; }
 
   .titulacion-review-modal .titulacion-progress-table table {
     min-width: 720px;
@@ -41217,7 +41295,7 @@ body .student-sidebar .logout-button {
 
 .english-admin-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   overflow: hidden;
   border: 1px solid #c9d9df;
   border-radius: 7px;
@@ -41257,6 +41335,169 @@ body .student-sidebar .logout-button {
 .english-admin-tabs small {
   color: #667187;
   font-weight: 700;
+}
+
+.english-approval-documents {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.english-approval-loading {
+  padding: 14px 16px;
+  border: 1px solid #c8d9df;
+  border-radius: 8px;
+  background: #f7fafb;
+  color: #526078;
+  font-weight: 800;
+}
+
+.english-approval-review {
+  overflow: hidden;
+  border: 1px solid #c8d9df;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.english-approval-review__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #d7e1e5;
+  background: #f7fafb;
+}
+
+.english-approval-review__header > div:first-child {
+  min-width: 0;
+}
+
+.english-approval-review__header span,
+.english-approval-grade span,
+.english-approval-requirement__review label span {
+  color: #657187;
+  font-size: 0.73rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.english-approval-review__header h3 {
+  margin: 3px 0 0;
+  color: #14213d;
+  font-size: 1.08rem;
+}
+
+.english-approval-review__header p {
+  margin: 5px 0 0;
+  color: #5f6d7f;
+}
+
+.english-approval-overall {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 3px;
+  min-width: 210px;
+  padding: 10px 12px;
+  border: 1px solid #e7c879;
+  border-radius: 7px;
+  background: #fff8e8;
+  color: #835800;
+}
+
+.english-approval-overall--ok {
+  border-color: #91d2ba;
+  background: #edf9f4;
+  color: #17684f;
+}
+
+.english-approval-overall small { overflow-wrap: anywhere; }
+.english-approval-overall small { color: inherit; font-weight: 700; }
+
+.english-approval-grade {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(140px, 0.45fr) minmax(260px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #d7e1e5;
+  background: #eef7f8;
+}
+
+.english-approval-grade strong { color: #14213d; }
+.english-approval-grade small { color: #536279; font-weight: 700; }
+
+.english-approval-requirements {
+  display: grid;
+}
+
+.english-approval-requirements article {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(390px, 0.85fr);
+  gap: 18px;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid #dfe6ea;
+  box-shadow: inset 4px 0 0 #d8a934;
+}
+
+.english-approval-requirements article:last-child { border-bottom: 0; }
+.english-approval-requirements article.is-validated { box-shadow: inset 4px 0 0 #2b8f6f; }
+.english-approval-requirements article.is-observed { box-shadow: inset 4px 0 0 #b42323; }
+
+.english-approval-requirement__content {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.english-approval-requirement__content > span {
+  color: #14213d;
+  font-weight: 900;
+}
+
+.english-approval-requirement__content strong {
+  overflow-wrap: anywhere;
+  color: #31415b;
+  font-size: 0.88rem;
+}
+
+.english-approval-requirement__content small { color: #68758a; }
+.english-approval-requirement__content p { margin: 4px 0 0; color: #8e251f; font-size: 0.82rem; font-weight: 700; }
+
+.english-approval-requirement__review {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  justify-items: stretch;
+}
+
+.english-approval-requirement__review label {
+  display: grid;
+  gap: 5px;
+}
+
+.english-approval-requirement__review input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid #c8d4dc;
+  border-radius: 7px;
+  background: #fff;
+  color: #14213d;
+  font: inherit;
+}
+
+.english-approval-requirement__review > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.english-approval-requirement__review button {
+  min-width: 104px;
+  min-height: 36px;
 }
 
 .english-schedule-panel {
@@ -45668,6 +45909,502 @@ body .student-sidebar .logout-button {
   }
 }
 
+/* Administración relacionada de dbo.CARRERAS y dbo.PENSUM. */
+.career-pensum {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.career-pensum__layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  min-height: 640px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.career-pensum__careers,
+.career-pensum__subjects {
+  min-width: 0;
+}
+
+.career-pensum__careers {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  border-right: 1px solid var(--line-strong);
+  background: #f7fafb;
+}
+
+.career-pensum__subjects {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+}
+
+.career-pensum__section-head,
+.career-pensum__career-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.career-pensum__section-head > div,
+.career-pensum__career-head > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.career-pensum__section-head span,
+.career-pensum__career-head span,
+.career-pensum__metrics span,
+.career-pensum__relation span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.career-pensum__section-head strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.career-pensum__section-head button,
+.career-pensum__career-head button,
+.career-pensum__search button,
+.career-pensum__subject-toolbar button,
+.career-pensum__pager button {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.career-pensum__section-head .primary-action,
+.career-pensum__career-head .primary-action {
+  border-color: #931913;
+  background: #931913;
+  color: #ffffff;
+}
+
+.career-pensum__section-head button:disabled,
+.career-pensum__career-head button:disabled,
+.career-pensum__search button:disabled,
+.career-pensum__subject-toolbar button:disabled,
+.career-pensum__pager button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.career-pensum__search,
+.career-pensum__subject-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.career-pensum__search label,
+.career-pensum__subject-toolbar label,
+.career-pensum__form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.career-pensum__search input,
+.career-pensum__subject-toolbar input,
+.career-pensum__form input,
+.career-pensum__form select,
+.career-pensum__form textarea {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(141, 187, 199, 0.66);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.career-pensum__search input:focus,
+.career-pensum__subject-toolbar input:focus,
+.career-pensum__form input:focus,
+.career-pensum__form select:focus,
+.career-pensum__form textarea:focus {
+  border-color: #1f6f8b;
+  box-shadow: 0 0 0 3px rgba(141, 187, 199, 0.18);
+  outline: none;
+}
+
+.career-pensum__career-list {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.career-pensum__career-list > button {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 70px;
+  border: 0;
+  border-bottom: 1px solid rgba(141, 187, 199, 0.34);
+  background: transparent;
+  color: var(--ink);
+  padding: 12px 46px 12px 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.career-pensum__career-list > button:hover {
+  background: rgba(141, 187, 199, 0.1);
+}
+
+.career-pensum__career-list > button.is-active {
+  border-left: 4px solid #931913;
+  background: #ffffff;
+  padding-left: 12px;
+}
+
+.career-pensum__career-list strong,
+.career-pensum__career-list span {
+  overflow-wrap: anywhere;
+}
+
+.career-pensum__career-list strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.career-pensum__career-list span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.career-pensum__career-list em {
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  color: #1f6f8b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.career-pensum__career-list > p,
+.career-pensum__empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 16px;
+}
+
+.career-pensum__career-head {
+  align-items: flex-start;
+  min-height: 88px;
+}
+
+.career-pensum__career-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.career-pensum__career-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.career-pensum__career-head > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.career-pensum__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line-strong);
+  background: #f8fbfc;
+}
+
+.career-pensum__metrics > div {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 72px;
+  padding: 11px 14px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.career-pensum__metrics > div:last-child {
+  border-right: 0;
+}
+
+.career-pensum__metrics strong {
+  color: var(--ink);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.career-pensum__subject-toolbar {
+  grid-template-columns: minmax(260px, 560px) auto;
+  justify-content: space-between;
+}
+
+.career-pensum__table-wrap {
+  flex: 1;
+  max-height: 430px;
+  border: 0;
+  border-radius: 0;
+}
+
+.career-pensum__table {
+  min-width: 1240px;
+  table-layout: fixed;
+}
+
+.career-pensum__table th:nth-child(1) { width: 78px; }
+.career-pensum__table th:nth-child(2) { width: 130px; }
+.career-pensum__table th:nth-child(3) { width: 260px; }
+.career-pensum__table th:nth-child(4) { width: 130px; }
+.career-pensum__table th:nth-child(5) { width: 88px; }
+.career-pensum__table th:nth-child(6) { width: 88px; }
+.career-pensum__table th:nth-child(7) { width: 78px; }
+.career-pensum__table th:nth-child(8) { width: 82px; }
+.career-pensum__table th:nth-child(9) { width: 82px; }
+.career-pensum__table th:nth-child(10) { width: 105px; }
+.career-pensum__table th:nth-child(11) { width: 88px; }
+
+.career-pensum__table td {
+  overflow-wrap: anywhere;
+}
+
+.career-pensum__table .career-pensum__row--created > td {
+  background: #eaf7f2;
+  box-shadow: inset 0 1px 0 #79bba6, inset 0 -1px 0 #79bba6;
+}
+
+.career-pensum__table .career-pensum__row--created > td:first-child {
+  box-shadow: inset 4px 0 0 #16765f, inset 0 1px 0 #79bba6, inset 0 -1px 0 #79bba6;
+}
+
+.career-pensum__pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-strong);
+  background: #ffffff;
+}
+
+.career-pensum__pager > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.career-pensum__pager > div {
+  display: flex;
+  gap: 6px;
+}
+
+.career-pensum__pager button {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.career-pensum__empty {
+  display: grid;
+  place-content: center;
+  gap: 5px;
+  min-height: 420px;
+  text-align: center;
+}
+
+.career-pensum__empty strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.career-pensum__modal {
+  width: min(1120px, 96vw);
+  max-width: 1120px;
+}
+
+.career-pensum__modal-overlay {
+  z-index: 1400;
+}
+
+.career-pensum__relation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #f4f9fa;
+}
+
+.career-pensum__relation strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.career-pensum__relation em {
+  color: #1f6f8b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.career-pensum__modal-error {
+  margin: 0 0 14px;
+  border-radius: 6px;
+}
+
+.career-pensum__form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.career-pensum__form .career-pensum__field--wide {
+  grid-column: 1 / -1;
+}
+
+.career-pensum__form textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+@media (max-width: 1180px) {
+  .career-pensum__layout {
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+  }
+
+  .career-pensum__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .career-pensum__metrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .career-pensum__metrics > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line-strong);
+  }
+}
+
+@media (max-width: 860px) {
+  .career-pensum__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .career-pensum__careers {
+    grid-template-rows: auto auto minmax(160px, 280px) auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .career-pensum__form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .career-pensum__modal-overlay {
+    align-items: stretch;
+    padding: 6px;
+  }
+
+  .career-pensum__modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 12px);
+    border-radius: 8px;
+  }
+
+  .career-pensum__modal .gestion-sis-modal-actions {
+    position: static;
+  }
+
+  .career-pensum__section-head,
+  .career-pensum__career-head,
+  .career-pensum__pager {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .career-pensum__section-head button,
+  .career-pensum__career-head button,
+  .career-pensum__search button,
+  .career-pensum__subject-toolbar button,
+  .career-pensum__pager button {
+    width: 100%;
+  }
+
+  .career-pensum__career-head > div:last-child,
+  .career-pensum__pager > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .career-pensum__search,
+  .career-pensum__subject-toolbar,
+  .career-pensum__form,
+  .career-pensum__relation,
+  .career-pensum__metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .career-pensum__metrics > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .career-pensum__metrics > div:last-child {
+    border-bottom: 0;
+  }
+
+  .career-pensum__relation {
+    align-items: start;
+  }
+}
+
 /* Moodle: matrícula manual masiva con resolución explícita de identidades. */
 .moodle-manual-enrollment .moodle-section__heading p {
   margin: 6px 0 0;
@@ -48525,5 +49262,54 @@ body .student-sidebar .logout-button {
   body .student-sidebar.student-sidebar--mobile.student-sidebar--open .student-mobile-menu-button,
   body .student-shell--mobile-view .student-sidebar.student-sidebar--open .student-mobile-menu-button {
     min-width: 94px !important;
+  }
+}
+
+body .career-pensum__career-list > button {
+  min-height: 64px !important;
+  padding: 9px 46px 9px 16px !important;
+}
+
+body .career-pensum__career-list > button.is-active {
+  padding-left: 12px !important;
+}
+
+@media (max-width: 820px) {
+  .english-approval-review__header,
+  .titulacion-english-document-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .english-approval-overall,
+  .titulacion-english-document-action .secondary-action {
+    width: 100%;
+  }
+
+  .english-approval-overall {
+    min-width: 0;
+    justify-items: start;
+  }
+
+  .english-approval-grade,
+  .english-approval-requirements article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .english-approval-requirement__review > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .english-approval-requirement__review button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .titulacion-english-documents-modal {
+    width: 100vw;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
   }
 }

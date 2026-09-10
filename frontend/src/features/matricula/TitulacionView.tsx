@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   addTitulacionTribunal,
   createTitulacionExpediente,
+  fetchEnglishApprovalStatus,
   fetchTitulacionAptos,
   fetchTitulacionExpediente,
   fetchTitulacionMallaCalificaciones,
@@ -22,6 +23,7 @@ import {
   uploadTitulacionDocumento,
 } from '../../lib/api'
 import type {
+  EnglishApprovalStatus,
   TitulacionAptoItem,
   TitulacionAptosResponse,
   TitulacionMallaCalificacionesResponse,
@@ -30,6 +32,7 @@ import type {
   TitulacionProgramacionResponse,
   TitulacionResponse,
 } from '../../types/app'
+import { EnglishApprovalDocuments } from '../ingles/EnglishApprovalDocuments'
 
 type TitulacionViewProps = {
   displayName: string
@@ -217,6 +220,10 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
   const [aptosPage, setAptosPage] = useState(1)
   const [aptosSort, setAptosSort] = useState<{ key: AptosSortKey; direction: SortDirection }>({ key: 'name', direction: 'asc' })
   const [reviewItem, setReviewItem] = useState<TitulacionAptoItem | null>(null)
+  const [reviewEnglishStatus, setReviewEnglishStatus] = useState<EnglishApprovalStatus | null>(null)
+  const [reviewEnglishLoading, setReviewEnglishLoading] = useState(false)
+  const [reviewEnglishError, setReviewEnglishError] = useState('')
+  const [englishDocumentsOpen, setEnglishDocumentsOpen] = useState(false)
   const [mallaDetail, setMallaDetail] = useState<{
     item: TitulacionAptoItem
     data: TitulacionMallaCalificacionesResponse | null
@@ -314,7 +321,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
   const puedeTitularse = boolValue(prevalidation?.PuedeTitularse)
   const mecanismoAprobado = boolValue(mechanismValidation?.MecanismoAprobado)
   const requisitoMalla = boolValue(academic?.malla_finalizada) || boolValue(expediente?.MallaCurricularCumple)
-  const requisitoIngles = checks.ingles_a2_cumple || boolValue(expediente?.InglesA2Cumple)
+  const requisitoIngles = boolValue(expediente?.InglesA2Cumple)
   const requisitoPracticas = boolValue(expediente?.PracticasPreprofesionalesCumple)
   const requisitoVinculacion = boolValue(expediente?.VinculacionCumple)
   const requisitosInicialesCumplidos = requisitoMalla && requisitoIngles && requisitoPracticas && requisitoVinculacion
@@ -430,9 +437,9 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
     },
     {
       label: 'Inglés A2+ - INTERMEDIATE',
-      detail: 'Marcar cuando el requisito esté validado',
+      detail: 'Se valida con la nota aprobada y los tres documentos obligatorios',
       ok: requisitoIngles,
-      key: 'ingles_a2_cumple',
+      fixed: true,
     },
     {
       label: 'Prácticas preprofesionales',
@@ -655,8 +662,10 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
   }, [programacionFilter, programacionSearch])
 
   useEffect(() => {
-    void loadAptos()
-  }, [loadAptos])
+    if (mainSection === 'verificacion' && !aptosData) {
+      void loadAptos()
+    }
+  }, [aptosData, loadAptos, mainSection])
 
   useEffect(() => {
     setMainSection(section)
@@ -678,7 +687,7 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
 
   useEffect(() => {
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && mainSection === 'verificacion') {
         void loadAptos()
       }
     }
@@ -688,23 +697,45 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
-  }, [loadAptos])
+  }, [loadAptos, mainSection])
 
   useEffect(() => {
     setAptosPage(1)
   }, [aptosSearchText])
 
+  const applyReviewEnglishStatus = useCallback((status: EnglishApprovalStatus) => {
+    setReviewEnglishStatus(status)
+    setReviewEnglishError('')
+    setReviewChecks((current) => ({ ...current, ingles_a2_cumple: status.approved }))
+  }, [])
+
   useEffect(() => {
-    if (!reviewItem) return
+    if (!reviewItem) {
+      setReviewEnglishStatus(null)
+      setReviewEnglishError('')
+      setEnglishDocumentsOpen(false)
+      return
+    }
     setReviewChecks({
       cedula_validada: true,
       titulo_bachiller_cumple: true,
-      ingles_a2_cumple: boolValue(reviewItem.CumpleInglesA2Avanzado),
+      ingles_a2_cumple: false,
       no_adeuda_financiero: false,
       apto_sustentacion: false,
       rubrica_titulacion_cumple: false,
     })
-  }, [reviewItem])
+    setReviewEnglishStatus(null)
+    setReviewEnglishError('')
+    setReviewEnglishLoading(true)
+    void fetchEnglishApprovalStatus(String(reviewItem.NumeroIdentificacion))
+      .then(applyReviewEnglishStatus)
+      .catch((requestError: unknown) => {
+        setReviewEnglishError(requestError instanceof Error
+          ? requestError.message
+          : 'No se pudo consultar la documentación de Inglés.')
+      })
+      .finally(() => setReviewEnglishLoading(false))
+  }, [applyReviewEnglishStatus, reviewItem])
 
   async function openProgramacionItem(item: TitulacionProgramacionItem) {
     const id = String(item.NumeroIdentificacion || '').trim()
@@ -2163,7 +2194,18 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
                 <tbody>
                   {[
                     ['Malla', `${numberText(reviewItem.MateriasAprobadas)} / ${MATERIAS_REQUERIDAS_TITULACION}`, percentValue((Number(reviewItem.MateriasAprobadas || 0) / MATERIAS_REQUERIDAS_TITULACION) * 100), reviewItem.CumpleMalla24],
-                    ['Inglés A2+ - INTERMEDIATE', reviewChecks.ingles_a2_cumple ? 'Validado por administración' : 'Pendiente', reviewChecks.ingles_a2_cumple ? 100 : 0, reviewChecks.ingles_a2_cumple],
+                    [
+                      'Inglés A2+ - INTERMEDIATE',
+                      reviewEnglishLoading
+                        ? 'Consultando documentación'
+                        : reviewEnglishStatus
+                          ? `${reviewEnglishStatus.validated_count} / ${reviewEnglishStatus.required_count} documentos validados`
+                          : 'Pendiente de validación documental',
+                      reviewEnglishStatus
+                        ? percentValue((reviewEnglishStatus.validated_count / reviewEnglishStatus.required_count) * 100)
+                        : 0,
+                      Boolean(reviewEnglishStatus?.approved),
+                    ],
                     ['Prácticas preprofesionales', `${numberText(reviewItem.TotalHorasPracticasPreprofesionales)} / 240 horas`, percentValue((Number(reviewItem.TotalHorasPracticasPreprofesionales || 0) / 240) * 100), reviewItem.CumplePracticasPreprofesionales],
                     ['Vinculación con la sociedad', `${numberText(reviewItem.TotalHorasVinculacion)} / ${HORAS_REQUERIDAS_VINCULACION} horas`, percentValue((Number(reviewItem.TotalHorasVinculacion || 0) / HORAS_REQUERIDAS_VINCULACION) * 100), reviewItem.CumpleVinculacion],
                   ].map(([label, current, percent, ok]) => (
@@ -2188,12 +2230,26 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
                 </tbody>
               </table>
             </div>
+            <div className="titulacion-english-document-action">
+              <div>
+                <strong>Documentación de aprobación de Inglés</strong>
+                <span>
+                  {reviewEnglishStatus?.message || reviewEnglishError || 'Cargue y valide los tres documentos obligatorios del estudiante.'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => setEnglishDocumentsOpen(true)}
+              >
+                Gestionar documentos
+              </button>
+            </div>
             <div className="titulacion-review-edit">
               <strong>Editar verificación</strong>
               {[
                 ['Cédula validada', 'cedula_validada'],
                 ['Título bachiller', 'titulo_bachiller_cumple'],
-                ['Inglés A2+ - INTERMEDIATE', 'ingles_a2_cumple'],
                 ['No adeuda financiero', 'no_adeuda_financiero'],
                 ['Apto sustentación', 'apto_sustentacion'],
                 ['Rúbrica titulación', 'rubrica_titulacion_cumple'],
@@ -2230,6 +2286,29 @@ export function TitulacionView({ displayName, role, section = 'verificacion', on
                 No se puede dar paso hasta cumplir malla, inglés A2+ - INTERMEDIATE, prácticas profesionales y vinculación con la sociedad.
               </p>
             ) : null}
+          </section>
+        </div>
+      ) : null}
+      {reviewItem && englishDocumentsOpen ? (
+        <div
+          className="titulacion-modal-backdrop titulacion-modal-backdrop--stacked"
+          role="presentation"
+          onClick={() => setEnglishDocumentsOpen(false)}
+        >
+          <section
+            className="titulacion-english-documents-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Documentación de aprobación de Inglés"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <EnglishApprovalDocuments
+              displayName={displayName}
+              role={role}
+              initialIdentification={String(reviewItem.NumeroIdentificacion)}
+              onClose={() => setEnglishDocumentsOpen(false)}
+              onStatusChange={applyReviewEnglishStatus}
+            />
           </section>
         </div>
       ) : null}

@@ -1,5 +1,6 @@
 import csv
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -6083,6 +6084,39 @@ _LEGACY_TEACHER_DATA_FIELDS = [
     "correo",
 ]
 
+_LEGACY_DATA_READONLY_FIELDS = {
+    "estudiantes": {"Cedula_Est", "correointec"},
+    "docentes": {"cedula_doc"},
+}
+
+_LEGACY_TERRITORIAL_FIELDS = {
+    "estudiantes": {
+        "paisNacionalidadId",
+        "provinciaNacimeintoId",
+        "cantonNacimeintoId",
+        "paisResidenciaId",
+        "codprov",
+        "Canton",
+    },
+    "docentes": {"paisNacionalidadId", "provinciaSufragio", "paisEstudiosId"},
+}
+
+_LEGACY_TERRITORIAL_RELATIONS = {
+    "provinciaNacimeintoId": ("paisNacionalidadId", "province"),
+    "cantonNacimeintoId": ("provinciaNacimeintoId", "canton"),
+    "codprov": ("paisResidenciaId", "province"),
+    "Canton": ("codprov", "canton"),
+    "provinciaSufragio": ("paisNacionalidadId", "province"),
+}
+
+_LEGACY_CATALOG_COLUMN_OVERRIDES = {
+    "PuebloNacionalidad": ("codigo_pueblo_nacionalidad", "nombre_pueblo_nacionalidad"),
+}
+
+_SQL_INTEGER_TYPES = {"bigint", "int", "smallint", "tinyint"}
+_SQL_DECIMAL_TYPES = {"decimal", "numeric", "money", "smallmoney", "float", "real"}
+_SQL_DATE_TYPES = {"date", "datetime", "datetime2", "smalldatetime"}
+
 
 def _quote_sql_name(name: str) -> str:
     return f"[{name.replace(']', ']]')}]"
@@ -6099,6 +6133,34 @@ def _table_columns(cursor: pyodbc.Cursor, table_name: str) -> set[str]:
         table_name,
     )
     return {_clean_cell(row.COLUMN_NAME) for row in cursor.fetchall()}
+
+
+def _table_column_metadata(cursor: pyodbc.Cursor, table_name: str) -> dict[str, dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT
+            COLUMN_NAME,
+            DATA_TYPE,
+            CHARACTER_MAXIMUM_LENGTH,
+            IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'dbo'
+          AND TABLE_NAME = ?
+        """,
+        table_name,
+    )
+    return {
+        _clean_cell(row.COLUMN_NAME): {
+            "data_type": _clean_cell(row.DATA_TYPE).lower(),
+            "max_length": (
+                int(row.CHARACTER_MAXIMUM_LENGTH)
+                if row.CHARACTER_MAXIMUM_LENGTH is not None and int(row.CHARACTER_MAXIMUM_LENGTH) >= 0
+                else None
+            ),
+            "nullable": _clean_cell(row.IS_NULLABLE).upper() == "YES",
+        }
+        for row in cursor.fetchall()
+    }
 
 
 def _row_to_dict(row: Any, columns: list[str]) -> dict[str, Any]:
@@ -6157,6 +6219,24 @@ def _actualizacion_datos_columns(cursor: pyodbc.Cursor, target: str) -> list[str
     allowed = _LEGACY_STUDENT_DATA_FIELDS if target == "estudiantes" else _LEGACY_TEACHER_DATA_FIELDS
     existing = _table_columns(cursor, table)
     return [field for field in allowed if field in existing]
+
+
+def _actualizacion_datos_field_metadata(
+    cursor: pyodbc.Cursor,
+    target: str,
+    columns: list[str],
+) -> dict[str, dict[str, Any]]:
+    table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
+    metadata = _table_column_metadata(cursor, table)
+    readonly = _LEGACY_DATA_READONLY_FIELDS[target]
+    return {
+        column: {
+            **metadata[column],
+            "readonly": column in readonly,
+        }
+        for column in columns
+        if column in metadata
+    }
 
 
 _LEGACY_DATA_CATALOG_TABLES: dict[str, list[str]] = {
@@ -6372,7 +6452,8 @@ def _catalog_options_from_table(cursor: pyodbc.Cursor, table_name: str) -> list[
         return []
     if not columns:
         return []
-    value_column = _pick_catalog_column(
+    override = _LEGACY_CATALOG_COLUMN_OVERRIDES.get(table_name)
+    value_column = override[0] if override and override[0] in columns else _pick_catalog_column(
         columns,
         (
             f"codigo_{table_name}",
@@ -6389,7 +6470,7 @@ def _catalog_options_from_table(cursor: pyodbc.Cursor, table_name: str) -> list[
         ),
         ("codigo", "cod_", "id_"),
     )
-    label_column = _pick_catalog_column(
+    label_column = override[1] if override and override[1] in columns else _pick_catalog_column(
         columns,
         (
             f"nombre_{table_name}",
@@ -6434,6 +6515,97 @@ def _catalog_options_from_table(cursor: pyodbc.Cursor, table_name: str) -> list[
         ]
     except pyodbc.Error:
         return []
+
+
+def _numeric_code(value: Any) -> str:
+    text = _clean_cell(value)
+    if not text:
+        return ""
+    try:
+        return str(int(text))
+    except ValueError:
+        return text
+
+
+def _territorial_catalogs(
+    cursor: pyodbc.Cursor,
+    columns: list[str],
+    target: str,
+) -> dict[str, list[dict[str, str]]]:
+    requested = _LEGACY_TERRITORIAL_FIELDS[target].intersection(columns)
+    if not requested:
+        return {}
+    try:
+        cursor.execute(
+            """
+            SELECT codigo_pais AS option_value, nombre_pais AS option_label
+            FROM dbo.Pais
+            WHERE activo = 1
+            ORDER BY nombre_pais
+            """
+        )
+        countries = [
+            {"value": _clean_cell(row.option_value), "label": _clean_cell(row.option_label)}
+            for row in cursor.fetchall()
+            if _clean_cell(row.option_value) and _clean_cell(row.option_label)
+        ]
+        cursor.execute(
+            """
+            SELECT
+                Cod_Provincia AS option_value,
+                Descripcion_Prov AS option_label,
+                Cod_Pais AS parent_value
+            FROM dbo.Provincias
+            WHERE activo = 1
+            ORDER BY Cod_Pais, Descripcion_Prov
+            """
+        )
+        provinces = [
+            {
+                "value": _clean_cell(row.option_value),
+                "label": _clean_cell(row.option_label),
+                "parent_value": _clean_cell(row.parent_value),
+            }
+            for row in cursor.fetchall()
+            if _clean_cell(row.option_value) and _clean_cell(row.option_label)
+        ]
+        cursor.execute(
+            """
+            SELECT
+                codigo_canton AS option_value,
+                nombre_canton AS option_label,
+                codigo_provincia AS parent_value
+            FROM dbo.Canton
+            WHERE activo = 1
+            ORDER BY codigo_provincia, nombre_canton
+            """
+        )
+        cantons = [
+            {
+                "value": _clean_cell(row.option_value),
+                "label": _clean_cell(row.option_label),
+                "parent_value": _clean_cell(row.parent_value),
+            }
+            for row in cursor.fetchall()
+            if _clean_cell(row.option_value) and _clean_cell(row.option_label)
+        ]
+    except pyodbc.Error:
+        return {}
+
+    catalogs: dict[str, list[dict[str, str]]] = {}
+    for field in requested:
+        if field in {"paisNacionalidadId", "paisResidenciaId", "paisEstudiosId"}:
+            catalogs[field] = countries
+        elif field == "codprov":
+            catalogs[field] = [
+                {**option, "value": _numeric_code(option["value"])}
+                for option in provinces
+            ]
+        elif field in {"provinciaNacimeintoId", "provinciaSufragio"}:
+            catalogs[field] = provinces
+        elif field in {"cantonNacimeintoId", "Canton"}:
+            catalogs[field] = cantons
+    return catalogs
 
 
 def _distinct_options_from_data_table(cursor: pyodbc.Cursor, source_table: str, field: str) -> list[dict[str, str]]:
@@ -6542,6 +6714,24 @@ def _sanitize_teacher_data_field(field: str, value: Any) -> str:
     if field in _TEACHER_DATE_FIELDS:
         return re.sub(r"[^0-9-]", "", text)[:10]
     return re.sub(r"<[^>]*>", "", text).strip()
+
+
+def _validate_data_update_inputs(target: str, updates: dict[str, Any]) -> None:
+    email_fields = {"correo", "correointec"} if target == "estudiantes" else {"correo", "correop"}
+    date_fields = _STUDENT_DATE_FIELDS if target == "estudiantes" else _TEACHER_DATE_FIELDS
+    for field, value in updates.items():
+        text = _clean_cell(value)
+        if not text:
+            continue
+        if field in email_fields and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text):
+            raise HTTPException(status_code=400, detail=f"El correo indicado en {field} no es válido")
+        if field in date_fields:
+            try:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+                    raise ValueError
+                date.fromisoformat(text)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"La fecha indicada en {field} no es válida") from exc
 
 
 def _fetch_single_value(cursor: pyodbc.Cursor, sql: str, *params: Any) -> str:
@@ -6806,8 +6996,11 @@ def _apply_teacher_legacy_rules(
 def _legacy_data_update_catalogs(cursor: pyodbc.Cursor, columns: list[str], target: str) -> dict[str, list[dict[str, str]]]:
     catalogs: dict[str, list[dict[str, str]]] = {}
     source_table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
+    territorial_catalogs = _territorial_catalogs(cursor, columns, target)
     for field in columns:
-        options = list(_LEGACY_STATIC_CATALOGS_BY_TARGET.get(target, {}).get(field, []))
+        options = list(territorial_catalogs.get(field, []))
+        if not options:
+            options = list(_LEGACY_STATIC_CATALOGS_BY_TARGET.get(target, {}).get(field, []))
         if not options:
             for table_name in _LEGACY_DATA_CATALOG_TABLES.get(field, []):
                 options = _catalog_options_from_table(cursor, table_name)
@@ -6818,6 +7011,132 @@ def _legacy_data_update_catalogs(cursor: pyodbc.Cursor, columns: list[str], targ
         if options:
             catalogs[field] = options
     return catalogs
+
+
+def _same_catalog_code(left: Any, right: Any) -> bool:
+    left_text = _clean_cell(left)
+    right_text = _clean_cell(right)
+    if not left_text or not right_text:
+        return False
+    if left_text.isdigit() and right_text.isdigit():
+        return int(left_text) == int(right_text)
+    return left_text.casefold() == right_text.casefold()
+
+
+def _validate_territorial_updates(
+    cursor: pyodbc.Cursor,
+    target: str,
+    fields: dict[str, Any],
+    updated_fields: set[str],
+) -> None:
+    territorial_fields = _LEGACY_TERRITORIAL_FIELDS[target]
+    touched = territorial_fields.intersection(updated_fields)
+    if not touched:
+        return
+
+    country_fields = {"paisNacionalidadId", "paisResidenciaId", "paisEstudiosId"}
+    for field in touched.intersection(country_fields):
+        value = _clean_cell(fields.get(field))
+        if not value or (field == "paisEstudiosId" and value.upper() == "NA"):
+            continue
+        cursor.execute(
+            """
+            SELECT TOP 1 1
+            FROM dbo.Pais
+            WHERE activo = 1
+              AND TRY_CONVERT(int, codigo_pais) = TRY_CONVERT(int, ?)
+            """,
+            value,
+        )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"El código de país indicado en {field} no existe")
+
+    for field, (parent_field, relation_type) in _LEGACY_TERRITORIAL_RELATIONS.items():
+        if field not in territorial_fields or not ({field, parent_field} & touched):
+            continue
+        value = _clean_cell(fields.get(field))
+        if not value:
+            continue
+        parent_value = _clean_cell(fields.get(parent_field))
+        if not parent_value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Seleccione {parent_field} antes de registrar {field}",
+            )
+        if relation_type == "province":
+            cursor.execute(
+                """
+                SELECT TOP 1 Cod_Pais AS parent_code
+                FROM dbo.Provincias
+                WHERE activo = 1
+                  AND TRY_CONVERT(int, Cod_Provincia) = TRY_CONVERT(int, ?)
+                """,
+                value,
+            )
+            invalid_message = "La provincia seleccionada no pertenece al país indicado"
+        else:
+            cursor.execute(
+                """
+                SELECT TOP 1 codigo_provincia AS parent_code
+                FROM dbo.Canton
+                WHERE activo = 1
+                  AND TRY_CONVERT(int, codigo_canton) = TRY_CONVERT(int, ?)
+                """,
+                value,
+            )
+            invalid_message = "El cantón seleccionado no pertenece a la provincia indicada"
+        relation = cursor.fetchone()
+        if not relation:
+            entity = "provincia" if relation_type == "province" else "cantón"
+            raise HTTPException(status_code=400, detail=f"El código de {entity} indicado no existe")
+        relation_parent = getattr(relation, "parent_code", None)
+        if relation_parent is None:
+            relation_parent = relation[0]
+        if not _same_catalog_code(relation_parent, parent_value):
+            raise HTTPException(status_code=400, detail=invalid_message)
+
+
+def _coerce_data_update_value(field: str, value: Any, metadata: dict[str, Any]) -> Any:
+    data_type = _clean_cell(metadata.get("data_type")).lower()
+    nullable = bool(metadata.get("nullable"))
+    text = _clean_cell(value)
+    if not text:
+        if nullable:
+            return None
+        raise HTTPException(status_code=400, detail=f"El campo {field} es obligatorio")
+
+    if data_type == "bit":
+        normalized = text.lower()
+        if normalized in {"1", "true", "sí", "si"}:
+            return True
+        if normalized in {"0", "false", "no"}:
+            return False
+        raise HTTPException(status_code=400, detail=f"El valor de {field} no es válido")
+
+    if data_type in _SQL_INTEGER_TYPES | _SQL_DECIMAL_TYPES:
+        try:
+            number = Decimal(text.replace(",", "."))
+        except InvalidOperation as exc:
+            raise HTTPException(status_code=400, detail=f"El campo {field} debe ser numérico") from exc
+        if data_type in _SQL_INTEGER_TYPES and number != number.to_integral_value():
+            raise HTTPException(status_code=400, detail=f"El campo {field} debe ser un número entero")
+        return int(number) if data_type in _SQL_INTEGER_TYPES else number
+
+    if data_type in _SQL_DATE_TYPES:
+        try:
+            if data_type == "date":
+                return date.fromisoformat(text[:10])
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"La fecha indicada en {field} no es válida") from exc
+
+    max_length = metadata.get("max_length")
+    if isinstance(max_length, int) and max_length >= 0 and len(text) > max_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El campo {field} admite máximo {max_length} caracteres",
+        )
+    return text
 
 
 @router.get("/actualizacion-datos/{target}/buscar")
@@ -6907,6 +7226,7 @@ def _load_legacy_data_update_record(cursor: pyodbc.Cursor, target: str, record_i
     editable_columns = _actualizacion_datos_columns(cursor, target)
     if not editable_columns:
         raise HTTPException(status_code=500, detail="No hay columnas compatibles para actualizar")
+    field_metadata = _actualizacion_datos_field_metadata(cursor, target, editable_columns)
     if target == "estudiantes":
         cursor.execute(
             f"""
@@ -6977,7 +7297,9 @@ def _load_legacy_data_update_record(cursor: pyodbc.Cursor, target: str, record_i
         "person": summary,
         "fields": fields,
         "columns": editable_columns,
+        "field_metadata": field_metadata,
         "catalogs": _legacy_data_update_catalogs(cursor, editable_columns, target),
+        "source_table": "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE",
         "target": target,
     }
 
@@ -7007,20 +7329,22 @@ def update_legacy_data_update_record(
     payload: DataUpdatePayload,
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
 ) -> dict[str, Any]:
-    del current_user
     if target not in {"estudiantes", "docentes"}:
         raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
             editable_columns = _actualizacion_datos_columns(cursor, target)
+            field_metadata = _actualizacion_datos_field_metadata(cursor, target, editable_columns)
+            writable_columns = set(editable_columns) - _LEGACY_DATA_READONLY_FIELDS[target]
             valid_updates = {
                 key: value
                 for key, value in payload.fields.items()
-                if key in editable_columns
+                if key in writable_columns
             }
             if not valid_updates:
                 raise HTTPException(status_code=400, detail="No hay campos válidos para actualizar")
+            _validate_data_update_inputs(target, valid_updates)
             table = "DATOS_ESTUD" if target == "estudiantes" else "DATOSDOCENTE"
             id_column = "codigo_estud" if target == "estudiantes" else "codigo_doc"
             cedula_column = "Cedula_Est" if target == "estudiantes" else "cedula_doc"
@@ -7041,6 +7365,7 @@ def update_legacy_data_update_record(
                 current_row = cursor.fetchone()
                 if not current_row:
                     raise HTTPException(status_code=404, detail="Registro no encontrado para actualizar")
+                resolved_record_id = _clean_cell(getattr(current_row, "record_id", ""))
                 current_fields = _row_to_dict(current_row, editable_columns)
                 merged_fields = {**current_fields, **valid_updates}
                 if target == "estudiantes":
@@ -7059,7 +7384,7 @@ def update_legacy_data_update_record(
                 valid_updates = {
                     field: value
                     for field, value in final_fields.items()
-                    if _clean_cell(value) != _clean_cell(current_fields.get(field))
+                    if field in writable_columns and _clean_cell(value) != _clean_cell(current_fields.get(field))
                 }
                 if not valid_updates:
                     response = _load_legacy_data_update_record(cursor, target, record_id)
@@ -7069,14 +7394,18 @@ def update_legacy_data_update_record(
                         "affected_rows": 0,
                     })
                     return response
+            _validate_territorial_updates(cursor, target, final_fields, set(valid_updates))
+            valid_updates = {
+                field: _coerce_data_update_value(field, value, field_metadata[field])
+                for field, value in valid_updates.items()
+            }
             set_sql = ", ".join(f"{_quote_sql_name(column)} = ?" for column in valid_updates)
-            params = list(valid_updates.values()) + [record_id, re.sub(r"\D+", "", record_id)]
+            params = list(valid_updates.values()) + [resolved_record_id]
             cursor.execute(
                 f"""
                 UPDATE dbo.{_quote_sql_name(table)}
                 SET {set_sql}
                 WHERE TRY_CONVERT(varchar(50), {_quote_sql_name(id_column)}) = ?
-                   OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), {_quote_sql_name(cedula_column)}), '-', ''), ' ', '') = ?
                 """,
                 *params,
             )

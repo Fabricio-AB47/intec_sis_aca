@@ -2092,6 +2092,9 @@ export type DocumentExpedientFile = {
   status: string
   uploaded_at: string | null
   uploaded_by: string
+  reviewed_at?: string | null
+  reviewed_by?: string
+  review_observation?: string
 }
 
 export type DocumentExpedientModule = {
@@ -2139,6 +2142,52 @@ export type DocumentExpedientPrepareResponse = {
   web_url: string
   student_folder_reused: boolean
   message: string
+}
+
+export type EnglishApprovalDocument = {
+  code: string
+  name: string
+  document_graph_id: number | null
+  filename: string
+  version: number | null
+  status: string
+  uploaded: boolean
+  validated: boolean
+  observed: boolean
+  uploaded_at: string | null
+  uploaded_by: string
+  reviewed_at: string | null
+  reviewed_by: string
+  observation: string
+}
+
+export type EnglishApprovalStatus = {
+  identification: string
+  status: 'APROBADO' | 'OBSERVADO' | 'PENDIENTE_DOCUMENTOS' | 'EN_REVISION' | 'PENDIENTE_NOTA' | string
+  message: string
+  approved: boolean
+  grade: {
+    found: boolean
+    exam_id: number | null
+    final_grade: number | null
+    status: string
+    approved: boolean
+    updated_at?: string | null
+  }
+  documents: EnglishApprovalDocument[]
+  required_count: number
+  uploaded_count: number
+  validated_count: number
+  all_documents_uploaded: boolean
+  all_documents_validated: boolean
+  titulation_synced?: boolean
+  sync_warning?: string
+}
+
+export type EnglishApprovalReviewResponse = {
+  ok: boolean
+  message: string
+  status: EnglishApprovalStatus
 }
 
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
@@ -4508,6 +4557,7 @@ export type SisAcademicoField = {
   type?: string
   required?: boolean
   readonly?: boolean
+  max_length?: number | null
   options?: SisAcademicoFieldOption[]
 }
 
@@ -4522,6 +4572,7 @@ export type SisAcademicoSection = {
   detail_fields?: SisAcademicoField[]
   editable_fields?: SisAcademicoField[]
   create_fields?: SisAcademicoField[]
+  defaults?: Record<string, string | number | boolean | null>
 }
 
 export type SisAcademicoRow = Record<string, string | number | boolean | null | undefined>
@@ -4556,6 +4607,8 @@ export type SisAcademicoSaveResponse = {
   message?: string
   affected_rows?: number
   action?: string
+  record_key?: string
+  record?: SisAcademicoRow
   detail?: string
 }
 
@@ -7530,7 +7583,14 @@ export type LegacyDataUpdateDetailResponse = {
   person?: LegacyDataUpdatePerson
   fields?: Record<string, string | number | null>
   columns?: string[]
-  catalogs?: Record<string, Array<{ value: string; label: string }>>
+  catalogs?: Record<string, Array<{ value: string; label: string; parent_value?: string }>>
+  field_metadata?: Record<string, {
+    data_type: string
+    max_length?: number | null
+    nullable: boolean
+    readonly: boolean
+  }>
+  source_table?: 'DATOS_ESTUD' | 'DATOSDOCENTE'
   target?: LegacyDataUpdateTarget
   updated_fields?: string[]
   affected_rows?: number

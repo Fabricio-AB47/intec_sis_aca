@@ -25,6 +25,8 @@ type ExpedientesDocumentalesViewProps = {
   embedded?: boolean
   embeddedTitle?: string
   embeddedDescription?: string
+  showStudentSearch?: boolean
+  onContextChange?: (context: DocumentExpedientContext | null) => void
   onClose?: () => void
 }
 
@@ -46,6 +48,9 @@ const PDF_FILE_RULES: Record<string, { accept: string; extension: string }> = {
   CERTIFICADO_PRACTICAS: { accept: '.pdf,application/pdf', extension: '.pdf' },
   CERTIFICADO_VINCULACION: { accept: '.pdf,application/pdf', extension: '.pdf' },
   DOCUMENTO_INGLES: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  CERTIFICADO_APROBACION_INGLES: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  ACTA_CALIFICACIONES_INGLES: { accept: '.pdf,application/pdf', extension: '.pdf' },
+  EVIDENCIA_EXAMEN_INGLES: { accept: '.pdf,application/pdf', extension: '.pdf' },
   DOCUMENTO_CERTIFICACIONES: { accept: '.pdf,application/pdf', extension: '.pdf' },
   DOCUMENTOS_UNIVERSIDAD_ORIGEN: { accept: '.pdf,application/pdf', extension: '.pdf' },
   DOCUMENTO_HOMOLOGACION: { accept: '.pdf,application/pdf', extension: '.pdf' },
@@ -333,6 +338,8 @@ export function ExpedientesDocumentalesView({
   embedded = false,
   embeddedTitle = 'Documentos de prácticas y vinculación',
   embeddedDescription = 'Cree la carpeta y gestione los documentos del proceso con trazabilidad en Microsoft 365.',
+  showStudentSearch = false,
+  onContextChange,
   onClose,
 }: Readonly<ExpedientesDocumentalesViewProps>) {
   const isReviewer = REVIEW_ROLES.has(normalizedRole(role))
@@ -351,13 +358,15 @@ export function ExpedientesDocumentalesView({
       const data = await fetchDocumentExpedientContext(identification)
       setContext(data)
       setSelectedIdentification(data.student.identification)
+      onContextChange?.(data)
     } catch (requestError) {
       setContext(null)
+      onContextChange?.(null)
       setError(errorMessage(requestError, 'No se pudo consultar el expediente documental.'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onContextChange])
 
   useEffect(() => {
     if (initialIdentification.trim()) {
@@ -406,14 +415,14 @@ export function ExpedientesDocumentalesView({
               : 'Documentos de Inglés, titulación, prácticas, vinculación, becas, solicitudes, Secretaría y certificados de no adeudamiento con trazabilidad en Microsoft 365.'}
           </p>
         </div>
-        {embedded ? (
+        {embedded && onClose ? (
           <button type="button" className="secondary-action" onClick={onClose}>Cerrar</button>
-        ) : (
+        ) : !embedded ? (
           <div className="student-user-pill"><div><strong>{displayName}</strong><span>{isReviewer ? 'Gestión documental' : 'Portal estudiante'}</span></div></div>
-        )}
+        ) : null}
       </header>
 
-      {isReviewer && !embedded ? (
+      {isReviewer && (!embedded || showStudentSearch) ? (
         <section className="document-expedient-search">
           <form onSubmit={searchStudents}>
             <label>
@@ -486,7 +495,7 @@ export function ExpedientesDocumentalesView({
         </>
       ) : null}
 
-      {isReviewer && !context && !loading && !embedded ? (
+      {isReviewer && !context && !loading && (!embedded || showStudentSearch) ? (
         <section className="document-expedient-empty">
           <strong>Seleccione un estudiante</strong>
           <span>Busque por nombre, cédula o código para consultar y gestionar sus expedientes.</span>

@@ -1025,10 +1025,24 @@ def list_documents(identification: str) -> list[dict[str, Any]]:
                 D.DocumentoGraphId, D.TipoDocumentoCodigo, D.DocumentoOrigenId,
                 D.NombreArchivo, D.ContentType, D.TamanoBytes, D.VersionActual,
                 D.EstadoDocumentoGraphCodigo, D.GraphItemId, D.GraphWebUrl,
-                D.FechaCarga, D.UsuarioCarga
+                D.FechaCarga, D.UsuarioCarga, D.FechaActualizacion,
+                D.UsuarioActualizacion, Revision.ObservacionRevision,
+                Revision.UsuarioRevision, Revision.FechaRevision
             FROM doc.ExpedienteGraph E
             LEFT JOIN doc.DocumentoGraph D
               ON D.ExpedienteGraphId = E.ExpedienteGraphId AND D.Activo = 1
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    A.Detalle AS ObservacionRevision,
+                    A.UsuarioAccion AS UsuarioRevision,
+                    A.FechaAccion AS FechaRevision
+                FROM aud.AuditoriaGraph A
+                WHERE A.EntidadTipo = 'DOCUMENTO_EXPEDIENTE'
+                  AND A.EntidadId = D.DocumentoGraphId
+                  AND A.Accion IN ('DOCUMENTO_VALIDADO', 'DOCUMENTO_OBSERVADO')
+                ORDER BY A.FechaAccion DESC, A.AuditoriaGraphId DESC
+            ) Revision
             WHERE E.NumeroIdentificacion = ? AND E.Activo = 1
             ORDER BY E.TipoExpedienteGraphCodigo, D.FechaCarga DESC, D.DocumentoGraphId DESC
             """,
@@ -1036,6 +1050,111 @@ def list_documents(identification: str) -> list[dict[str, Any]]:
         )
         columns = [column[0] for column in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def review_document(
+    *,
+    document_graph_id: int,
+    identification: str,
+    module_code: str,
+    allowed_document_types: set[str],
+    status_code: str,
+    observation: str,
+    audit_user: str,
+) -> dict[str, Any]:
+    document = re.sub(r"\D+", "", identification)
+    module = clean(module_code).upper()
+    review_status = clean(status_code).upper()
+    allowed_types = {clean(value).upper() for value in allowed_document_types}
+    detail = clean(observation)[:2000]
+    if review_status not in {"VALIDADO", "OBSERVADO"}:
+        raise ValueError("El estado de revisión documental no es válido.")
+    if review_status == "OBSERVADO" and not detail:
+        raise ValueError("La observación es obligatoria al observar un documento.")
+
+    with get_graph_database_connection() as conn:
+        cursor = conn.cursor()
+        _assert_schema(cursor)
+        cursor.execute(
+            """
+            MERGE cat.EstadoDocumentoGraph AS target
+            USING (VALUES
+                ('VALIDADO', N'Validado', 1),
+                ('OBSERVADO', N'Observado', 0)
+            ) AS source(Codigo, Nombre, EsFinal)
+               ON target.EstadoDocumentoGraphCodigo = source.Codigo
+            WHEN MATCHED THEN
+                UPDATE SET Nombre = source.Nombre, EsFinal = source.EsFinal, Activo = 1
+            WHEN NOT MATCHED THEN
+                INSERT(EstadoDocumentoGraphCodigo, Nombre, EsFinal)
+                VALUES(source.Codigo, source.Nombre, source.EsFinal);
+            """
+        )
+        cursor.execute(
+            """
+            SELECT
+                D.DocumentoGraphId, D.TipoDocumentoCodigo,
+                D.EstadoDocumentoGraphCodigo, D.VersionActual,
+                E.NumeroIdentificacion, E.TipoExpedienteGraphCodigo
+            FROM doc.DocumentoGraph D WITH (UPDLOCK, HOLDLOCK)
+            INNER JOIN doc.ExpedienteGraph E
+                ON E.ExpedienteGraphId = D.ExpedienteGraphId
+            WHERE D.DocumentoGraphId = ? AND D.Activo = 1 AND E.Activo = 1
+            """,
+            document_graph_id,
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError("No existe el documento seleccionado.")
+        if re.sub(r"\D+", "", clean(row.NumeroIdentificacion)) != document:
+            raise PermissionError("El documento no pertenece al estudiante seleccionado.")
+        if clean(row.TipoExpedienteGraphCodigo).upper() != module:
+            raise ValueError("El documento no pertenece al expediente de Inglés.")
+        document_type = clean(row.TipoDocumentoCodigo).upper()
+        if document_type not in allowed_types:
+            raise ValueError("El tipo documental no forma parte de la aprobación de Inglés.")
+
+        cursor.execute(
+            """
+            UPDATE doc.DocumentoGraph
+               SET EstadoDocumentoGraphCodigo = ?, FechaActualizacion = SYSUTCDATETIME(),
+                   UsuarioActualizacion = ?
+             WHERE DocumentoGraphId = ?
+            """,
+            review_status,
+            audit_user,
+            document_graph_id,
+        )
+        cursor.execute(
+            """
+            UPDATE doc.DocumentoGraphVersion
+               SET EstadoDocumentoGraphCodigo = ?
+             WHERE DocumentoGraphId = ? AND NumeroVersion = ?
+            """,
+            review_status,
+            document_graph_id,
+            int(row.VersionActual),
+        )
+        cursor.execute(
+            """
+            INSERT INTO aud.AuditoriaGraph
+                (EntidadTipo, EntidadId, Accion, Detalle, UsuarioAccion)
+            VALUES
+                ('DOCUMENTO_EXPEDIENTE', ?, ?, NULLIF(?, N''), ?)
+            """,
+            document_graph_id,
+            "DOCUMENTO_VALIDADO" if review_status == "VALIDADO" else "DOCUMENTO_OBSERVADO",
+            detail,
+            audit_user,
+        )
+        conn.commit()
+        return {
+            "document_graph_id": int(row.DocumentoGraphId),
+            "document_type_code": document_type,
+            "previous_status": clean(row.EstadoDocumentoGraphCodigo),
+            "status": review_status,
+            "observation": detail,
+        }
 
 
 def document_record(document_graph_id: int) -> dict[str, Any] | None:

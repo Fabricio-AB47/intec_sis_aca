@@ -16,6 +16,7 @@ from app.core.security import SessionUser, require_roles
 from app.core.file_security import read_secure_upload
 from app.routers.students import _MATRICULA_ACTUAL_CTE
 from app.services.db import get_connection, get_practices_connection, get_titulation_connection
+from app.services.english_approval import english_approval_status
 from app.services.practices_operations import ensure_operations_schema, is_approved_practice_outcome
 
 router = APIRouter(prefix="/api/titulacion", tags=["titulacion"])
@@ -183,6 +184,184 @@ def _row_dict(cursor: pyodbc.Cursor, row: Any) -> dict[str, Any]:
 
 def _fetch_all(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
     return [_row_dict(cursor, row) for row in cursor.fetchall()]
+
+
+def _integer_db(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _bulk_academic_summaries(
+    cursor: pyodbc.Cursor,
+    students: list[dict[str, Any]],
+) -> dict[tuple[int, int], dict[str, Any]]:
+    candidates = sorted({
+        (student, career)
+        for row in students
+        if (student := _integer_db(row.get("CodigoEstud"))) is not None
+        and (career := _integer_db(row.get("CodAnioBasica"))) is not None
+    })
+    if not candidates:
+        return {}
+
+    summaries: dict[tuple[int, int], dict[str, Any]] = {}
+    for start in range(0, len(candidates), 500):
+        batch = candidates[start : start + 500]
+        values_sql = ",".join("(?, ?)" for _ in batch)
+        params = [value for candidate in batch for value in candidate]
+        cursor.execute(
+            f"""
+            ;WITH Candidates AS
+            (
+                SELECT
+                    CAST(source.CodigoEstud AS decimal(18, 0)) AS CodigoEstud,
+                    CAST(source.CodAnioBasica AS decimal(18, 0)) AS CodAnioBasica
+                FROM (VALUES {values_sql}) source(CodigoEstud, CodAnioBasica)
+            ),
+            PensumOrdenado AS
+            (
+                SELECT
+                    careers.CodAnioBasica,
+                    TRY_CONVERT(nvarchar(50), p.codigo_materia) AS CodigoMateria,
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY careers.CodAnioBasica, TRY_CONVERT(nvarchar(50), p.codigo_materia)
+                        ORDER BY
+                            TRY_CONVERT(int, p.Semestre),
+                            TRY_CONVERT(int, p.Orden),
+                            TRY_CONVERT(nvarchar(250), p.Nomb_Materia)
+                    ) AS MateriaRN,
+                    MIN(TRY_CONVERT(int, p.Semestre)) OVER
+                    (
+                        PARTITION BY careers.CodAnioBasica, TRY_CONVERT(nvarchar(50), p.codigo_materia)
+                    ) AS Semestre,
+                    MIN(TRY_CONVERT(int, p.Orden)) OVER
+                    (
+                        PARTITION BY careers.CodAnioBasica, TRY_CONVERT(nvarchar(50), p.codigo_materia)
+                    ) AS Orden
+                FROM (SELECT DISTINCT CodAnioBasica FROM Candidates) careers
+                INNER JOIN dbo.PENSUM p
+                    ON p.Cod_AnioBasica = careers.CodAnioBasica
+                WHERE p.codigo_materia IS NOT NULL
+            ),
+            PensumClasificado AS
+            (
+                SELECT
+                    CodAnioBasica,
+                    CodigoMateria,
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY CodAnioBasica
+                        ORDER BY ISNULL(Semestre, 999), ISNULL(Orden, 999), CodigoMateria
+                    ) AS PensumRN
+                FROM PensumOrdenado
+                WHERE MateriaRN = 1
+            ),
+            PensumBase AS
+            (
+                SELECT CodAnioBasica, CodigoMateria
+                FROM PensumClasificado
+                WHERE PensumRN <= {_MATERIAS_REQUERIDAS_TITULACION}
+            ),
+            Notas AS
+            (
+                SELECT
+                    candidates.CodigoEstud,
+                    candidates.CodAnioBasica,
+                    TRY_CONVERT(nvarchar(50), cxe.codigo_materia) AS CodigoMateria,
+                    CASE
+                        WHEN UPPER(LTRIM(RTRIM(COALESCE(CONVERT(nvarchar(50), cxe.TipoMatricula), CONVERT(nvarchar(50), pe.TipoMatricula), N'')))) = N'H'
+                          OR UPPER(COALESCE(CONVERT(nvarchar(4000), pe.Detalle_Periodo), N'')) LIKE N'%HOMO%'
+                        THEN
+                            COALESCE(
+                                CASE WHEN TRY_CONVERT(float, cxe.PromedioFinal) BETWEEN 0 AND 10 THEN TRY_CONVERT(float, cxe.PromedioFinal) END,
+                                CASE
+                                    WHEN TRY_CONVERT(float, cxe.teoriaHomo) IS NOT NULL
+                                     AND TRY_CONVERT(float, cxe.practicahomo) IS NOT NULL
+                                    THEN (TRY_CONVERT(float, cxe.teoriaHomo) + TRY_CONVERT(float, cxe.practicahomo)) / 2
+                                END
+                            )
+                        ELSE
+                            COALESCE(
+                                CASE WHEN TRY_CONVERT(float, cxe.PromedioFinal) BETWEEN 0 AND 10 THEN TRY_CONVERT(float, cxe.PromedioFinal) END,
+                                CASE
+                                    WHEN TRY_CONVERT(float, cxe.promP1) IS NOT NULL
+                                     AND TRY_CONVERT(float, cxe.promP2) IS NOT NULL
+                                     AND TRY_CONVERT(float, cxe.promP3) IS NOT NULL
+                                    THEN (TRY_CONVERT(float, cxe.promP1) + TRY_CONVERT(float, cxe.promP2) + TRY_CONVERT(float, cxe.promP3)) / 3
+                                END
+                            )
+                    END AS NotaFinal,
+                    CAST(? AS float) AS NotaAprobar
+                FROM Candidates candidates
+                INNER JOIN dbo.CARRERAXESTUD cxe
+                    ON cxe.codigo_estud = candidates.CodigoEstud
+                   AND cxe.cod_anio_Basica = candidates.CodAnioBasica
+                LEFT JOIN dbo.PERIODO pe
+                    ON pe.cod_periodo = cxe.codigo_periodo
+                WHERE cxe.codigo_materia IS NOT NULL
+            ),
+            Mejores AS
+            (
+                SELECT
+                    CodigoEstud,
+                    CodAnioBasica,
+                    CodigoMateria,
+                    MAX(CASE WHEN NotaFinal >= NotaAprobar AND NotaFinal <= 10 THEN 1 ELSE 0 END) AS Aprobada,
+                    MAX(CASE WHEN NotaFinal >= 0 AND NotaFinal <= 10 THEN NotaFinal ELSE NULL END) AS MejorNota
+                FROM Notas
+                GROUP BY CodigoEstud, CodAnioBasica, CodigoMateria
+            )
+            SELECT
+                candidates.CodigoEstud,
+                candidates.CodAnioBasica,
+                COUNT(pensum.CodigoMateria) AS MateriasPensum,
+                COUNT(mejores.CodigoMateria) AS MateriasCursadas,
+                ISNULL(SUM(CASE WHEN mejores.Aprobada = 1 THEN 1 ELSE 0 END), 0) AS MateriasAprobadas,
+                AVG(CASE WHEN mejores.Aprobada = 1 THEN mejores.MejorNota ELSE NULL END) AS PromedioAprobadas,
+                AVG(mejores.MejorNota) AS PromedioGeneral
+            FROM Candidates candidates
+            LEFT JOIN PensumBase pensum
+                ON pensum.CodAnioBasica = candidates.CodAnioBasica
+            LEFT JOIN Mejores mejores
+                ON mejores.CodigoEstud = candidates.CodigoEstud
+               AND mejores.CodAnioBasica = candidates.CodAnioBasica
+               AND mejores.CodigoMateria = pensum.CodigoMateria
+            GROUP BY candidates.CodigoEstud, candidates.CodAnioBasica
+            """,
+            *params,
+            _NOTA_MINIMA_MALLA,
+        )
+        for row in _fetch_all(cursor):
+            student = _integer_db(row.get("CodigoEstud"))
+            career = _integer_db(row.get("CodAnioBasica"))
+            if student is None or career is None:
+                continue
+            total_subjects = int(row.get("MateriasPensum") or 0)
+            approved = int(row.get("MateriasAprobadas") or 0)
+            average = row.get("PromedioAprobadas")
+            if average is None:
+                average = row.get("PromedioGeneral")
+            summaries[(student, career)] = {
+                "total_materias": _MATERIAS_REQUERIDAS_TITULACION,
+                "materias_pensum": total_subjects,
+                "materias_cursadas": int(row.get("MateriasCursadas") or 0),
+                "materias_aprobadas": approved,
+                "materias_pendientes": max(_MATERIAS_REQUERIDAS_TITULACION - approved, 0),
+                "promedio_asignaturas": round(float(average), 2) if average is not None else None,
+                "porcentaje_malla": min(
+                    100,
+                    round((approved / _MATERIAS_REQUERIDAS_TITULACION) * 100, 2),
+                ) if total_subjects else 0,
+                "malla_finalizada": bool(
+                    total_subjects and approved >= _MATERIAS_REQUERIDAS_TITULACION
+                ),
+            }
+    return summaries
 
 
 def _operational_practices_completion(
@@ -1283,6 +1462,7 @@ def get_titulacion_estudiantes_aptos(
                 limit,
             )
             base_rows = _fetch_all(cursor)
+            academic_summaries = _bulk_academic_summaries(cursor, base_rows)
 
         documents = sorted({_document(str(row.get("NumeroIdentificacion") or "")) for row in base_rows if _document(str(row.get("NumeroIdentificacion") or ""))})
         expediente_map: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1336,7 +1516,10 @@ def get_titulacion_estudiantes_aptos(
     for row in base_rows:
         document = _document(str(row.get("NumeroIdentificacion") or ""))
         career = _clean(row.get("CodAnioBasica"))
-        academic = _academic_status(document, career)
+        academic = academic_summaries.get(
+            (_integer_db(row.get("CodigoEstud")), _integer_db(row.get("CodAnioBasica"))),
+            {},
+        )
         expediente = expediente_map.get((document, career)) or expediente_map.get((document, ""))
         ppf = _matching_operational_completion(operational_completion, document, career, "PPF")
         vin = _matching_operational_completion(operational_completion, document, career, "VIN")
@@ -1921,6 +2104,18 @@ def save_titulacion_notas(
             nota_80 = round(promedio * 0.80, 2) if promedio is not None else None
             nota_20 = round(nota_titulacion * 0.20, 2) if nota_titulacion is not None else None
             nota_final = round((nota_80 or 0) + (nota_20 or 0), 2) if nota_80 is not None and nota_20 is not None else None
+            ingles_a2_cumple = False
+            if payload.ingles_a2_cumple:
+                english_status = english_approval_status(cedula)
+                if not english_status.get("approved"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "No se puede aprobar Inglés A2+: "
+                            f"{english_status.get('message') or 'la evidencia documental está incompleta.'}"
+                        ),
+                    )
+                ingles_a2_cumple = True
 
             cursor.execute(
                 """
@@ -1942,7 +2137,7 @@ def save_titulacion_notas(
                 """,
                 1 if payload.cedula_validada else 0,
                 1 if payload.titulo_bachiller_cumple else 0,
-                1 if payload.ingles_a2_cumple else 0,
+                1 if ingles_a2_cumple else 0,
                 1 if academic.get("malla_finalizada") else 0,
                 1 if payload.no_adeuda_financiero else 0,
                 1 if payload.apto_sustentacion else 0,

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.config import get_settings
 from app.core.security import SessionUser, get_current_user, require_roles, require_screen_access
 from app.services.db import get_connection, get_expedient_connection, get_titulation_connection
+from app.services.english_approval import sync_titulation_english_approval
 from app.services.graph import get_graph_token
 from app.services.graph_documents import (
     complete_upload_session as complete_graph_document_upload,
@@ -2724,25 +2725,12 @@ def _sync_academic_component_grade(
 
 
 def _sync_titulation_english(identification: str, approved: bool, audit_user: str) -> None:
+    del approved
     try:
-        with get_titulation_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE E
-                   SET InglesA2Cumple = ?, FechaActualizacion = SYSDATETIME(), UsuarioActualizacion = ?
-                FROM tit.ExpedienteTitulacion E
-                INNER JOIN core.EstudianteRef ER ON ER.EstudianteRefId = E.EstudianteRefId
-                WHERE REPLACE(REPLACE(LTRIM(RTRIM(CONVERT(VARCHAR(30), ER.NumeroIdentificacion))), '-', ''), ' ', '') = ?
-                """,
-                1 if approved else 0,
-                audit_user,
-                re.sub(r"\D+", "", identification),
-            )
-            conn.commit()
+        sync_titulation_english_approval(identification, audit_user)
     except (RuntimeError, pyodbc.Error):
-        # El expediente de Inglés es la fuente primaria. Titulación se sincroniza
-        # cuando la base complementaria está disponible.
+        # La publicación de la nota no se revierte si la base documental o la de
+        # Titulación están temporalmente indisponibles.
         return
 
 
