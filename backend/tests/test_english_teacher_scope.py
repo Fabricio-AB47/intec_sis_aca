@@ -24,6 +24,7 @@ from app.routers.english_exams import (
     _reviewer_scope_filter,
     _select_reviewer_period,
     _select_reviewer_subject,
+    _student_profile,
     _virtual_exam_payload,
     finalize_student_upload,
 )
@@ -335,6 +336,11 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIn("INTECBDD.dbo.CARRERAXESTUD", query)
         self.assertNotIn("ing.ExamenIngles", query)
         self.assertNotIn("A2+ - INTERMEDIATE", cursor.execute.call_args.args)
+        self.assertIn("periodo.fechain", query)
+        self.assertNotIn(
+            "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
+            query,
+        )
 
     def test_subject_catalog_uses_current_enrollment_and_exact_teacher_subject(self):
         cursor = MagicMock()
@@ -359,6 +365,10 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         query = " ".join(cursor.execute.call_args.args[0].split())
         self.assertIn("cxd.codigo_materia", query)
         self.assertIn("cx.codigo_materia", query)
+        self.assertNotIn(
+            "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
+            query,
+        )
         self.assertEqual(cursor.execute.call_args.args[1:], ("1060", 100))
 
     def test_subject_selection_rejects_subject_outside_teacher_assignment(self):
@@ -406,7 +416,52 @@ class EnglishTeacherScopeTests(unittest.TestCase):
         self.assertIn("ROW_NUMBER() OVER", query)
         self.assertIn("INTECBDD.dbo.CARRERAXESTUD", query)
         self.assertNotIn("CargaExamenIngles", query)
+        self.assertNotIn(
+            "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
+            query,
+        )
         self.assertEqual(cursor.execute.call_args.args[1:3], ("1060", "901"))
+
+    @patch("app.routers.english_exams.get_connection")
+    def test_student_keeps_active_english_enrollment_visible_after_period_end(
+        self,
+        connection_factory,
+    ) -> None:
+        cursor = connection_factory.return_value.__enter__.return_value.cursor.return_value
+        cursor.fetchone.return_value = SimpleNamespace(
+            codigo_estud=800,
+            cedula="1106128380",
+            estudiante="ESTUDIANTE PRUEBA",
+            correo="estudiante@intec.edu.ec",
+            carrera_x_estud_num=5001,
+            codigo_carrera=12,
+            carrera_ingles="INGLES",
+            codigo_materia=331,
+            nivel_ingles="A1 - BEGINNER",
+            codigo_periodo=1034,
+            detalle_periodo="MAYO 2026 - SEPTIEMBRE 2026",
+            fecha_inicio_periodo=None,
+            fecha_fin_periodo=None,
+            paralelo="PBS1",
+            tipo_matricula="R",
+            codigo_carrera_principal=22,
+            carrera="CONTABILIDAD",
+        )
+        user = SessionUser(
+            login="estudiante@intec.edu.ec",
+            nombres="Estudiante prueba",
+            rol="ESTUDIANTE",
+            codigo_estud=800,
+            cedula="1106128380",
+        )
+
+        profile = _student_profile(user)
+
+        query = " ".join(cursor.execute.call_args.args[0].split())
+        self.assertEqual(profile["carrera_x_estud_num"], 5001)
+        self.assertIn("pe.Estado", query)
+        self.assertIn("pe.fechain", query)
+        self.assertNotIn("pe.fechafin IS NULL OR pe.fechafin >=", query)
 
     def test_virtual_exam_payload_marks_enrolled_student_without_delivery(self):
         profile = {

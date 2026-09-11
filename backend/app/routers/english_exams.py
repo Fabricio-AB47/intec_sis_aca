@@ -282,7 +282,6 @@ def _reviewer_periods(
         enrollment_filters.extend(
             [
                 "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
-                "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
             ]
         )
     enrollment_params: list[Any] = []
@@ -383,7 +382,6 @@ def _reviewer_subjects(
         filters.extend(
             [
                 "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
-                "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
             ]
         )
     params: list[Any] = [selected_period]
@@ -541,7 +539,6 @@ def _reviewer_enrollments(
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.tp_escuela)))) = N'IDIOMA'",
         "UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), periodo.Estado)))) = N'A'",
         "(periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))",
-        "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
         "TRY_CONVERT(BIGINT, cx.num) IS NOT NULL",
         "LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), cx.codigo_periodo))) = ?",
         "TRY_CONVERT(INT, cx.codigo_materia) = TRY_CONVERT(INT, ?)",
@@ -1786,7 +1783,6 @@ def _student_profile(current_user: SessionUser) -> dict[str, Any]:
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), ci.tp_escuela)))) = N'IDIOMA'
                   AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), pe.Estado)))) = N'A'
                   AND (pe.fechain IS NULL OR pe.fechain <= CONVERT(DATE, GETDATE()))
-                  AND (pe.fechafin IS NULL OR pe.fechafin >= CONVERT(DATE, GETDATE()))
                   AND TRY_CONVERT(BIGINT, cx.num) IS NOT NULL
                 ORDER BY COALESCE(TRY_CONVERT(INT, pe.Orden), TRY_CONVERT(INT, cx.codigo_periodo)) DESC,
                          cx.Fecha_Matricula DESC,
