@@ -206,9 +206,8 @@ def _require_teacher_exam_scope(
     exam_id: int,
     current_user: SessionUser,
 ) -> None:
-    if current_user.rol != "DOCENTE":
-        return
-    if current_user.codigo_doc is None:
+    """Require a current official enrollment and, for teachers, an exact assignment."""
+    if current_user.rol == "DOCENTE" and current_user.codigo_doc is None:
         raise HTTPException(status_code=403, detail="La sesión docente no contiene un código válido.")
     cursor.execute(
         """
@@ -225,10 +224,28 @@ def _require_teacher_exam_scope(
 
     with get_connection() as academic_connection:
         academic_cursor = academic_connection.cursor()
+        teacher_filter = ""
+        params: list[Any] = [
+            exam.CarreraXEstudNum,
+            exam.CodigoEstud,
+            exam.CodigoCarrera,
+            exam.CodigoMateria,
+            exam.CodigoPeriodo,
+            exam.Paralelo,
+        ]
+        if current_user.rol == "DOCENTE":
+            teacher_filter = f"AND {_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL}"
+            params.append(current_user.codigo_doc)
         academic_cursor.execute(
             f"""
             SELECT TOP (1) 1
-            FROM INTECBDD.dbo.CARRERAXESTUD cx
+            FROM dbo.CARRERAXESTUD cx
+            INNER JOIN dbo.DATOS_ESTUD d
+                ON TRY_CONVERT(BIGINT, d.codigo_estud) = TRY_CONVERT(BIGINT, cx.codigo_estud)
+            INNER JOIN dbo.CARRERAS carrera_ingles
+                ON TRY_CONVERT(INT, carrera_ingles.Cod_AnioBasica) = TRY_CONVERT(INT, cx.cod_anio_Basica)
+            INNER JOIN dbo.PERIODO periodo
+                ON TRY_CONVERT(INT, periodo.cod_periodo) = TRY_CONVERT(INT, cx.codigo_periodo)
             WHERE TRY_CONVERT(BIGINT, cx.num) = TRY_CONVERT(BIGINT, ?)
               AND TRY_CONVERT(BIGINT, cx.codigo_estud) = TRY_CONVERT(BIGINT, ?)
               AND TRY_CONVERT(INT, cx.cod_anio_Basica) = TRY_CONVERT(INT, ?)
@@ -236,18 +253,25 @@ def _require_teacher_exam_scope(
               AND TRY_CONVERT(INT, cx.codigo_periodo) = TRY_CONVERT(INT, ?)
               AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(20), cx.Paralelo)))) =
                   UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(20), ?))))
-              AND {_TEACHER_ACTIVE_ENGLISH_SCOPE_SQL}
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), d.Estado)))) = N'A'
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.Estado)))) = N'A'
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.tp_escuela)))) = N'IDIOMA'
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), periodo.Estado)))) = N'A'
+              AND (periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))
+              {teacher_filter}
             """,
-            exam.CarreraXEstudNum,
-            exam.CodigoEstud,
-            exam.CodigoCarrera,
-            exam.CodigoMateria,
-            exam.CodigoPeriodo,
-            exam.Paralelo,
-            current_user.codigo_doc,
+            *params,
         )
         assigned = academic_cursor.fetchone()
     if not assigned:
+        if current_user.rol != "DOCENTE":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "La matrícula de Inglés ya no está activa o no coincide con el expediente; "
+                    "actualice la pantalla antes de continuar."
+                ),
+            )
         raise HTTPException(
             status_code=403,
             detail="El estudiante no pertenece a una carrera y período asignados al docente.",
@@ -2552,8 +2576,7 @@ def _load_student_exam(profile: dict[str, Any], audit_user: str) -> dict[str, An
     if not row:
         raise HTTPException(status_code=500, detail="No se pudo abrir el expediente de Inglés.")
     payload = _row_payload(row, component_rows, include_student=True)
-    payload["student"]["career"] = profile["carrera"] or payload["student"]["career"]
-    return payload
+    return _apply_reviewer_profile(payload, profile)
 
 
 def _refresh_exam_status(cursor: Any, exam_id: int, audit_user: str) -> tuple[Decimal | None, bool]:
@@ -2612,9 +2635,9 @@ _ACADEMIC_EXAM_COLUMNS = {
 }
 
 
-def _sync_academic_component_grade(
+def _write_academic_component_grade(
     cursor: Any,
-    exam_id: int,
+    exam: Any,
     component_code: str,
     grade: Decimal,
     audit_user: str,
@@ -2623,18 +2646,6 @@ def _sync_academic_component_grade(
     if not exam_column:
         raise HTTPException(status_code=400, detail="El parcial indicado no es válido.")
 
-    cursor.execute(
-        """
-        SELECT CarreraXEstudNum, CodigoEstud, CodigoCarrera, CodigoMateria, CodigoPeriodo, Paralelo
-        FROM ing.ExamenIngles
-        WHERE ExamenInglesId = ? AND Activo = 1
-        """,
-        exam_id,
-    )
-    exam = cursor.fetchone()
-    if not exam or exam.CarreraXEstudNum is None:
-        raise HTTPException(status_code=409, detail="El expediente no está enlazado con una matrícula de Inglés válida.")
-
     exact_where = """
         TRY_CONVERT(BIGINT, num) = ?
         AND TRY_CONVERT(BIGINT, codigo_estud) = ?
@@ -2642,6 +2653,29 @@ def _sync_academic_component_grade(
         AND TRY_CONVERT(INT, codigo_materia) = ?
         AND TRY_CONVERT(INT, codigo_periodo) = ?
         AND UPPER(LTRIM(RTRIM(COALESCE(TRY_CONVERT(NVARCHAR(20), paralelo), N'')))) = ?
+        AND EXISTS
+        (
+            SELECT 1
+            FROM dbo.DATOS_ESTUD d
+            WHERE TRY_CONVERT(BIGINT, d.codigo_estud) = TRY_CONVERT(BIGINT, CARRERAXESTUD.codigo_estud)
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), d.Estado)))) = N'A'
+        )
+        AND EXISTS
+        (
+            SELECT 1
+            FROM dbo.CARRERAS carrera_ingles
+            WHERE TRY_CONVERT(INT, carrera_ingles.Cod_AnioBasica) = TRY_CONVERT(INT, CARRERAXESTUD.cod_anio_Basica)
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.Estado)))) = N'A'
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), carrera_ingles.tp_escuela)))) = N'IDIOMA'
+        )
+        AND EXISTS
+        (
+            SELECT 1
+            FROM dbo.PERIODO periodo
+            WHERE TRY_CONVERT(INT, periodo.cod_periodo) = TRY_CONVERT(INT, CARRERAXESTUD.codigo_periodo)
+              AND UPPER(LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(30), periodo.Estado)))) = N'A'
+              AND (periodo.fechain IS NULL OR periodo.fechain <= CONVERT(DATE, GETDATE()))
+        )
     """
     exact_params = [
         int(exam.CarreraXEstudNum),
@@ -2653,7 +2687,7 @@ def _sync_academic_component_grade(
     ]
     cursor.execute(
         f"""
-        UPDATE INTECBDD.dbo.CARRERAXESTUD
+        UPDATE dbo.CARRERAXESTUD
            SET {exam_column} = ?, Usuario = ?
          WHERE {exact_where}
         """,
@@ -2673,7 +2707,7 @@ def _sync_academic_component_grade(
                P2Tareas, P2Proyectos, P2Examen,
                P3Tareas, P3Proyectos, P3Examen,
                Recuperacion
-        FROM INTECBDD.dbo.CARRERAXESTUD
+        FROM dbo.CARRERAXESTUD
         WHERE {exact_where}
         """,
         *exact_params,
@@ -2701,7 +2735,7 @@ def _sync_academic_component_grade(
     final_grade = Decimal(str(calculation.final)).quantize(Decimal("0.01")) if calculation.final is not None else None
     cursor.execute(
         f"""
-        UPDATE INTECBDD.dbo.CARRERAXESTUD
+        UPDATE dbo.CARRERAXESTUD
            SET promP1 = ?, promP2 = ?, promP3 = ?,
                Promedio = ?, PromedioFinal = ?,
                caprueba = ?, Usuario = ?
@@ -2718,6 +2752,39 @@ def _sync_academic_component_grade(
     )
     if int(cursor.rowcount or 0) != 1:
         raise HTTPException(status_code=409, detail="No se pudo recalcular la matrícula académica de Inglés.")
+    return final_grade
+
+
+def _sync_academic_component_grade(
+    cursor: Any,
+    exam_id: int,
+    component_code: str,
+    grade: Decimal,
+    audit_user: str,
+) -> Decimal | None:
+    """Persist a published grade only in the authoritative academic database."""
+    cursor.execute(
+        """
+        SELECT CarreraXEstudNum, CodigoEstud, CodigoCarrera, CodigoMateria, CodigoPeriodo, Paralelo
+        FROM ing.ExamenIngles
+        WHERE ExamenInglesId = ? AND Activo = 1
+        """,
+        exam_id,
+    )
+    exam = cursor.fetchone()
+    if not exam or exam.CarreraXEstudNum is None:
+        raise HTTPException(status_code=409, detail="El expediente no está enlazado con una matrícula de Inglés válida.")
+
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        final_grade = _write_academic_component_grade(
+            academic_cursor,
+            exam,
+            component_code,
+            grade,
+            audit_user,
+        )
+        academic_connection.commit()
     return final_grade
 
 

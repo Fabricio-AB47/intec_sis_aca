@@ -26,6 +26,7 @@ from app.routers.english_exams import (
     _select_reviewer_period,
     _select_reviewer_subject,
     _student_profile,
+    _sync_academic_component_grade,
     _virtual_exam_payload,
     finalize_student_upload,
 )
@@ -286,6 +287,73 @@ class EnglishTeacherScopeTests(unittest.TestCase):
 
         cursor.execute.assert_called_once()
         academic_cursor.execute.assert_called_once()
+
+    @patch("app.routers.english_exams.get_connection")
+    def test_administrator_action_still_requires_active_official_enrollment(self, connection_factory):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = SimpleNamespace(
+            CodigoEstud=800,
+            CarreraXEstudNum=5001,
+            CodigoCarrera=12,
+            CodigoMateria=331,
+            CodigoPeriodo=1034,
+            Paralelo="PBS1",
+        )
+        academic_cursor = connection_factory.return_value.__enter__.return_value.cursor.return_value
+        academic_cursor.fetchone.return_value = None
+        user = SessionUser(login="admin", nombres="Administrador", rol="ADMINISTRADOR")
+
+        with self.assertRaises(HTTPException) as context:
+            _require_teacher_exam_scope(cursor, 99, user)
+
+        self.assertEqual(context.exception.status_code, 409)
+        query = " ".join(academic_cursor.execute.call_args.args[0].split())
+        self.assertIn("dbo.CARRERAXESTUD", query)
+        self.assertIn("carrera_ingles.tp_escuela", query)
+        self.assertIn("periodo.Estado", query)
+        self.assertNotIn("CARRERAXDOCENTE", query)
+
+    @patch("app.routers.english_exams.get_connection")
+    def test_published_grade_writes_only_to_official_academic_connection(self, connection_factory):
+        expedient_cursor = MagicMock()
+        expedient_cursor.fetchone.return_value = SimpleNamespace(
+            CarreraXEstudNum=5001,
+            CodigoEstud=800,
+            CodigoCarrera=12,
+            CodigoMateria=331,
+            CodigoPeriodo=1034,
+            Paralelo="PBS1",
+        )
+        academic_connection = connection_factory.return_value.__enter__.return_value
+        academic_cursor = academic_connection.cursor.return_value
+        academic_cursor.rowcount = 1
+        academic_cursor.fetchone.return_value = SimpleNamespace(
+            P1Tareas=8,
+            P1Proyectos=8,
+            P1Examen=9,
+            P2Tareas=None,
+            P2Proyectos=None,
+            P2Examen=None,
+            P3Tareas=None,
+            P3Proyectos=None,
+            P3Examen=None,
+            Recuperacion=None,
+        )
+
+        _sync_academic_component_grade(
+            expedient_cursor,
+            99,
+            "P1",
+            Decimal("9.00"),
+            "docente",
+        )
+
+        self.assertEqual(expedient_cursor.execute.call_count, 1)
+        self.assertNotIn("UPDATE", expedient_cursor.execute.call_args.args[0].upper())
+        academic_sql = " ".join(call.args[0] for call in academic_cursor.execute.call_args_list)
+        self.assertIn("UPDATE dbo.CARRERAXESTUD", academic_sql)
+        self.assertNotIn("ing.ExamenIngles", academic_sql)
+        academic_connection.commit.assert_called_once_with()
 
     def test_latest_available_period_is_selected_initially(self):
         user = SessionUser(
