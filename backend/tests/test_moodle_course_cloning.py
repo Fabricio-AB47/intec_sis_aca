@@ -165,6 +165,54 @@ class MoodleCourseCloningServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(regular["subject_name"], "Seguridad en Redes")
         self.assertEqual(regular["area"], "TICS")
         self.assertEqual(regular["career"], "CIBERSEGURIDAD")
+        self.assertEqual(regular["category_route"], ["TICS", "CIBERSEGURIDAD"])
+
+    async def test_catalog_refresh_detects_mode_before_dynamic_career(self) -> None:
+        first = await self.service.catalog()
+        self.assertNotIn(301, {item["course_id"] for item in first["templates"]})
+
+        self.client.categories.extend(
+            [
+                {
+                    "id": 20,
+                    "name": "REGULAR",
+                    "idnumber": "CBP-TICS-REG",
+                    "parent": 2,
+                    "visible": 1,
+                },
+                {
+                    "id": 21,
+                    "name": "Big Data",
+                    "idnumber": "CBP-TICS-REG-BIGDATA",
+                    "parent": 20,
+                    "visible": 1,
+                },
+            ]
+        )
+        self.client.courses.append(
+            {
+                "id": 301,
+                "fullname": "Minería de Datos PLANTILLA",
+                "shortname": "VGA-BIG-301-RPLAN",
+                "idnumber": "VGA-ID-BIG-301-RPLAN",
+                "categoryid": 21,
+                "visible": 0,
+            }
+        )
+
+        refreshed = await self.service.catalog()
+        template = next(item for item in refreshed["templates"] if item["course_id"] == 301)
+
+        self.assertEqual(template["category_route"], ["TICS", "Big Data"])
+        self.assertEqual(template["area"], "TICS")
+        self.assertEqual(template["career"], "Big Data")
+        self.assertEqual(template["offer_type"], "REGULAR")
+
+        preview = await self.service.preview(self.request([301]))
+        self.assertEqual(
+            preview["courses"][0]["destination_path"],
+            "OFERTA_ACADEMICA/TICS/Big Data/2027/REGULAR/R30",
+        )
 
     async def test_preview_derives_year_and_builds_both_offer_type_branches(self) -> None:
         result = await self.service.preview(self.request([101, 102]))

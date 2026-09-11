@@ -69,7 +69,13 @@ export function MoodleCourseCloningPanel() {
     setCatalogLoading(true)
     setError('')
     try {
-      setCatalog(await fetchMoodleCourseCloningCatalog())
+      const response = await fetchMoodleCourseCloningCatalog()
+      const availableIds = new Set(response.templates.map((item) => item.course_id))
+      setCatalog(response)
+      setSelectedIds((current) => current.filter((courseId) => availableIds.has(courseId)))
+      setPreview(null)
+      setPreviewPayload(null)
+      setConfirmOpen(false)
     } catch (requestError) {
       setCatalog(null)
       setError(errorMessage(requestError))
@@ -119,6 +125,16 @@ export function MoodleCourseCloningPanel() {
     })
   }, [area, career, search, templatesByType])
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const selectedRoutes = useMemo(() => uniqueSorted(
+    templatesByType
+      .filter((item) => selectedSet.has(item.course_id))
+      .map((item) => item.category_route.join(' / ')),
+  ), [selectedSet, templatesByType])
+  const destinationBranch = selectedRoutes.length === 1
+    ? selectedRoutes[0]
+    : selectedRoutes.length > 1
+      ? `${selectedRoutes.length} ramas seleccionadas`
+      : 'Área / Carrera'
   const derivedYear = openingAt ? new Date(`${openingAt}:00`).getFullYear() : 0
 
   const changeOfferType = (nextType: MoodleCourseOfferType) => {
@@ -425,7 +441,7 @@ export function MoodleCourseCloningPanel() {
         <div className="moodle-cloning-route-example">
           <span>Ruta prevista</span>
           <strong>
-            OFERTA_ACADEMICA / Área / Carrera / {derivedYear || 'AÑO'} / {offerType} / {periodName || 'PERÍODO'}
+            OFERTA_ACADEMICA / {destinationBranch} / {derivedYear || 'AÑO'} / {offerType} / {periodName || 'PERÍODO'}
           </strong>
         </div>
       </section>

@@ -826,6 +826,7 @@ export type MoodleCourseCloningTemplate = {
   source_path: string
   area: string
   career: string
+  category_route: string[]
   offer_type: MoodleCourseOfferType
   visible: boolean
 }
@@ -871,6 +872,7 @@ export type MoodleCourseCloningCoursePlan = {
   source_path: string
   area: string
   career: string
+  category_route: string[]
   offer_type: MoodleCourseOfferType
   fullname: string
   shortname: string

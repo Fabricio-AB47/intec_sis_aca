@@ -1102,6 +1102,59 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertLessEqual(font_size, 5.5)
         self.assertGreaterEqual(separation, 1)
 
+    def test_secretary_report_includes_every_student_grouped_by_period(self):
+        students = [
+            {
+                "codigo_estud": "800",
+                "codigo_periodo": "1060",
+                "detalle_periodo": "C1-2026 ABRIL 2026 - AGOSTO 2026",
+                "nombre_estudiante": "ESTUDIANTE PRIMER PERIODO",
+                "cedula": "1106128380",
+                "nombre_carrera": "Carrera 10",
+            },
+            {
+                "codigo_estud": "801",
+                "codigo_periodo": "1060",
+                "detalle_periodo": "C1-2026 ABRIL 2026 - AGOSTO 2026",
+                "nombre_estudiante": "SEGUNDO PRIMER PERIODO",
+                "cedula": "1106128381",
+                "nombre_carrera": "Carrera 11",
+            },
+            {
+                "codigo_estud": "802",
+                "codigo_periodo": "1051",
+                "detalle_periodo": "C2-2026 JULIO 2026 - NOVIEMBRE 2026",
+                "nombre_estudiante": "ESTUDIANTE SEGUNDO PERIODO",
+                "cedula": "1106128382",
+                "nombre_carrera": "Carrera 10",
+            },
+        ]
+
+        pdf = _student_grade_report_pdf(
+            {"docente": "DOCENTE PRUEBA", "cedula": "1106128389"},
+            {
+                "nombre_materia": "Materia asignada",
+                "detalle_periodo": (
+                    "C1-2026 ABRIL 2026 - AGOSTO 2026 / "
+                    "C2-2026 JULIO 2026 - NOVIEMBRE 2026"
+                ),
+                "paralelo": "Varios",
+                "jornada": "Nocturna",
+            },
+            students,
+        )
+
+        report_text = "\n".join(
+            page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages
+        )
+        self.assertIn("Períodos incluidos:", report_text)
+        self.assertIn("Estudiantes matriculados:", report_text)
+        self.assertIn("C1-2026 ABRIL 2026 - AGOSTO 2026", report_text)
+        self.assertIn("C2-2026 JULIO 2026 - NOVIEMBRE 2026", report_text)
+        self.assertIn("ESTUDIANTE PRIMER PERIODO", report_text)
+        self.assertIn("SEGUNDO PRIMER PERIODO", report_text)
+        self.assertIn("ESTUDIANTE SEGUNDO PERIODO", report_text)
+
     def test_signature_stamp_scales_to_each_document_area(self):
         notes = _signature_stamp_layout((243, 90, 369, 138))
         compliance = _signature_stamp_layout((72, 458, 262, 516))

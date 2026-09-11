@@ -3,7 +3,9 @@ from datetime import date
 from unittest.mock import Mock, patch
 
 from app.routers.academic_enrollment import (
+    AcademicBulkEnrollmentPayload,
     AcademicEnrollmentPayload,
+    _bulk_student_payload,
     _fetch_existing_codes,
     _next_subject_matricula,
     _save_enrollment_with_cursor,
@@ -112,7 +114,46 @@ class AcademicEnrollmentSaveTests(unittest.TestCase):
                     if "INSERT INTO dbo.CARRERAXESTUD" in call[0]
                 )
                 self.assertEqual(insert_call[1][10], expected_cxe_type)
+                self.assertEqual(insert_call[1][12], "N")
+                self.assertEqual(insert_call[1][13], "95")
                 self.assertEqual(result["inserted"], 1)
+
+    def test_bulk_enrollment_uses_institutional_registration_metadata(self) -> None:
+        bulk_payload = AcademicBulkEnrollmentPayload(
+            cod_anio_basica=8,
+            source_codigo_periodo=1033,
+            target_codigo_periodo=1034,
+            materia_codes=[101],
+        )
+        payload = _bulk_student_payload(
+            {"codigo_estud": 100, "paralelo": "B", "num_grupo": 2},
+            bulk_payload,
+        )
+        cursor = RecordingCursor()
+        preview = {
+            "summary": {"bloqueadas_por_prerrequisito": 0, "bloqueadas_por_periodo": 0},
+            "items": [{"codigo_materia": 101, "accion": "INSERTAR"}],
+        }
+        pensum = {101: {"nombre_materia": "Matemática aplicada", "creditos": 3}}
+
+        with patch.multiple(
+            "app.routers.academic_enrollment",
+            _validate_payload=Mock(),
+            _resolve_or_create_student_from_preinscription=Mock(return_value=True),
+            _preview_with_cursor=Mock(return_value=preview),
+            _fetch_pensum_by_code=Mock(return_value=pensum),
+            _fetch_jornada_name=Mock(return_value="Nocturno"),
+            _fetch_existing_codes=Mock(return_value={}),
+            _next_number=Mock(return_value=1),
+            _next_subject_matricula=Mock(return_value=1),
+        ):
+            _save_enrollment_with_cursor(cursor, payload, "OTRO_USUARIO", date(2026, 9, 10))
+
+        insert_call = next(
+            call for call in cursor.calls if "INSERT INTO dbo.CARRERAXESTUD" in call[0]
+        )
+        self.assertEqual(insert_call[1][12], "N")
+        self.assertEqual(insert_call[1][13], "95")
 
     def test_second_subject_enrollment_is_inserted_with_attempt_two(self) -> None:
         cursor = RecordingCursor()

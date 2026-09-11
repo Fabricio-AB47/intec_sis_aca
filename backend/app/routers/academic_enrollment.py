@@ -18,6 +18,8 @@ _PREREQUISITE_ACCESS = require_screen_access("matricula-acad/prerrequisitos")
 _TEACHER_ENROLLMENT_ACCESS = require_screen_access("matricula-docente")
 _VALID_TIPO_MATRICULA = {"R", "H", "E"}
 _CARRERAXESTUD_TIPO_MATRICULA = "N"
+_CARRERAXESTUD_COD_USUA_MAT = "95"
+_CARRERAXESTUD_TIPO_CURSO_MIGRA = "N"
 _VALID_TEACHER_STATE_CODES = {"A", "P"}
 _PASSING_FINAL_GRADE = 7.0
 
@@ -3254,7 +3256,7 @@ def _save_enrollment_with_cursor(
                     Num_Reg_Mat, TipoMatricula, ControlMatricula, NumCertificado,
                     gcer, NumMatricuMod, TipoCursoMigra, CodUsuaMat
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, '', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
                 """,
                 payload.codigo_estud,
                 payload.cod_anio_basica,
@@ -3268,7 +3270,8 @@ def _save_enrollment_with_cursor(
                 next_reg,
                 _carreraxestud_tipo_matricula(payload.tipo_matricula),
                 payload.control_matricula,
-                user_code,
+                _CARRERAXESTUD_TIPO_CURSO_MIGRA,
+                _CARRERAXESTUD_COD_USUA_MAT,
             )
             inserted += 1
             action = (

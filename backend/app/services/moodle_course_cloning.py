@@ -209,8 +209,7 @@ class MoodleCourseCloningService:
                 try:
                     destination, new_categories = await self._ensure_destination(
                         categories,
-                        area=planned_course["area"],
-                        career=planned_course["career"],
+                        category_route=planned_course["category_route"],
                         year=values["year"],
                         offer_type=values["offer_type"],
                         period_name=values["period_name"],
@@ -404,8 +403,7 @@ class MoodleCourseCloningService:
         for template in selected:
             route_categories, destination_category = self._plan_destination(
                 context["categories"],
-                area=template["area"],
-                career=template["career"],
+                category_route=template["category_route"],
                 year=values["year"],
                 offer_type=values["offer_type"],
                 period_name=values["period_name"],
@@ -441,6 +439,7 @@ class MoodleCourseCloningService:
                     "source_path": template["source_path"],
                     "area": template["area"],
                     "career": template["career"],
+                    "category_route": template["category_route"],
                     "offer_type": template["offer_type"],
                     "fullname": fullname,
                     "shortname": shortname,
@@ -572,25 +571,26 @@ class MoodleCourseCloningService:
             if root["id"] not in path_ids:
                 continue
             relative = path[path_ids.index(root["id"]) + 1 :]
-            type_index = next(
-                (
-                    index
-                    for index, item in enumerate(relative)
-                    if _identity(item["name"]) in _OFFER_TYPES
-                ),
-                -1,
-            )
-            if type_index < 1:
+            type_indexes = [
+                index
+                for index, item in enumerate(relative)
+                if _identity(item["name"]) in _OFFER_TYPES
+            ]
+            if len(type_indexes) != 1 or type_indexes[0] < 1:
                 ignored += 1
                 continue
-            relative_names = [item["name"] for item in relative]
-            area = relative_names[0]
-            is_general = _identity(area) == "GENERAL"
-            career = "" if is_general else (relative_names[1] if type_index >= 2 else "")
-            if not is_general and not career:
+            type_index = type_indexes[0]
+            category_route = [
+                item["name"]
+                for index, item in enumerate(relative)
+                if index != type_index
+            ]
+            if not category_route:
                 ignored += 1
                 continue
-            offer_type = _OFFER_TYPES[_identity(relative_names[type_index])]
+            area = category_route[0]
+            career = category_route[-1] if len(category_route) > 1 else ""
+            offer_type = _OFFER_TYPES[_identity(relative[type_index]["name"])]
             subject_name = self._subject_name(course)
             templates.append(
                 {
@@ -603,6 +603,7 @@ class MoodleCourseCloningService:
                     "source_path": "/".join(item["name"] for item in path),
                     "area": area,
                     "career": career,
+                    "category_route": category_route,
                     "offer_type": offer_type,
                     "visible": bool(_integer(course.get("visible"))),
                 }
@@ -666,8 +667,7 @@ class MoodleCourseCloningService:
         self,
         categories: list[dict[str, Any]],
         *,
-        area: str,
-        career: str,
+        category_route: list[str],
         year: int,
         offer_type: CourseOfferType,
         period_name: str,
@@ -687,10 +687,8 @@ class MoodleCourseCloningService:
         parent_id = root.get("id") or None
         parent_path = root_plan["path"]
 
-        branches = [(area, _slug(area))]
-        if career:
-            branches.append((career, _slug(career)))
-        for name, segment in branches:
+        for name in category_route:
+            segment = _slug(name)
             code = _bounded_code(f"{code}-{segment}", 100)
             category, category_plan = self._planned_category(
                 categories,
@@ -842,8 +840,7 @@ class MoodleCourseCloningService:
         self,
         categories: list[dict[str, Any]],
         *,
-        area: str,
-        career: str,
+        category_route: list[str],
         year: int,
         offer_type: CourseOfferType,
         period_name: str,
@@ -858,9 +855,7 @@ class MoodleCourseCloningService:
             parent_path="",
         )
         code = "OFA"
-        for name in (area, career):
-            if not name:
-                continue
+        for name in category_route:
             code = _bounded_code(f"{code}-{_slug(name)}", 100)
             parent = await self._ensure_category(
                 categories,

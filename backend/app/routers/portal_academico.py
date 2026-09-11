@@ -6737,6 +6737,26 @@ def _student_grade_report_pdf(
         style = styles["SecretaryLegacyCellCenter"] if centered else styles["SecretaryLegacyCell"]
         return Paragraph(_pdf_text(value), style)
 
+    period_groups: list[tuple[str, str, list[dict[str, Any]]]] = []
+    period_group_indexes: dict[tuple[str, str], int] = {}
+    for item in rows:
+        period_code = _clean(item.get("codigo_periodo"))
+        period_name = _clean(item.get("detalle_periodo")) or period_code or "Período sin identificar"
+        group_key = (period_code, period_name)
+        group_index = period_group_indexes.get(group_key)
+        if group_index is None:
+            period_group_indexes[group_key] = len(period_groups)
+            period_groups.append((period_code, period_name, [item]))
+        else:
+            period_groups[group_index][2].append(item)
+
+    def period_heading(period_code: str, period_name: str, total: int) -> Paragraph:
+        code_label = f" · Código {_pdf_text(period_code)}" if period_code and period_code not in period_name else ""
+        return Paragraph(
+            f"<b>PERÍODO:</b> {_pdf_text(period_name)}{code_label} · {total} estudiante(s) matriculado(s)",
+            styles["SecretaryLegacyCell"],
+        )
+
     period_label = _clean(meta.get("detalle_periodo")) or "-"
     subject_name = _clean(meta.get("nombre_materia")) or _clean(meta.get("codigo_materia")) or "-"
     teacher_label = _pdf_text(teacher.get("docente")) if include_teacher else "-"
@@ -6766,9 +6786,15 @@ def _student_grade_report_pdf(
             f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Horas:</b>&nbsp;&nbsp;{compact_number(meta.get('horas'))}",
             styles["SecretaryLegacyMeta"],
         ),
+        Paragraph(
+            f"<b>Períodos incluidos:</b>&nbsp;&nbsp;{len(period_groups)}"
+            f"&nbsp;&nbsp;&nbsp;&nbsp;<b>Estudiantes matriculados:</b>&nbsp;&nbsp;{len(rows)}",
+            styles["SecretaryLegacyMeta"],
+        ),
         Spacer(1, 0.18 * cm),
     ]
 
+    period_header_rows: list[int] = []
     if is_homologation:
         headers = [
             "No.",
@@ -6783,18 +6809,26 @@ def _student_grade_report_pdf(
         table_data: list[list[Any]] = [
             [Paragraph(escape(label), styles["SecretaryLegacyHeader"]) for label in headers]
         ]
-        for index, item in enumerate(rows, start=1):
+        student_index = 1
+        for period_code, period_name, period_students in period_groups:
+            period_header_rows.append(len(table_data))
             table_data.append(
-                [
-                    cell(index, centered=True),
-                    cell(item.get("nombre_carrera")),
-                    cell(item.get("cedula"), centered=True),
-                    cell(item.get("nombre_estudiante")),
-                    cell(grade(item.get("teoria_homo")), centered=True),
-                    cell(grade(item.get("practica_homo")), centered=True),
-                    cell(grade(final_average(item)), centered=True),
-                ]
+                [period_heading(period_code, period_name, len(period_students))]
+                + [""] * (len(headers) - 1)
             )
+            for item in period_students:
+                table_data.append(
+                    [
+                        cell(student_index, centered=True),
+                        cell(item.get("nombre_carrera")),
+                        cell(item.get("cedula"), centered=True),
+                        cell(item.get("nombre_estudiante")),
+                        cell(grade(item.get("teoria_homo")), centered=True),
+                        cell(grade(item.get("practica_homo")), centered=True),
+                        cell(grade(final_average(item)), centered=True),
+                    ]
+                )
+                student_index += 1
     else:
         headers = [
             "No.",
@@ -6819,30 +6853,38 @@ def _student_grade_report_pdf(
         ]
         col_widths = [11, 31, 35, 121, *([17.5, 17.5, 17.5, 28.5] * 3), 29, 40, 29]
         table_data = [[Paragraph(label, styles["SecretaryLegacyHeader"]) for label in headers]]
-        for index, item in enumerate(rows, start=1):
+        student_index = 1
+        for period_code, period_name, period_students in period_groups:
+            period_header_rows.append(len(table_data))
             table_data.append(
-                [
-                    cell(index, centered=True),
-                    cell(item.get("nombre_carrera")),
-                    cell(item.get("cedula"), centered=True),
-                    cell(item.get("nombre_estudiante")),
-                    cell(grade(item.get("p1_tareas")), centered=True),
-                    cell(grade(item.get("p1_proyectos")), centered=True),
-                    cell(grade(item.get("p1_examen")), centered=True),
-                    cell(grade(partial_average(item, 1)), centered=True),
-                    cell(grade(item.get("p2_tareas")), centered=True),
-                    cell(grade(item.get("p2_proyectos")), centered=True),
-                    cell(grade(item.get("p2_examen")), centered=True),
-                    cell(grade(partial_average(item, 2)), centered=True),
-                    cell(grade(item.get("p3_tareas")), centered=True),
-                    cell(grade(item.get("p3_proyectos")), centered=True),
-                    cell(grade(item.get("p3_examen")), centered=True),
-                    cell(grade(partial_average(item, 3)), centered=True),
-                    cell(grade(regular_average(item)), centered=True),
-                    cell(grade(item.get("recuperacion")), centered=True),
-                    cell(grade(final_average(item)), centered=True),
-                ]
+                [period_heading(period_code, period_name, len(period_students))]
+                + [""] * (len(headers) - 1)
             )
+            for item in period_students:
+                table_data.append(
+                    [
+                        cell(student_index, centered=True),
+                        cell(item.get("nombre_carrera")),
+                        cell(item.get("cedula"), centered=True),
+                        cell(item.get("nombre_estudiante")),
+                        cell(grade(item.get("p1_tareas")), centered=True),
+                        cell(grade(item.get("p1_proyectos")), centered=True),
+                        cell(grade(item.get("p1_examen")), centered=True),
+                        cell(grade(partial_average(item, 1)), centered=True),
+                        cell(grade(item.get("p2_tareas")), centered=True),
+                        cell(grade(item.get("p2_proyectos")), centered=True),
+                        cell(grade(item.get("p2_examen")), centered=True),
+                        cell(grade(partial_average(item, 2)), centered=True),
+                        cell(grade(item.get("p3_tareas")), centered=True),
+                        cell(grade(item.get("p3_proyectos")), centered=True),
+                        cell(grade(item.get("p3_examen")), centered=True),
+                        cell(grade(partial_average(item, 3)), centered=True),
+                        cell(grade(regular_average(item)), centered=True),
+                        cell(grade(item.get("recuperacion")), centered=True),
+                        cell(grade(final_average(item)), centered=True),
+                    ]
+                )
+                student_index += 1
 
     if not rows:
         table_data.append(
@@ -6850,7 +6892,11 @@ def _student_grade_report_pdf(
             + [""] * (len(col_widths) - 1)
         )
 
-    row_heights = [27] + ([25.5] * max(len(table_data) - 1, 1))
+    period_header_row_set = set(period_header_rows)
+    row_heights = [27] + [
+        16 if row_index in period_header_row_set else 25.5
+        for row_index in range(1, len(table_data))
+    ]
     grades_table = Table(table_data, colWidths=col_widths, rowHeights=row_heights, repeatRows=1)
     table_commands: list[tuple[Any, ...]] = [
         ("GRID", (0, 0), (-1, -1), 0.45, grid_color),
@@ -6863,6 +6909,15 @@ def _student_grade_report_pdf(
         ("TOPPADDING", (0, 0), (-1, -1), 1.2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
     ]
+    for row_index in period_header_rows:
+        table_commands.extend(
+            [
+                ("SPAN", (0, row_index), (-1, row_index)),
+                ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#EEF3F5")),
+                ("ALIGN", (0, row_index), (-1, row_index), "LEFT"),
+                ("LEFTPADDING", (0, row_index), (-1, row_index), 4),
+            ]
+        )
     if not rows:
         table_commands.append(("SPAN", (0, 1), (-1, 1)))
     grades_table.setStyle(TableStyle(table_commands))

@@ -1358,8 +1358,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   async function buildSecretaryReportBlob(
-    course: PortalTeacherCourse | null = reportCourse,
-    selectedPeriodos: string[] = [],
+    course: PortalTeacherCourse | null = selectedCourse,
+    selectedPeriodos: string[] = selectedGradePeriodCodes,
     selectedStudentCodes: string[] = []
   ) {
     const params = reportRequestParams(course, selectedPeriodos)
@@ -1480,8 +1480,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   async function previewSecretaryReport(
-    course: PortalTeacherCourse | null = reportCourse,
-    selectedPeriodos: string[] = [],
+    course: PortalTeacherCourse | null = selectedCourse,
+    selectedPeriodos: string[] = selectedGradePeriodCodes,
     selectedStudentCodes: string[] = []
   ) {
     setPreviewingSecretaryReport(true)
@@ -1511,8 +1511,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   async function downloadSecretaryReport(
-    course: PortalTeacherCourse | null = reportCourse,
-    selectedPeriodos: string[] = [],
+    course: PortalTeacherCourse | null = selectedCourse,
+    selectedPeriodos: string[] = selectedGradePeriodCodes,
     selectedStudentCodes: string[] = []
   ) {
     if (!course) return
@@ -1531,7 +1531,9 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       const subjectCode = course.cod_materia || course.codigo_materia || ''
       const url = window.URL.createObjectURL(blob)
       const subject = safeFilenamePart(course.nombre_materia || subjectCode)
-      const period = safeFilenamePart(course.detalle_periodos || course.detalle_periodo || periodos.join('-'))
+      const period = safeFilenamePart(
+        selectedPeriodos.join('-') || course.detalle_periodos || course.detalle_periodo || periodos.join('-')
+      )
       downloadObjectUrl(url, `reporte-notas-secretaria-${subject}-${period}.pdf`)
       window.URL.revokeObjectURL(url)
     } catch (apiError) {
@@ -3370,16 +3372,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <button
                 type="button"
                 className="ghost-button"
-                onClick={() => void previewSecretaryReport()}
-                disabled={previewingSecretaryReport || !reportCourse}
+                onClick={() => void previewSecretaryReport(selectedCourse, selectedGradePeriodCodes)}
+                disabled={previewingSecretaryReport || !selectedCourse || selectedGradePeriodCodes.length === 0}
               >
                 {previewingSecretaryReport ? 'Generando vista...' : 'Vista formato Secretaría'}
               </button>
               <button
                 type="button"
                 className="ghost-button"
-                onClick={() => void downloadSecretaryReport()}
-                disabled={downloadingSecretaryReport || !reportCourse}
+                onClick={() => void downloadSecretaryReport(selectedCourse, selectedGradePeriodCodes)}
+                disabled={downloadingSecretaryReport || !selectedCourse || selectedGradePeriodCodes.length === 0}
               >
                 {downloadingSecretaryReport ? 'Generando...' : 'Descargar formato Secretaría'}
               </button>
