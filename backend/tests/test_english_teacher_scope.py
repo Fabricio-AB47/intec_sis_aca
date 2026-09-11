@@ -11,6 +11,7 @@ from app.routers.english_exams import (
     _TEACHER_ACTIVE_ENGLISH_SCOPE_SQL,
     _TEACHER_ENROLLMENT_SCOPE_SQL,
     _aggregate_component_grade,
+    _activity_schedules_response,
     _component_specs,
     _default_component_instructions,
     _ensure_components,
@@ -341,6 +342,55 @@ class EnglishTeacherScopeTests(unittest.TestCase):
             "(periodo.fechafin IS NULL OR periodo.fechafin >= CONVERT(DATE, GETDATE()))",
             query,
         )
+
+    def test_activity_schedule_catalog_uses_official_academic_cursor(self):
+        academic_cursor = MagicMock()
+        academic_cursor.fetchall.side_effect = [
+            [
+                SimpleNamespace(
+                    codigo_periodo="1034",
+                    detalle_periodo="MAYO 2026 - SEPTIEMBRE 2026",
+                    periodo_orden=1034,
+                    total_estudiantes=222,
+                )
+            ],
+            [
+                SimpleNamespace(
+                    codigo_materia="331",
+                    nombre_materia="A1 - BEGINNER",
+                    total_estudiantes=221,
+                ),
+                SimpleNamespace(
+                    codigo_materia="332",
+                    nombre_materia="A1+ - ELEMENTARY",
+                    total_estudiantes=220,
+                ),
+            ],
+        ]
+        academic_cursor.fetchone.return_value = SimpleNamespace(
+            fecha_inicio=None,
+            fecha_fin=None,
+        )
+        schedule_cursor = MagicMock()
+        schedule_cursor.fetchall.return_value = []
+        user = SessionUser(login="admin", nombres="Administrador", rol="ADMINISTRADOR")
+
+        result = _activity_schedules_response(
+            academic_cursor,
+            schedule_cursor,
+            user,
+            "1034",
+            "332",
+        )
+
+        self.assertEqual([item["code"] for item in result["subjects"]], ["331", "332"])
+        self.assertEqual(result["selected_subject_code"], "332")
+        self.assertEqual(result["affected_students"], 220)
+        academic_sql = " ".join(call.args[0] for call in academic_cursor.execute.call_args_list)
+        schedule_sql = " ".join(call.args[0] for call in schedule_cursor.execute.call_args_list)
+        self.assertIn("INTECBDD.dbo.CARRERAXESTUD", academic_sql)
+        self.assertNotIn("INTECBDD.dbo.CARRERAXESTUD", schedule_sql)
+        self.assertIn("ing.ConfiguracionActividadIngles", schedule_sql)
 
     def test_subject_catalog_uses_current_enrollment_and_exact_teacher_subject(self):
         cursor = MagicMock()

@@ -465,15 +465,16 @@ def _period_activity_window(cursor: Any, period_code: str) -> tuple[datetime | N
 
 
 def _activity_schedules_response(
-    cursor: Any,
+    academic_cursor: Any,
+    schedule_cursor: Any,
     current_user: SessionUser,
     requested_period: str = "",
     requested_subject: str = "",
 ) -> dict[str, Any]:
-    periods = _reviewer_periods(cursor, current_user, include_closed=True)
+    periods = _reviewer_periods(academic_cursor, current_user, include_closed=True)
     selected_period = _select_reviewer_period(periods, requested_period, current_user)
     subjects = _reviewer_subjects(
-        cursor,
+        academic_cursor,
         selected_period,
         current_user,
         include_closed=True,
@@ -483,8 +484,8 @@ def _activity_schedules_response(
         (item for item in subjects if _clean(item.get("code")) == selected_subject),
         None,
     )
-    default_start, default_deadline = _period_activity_window(cursor, selected_period)
-    schedules = _activity_schedule_map(cursor, selected_period, selected_subject)
+    default_start, default_deadline = _period_activity_window(academic_cursor, selected_period)
+    schedules = _activity_schedule_map(schedule_cursor, selected_period, selected_subject)
     components: list[dict[str, Any]] = []
     for spec in _component_specs("R"):
         configured = schedules.get(spec["code"])
@@ -3458,16 +3459,19 @@ def activity_schedules(
     period_code: Annotated[str, Query(max_length=100)] = "",
     subject_code: Annotated[str, Query(max_length=100)] = "",
 ) -> dict[str, Any]:
-    with get_expedient_connection() as conn:
-        cursor = conn.cursor()
-        _ensure_schema(cursor)
-        conn.commit()
-        return _activity_schedules_response(
-            cursor,
-            current_user,
-            period_code,
-            subject_code,
-        )
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        with get_expedient_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_schema(cursor)
+            conn.commit()
+            return _activity_schedules_response(
+                academic_cursor,
+                cursor,
+                current_user,
+                period_code,
+                subject_code,
+            )
 
 
 @router.put("/activity-schedules")
@@ -3490,169 +3494,172 @@ def update_activity_schedule(
     )
     instructions = payload.instructions.strip()
 
-    with get_expedient_connection() as conn:
-        cursor = conn.cursor()
-        _ensure_schema(cursor)
-        periods = _reviewer_periods(cursor, current_user, include_closed=True)
+    with get_connection() as academic_connection:
+        academic_cursor = academic_connection.cursor()
+        periods = _reviewer_periods(academic_cursor, current_user, include_closed=True)
         selected_period = _select_reviewer_period(periods, period_code, current_user)
         subjects = _reviewer_subjects(
-            cursor,
+            academic_cursor,
             selected_period,
             current_user,
             include_closed=True,
         )
         selected_subject = _select_reviewer_subject(subjects, subject_code, current_user)
 
-        cursor.execute(
-            """
-            SELECT TOP (1)
-                ConfiguracionActividadInglesId, Instrucciones,
-                FechaInicioActividad, FechaLimiteActividad
-            FROM ing.ConfiguracionActividadIngles WITH (UPDLOCK, HOLDLOCK)
-            WHERE CodigoPeriodo = ? AND CodigoMateria = ? AND CodigoComponente = ?
-            """,
-            selected_period,
-            selected_subject,
-            component_code,
-        )
-        previous_config = cursor.fetchone()
-        if previous_config:
-            configuration_id = int(previous_config.ConfiguracionActividadInglesId)
+        with get_expedient_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_schema(cursor)
             cursor.execute(
                 """
-                UPDATE ing.ConfiguracionActividadIngles
-                   SET NumeroParcial = ?, Nombre = ?, Instrucciones = ?,
-                       FechaInicioActividad = ?, FechaLimiteActividad = ?, Activo = 1,
-                       FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
-                 WHERE ConfiguracionActividadInglesId = ?
-                """,
-                int(component_spec["number"]),
-                component_spec["label"],
-                instructions,
-                activity_start,
-                activity_deadline,
-                current_user.login,
-                configuration_id,
-            )
-        else:
-            cursor.execute(
-                """
-                INSERT INTO ing.ConfiguracionActividadIngles
-                    (CodigoPeriodo, CodigoMateria, CodigoComponente, NumeroParcial,
-                     Nombre, Instrucciones, FechaInicioActividad, FechaLimiteActividad,
-                     UsuarioActualizacion)
-                OUTPUT INSERTED.ConfiguracionActividadInglesId
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                SELECT TOP (1)
+                    ConfiguracionActividadInglesId, Instrucciones,
+                    FechaInicioActividad, FechaLimiteActividad
+                FROM ing.ConfiguracionActividadIngles WITH (UPDLOCK, HOLDLOCK)
+                WHERE CodigoPeriodo = ? AND CodigoMateria = ? AND CodigoComponente = ?
                 """,
                 selected_period,
                 selected_subject,
                 component_code,
-                int(component_spec["number"]),
-                component_spec["label"],
-                instructions,
-                activity_start,
-                activity_deadline,
-                current_user.login,
             )
-            configuration_id = int(cursor.fetchone()[0])
+            previous_config = cursor.fetchone()
+            if previous_config:
+                configuration_id = int(previous_config.ConfiguracionActividadInglesId)
+                cursor.execute(
+                    """
+                    UPDATE ing.ConfiguracionActividadIngles
+                       SET NumeroParcial = ?, Nombre = ?, Instrucciones = ?,
+                           FechaInicioActividad = ?, FechaLimiteActividad = ?, Activo = 1,
+                           FechaActualizacion = SYSUTCDATETIME(), UsuarioActualizacion = ?
+                     WHERE ConfiguracionActividadInglesId = ?
+                    """,
+                    int(component_spec["number"]),
+                    component_spec["label"],
+                    instructions,
+                    activity_start,
+                    activity_deadline,
+                    current_user.login,
+                    configuration_id,
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO ing.ConfiguracionActividadIngles
+                        (CodigoPeriodo, CodigoMateria, CodigoComponente, NumeroParcial,
+                         Nombre, Instrucciones, FechaInicioActividad, FechaLimiteActividad,
+                         UsuarioActualizacion)
+                    OUTPUT INSERTED.ConfiguracionActividadInglesId
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    selected_period,
+                    selected_subject,
+                    component_code,
+                    int(component_spec["number"]),
+                    component_spec["label"],
+                    instructions,
+                    activity_start,
+                    activity_deadline,
+                    current_user.login,
+                )
+                configuration_id = int(cursor.fetchone()[0])
 
-        cursor.execute(
-            """
-            SELECT
-                componente.ComponenteExamenInglesId,
-                componente.ExamenInglesId,
-                componente.EstadoRevision,
-                componente.FechaPublicacion,
-                componente.FechaInicioActividad,
-                componente.FechaLimiteActividad,
-                componente.InstruccionesActividad
-            FROM ing.ComponenteExamenIngles componente
-            INNER JOIN ing.ExamenIngles examen
-                ON examen.ExamenInglesId = componente.ExamenInglesId
-            WHERE examen.Activo = 1
-              AND componente.Activo = 1
-              AND componente.Codigo = ?
-              AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoPeriodo))) = ?
-              AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoMateria))) = ?
-            """,
-            component_code,
-            selected_period,
-            selected_subject,
-        )
-        existing_components = list(cursor.fetchall())
-        updated_components = 0
-        skipped_published = 0
-        for component in existing_components:
-            if _clean(component.EstadoRevision) == "PUBLICADO" or component.FechaPublicacion is not None:
-                skipped_published += 1
-                continue
             cursor.execute(
                 """
-                UPDATE ing.ComponenteExamenIngles
-                   SET FechaInicioActividad = ?, FechaLimiteActividad = ?,
-                       InstruccionesActividad = ?, FechaActualizacion = SYSUTCDATETIME(),
-                       UsuarioActualizacion = ?
-                 WHERE ComponenteExamenInglesId = ?
+                SELECT
+                    componente.ComponenteExamenInglesId,
+                    componente.ExamenInglesId,
+                    componente.EstadoRevision,
+                    componente.FechaPublicacion,
+                    componente.FechaInicioActividad,
+                    componente.FechaLimiteActividad,
+                    componente.InstruccionesActividad
+                FROM ing.ComponenteExamenIngles componente
+                INNER JOIN ing.ExamenIngles examen
+                    ON examen.ExamenInglesId = componente.ExamenInglesId
+                WHERE examen.Activo = 1
+                  AND componente.Activo = 1
+                  AND componente.Codigo = ?
+                  AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoPeriodo))) = ?
+                  AND LTRIM(RTRIM(TRY_CONVERT(NVARCHAR(100), examen.CodigoMateria))) = ?
                 """,
+                component_code,
+                selected_period,
+                selected_subject,
+            )
+            existing_components = list(cursor.fetchall())
+            updated_components = 0
+            skipped_published = 0
+            for component in existing_components:
+                if _clean(component.EstadoRevision) == "PUBLICADO" or component.FechaPublicacion is not None:
+                    skipped_published += 1
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE ing.ComponenteExamenIngles
+                       SET FechaInicioActividad = ?, FechaLimiteActividad = ?,
+                           InstruccionesActividad = ?, FechaActualizacion = SYSUTCDATETIME(),
+                           UsuarioActualizacion = ?
+                     WHERE ComponenteExamenInglesId = ?
+                    """,
+                    activity_start,
+                    activity_deadline,
+                    instructions,
+                    current_user.login,
+                    int(component.ComponenteExamenInglesId),
+                )
+                updated_components += 1
+                _audit_event(
+                    cursor,
+                    int(component.ExamenInglesId),
+                    "ACTIVIDAD_MASIVA_CONFIGURADA",
+                    current_user.login,
+                    component_id=int(component.ComponenteExamenInglesId),
+                    previous_state=_clean(component.EstadoRevision),
+                    new_state=_clean(component.EstadoRevision),
+                    detail={
+                        "component": component_code,
+                        "period": selected_period,
+                        "subject": selected_subject,
+                        "previous_start": component.FechaInicioActividad,
+                        "previous_deadline": component.FechaLimiteActividad,
+                        "previous_instructions": _clean(component.InstruccionesActividad),
+                        "activity_start": activity_start,
+                        "activity_deadline": activity_deadline,
+                        "instructions": instructions,
+                    },
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO ing.AuditoriaConfiguracionActividadIngles
+                    (ConfiguracionActividadInglesId, CodigoPeriodo, CodigoMateria,
+                     CodigoComponente, InstruccionesAnteriores, InstruccionesNuevas,
+                     FechaInicioAnterior, FechaLimiteAnterior,
+                     FechaInicioNueva, FechaLimiteNueva,
+                     ComponentesActualizados, ComponentesOmitidos, Usuario)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                configuration_id,
+                selected_period,
+                selected_subject,
+                component_code,
+                _clean(previous_config.Instrucciones) if previous_config else None,
+                instructions,
+                previous_config.FechaInicioActividad if previous_config else None,
+                previous_config.FechaLimiteActividad if previous_config else None,
                 activity_start,
                 activity_deadline,
-                instructions,
+                updated_components,
+                skipped_published,
                 current_user.login,
-                int(component.ComponenteExamenInglesId),
             )
-            updated_components += 1
-            _audit_event(
+            conn.commit()
+            result = _activity_schedules_response(
+                academic_cursor,
                 cursor,
-                int(component.ExamenInglesId),
-                "ACTIVIDAD_MASIVA_CONFIGURADA",
-                current_user.login,
-                component_id=int(component.ComponenteExamenInglesId),
-                previous_state=_clean(component.EstadoRevision),
-                new_state=_clean(component.EstadoRevision),
-                detail={
-                    "component": component_code,
-                    "period": selected_period,
-                    "subject": selected_subject,
-                    "previous_start": component.FechaInicioActividad,
-                    "previous_deadline": component.FechaLimiteActividad,
-                    "previous_instructions": _clean(component.InstruccionesActividad),
-                    "activity_start": activity_start,
-                    "activity_deadline": activity_deadline,
-                    "instructions": instructions,
-                },
+                current_user,
+                selected_period,
+                selected_subject,
             )
-
-        cursor.execute(
-            """
-            INSERT INTO ing.AuditoriaConfiguracionActividadIngles
-                (ConfiguracionActividadInglesId, CodigoPeriodo, CodigoMateria,
-                 CodigoComponente, InstruccionesAnteriores, InstruccionesNuevas,
-                 FechaInicioAnterior, FechaLimiteAnterior,
-                 FechaInicioNueva, FechaLimiteNueva,
-                 ComponentesActualizados, ComponentesOmitidos, Usuario)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            configuration_id,
-            selected_period,
-            selected_subject,
-            component_code,
-            _clean(previous_config.Instrucciones) if previous_config else None,
-            instructions,
-            previous_config.FechaInicioActividad if previous_config else None,
-            previous_config.FechaLimiteActividad if previous_config else None,
-            activity_start,
-            activity_deadline,
-            updated_components,
-            skipped_published,
-            current_user.login,
-        )
-        conn.commit()
-        result = _activity_schedules_response(
-            cursor,
-            current_user,
-            selected_period,
-            selected_subject,
-        )
     result["updated_components"] = updated_components
     result["skipped_published"] = skipped_published
     return result
