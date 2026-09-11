@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import {
   fetchMoodleCourseEvaluations,
@@ -23,6 +23,7 @@ type ScheduleDraft = {
 }
 
 type ScheduleMap = Record<ScheduleKey, ScheduleDraft>
+type CourseActivitySelectionMap = Record<number, number[]>
 
 type ScheduleBlock = {
   key: ScheduleKey
@@ -91,6 +92,45 @@ function activityScheduleKey(activity: MoodleEvaluationActivity): ScheduleKey | 
   if (!activity.programmable || activity.partial < 1 || activity.partial > 3) return null
   if (activity.scope !== 'simuladores' && activity.scope !== 'evaluaciones') return null
   return `${activity.scope}-${activity.partial as PartialNumber}`
+}
+
+function courseBlockActivities(
+  data: MoodleCourseEvaluationsResponse | undefined,
+  key: ScheduleKey,
+): MoodleEvaluationActivity[] {
+  if (!data) return []
+  return data.activities.filter((activity) => activityScheduleKey(activity) === key)
+}
+
+function ActivityGroupCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean
+  indeterminate: boolean
+  disabled: boolean
+  label: string
+  onChange: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate
+  }, [indeterminate])
+
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      aria-label={label}
+      onChange={onChange}
+    />
+  )
 }
 
 function activityCurrentRange(activity: MoodleEvaluationActivity): { open: number; close: number } {
@@ -197,6 +237,9 @@ export function MoodleEvaluationDatesPanel() {
   const [courseData, setCourseData] = useState<Record<number, MoodleCourseEvaluationsResponse>>({})
   const [analysisErrors, setAnalysisErrors] = useState<Record<number, string>>({})
   const [schedules, setSchedules] = useState<ScheduleMap>(EMPTY_SCHEDULES)
+  const [courseActivitySelections, setCourseActivitySelections] = useState<CourseActivitySelectionMap>({})
+  const [courseSelectionOpen, setCourseSelectionOpen] = useState(false)
+  const [activeSelectionCourseId, setActiveSelectionCourseId] = useState<number | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState({ completed: 0, total: 0 })
@@ -269,12 +312,18 @@ export function MoodleEvaluationDatesPanel() {
   const dateManagementEnabled = loadedResponses.length > 0
     && loadedResponses.every((response) => response.date_management.enabled)
 
+  const activeSelectionCourse = selectedCourses.find(
+    (course) => course.id === activeSelectionCourseId && Boolean(courseData[course.id]),
+  ) ?? selectedCourses.find((course) => Boolean(courseData[course.id])) ?? null
+  const activeSelectionData = activeSelectionCourse ? courseData[activeSelectionCourse.id] : undefined
+
   const updatePlans = useMemo<CourseUpdatePlan[]>(() => selectedCourses.flatMap((course) => {
     const data = courseData[course.id]
     if (!data) return []
+    const selectedActivities = new Set(courseActivitySelections[course.id] ?? [])
     const matching = data.activities.filter((activity) => {
       const key = activityScheduleKey(activity)
-      return key ? schedules[key].enabled : false
+      return key ? schedules[key].enabled && selectedActivities.has(activity.cmid) : false
     })
     const updates = matching
       .map((activity) => {
@@ -285,12 +334,23 @@ export function MoodleEvaluationDatesPanel() {
       .filter(({ activity, update }) => updateChangesActivity(activity, update))
       .map(({ update }) => update)
     return [{ course, data, matchingActivities: matching.length, updates }]
-  }), [courseData, schedules, selectedCourses])
+  }), [courseActivitySelections, courseData, schedules, selectedCourses])
 
   const enabledBlocks = SCHEDULE_BLOCKS.filter((block) => schedules[block.key].enabled)
-  const matchingActivities = updatePlans.reduce((total, plan) => total + plan.matchingActivities, 0)
+  const selectedBlocks = SCHEDULE_BLOCKS.filter((block) => schedules[block.key].enabled && updatePlans.some((plan) => {
+    const selectedActivities = new Set(courseActivitySelections[plan.course.id] ?? [])
+    return courseBlockActivities(plan.data, block.key).some((activity) => selectedActivities.has(activity.cmid))
+  }))
+  const selectedActivityCount = updatePlans.reduce((total, plan) => total + plan.matchingActivities, 0)
+  const configuredCourseCount = updatePlans.filter((plan) => plan.matchingActivities > 0).length
   const changedActivities = updatePlans.reduce((total, plan) => total + plan.updates.length, 0)
   const coursesWithChanges = updatePlans.filter((plan) => plan.updates.length > 0)
+  const activeSelectedActivityCount = activeSelectionData?.activities.filter((activity) => {
+    const key = activityScheduleKey(activity)
+    return key
+      ? schedules[key].enabled && (courseActivitySelections[activeSelectionCourse?.id ?? 0] ?? []).includes(activity.cmid)
+      : false
+  }).length ?? 0
 
   const submitCourseSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -317,6 +377,9 @@ export function MoodleEvaluationDatesPanel() {
     setCourseData({})
     setAnalysisErrors({})
     setSchedules(EMPTY_SCHEDULES)
+    setCourseActivitySelections({})
+    setCourseSelectionOpen(false)
+    setActiveSelectionCourseId(null)
     setError('')
   }
 
@@ -353,6 +416,20 @@ export function MoodleEvaluationDatesPanel() {
     setCourseData(loaded)
     setAnalysisErrors(failures)
     setSchedules((current) => deriveCommonSchedules(Object.values(loaded), current))
+    setCourseActivitySelections((current) => Object.fromEntries(
+      selectedCourses.flatMap((course) => {
+        const data = loaded[course.id]
+        if (!data) return []
+        const availableActivityIds = new Set(
+          data.activities.filter((activity) => Boolean(activityScheduleKey(activity))).map((activity) => activity.cmid),
+        )
+        return [[course.id, (current[course.id] ?? []).filter((cmid) => availableActivityIds.has(cmid))]]
+      }),
+    ))
+    const firstAnalyzedCourse = selectedCourses.find((course) => Boolean(loaded[course.id]))
+    if (firstAnalyzedCourse) {
+      setActiveSelectionCourseId(firstAnalyzedCourse.id)
+    }
     if (Object.keys(failures).length > 0) {
       setError(`No se pudieron analizar ${Object.keys(failures).length} curso(s). Revise el detalle antes de continuar.`)
     }
@@ -364,6 +441,86 @@ export function MoodleEvaluationDatesPanel() {
       ...current,
       [key]: { ...current[key], ...change },
     }))
+    if (change.enabled === false) {
+      setCourseActivitySelections((current) => Object.fromEntries(
+        Object.entries(current).map(([courseId, cmids]) => {
+          const disabledActivityIds = new Set(
+            courseBlockActivities(courseData[Number(courseId)], key).map((activity) => activity.cmid),
+          )
+          return [courseId, cmids.filter((cmid) => !disabledActivityIds.has(cmid))]
+        }),
+      ))
+    }
+    setError('')
+  }
+
+  const toggleCourseBlock = (courseId: number, key: ScheduleKey) => {
+    const data = courseData[courseId]
+    const blockActivities = courseBlockActivities(data, key)
+    if (!data || !schedules[key].enabled || blockActivities.length === 0) return
+    setCourseActivitySelections((current) => {
+      const selected = new Set(current[courseId] ?? [])
+      const allSelected = blockActivities.every((activity) => selected.has(activity.cmid))
+      blockActivities.forEach((activity) => {
+        if (allSelected) selected.delete(activity.cmid)
+        else selected.add(activity.cmid)
+      })
+      return {
+        ...current,
+        [courseId]: data.activities
+          .filter((activity) => Boolean(activityScheduleKey(activity)) && selected.has(activity.cmid))
+          .map((activity) => activity.cmid),
+      }
+    })
+    setError('')
+  }
+
+  const toggleCourseActivity = (courseId: number, cmid: number) => {
+    const data = courseData[courseId]
+    const activity = data?.activities.find((item) => item.cmid === cmid)
+    const key = activity ? activityScheduleKey(activity) : null
+    if (!data || !key || !schedules[key].enabled) return
+    setCourseActivitySelections((current) => {
+      const selected = new Set(current[courseId] ?? [])
+      if (selected.has(cmid)) selected.delete(cmid)
+      else selected.add(cmid)
+      return {
+        ...current,
+        [courseId]: data.activities
+          .filter((item) => Boolean(activityScheduleKey(item)) && selected.has(item.cmid))
+          .map((item) => item.cmid),
+      }
+    })
+    setError('')
+  }
+
+  const selectAvailableCourseActivities = (courseId: number) => {
+    const data = courseData[courseId]
+    const available = data?.activities.filter((activity) => {
+      const key = activityScheduleKey(activity)
+      return key ? schedules[key].enabled : false
+    }).map((activity) => activity.cmid) ?? []
+    setCourseActivitySelections((current) => ({ ...current, [courseId]: available }))
+    setError('')
+  }
+
+  const clearCourseActivities = (courseId: number) => {
+    setCourseActivitySelections((current) => ({ ...current, [courseId]: [] }))
+    setError('')
+  }
+
+  const openCourseSelection = (courseId?: number) => {
+    const firstAvailable = selectedCourses.find((course) => Boolean(courseData[course.id]))
+    const requested = courseId ? selectedCourses.find(
+      (course) => course.id === courseId && Boolean(courseData[course.id]),
+    ) : null
+    const course = requested ?? activeSelectionCourse ?? firstAvailable
+    if (!course) {
+      setError('Analice al menos una materia antes de seleccionar sus fechas.')
+      return
+    }
+    setActiveSelectionCourseId(course.id)
+    setCourseSelectionOpen(true)
     setError('')
   }
 
@@ -376,7 +533,7 @@ export function MoodleEvaluationDatesPanel() {
       setError('Seleccione al menos un parcial de Simuladores o Evaluaciones.')
       return
     }
-    for (const block of enabledBlocks) {
+    for (const block of selectedBlocks) {
       const schedule = schedules[block.key]
       if (!schedule.open || !schedule.close) {
         setError(`${block.scopeLabel} · ${block.partialLabel}: ingrese la fecha de apertura y de cierre.`)
@@ -387,8 +544,8 @@ export function MoodleEvaluationDatesPanel() {
         return
       }
     }
-    if (matchingActivities === 0) {
-      setError('Los bloques seleccionados no contienen tareas ni cuestionarios programables.')
+    if (selectedActivityCount === 0) {
+      setError('Abra la selección por materia y marque las actividades que deben recibir las nuevas fechas.')
       return
     }
     if (changedActivities === 0) {
@@ -405,6 +562,7 @@ export function MoodleEvaluationDatesPanel() {
     setError('')
     setSaveProgress({ completed: 0, total: coursesWithChanges.length })
     const failures: string[] = []
+    const completedCourseIds: number[] = []
     let updatedCourses = 0
     let updatedActivities = 0
     for (let index = 0; index < coursesWithChanges.length; index += 1) {
@@ -415,6 +573,7 @@ export function MoodleEvaluationDatesPanel() {
           ...current,
           [plan.course.id]: updatedResponse(current[plan.course.id] ?? plan.data, response.activities),
         }))
+        completedCourseIds.push(plan.course.id)
         updatedCourses += 1
         updatedActivities += response.updated_count
       } catch (requestError) {
@@ -424,6 +583,15 @@ export function MoodleEvaluationDatesPanel() {
     }
     setConfirmOpen(false)
     setSaving(false)
+    if (completedCourseIds.length > 0) {
+      const completed = new Set(completedCourseIds)
+      setCourseActivitySelections((current) => Object.fromEntries(
+        Object.entries(current).map(([courseId, cmids]) => [
+          courseId,
+          completed.has(Number(courseId)) ? [] : cmids,
+        ]),
+      ))
+    }
     if (updatedActivities > 0) {
       setSuccess(`Se actualizaron ${updatedActivities} actividad(es) en ${updatedCourses} curso(s).`)
     }
@@ -459,16 +627,18 @@ export function MoodleEvaluationDatesPanel() {
           <strong>{selectedCourses.length} seleccionado(s)</strong>
         </div>
         <form className="moodle-evaluation-course-search" onSubmit={submitCourseSearch}>
-          <label>
-            <span>Buscar curso</span>
-            <input
-              type="search"
-              value={courseSearch}
-              onChange={(event) => setCourseSearch(event.target.value)}
-              placeholder="Nombre, nombre corto, código o ID"
-            />
-            <small>{courses.length} visible(s) de {coursesTotal} curso(s)</small>
-          </label>
+          <label htmlFor="moodle-evaluation-course-search-input">Buscar curso</label>
+          <input
+            id="moodle-evaluation-course-search-input"
+            type="search"
+            value={courseSearch}
+            aria-describedby="moodle-evaluation-course-search-summary"
+            onChange={(event) => setCourseSearch(event.target.value)}
+            placeholder="Nombre, nombre corto, código o ID"
+          />
+          <small id="moodle-evaluation-course-search-summary">
+            {courses.length} visible(s) de {coursesTotal} curso(s)
+          </small>
           <button type="submit" className="moodle-button moodle-button--secondary" disabled={catalogLoading || analyzing}>
             {catalogLoading ? 'Buscando...' : 'Buscar'}
           </button>
@@ -587,9 +757,16 @@ export function MoodleEvaluationDatesPanel() {
             <div className="moodle-course-analysis__heading">
               <div>
                 <span>Paso 3</span>
-                <h3 id="moodle-course-analysis-title">Revisar contenido detectado</h3>
+                <h3 id="moodle-course-analysis-title">Seleccionar cambios por materia</h3>
               </div>
-              <strong>{loadedResponses.length} de {selectedCourses.length} curso(s) analizado(s)</strong>
+              <button
+                type="button"
+                className="moodle-button moodle-button--secondary"
+                disabled={!dateManagementEnabled || !allSelectedAnalyzed || enabledBlocks.length === 0 || saving}
+                onClick={() => openCourseSelection()}
+              >
+                Configurar materias
+              </button>
             </div>
             <div className="moodle-course-analysis__table-wrap">
               <table>
@@ -602,7 +779,7 @@ export function MoodleEvaluationDatesPanel() {
                     <th>Eval. P1</th>
                     <th>Eval. P2</th>
                     <th>Eval. P3</th>
-                    <th>Fuera del proceso</th>
+                    <th>Selección</th>
                     <th>Detalle</th>
                   </tr>
                 </thead>
@@ -613,29 +790,52 @@ export function MoodleEvaluationDatesPanel() {
                       block.key,
                       response?.activities.filter((activity) => activityScheduleKey(activity) === block.key).length ?? 0,
                     ])) as Record<ScheduleKey, number>
+                    const programmableActivities = response?.activities.filter(
+                      (activity) => Boolean(activityScheduleKey(activity)),
+                    ) ?? []
+                    const selectedActivityIds = new Set(courseActivitySelections[course.id] ?? [])
+                    const selectedActivitiesForCourse = programmableActivities.filter((activity) => {
+                      const key = activityScheduleKey(activity)
+                      return key ? schedules[key].enabled && selectedActivityIds.has(activity.cmid) : false
+                    })
                     return (
                       <tr key={course.id}>
                         <td><strong>{courseName(course)}</strong><small>{course.shortname || `ID ${course.id}`}</small></td>
                         {SCHEDULE_BLOCKS.map((block) => <td key={block.key}>{response ? counts[block.key] : '-'}</td>)}
-                        <td>{response?.totals.unclassified ?? '-'}</td>
+                        <td>
+                          {response ? (
+                            <>
+                              <strong>{selectedActivitiesForCourse.length} actividad(es)</strong>
+                              <button
+                                type="button"
+                                className="moodle-table-action"
+                                disabled={!dateManagementEnabled || enabledBlocks.length === 0 || saving}
+                                onClick={() => openCourseSelection(course.id)}
+                              >
+                                Seleccionar
+                              </button>
+                            </>
+                          ) : '-'}
+                        </td>
                         <td>
                           {response ? (
                             <details>
-                              <summary>Ver actividades</summary>
+                              <summary>Ver contenido</summary>
                               <div className="moodle-course-analysis__details">
-                                {response.activities.map((activity) => (
+                                {selectedActivitiesForCourse.map((activity) => (
                                   <div key={activity.cmid}>
                                     <strong>{activity.name}</strong>
-                                    <span>
-                                      {activity.programmable
-                                        ? `${activity.scope_label} · ${activity.partial_label}`
-                                        : 'No incluida en la programación común'}
-                                    </span>
+                                    <span>{activity.scope_label} · {activity.partial_label}</span>
                                     <small>
                                       {formatDate(activityCurrentRange(activity).open)} → {formatDate(activityCurrentRange(activity).close)}
                                     </small>
                                   </div>
                                 ))}
+                                {selectedActivitiesForCourse.length === 0 && (
+                                  <div className="moodle-course-analysis__empty">
+                                    No existen actividades seleccionadas para actualizar en esta materia.
+                                  </div>
+                                )}
                               </div>
                             </details>
                           ) : (
@@ -651,14 +851,22 @@ export function MoodleEvaluationDatesPanel() {
               </table>
             </div>
             <p className="moodle-course-analysis__note">
-              Recuperación y las actividades sin un bloque P1, P2 o P3 verificable se muestran como “Fuera del proceso” y no se modifican.
+              La selección considera exclusivamente las actividades de Simuladores y Evaluaciones de P1, P2 y P3.
             </p>
           </section>
 
           <div className="moodle-evaluation-actions">
             <span>
-              {enabledBlocks.length} bloque(s), {matchingActivities} actividad(es) coincidente(s) y {changedActivities} cambio(s) efectivo(s).
+              {configuredCourseCount} materia(s), {selectedActivityCount} actividad(es) seleccionada(s) y {changedActivities} cambio(s) efectivo(s).
             </span>
+            <button
+              type="button"
+              className="moodle-button moodle-button--secondary"
+              disabled={!dateManagementEnabled || !allSelectedAnalyzed || enabledBlocks.length === 0 || saving}
+              onClick={() => openCourseSelection()}
+            >
+              Seleccionar por materia
+            </button>
             <button
               type="button"
               className="moodle-button moodle-button--primary"
@@ -669,6 +877,185 @@ export function MoodleEvaluationDatesPanel() {
             </button>
           </div>
         </>
+      )}
+
+      {courseSelectionOpen && activeSelectionCourse && activeSelectionData && (
+        <div
+          className="moodle-confirm-overlay moodle-date-course-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) setCourseSelectionOpen(false)
+          }}
+        >
+          <section
+            className="moodle-confirm-dialog moodle-date-course-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="moodle-course-date-selection-title"
+          >
+            <div className="moodle-confirm-dialog__header">
+              <div>
+                <span>Selección por materia</span>
+                <h2 id="moodle-course-date-selection-title">Simuladores y Evaluaciones</h2>
+              </div>
+              <button
+                type="button"
+                className="moodle-button moodle-button--secondary"
+                disabled={saving}
+                onClick={() => setCourseSelectionOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="moodle-date-course-summary" aria-label="Resumen de selección">
+              <div><span>Materias analizadas</span><strong>{loadedResponses.length}</strong></div>
+              <div><span>Materias configuradas</span><strong>{configuredCourseCount}</strong></div>
+              <div><span>Actividades seleccionadas</span><strong>{selectedActivityCount}</strong></div>
+            </div>
+
+            <div className="moodle-date-course-workspace">
+              <nav className="moodle-date-course-nav" aria-label="Materias escogidas">
+                {selectedCourses.filter((course) => Boolean(courseData[course.id])).map((course) => {
+                  const selectedActivityIds = new Set(courseActivitySelections[course.id] ?? [])
+                  const selectedCount = courseData[course.id].activities.filter((activity) => {
+                    const key = activityScheduleKey(activity)
+                    return key ? schedules[key].enabled && selectedActivityIds.has(activity.cmid) : false
+                  }).length
+                  return (
+                    <button
+                      type="button"
+                      className={course.id === activeSelectionCourse.id ? 'is-active' : ''}
+                      key={course.id}
+                      onClick={() => setActiveSelectionCourseId(course.id)}
+                    >
+                      <span>
+                        <strong>{courseName(course)}</strong>
+                        <small>{course.shortname || `ID ${course.id}`}</small>
+                      </span>
+                      <b>{selectedCount}</b>
+                    </button>
+                  )
+                })}
+              </nav>
+
+              <div className="moodle-date-course-detail">
+                <header>
+                  <div>
+                    <span>Materia seleccionada</span>
+                    <h3>{courseName(activeSelectionCourse)}</h3>
+                    <small>{activeSelectionCourse.shortname || `ID ${activeSelectionCourse.id}`} · {activeSelectionCourse.categoryname || 'Sin categoría'}</small>
+                  </div>
+                  <div className="moodle-date-course-detail__actions">
+                    <button
+                      type="button"
+                      className="moodle-button moodle-button--secondary"
+                      disabled={saving || enabledBlocks.length === 0}
+                      onClick={() => selectAvailableCourseActivities(activeSelectionCourse.id)}
+                    >
+                      Seleccionar todas
+                    </button>
+                    <button
+                      type="button"
+                      className="moodle-button moodle-button--secondary"
+                      disabled={saving || activeSelectedActivityCount === 0}
+                      onClick={() => clearCourseActivities(activeSelectionCourse.id)}
+                    >
+                      Limpiar materia
+                    </button>
+                  </div>
+                </header>
+
+                <div className="moodle-date-scope-grid">
+                  {(['simuladores', 'evaluaciones'] as EvaluationScope[]).map((scope) => (
+                    <section className="moodle-date-scope" key={scope}>
+                      <h4>{scope === 'simuladores' ? 'Simuladores' : 'Evaluaciones'}</h4>
+                      <div className="moodle-date-scope__partials">
+                        {SCHEDULE_BLOCKS.filter((block) => block.scope === scope).map((block) => {
+                          const activities = courseBlockActivities(activeSelectionData, block.key)
+                          const selectedActivityIds = new Set(courseActivitySelections[activeSelectionCourse.id] ?? [])
+                          const selectedActivities = activities.filter((activity) => selectedActivityIds.has(activity.cmid))
+                          const available = schedules[block.key].enabled && activities.length > 0 && dateManagementEnabled
+                          const allSelected = available && selectedActivities.length === activities.length
+                          const partiallySelected = available
+                            && selectedActivities.length > 0
+                            && selectedActivities.length < activities.length
+                          return (
+                            <article
+                              className={`moodle-date-partial${selectedActivities.length > 0 ? ' has-selection' : ''}${available ? '' : ' is-disabled'}`}
+                              key={block.key}
+                            >
+                              <label className="moodle-date-partial__selector">
+                                <ActivityGroupCheckbox
+                                  checked={allSelected}
+                                  indeterminate={partiallySelected}
+                                  disabled={!available || saving}
+                                  label={`Seleccionar todas las actividades de ${block.scopeLabel}, ${block.partialLabel}`}
+                                  onChange={() => toggleCourseBlock(activeSelectionCourse.id, block.key)}
+                                />
+                                <span>
+                                  <strong>{block.partialLabel}</strong>
+                                  <small>{selectedActivities.length} de {activities.length} seleccionada(s)</small>
+                                </span>
+                                <em>
+                                  {schedules[block.key].enabled
+                                    ? `${formatDate(fromLocalDateTime(schedules[block.key].open))} → ${formatDate(fromLocalDateTime(schedules[block.key].close))}`
+                                    : 'Fechas no habilitadas'}
+                                </em>
+                              </label>
+                              <div className="moodle-date-activity-list">
+                                {activities.map((activity) => {
+                                  const selected = selectedActivityIds.has(activity.cmid)
+                                  const currentRange = activityCurrentRange(activity)
+                                  return (
+                                    <label
+                                      className={`moodle-date-activity${selected ? ' is-selected' : ''}${available ? '' : ' is-disabled'}`}
+                                      key={activity.cmid}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={selected}
+                                        disabled={!available || saving}
+                                        onChange={() => toggleCourseActivity(activeSelectionCourse.id, activity.cmid)}
+                                      />
+                                      <span>
+                                        <strong>{activity.name}</strong>
+                                        <small>{activity.type_label} · {activity.section_name || block.partialLabel}</small>
+                                      </span>
+                                      <em>
+                                        Fecha actual: {formatDate(currentRange.open)} → {formatDate(currentRange.close)}
+                                      </em>
+                                    </label>
+                                  )
+                                })}
+                                {activities.length === 0 && (
+                                  <p>No se identificaron actividades en este parcial.</p>
+                                )}
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="moodle-confirm-dialog__actions moodle-date-course-dialog__actions">
+              <span>
+                {activeSelectedActivityCount} actividad(es) en esta materia · {configuredCourseCount} de {loadedResponses.length} materia(s) configurada(s)
+              </span>
+              <button
+                type="button"
+                className="moodle-button moodle-button--primary"
+                onClick={() => setCourseSelectionOpen(false)}
+              >
+                Confirmar selección
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {confirmOpen && (
@@ -695,15 +1082,21 @@ export function MoodleEvaluationDatesPanel() {
                 <strong>{coursesWithChanges.length} curso(s)</strong>. La operación se registra en auditoría por cada actividad.
               </p>
               <div className="moodle-evaluation-review">
-                {enabledBlocks.map((block) => (
-                  <div key={block.key}>
-                    <strong>{block.scopeLabel} · {block.partialLabel}</strong>
-                    <span>
-                      Apertura: {formatDate(fromLocalDateTime(schedules[block.key].open))} · Cierre: {formatDate(fromLocalDateTime(schedules[block.key].close))}
-                    </span>
-                    <small>{blockCounts[block.key]} actividad(es) encontrada(s)</small>
-                  </div>
-                ))}
+                {coursesWithChanges.map((plan) => {
+                  const changedActivityIds = new Set(plan.updates.map((update) => update.cmid))
+                  const changedCourseActivities = plan.data.activities.filter(
+                    (activity) => changedActivityIds.has(activity.cmid),
+                  )
+                  return (
+                    <div key={plan.course.id}>
+                      <strong>{courseName(plan.course)}</strong>
+                      <span>{changedCourseActivities.map(
+                        (activity) => `${activity.scope_label} · ${activity.partial_label}: ${activity.name}`,
+                      ).join(' | ')}</span>
+                      <small>{plan.updates.length} actividad(es) con cambios efectivos</small>
+                    </div>
+                  )
+                })}
               </div>
               {saving && (
                 <div className="moodle-evaluation-save-progress" role="status">

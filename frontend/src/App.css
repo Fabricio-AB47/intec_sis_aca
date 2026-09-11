@@ -4171,19 +4171,21 @@
 
 .moodle-evaluation-course-search {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) auto auto auto;
-  align-items: end;
-  gap: 10px;
+  grid-template-columns: minmax(280px, 1fr) repeat(3, auto);
+  grid-template-rows: auto 42px auto;
+  align-items: stretch;
+  column-gap: 10px;
+  row-gap: 6px;
   padding: 14px 16px;
 }
 
 .moodle-evaluation-course-search label {
-  display: grid;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
-  gap: 6px;
 }
 
-.moodle-evaluation-course-search label > span,
+.moodle-evaluation-course-search label,
 .moodle-common-schedule__row label > span {
   color: #647087;
   font-size: 12px;
@@ -4203,6 +4205,18 @@
   font: inherit;
 }
 
+.moodle-evaluation-course-search > input {
+  grid-column: 1;
+  grid-row: 2;
+  height: 42px;
+}
+
+.moodle-evaluation-course-search > button {
+  grid-row: 2;
+  height: 42px;
+  align-self: stretch;
+}
+
 .moodle-evaluation-course-search input:focus,
 .moodle-common-schedule__row input[type='datetime-local']:focus {
   border-color: #13808a;
@@ -4210,6 +4224,8 @@
 }
 
 .moodle-evaluation-course-search small {
+  grid-column: 1;
+  grid-row: 3;
   color: #68748a;
   font-size: 12px;
 }
@@ -4467,16 +4483,26 @@
 }
 
 @media (max-width: 1050px) {
-  .moodle-evaluation-course-search {
-    grid-template-columns: minmax(0, 1fr) repeat(2, auto);
-  }
-
-  .moodle-evaluation-course-search button:last-child {
-    grid-column: 2 / -1;
-  }
-
   .moodle-common-schedule__row {
     grid-template-columns: minmax(190px, 0.7fr) repeat(2, minmax(190px, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .moodle-evaluation-course-search {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto 42px auto 42px;
+  }
+
+  .moodle-evaluation-course-search > label,
+  .moodle-evaluation-course-search > input,
+  .moodle-evaluation-course-search > small {
+    grid-column: 1 / -1;
+  }
+
+  .moodle-evaluation-course-search > button {
+    grid-row: 4;
+    width: 100%;
   }
 }
 
@@ -4500,10 +4526,15 @@
     grid-template-columns: 1fr;
   }
 
+  .moodle-evaluation-course-search {
+    grid-template-rows: auto 42px auto;
+  }
+
   .moodle-evaluation-course-search button,
   .moodle-evaluation-course-search button:last-child,
   .moodle-evaluation-selection-actions .moodle-button {
     grid-column: auto;
+    grid-row: auto;
     width: 100%;
   }
 
@@ -23042,6 +23073,460 @@
   .academic-integration__row > b {
     grid-column: 2;
     grid-row: 2 / span 2;
+  }
+}
+
+/* Selección específica de fechas Moodle por materia. */
+.moodle-confirm-dialog.moodle-date-course-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(1180px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+}
+
+.moodle-date-course-dialog .moodle-confirm-dialog__header > div {
+  min-width: 0;
+}
+
+.moodle-date-course-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-date-course-summary > div {
+  display: grid;
+  min-width: 0;
+  min-height: 72px;
+  align-content: center;
+  gap: 5px;
+  padding: 11px 16px;
+  border-right: 1px solid #d8e0e4;
+}
+
+.moodle-date-course-summary > div:last-child {
+  border-right: 0;
+}
+
+.moodle-date-course-summary span,
+.moodle-date-course-detail > header span {
+  color: #647087;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.moodle-date-course-summary strong {
+  color: #172541;
+  font-size: 20px;
+}
+
+.moodle-date-course-workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.32fr) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.moodle-date-course-nav {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid #d8e0e4;
+  background: #f5f8f9;
+}
+
+.moodle-date-course-nav > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  width: 100%;
+  min-height: 64px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #d8e0e4;
+  background: transparent;
+  color: #172541;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.moodle-date-course-nav > button:hover {
+  background: #ffffff;
+}
+
+.moodle-date-course-nav > button.is-active {
+  background: #eaf6f5;
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-date-course-nav span,
+.moodle-date-course-nav strong,
+.moodle-date-course-nav small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-date-course-nav small {
+  margin-top: 4px;
+  color: #647087;
+  font-size: 11px;
+}
+
+.moodle-date-course-nav b {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #b8ccd1;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0d6972;
+  font-size: 12px;
+}
+
+.moodle-date-course-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+.moodle-date-course-detail > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  border-bottom: 1px solid #d8e0e4;
+}
+
+.moodle-date-course-detail > header > div:first-child {
+  min-width: 0;
+}
+
+.moodle-date-course-detail > header h3 {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+  color: #172541;
+  font-size: 18px;
+}
+
+.moodle-date-course-detail > header small {
+  color: #647087;
+  overflow-wrap: anywhere;
+}
+
+.moodle-date-course-detail__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.moodle-date-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.moodle-date-scope + .moodle-date-scope {
+  border-left: 1px solid #d8e0e4;
+}
+
+.moodle-date-scope h4 {
+  margin: 0;
+  padding: 11px 14px;
+  border-bottom: 1px solid #d8e0e4;
+  background: #eef5f7;
+  color: #172541;
+  font-size: 15px;
+}
+
+.moodle-date-scope__partials {
+  display: grid;
+}
+
+.moodle-date-partial {
+  border-bottom: 1px solid #d8e0e4;
+  background: #f7fafb;
+}
+
+.moodle-date-partial:last-child {
+  border-bottom: 0;
+}
+
+.moodle-date-partial.has-selection {
+  box-shadow: inset 4px 0 #13808a;
+}
+
+.moodle-date-partial__selector {
+  display: grid;
+  grid-template-columns: 20px minmax(110px, 0.35fr) minmax(0, 1fr);
+  min-height: 68px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.moodle-date-partial.has-selection .moodle-date-partial__selector {
+  background: #f0f8f7;
+}
+
+.moodle-date-partial.is-disabled .moodle-date-partial__selector {
+  background: #f5f7f8;
+  color: #7b8799;
+  cursor: not-allowed;
+}
+
+.moodle-date-scope input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #13808a;
+}
+
+.moodle-date-scope span,
+.moodle-date-scope strong,
+.moodle-date-scope small {
+  display: block;
+  min-width: 0;
+}
+
+.moodle-date-scope small {
+  margin-top: 3px;
+  color: #647087;
+  font-size: 11px;
+}
+
+.moodle-date-partial__selector em,
+.moodle-date-activity em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #526078;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.moodle-date-activity-list {
+  display: grid;
+  gap: 6px;
+  padding: 0 10px 10px 42px;
+  background: #f7fafb;
+}
+
+.moodle-date-activity {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px 9px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d5e0e4;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.moodle-date-activity:hover {
+  border-color: #9ebfc5;
+}
+
+.moodle-date-activity.is-selected {
+  border-color: #71b7b4;
+  background: #edf8f6;
+}
+
+.moodle-date-activity.is-disabled {
+  background: #f2f4f5;
+  color: #7b8799;
+  cursor: not-allowed;
+}
+
+.moodle-date-activity > input {
+  margin-top: 2px;
+}
+
+.moodle-date-activity > span,
+.moodle-date-activity > span > strong,
+.moodle-date-activity > span > small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moodle-date-activity > span > strong {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.moodle-date-activity > em {
+  grid-column: 2;
+}
+
+.moodle-date-activity-list > p {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px dashed #c5d1d6;
+  border-radius: 6px;
+  color: #647087;
+  font-size: 11px;
+  text-align: center;
+}
+
+.moodle-confirm-dialog__actions.moodle-date-course-dialog__actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.moodle-confirm-dialog__actions.moodle-date-course-dialog__actions > span {
+  color: #526078;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.moodle-table-action {
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  border: 1px solid #b9cdd4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0d6570;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.moodle-table-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 900px) {
+  .moodle-confirm-dialog.moodle-date-course-dialog {
+    width: min(760px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+  }
+
+  .moodle-date-course-workspace {
+    grid-template-columns: minmax(210px, 0.4fr) minmax(0, 1fr);
+  }
+
+  .moodle-date-course-detail > header,
+  .moodle-date-course-detail__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-date-scope-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .moodle-date-scope + .moodle-date-scope {
+    border-top: 1px solid #d8e0e4;
+    border-left: 0;
+  }
+
+  .moodle-date-partial__selector {
+    grid-template-columns: 20px minmax(100px, 0.4fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 650px) {
+  .moodle-confirm-overlay.moodle-date-course-overlay {
+    padding: 0;
+  }
+
+  .moodle-confirm-dialog.moodle-date-course-dialog {
+    width: 100vw;
+    max-height: 100dvh;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .moodle-date-course-dialog .moodle-confirm-dialog__header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    padding: 14px 12px;
+  }
+
+  .moodle-date-course-dialog .moodle-confirm-dialog__header h2 {
+    overflow-wrap: anywhere;
+    font-size: 19px;
+    line-height: 1.25;
+  }
+
+  .moodle-date-course-dialog .moodle-confirm-dialog__header .moodle-button {
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .moodle-date-course-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .moodle-date-course-summary > div {
+    min-height: 62px;
+    padding: 8px;
+  }
+
+  .moodle-date-course-summary span {
+    overflow-wrap: anywhere;
+    font-size: 9px;
+  }
+
+  .moodle-date-course-summary strong {
+    font-size: 17px;
+  }
+
+  .moodle-date-course-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .moodle-date-course-nav {
+    display: flex;
+    max-height: 104px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid #d8e0e4;
+  }
+
+  .moodle-date-course-nav > button {
+    flex: 0 0 220px;
+    border-right: 1px solid #d8e0e4;
+    border-bottom: 0;
+  }
+
+  .moodle-date-partial__selector {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .moodle-date-partial__selector em {
+    grid-column: 2;
+  }
+
+  .moodle-date-activity-list {
+    padding: 0 8px 9px 30px;
+  }
+
+  .moodle-confirm-dialog__actions.moodle-date-course-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moodle-confirm-dialog__actions.moodle-date-course-dialog__actions .moodle-button {
+    width: 100%;
   }
 }
 
