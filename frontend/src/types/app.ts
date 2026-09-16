@@ -106,6 +106,7 @@ export type Page =
   | 'evaluacion-docente-admin'
   | 'evaluacion-docente-avance'
   | 'evaluacion-docente-reportes'
+  | 'evaluacion-docente-historicas'
   | 'portal-estudiante'
   | 'portal-estudiante-malla-curricular'
   | 'portal-estudiante-malla-academica'
@@ -2209,6 +2210,35 @@ export type MatriculaTipo = 'R' | 'H' | 'E'
 
 export type TeacherEvaluationFlow = 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente' | 'academico_docente'
 
+export type TeacherEvaluationPendingAlertItem = {
+  flow: Extract<TeacherEvaluationFlow, 'student' | 'auto_estudiante' | 'auto_docente' | 'par_docente'>
+  label: string
+  total: number
+  completed: number
+  pending: number
+  pending_courses: Array<{
+    key: string
+    codigo_periodo: number
+    detalle_periodo: string
+    codigo_materia: number
+    codigo_materia_interno: string
+    materia: string
+    carrera: string
+    paralelo: string
+    docente: string
+  }>
+}
+
+export type TeacherEvaluationPendingAlertResponse = {
+  role: 'ESTUDIANTE' | 'DOCENTE'
+  cedula: string
+  total_evaluable: number
+  total_completed: number
+  total_pending: number
+  items: TeacherEvaluationPendingAlertItem[]
+  updated_at: string
+}
+
 export type PracticasProcessCode = 'PPF' | 'VIN'
 
 export type TituloRegistradoTipo = 'senescyt' | 'intec'
@@ -3495,6 +3525,56 @@ export type TeacherEvaluationAdminPeriodsResponse = {
   items: TeacherEvaluationAdminPeriod[]
   total: number
 }
+
+export type HistoricalSelfEvaluationSelection = { periods: number[]; teachers: number[] }
+export type HistoricalSelfEvaluationCatalog = {
+  periods: Array<{ codigo_periodo: number; detalle_periodo: string; year: number }>
+  teachers: Array<{ codigo_doc: number; docente: string; cedula_doc: string; periods: number[] }>
+  max_applications: number | null
+  max_teachers: number | null
+}
+export type HistoricalSelfEvaluationPreview = {
+  instrument: { Id_Instrumento: number; Nombre?: string; Codigo?: string }
+  preview_token: string
+  expires_in_minutes: number
+  pending: number
+  existing: number
+  questions: TeacherEvaluationQuestion[]
+  items: Array<{
+    course: TeacherEvaluationCourse
+    status: 'PENDIENTE' | 'EXISTENTE'
+    score_10: number
+    answers: Array<{ id_pregunta: number; puntaje: number }>
+  }>
+}
+export type HistoricalSelfEvaluationResult = {
+  batch_id: string
+  created: number
+  skipped: number
+  message: string
+  processed?: number
+  total?: number
+  next_offset?: number | null
+  preview_token?: string | null
+}
+export type HistoricalSelfEvaluationHistoryItem = {
+  Id_Aplicacion: number
+  Cod_Periodo: string
+  Cod_Materia: string
+  Cod_Docente_Evaluado: string
+  Paralelo: string
+  batch_id: string
+  actor_login: string
+  actor_name?: string | null
+  teacher_code?: number
+  teacher_name?: string
+  teacher_cedula?: string
+  record_origin?: 'ADMINISTRATIVO'
+  created_at: string
+  reason: string
+  score_10: number
+}
+export type HistoricalSelfEvaluationHistory = { items: HistoricalSelfEvaluationHistoryItem[]; total: number }
 
 export type TeacherEvaluationAdminSummaryItem = {
   flow: TeacherEvaluationFlow

@@ -46,6 +46,7 @@ from app.routers.sisacademico_admin import router as sisacademico_admin_router
 from app.routers.students import router as students_router
 from app.routers.teams import router as teams_router
 from app.routers.teacher_evaluation import router as teacher_evaluation_router
+from app.routers.teacher_evaluation_history import router as teacher_evaluation_history_router
 from app.routers.titulos_registrados import router as titulos_registrados_router
 from app.routers.titulacion import router as titulacion_router
 
@@ -289,6 +290,7 @@ app.include_router(legacy_reports_router)
 app.include_router(sisacademico_admin_router)
 app.include_router(portal_academico_router)
 app.include_router(teacher_evaluation_router)
+app.include_router(teacher_evaluation_history_router)
 app.include_router(practicas_institucionales_router)
 app.include_router(practicas_operativas_router)
 app.include_router(titulos_registrados_router)

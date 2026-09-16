@@ -1156,6 +1156,9 @@ export function useReporteriaApp() {
   const openTeacherEvaluationReportsPage = () => {
     activateAssignedScreen('evaluacion-docente-reportes')
   }
+  const openTeacherEvaluationHistoryPage = () => {
+    activateAssignedScreen('evaluacion-docente-historicas')
+  }
   const openTeacherComplianceFormatPage = () => {
     activateAssignedScreen('formato-informe-docente')
   }
@@ -1404,6 +1407,7 @@ export function useReporteriaApp() {
     openTeacherEvaluationAdminPage,
     openTeacherEvaluationProgressPage,
     openTeacherEvaluationReportsPage,
+    openTeacherEvaluationHistoryPage,
     openTeacherComplianceFormatPage,
     openTeamsPage,
     openHistoricoIntegracionesPage,

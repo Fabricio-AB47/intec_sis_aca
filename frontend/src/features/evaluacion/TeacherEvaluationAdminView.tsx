@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import {
   downloadTeacherEvaluationGradesPdf,
@@ -29,6 +29,7 @@ import type {
 type TeacherEvaluationAdminViewProps = {
   displayName?: string
   mode?: 'progress' | 'reports' | 'all'
+  navigation?: ReactNode
 }
 
 const FLOW_OPTIONS: Array<{ value: TeacherEvaluationFlow; label: string }> = [
@@ -47,7 +48,7 @@ const REPORT_FLOW_OPTIONS: Array<{ value: Exclude<TeacherEvaluationFlow, 'auto_e
   { value: 'academico_docente', label: 'Administrativa docente' },
 ]
 
-export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: TeacherEvaluationAdminViewProps) {
+export function TeacherEvaluationAdminView({ displayName = '', mode = 'all', navigation }: TeacherEvaluationAdminViewProps) {
   void displayName
   const showProgress = mode === 'progress' || mode === 'all'
   const showReports = mode === 'reports' || mode === 'all'
@@ -401,6 +402,7 @@ export function TeacherEvaluationAdminView({ displayName = '', mode = 'all' }: T
 
   return (
     <main className="teacher-evaluation teacher-evaluation--compact">
+      {navigation}
       <section className="teacher-evaluation__hero teacher-evaluation__hero--compact">
         <div>
           <p className="teacher-evaluation__eyebrow">Administración</p>

@@ -260,8 +260,14 @@ import type {
   TeamsActionResponse,
   TeamsCatalogResponse,
   TeacherEvaluationFlow,
+  TeacherEvaluationPendingAlertResponse,
   TeacherEvaluationAdminPendingResponse,
   TeacherEvaluationAdminPeriodsResponse,
+  HistoricalSelfEvaluationCatalog,
+  HistoricalSelfEvaluationSelection,
+  HistoricalSelfEvaluationPreview,
+  HistoricalSelfEvaluationResult,
+  HistoricalSelfEvaluationHistory,
   TeacherEvaluationAutoStudentListResponse,
   TeacherEvaluationProgressDetailResponse,
   TeacherEvaluationProgressParticipantsResponse,
@@ -428,6 +434,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 const MOODLE_GRADE_ALERT_CACHE_MS = 30_000
 export const MOODLE_GRADE_ALERT_INVALIDATED_EVENT = 'moodle-grade-alerts:invalidate'
+export const TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT = 'teacher-evaluation-alerts:invalidate'
 let moodleGradeAlertCache: {
   expiresAt: number
   value: MoodleGradeAlertResponse
@@ -445,6 +452,12 @@ export function invalidateMoodleGradeAlertCache() {
   clearMoodleGradeAlertCache()
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(MOODLE_GRADE_ALERT_INVALIDATED_EVENT))
+  }
+}
+
+export function invalidateTeacherEvaluationAlerts() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT))
   }
 }
 
@@ -3580,6 +3593,28 @@ export async function fetchTeacherEvaluationIdentity(
   )
 }
 
+export async function fetchTeacherEvaluationPendingAlerts(): Promise<TeacherEvaluationPendingAlertResponse> {
+  const response = await request<TeacherEvaluationPendingAlertResponse>(
+    '/api/evaluacion-docente/alertas/pendientes',
+    { cache: 'no-store' },
+  )
+  return {
+    ...response,
+    total_evaluable: Number(response.total_evaluable ?? 0),
+    total_completed: Number(response.total_completed ?? 0),
+    total_pending: Number(response.total_pending ?? 0),
+    items: Array.isArray(response.items)
+      ? response.items.map((item) => ({
+          ...item,
+          total: Number(item.total ?? 0),
+          completed: Number(item.completed ?? 0),
+          pending: Number(item.pending ?? 0),
+          pending_courses: Array.isArray(item.pending_courses) ? item.pending_courses : [],
+        }))
+      : [],
+  }
+}
+
 export async function fetchTeacherEvaluationByCedula(
   cedula: string,
   accessToken: string,
@@ -3655,6 +3690,26 @@ export async function saveTeacherRoleEvaluation(
 
 export async function fetchTeacherEvaluationAdminPeriods(): Promise<TeacherEvaluationAdminPeriodsResponse> {
   return request<TeacherEvaluationAdminPeriodsResponse>('/api/evaluacion-docente/admin/periodos')
+}
+
+const HISTORICAL_SELF_EVALUATION_API = '/api/evaluacion-docente/admin/autoevaluaciones-historicas'
+
+export function fetchHistoricalSelfEvaluationCatalog(): Promise<HistoricalSelfEvaluationCatalog> {
+  return request<HistoricalSelfEvaluationCatalog>(`${HISTORICAL_SELF_EVALUATION_API}/catalogo`)
+}
+
+export function previewHistoricalSelfEvaluations(selection: HistoricalSelfEvaluationSelection): Promise<HistoricalSelfEvaluationPreview> {
+  return request<HistoricalSelfEvaluationPreview>(`${HISTORICAL_SELF_EVALUATION_API}/vista-previa`, { method: 'POST', body: selection })
+}
+
+export function generateHistoricalSelfEvaluations(previewToken: string, reason: string, offset?: number): Promise<HistoricalSelfEvaluationResult> {
+  return request<HistoricalSelfEvaluationResult>(`${HISTORICAL_SELF_EVALUATION_API}/generar`, {
+    method: 'POST', body: { preview_token: previewToken, reason, confirmed: true, offset },
+  })
+}
+
+export function fetchHistoricalSelfEvaluationHistory(): Promise<HistoricalSelfEvaluationHistory> {
+  return request<HistoricalSelfEvaluationHistory>(`${HISTORICAL_SELF_EVALUATION_API}/historial?limit=2000`)
 }
 
 export async function fetchTeacherEvaluationAdminPending(

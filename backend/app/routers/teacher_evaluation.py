@@ -21,15 +21,22 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
-from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, KeepInFrame, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from svglib.svglib import svg2rlg
 
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimitExceeded, RateLimitUnavailable, rate_limiter
-from app.core.security import require_roles
+from app.core.security import SessionUser, require_roles, require_screen_access
 from app.services.db import get_connection, get_evaluation_connection
+from app.services.teacher_evaluation_generation import (
+    GENERATION_PREFIX,
+    acquire_self_evaluation_lock,
+    decode_generation_metadata,
+    generation_report_notices,
+)
 
 router = APIRouter(prefix="/api/evaluacion-docente", tags=["evaluacion-docente"])
+_TEACHER_EVALUATION_ACCESS = require_screen_access("evaluacion-docente")
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
@@ -1540,32 +1547,87 @@ def _weighted_teacher_result_score(row: dict[str, Any], weights: list[dict[str, 
     return round(total, 2)
 
 
+def _apply_evaluation_status_with_cursor(
+    cursor: pyodbc.Cursor,
+    actor_code: int,
+    courses: list[dict[str, Any]],
+    flow: str,
+) -> list[dict[str, Any]]:
+    instrument = _get_instrument(cursor, flow)
+    for course in courses:
+        key = _origin_key(actor_code, course, flow)
+        count = _evaluation_count(
+            cursor,
+            flow=flow,
+            instrument=instrument,
+            evaluator_code=actor_code,
+            course=course,
+            origin_key=key,
+        )
+        course["respuestas_registradas"] = count
+        course["evaluado"] = count > 0
+    return courses
+
+
 def _apply_evaluation_status(actor_code: int, courses: list[dict[str, Any]], flow: str) -> list[dict[str, Any]]:
     if not courses:
         return courses
 
     try:
         with get_evaluation_connection() as conn:
-            cursor = conn.cursor()
-            instrument = _get_instrument(cursor, flow)
-            for course in courses:
-                key = _origin_key(actor_code, course, flow)
-                count = _evaluation_count(
-                    cursor,
-                    flow=flow,
-                    instrument=instrument,
-                    evaluator_code=actor_code,
-                    course=course,
-                    origin_key=key,
-                )
-                course["respuestas_registradas"] = count
-                course["evaluado"] = count > 0
+            return _apply_evaluation_status_with_cursor(conn.cursor(), actor_code, courses, flow)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except (pyodbc.Error, ValueError, TypeError) as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo verificar evaluaciones registradas: {exc}") from exc
 
-    return courses
+
+def _apply_evaluation_status_groups(
+    actor_code: int,
+    courses_by_flow: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    if not any(courses_by_flow.values()):
+        return courses_by_flow
+
+    try:
+        with get_evaluation_connection() as conn:
+            cursor = conn.cursor()
+            for flow, courses in courses_by_flow.items():
+                if courses:
+                    _apply_evaluation_status_with_cursor(cursor, actor_code, courses, flow)
+        return courses_by_flow
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo verificar evaluaciones registradas: {exc}") from exc
+
+
+def _pending_alert_item(flow: str, courses: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(courses)
+    completed = sum(1 for course in courses if bool(course.get("evaluado")))
+    pending_courses = [
+        {
+            "key": _clean_text(course.get("key")),
+            "codigo_periodo": _safe_int(course.get("codigo_periodo")),
+            "detalle_periodo": _clean_text(course.get("detalle_periodo")),
+            "codigo_materia": _safe_int(course.get("codigo_materia")),
+            "codigo_materia_interno": _clean_text(course.get("codigo_materia_interno")),
+            "materia": _clean_text(course.get("materia")),
+            "carrera": _clean_text(course.get("carrera")),
+            "paralelo": _clean_text(course.get("paralelo")),
+            "docente": _clean_text(course.get("docente")),
+        }
+        for course in courses
+        if not bool(course.get("evaluado"))
+    ]
+    return {
+        "flow": flow,
+        "label": _clean_text(_flow_config(flow).get("label")),
+        "total": total,
+        "completed": completed,
+        "pending": max(total - completed, 0),
+        "pending_courses": pending_courses,
+    }
 
 
 def _get_or_create_campaign(
@@ -2813,6 +2875,22 @@ def _fetch_teacher_grade_report(
             for row in cursor.fetchall()
         ]
 
+        generated_rows = []
+        if report_flow in {"all", "auto_docente"}:
+            cursor.execute(
+                f"""
+                SELECT a.Id_Aplicacion, a.Cod_Docente_Evaluado, a.Cod_Materia,
+                    a.Jornada, a.Paralelo, a.Observacion_General
+                FROM eval360.Aplicacion a
+                WHERE a.Cod_Periodo = ? AND a.Estado = 'FINALIZADA'
+                  AND LEFT(a.Observacion_General, ?) = ?
+                  {teacher_where.replace('Cod_Docente_Evaluado', 'a.Cod_Docente_Evaluado')}
+                """,
+                periodo, len(GENERATION_PREFIX), GENERATION_PREFIX,
+                *([selected_teacher] if selected_teacher else []),
+            )
+            generated_rows = [_row_dict(cursor, row) for row in cursor.fetchall()]
+
     def key_for(item: dict[str, Any]) -> str:
         return _report_row_key(
             item.get("Cod_Docente_Evaluado"),
@@ -2829,6 +2907,14 @@ def _fetch_teacher_grade_report(
             item.get("Jornada"),
             item.get("Paralelo"),
         )
+
+    generated_by_key: dict[str, list[dict[str, Any]]] = {}
+    for item in generated_rows:
+        metadata = decode_generation_metadata(item.get("Observacion_General"))
+        if metadata:
+            generated_by_key.setdefault(equivalent_key_for(item), []).append(
+                {"application_id": _safe_int(item.get("Id_Aplicacion")), **metadata}
+            )
 
     student_completed_by_key: dict[str, int] = {}
     for item in type_rows:
@@ -3056,6 +3142,7 @@ def _fetch_teacher_grade_report(
                 "tipos": types_by_key.get(row_key, []),
                 "dimensiones": dimensions_by_key.get(row_key, []),
                 "items_calificacion": items_by_key.get(row_key, []),
+                "autoevaluaciones_generadas": generated_by_key.get(equivalent_key_for(item), []),
             }
         )
 
@@ -3280,6 +3367,7 @@ def _pdf_grade_styles() -> dict[str, ParagraphStyle]:
     styles.add(ParagraphStyle(name="EvalBody", parent=styles["BodyText"], fontSize=7.5, leading=9.2, textColor=colors.HexColor("#0c1f42")))
     styles.add(ParagraphStyle(name="EvalCell", parent=styles["BodyText"], fontSize=6.6, leading=7.8, textColor=colors.HexColor("#0c1f42")))
     styles.add(ParagraphStyle(name="EvalCellBold", parent=styles["EvalCell"], fontName="Helvetica-Bold"))
+    styles.add(ParagraphStyle(name="EvalItemCell", parent=styles["EvalCell"], leading=7.1))
     styles.add(ParagraphStyle(name="EvalNote", parent=styles["BodyText"], fontSize=7, leading=9, textColor=colors.HexColor("#334155")))
     return styles
 
@@ -3328,6 +3416,10 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
     teachers = report.get("teachers") or []
     document_title = _report_document_title(report)
     document_type = _clean_text(report.get("document_type") or "certificado")
+    show_item_detail = _clean_text(report.get("flow") or "all") == "auto_docente" or document_type == "detalle"
+    gap_scale = 0.5 if show_item_detail else 1.0
+    if show_item_detail:
+        styles["EvalSection"].spaceBefore = 2
     if not teachers:
         story.extend(
             [
@@ -3345,6 +3437,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
     for teacher_index, teacher_group in enumerate(teachers):
         if teacher_index:
             story.append(PageBreak())
+        teacher_story_start = len(story)
         teacher = teacher_group["teacher"]
         rows = teacher_group.get("rows") or []
         averages = _teacher_group_averages(rows, report)
@@ -3359,9 +3452,8 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
         header_table = Table(
             [
                 [
-                    _SvgLogo(_LOGO_PATH, 4.8 * cm),
+                    _SvgLogo(_LOGO_PATH, (3.4 if show_item_detail else 4.8) * cm),
                     Paragraph(
-                        "<b>INSTITUTO TECNOLÓGICO SUPERIOR INTEC</b><br/>"
                         "QUITO - ECUADOR<br/>"
                         f"<font size='13'><b>{escape(document_title)}</b></font>",
                         styles["EvalSubtitle"],
@@ -3377,12 +3469,12 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("ALIGN", (1, 0), (1, 0), "CENTER"),
                     ("ALIGN", (2, 0), (2, 0), "RIGHT"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4 if show_item_detail else 6),
                 ]
             )
         )
         story.append(header_table)
-        story.append(Spacer(1, 0.15 * cm))
+        story.append(Spacer(1, 0.15 * cm * gap_scale))
 
         data_table = Table(
             [
@@ -3418,13 +3510,31 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("LEFTPADDING", (0, 0), (-1, -1), 7),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 5),
                 ]
             )
         )
         story.append(data_table)
-        story.append(Spacer(1, 0.22 * cm))
+        story.append(Spacer(1, 0.22 * cm * gap_scale))
+
+        generated_notices = generation_report_notices(rows)
+        if generated_notices:
+            story.append(Paragraph("<b>ORIGEN DE LA AUTOEVALUACIÓN: GENERACIÓN ADMINISTRATIVA</b>", styles["EvalSection"]))
+            story.append(Paragraph(
+                "Este informe incluye respuestas seleccionadas aleatoriamente por un proceso administrativo. "
+                "No corresponden a respuestas realizadas personalmente por el docente.", styles["EvalBody"],
+            ))
+            for notice in generated_notices:
+                story.append(Paragraph(
+                    f"<b>Registro:</b> {notice['application_id']} · "
+                    f"<b>Lote:</b> {escape(_clean_text(notice.get('batch_id')))} · "
+                    f"<b>Fecha real de generación (UTC):</b> {escape(_clean_text(notice.get('created_at')))}<br/>"
+                    f"<b>Responsable:</b> {escape(_clean_text(notice.get('actor_name') or notice.get('actor_login')))} "
+                    f"({escape(_clean_text(notice.get('actor_login')))})<br/>"
+                    f"<b>Motivo:</b> {escape(_clean_text(notice.get('reason')))}", styles["EvalBody"],
+                ))
+            story.append(Spacer(1, 0.22 * cm * gap_scale))
 
         summary_rows: list[list[Any]] = [[
             _p("Materia", styles["EvalCellBold"]),
@@ -3463,13 +3573,13 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f8fb")]),
             ("ALIGN", (2, 1), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 4),
         ]))
         story.append(Paragraph("<b>MATRIZ DE COMPONENTES</b>", styles["EvalSection"]))
         story.append(table)
 
-        story.append(Spacer(1, 0.2 * cm))
+        story.append(Spacer(1, 0.2 * cm * gap_scale))
         if _clean_text(report.get("flow") or "all") == "all":
             weights_table_rows: list[list[Any]] = [[
                 _p("Componente", styles["EvalCellBold"]),
@@ -3505,7 +3615,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
             ]))
             story.append(Paragraph("<b>PONDERACIONES DEL PERÍODO</b>", styles["EvalSection"]))
             story.append(weights_table)
-            story.append(Spacer(1, 0.2 * cm))
+            story.append(Spacer(1, 0.2 * cm * gap_scale))
 
         score_table = Table(
             [
@@ -3524,6 +3634,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                             ("Final 360", final_score, 100.0),
                         ],
                         width=9.2 * cm,
+                        height=(1.8 if show_item_detail else 3.0) * cm,
                     ),
                     Paragraph(f"<font size='24'><b>{final_score:.0f}</b></font><br/><font size='8'>{final_score:.2f}/100</font>", styles["EvalSubtitle"]),
                     Paragraph(f"<font size='16'><b>{escape(level)}</b></font>", styles["EvalSubtitle"]),
@@ -3540,16 +3651,16 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#3f3f46")),
                     ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#a8a8a8")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3 if show_item_detail else 6),
                 ]
             )
         )
         story.append(score_table)
-        story.append(Spacer(1, 0.28 * cm))
+        story.append(Spacer(1, 0.28 * cm * gap_scale))
 
-        show_item_detail = _clean_text(report.get("flow") or "all") == "auto_docente" or document_type == "detalle"
         if show_item_detail:
+            item_detail_spans: list[tuple[Any, ...]] = []
             item_detail_rows: list[list[Any]] = [[
                 _p("Materia", styles["EvalCellBold"]),
                 _p("Dimensión", styles["EvalCellBold"]),
@@ -3559,24 +3670,39 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 _p("Promedio", styles["EvalCellBold"]),
             ]]
             for row in rows:
+                subject_start = len(item_detail_rows)
+                dimension_start = subject_start
+                previous_dimension = None
                 for item in row.get("items_calificacion") or []:
+                    dimension = _clean_text(item.get("Dimension_Global"))
+                    current_row = len(item_detail_rows)
+                    if dimension != previous_dimension:
+                        if current_row - dimension_start > 1:
+                            item_detail_spans.append(("SPAN", (1, dimension_start), (1, current_row - 1)))
+                        dimension_start = current_row
+                        previous_dimension = dimension
                     item_detail_rows.append([
-                        _p(row.get("materia"), styles["EvalCell"]),
-                        _p(item.get("Dimension_Global"), styles["EvalCell"]),
+                        _p(row.get("materia"), styles["EvalItemCell"]),
+                        _p(item.get("Dimension_Global"), styles["EvalItemCell"]),
                         _p(
                             f"{_clean_text(item.get('NoPregunta'))}. {_clean_text(item.get('Detalle_Preg'))}"
                             if _clean_text(item.get("NoPregunta"))
                             else item.get("Detalle_Preg"),
-                            styles["EvalCell"],
+                            styles["EvalItemCell"],
                         ),
-                        _p(item.get("Total_Evaluaciones"), styles["EvalCell"]),
-                        _p(item.get("Total_Respuestas"), styles["EvalCell"]),
-                        _p(f"{_safe_float(item.get('Promedio_Item')):.2f}", styles["EvalCell"]),
+                        _p(item.get("Total_Evaluaciones"), styles["EvalItemCell"]),
+                        _p(item.get("Total_Respuestas"), styles["EvalItemCell"]),
+                        _p(f"{_safe_float(item.get('Promedio_Item')):.2f}", styles["EvalItemCell"]),
                     ])
+                last_row = len(item_detail_rows) - 1
+                if last_row > subject_start:
+                    item_detail_spans.append(("SPAN", (0, subject_start), (0, last_row)))
+                if last_row > dimension_start:
+                    item_detail_spans.append(("SPAN", (1, dimension_start), (1, last_row)))
             if len(item_detail_rows) > 1:
                 item_detail_table = Table(
                     item_detail_rows,
-                    colWidths=[3.2 * cm, 3.1 * cm, 7.1 * cm, 1.65 * cm, 1.65 * cm, 1.7 * cm],
+                    colWidths=[1.5 * cm, 2.5 * cm, 9.3 * cm, 2.0 * cm, 1.8 * cm, 1.6 * cm],
                     repeatRows=1,
                 )
                 item_detail_table.setStyle(TableStyle([
@@ -3585,12 +3711,15 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f8fb")]),
                     ("ALIGN", (3, 1), (-1, -1), "CENTER"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                    *item_detail_spans,
                 ]))
                 story.append(Paragraph("<b>DETALLE POR ÍTEM DE CALIFICACIÓN</b>", styles["EvalSection"]))
                 story.append(item_detail_table)
-                story.append(Spacer(1, 0.2 * cm))
+                story.append(Spacer(1, 0.2 * cm * gap_scale))
 
         if document_type == "detalle":
             detail_rows: list[list[Any]] = [[
@@ -3624,7 +3753,7 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
                 ]))
                 story.append(Paragraph("<b>DETALLE POR DIMENSIÓN</b>", styles["EvalSection"]))
                 story.append(detail_table)
-                story.append(Spacer(1, 0.2 * cm))
+                story.append(Spacer(1, 0.2 * cm * gap_scale))
 
         note = (
             "Nota: El personal académico que no esté de acuerdo con los resultados de su evaluación "
@@ -3632,13 +3761,16 @@ def _build_teacher_grade_pdf(report: dict[str, Any]) -> bytes:
             "según la normativa institucional vigente de evaluación integral del desempeño docente."
         )
         story.append(Paragraph(note, styles["EvalNote"]))
-        story.append(Spacer(1, 0.2 * cm))
+        story.append(Spacer(1, 0.2 * cm * gap_scale))
+        signature_spacing = "<br/>" if show_item_detail else "<br/><br/>"
         story.append(
             Table(
-                [[Paragraph("<br/><br/>____________________________<br/><b>Coordinación Académica</b>", styles["EvalSubtitle"])]],
+                [[Paragraph(f"{signature_spacing}____________________________<br/><b>Coordinación Académica</b>", styles["EvalSubtitle"])]],
                 colWidths=[18.7 * cm],
             )
         )
+        # Fit the complete teacher document, never truncate questions or other sections.
+        story[teacher_story_start:] = [KeepInFrame(0, 0, story[teacher_story_start:], mode="shrink", hAlign="CENTER", vAlign="TOP", fakeWidth=False)]
 
     def draw_template(canvas: Any, _doc: Any) -> None:
         canvas.saveState()
@@ -3711,6 +3843,8 @@ def _save_application(
     origin_evaluator_table: str,
     origin_evaluated_table: str,
     authority_id: int | None = None,
+    observation: str | None = None,
+    bulk_answers: bool = False,
 ) -> dict[str, Any]:
     config = _flow_config(flow)
     now = datetime.now()
@@ -3730,7 +3864,7 @@ def _save_application(
         OUTPUT INSERTED.Id_Aplicacion
         VALUES
             (NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'FINALIZADA',
-             NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+             ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         campaign_id,
         _safe_int(instrument["Id_Tipo_Evaluacion"]),
@@ -3746,6 +3880,7 @@ def _save_application(
         token,
         now,
         now,
+        observation,
         origin_table,
         origin_key,
         str(course.get("cod_anio_basica") or ""),
@@ -3760,18 +3895,16 @@ def _save_application(
         raise HTTPException(status_code=500, detail="No se pudo crear la aplicación de evaluación.")
     application_id = _safe_int(application_row[0])
 
-    for answer in answers:
-        evaluation_cursor.execute(
-            """
-            INSERT INTO eval360.Respuesta
-                (Id_Aplicacion, Id_Pregunta, Puntaje, Respuesta_Texto, Fecha_Respuesta)
-            VALUES (?, ?, ?, NULL, ?)
-            """,
-            application_id,
-            answer.id_pregunta,
-            answer.puntaje,
-            now,
-        )
+    answer_sql = """
+        INSERT INTO eval360.Respuesta
+            (Id_Aplicacion, Id_Pregunta, Puntaje, Respuesta_Texto, Fecha_Respuesta)
+        VALUES (?, ?, ?, NULL, ?)
+    """
+    if bulk_answers:
+        evaluation_cursor.executemany(answer_sql, [(application_id, answer.id_pregunta, answer.puntaje, now) for answer in answers])
+    else:
+        for answer in answers:
+            evaluation_cursor.execute(answer_sql, application_id, answer.id_pregunta, answer.puntaje, now)
 
     total = len(answers)
     average = round(sum(answer.puntaje for answer in answers) / total, 2) if total else 0
@@ -4781,6 +4914,83 @@ def download_teacher_evaluation_grades_pdf(
 
 
 
+@router.get("/alertas/pendientes")
+def get_teacher_evaluation_pending_alerts(
+    current_user: SessionUser = Depends(_TEACHER_EVALUATION_ACCESS),
+) -> dict[str, Any]:
+    """Resume las evaluaciones pendientes del estudiante o docente autenticado."""
+    role = _clean_text(current_user.rol).upper()
+    if role not in {"ESTUDIANTE", "DOCENTE"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Las alertas de evaluación están disponibles para estudiantes y docentes.",
+        )
+
+    cedula = _digits(_clean_text(current_user.cedula))
+    if not re.fullmatch(r"\d{10}", cedula):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="La sesión no tiene una cédula válida para consultar evaluaciones pendientes.",
+        )
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            courses_by_flow: dict[str, list[dict[str, Any]]]
+
+            if role == "ESTUDIANTE":
+                student = _fetch_student(cursor, cedula)
+                if not student:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="No se encontró un estudiante activo asociado a la sesión.",
+                    )
+                cursor.execute(_courses_query(), student["codigo_estud"])
+                student_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
+                cursor.execute(_auto_student_courses_query(), student["codigo_estud"])
+                auto_student_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
+                courses_by_flow = {
+                    "student": _deduplicate_subject_courses(student_courses),
+                    "auto_estudiante": _deduplicate_subject_courses(auto_student_courses),
+                }
+                actor_code = student["codigo_estud"]
+            else:
+                teacher = _fetch_teacher(cursor, cedula)
+                if not teacher:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="No se encontró un docente activo asociado a la sesión.",
+                    )
+                cursor.execute(_teacher_courses_query(), teacher["codigo_doc"])
+                auto_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
+                cursor.execute(_peer_courses_query(), teacher["codigo_doc"])
+                peer_courses = [_course_from_row(_row_dict(cursor, row)) for row in cursor.fetchall()]
+                courses_by_flow = {
+                    "auto_docente": _deduplicate_subject_courses(auto_courses),
+                    "par_docente": _deduplicate_subject_courses(peer_courses, include_teacher=True),
+                }
+                actor_code = teacher["codigo_doc"]
+
+        courses_by_flow = _apply_evaluation_status_groups(actor_code, courses_by_flow)
+        items = [_pending_alert_item(flow, courses) for flow, courses in courses_by_flow.items()]
+        return {
+            "role": role,
+            "cedula": cedula,
+            "total_evaluable": sum(item["total"] for item in items),
+            "total_completed": sum(item["completed"] for item in items),
+            "total_pending": sum(item["pending"] for item in items),
+            "items": items,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except HTTPException:
+        raise
+    except (pyodbc.Error, ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"No se pudieron consultar las evaluaciones pendientes: {exc}",
+        ) from exc
+
+
 @router.get("/identity/{cedula}")
 def get_teacher_evaluation_identity(cedula: str, request: Request) -> dict[str, Any]:
     """Resuelve una cédula entre estudiantes y docentes para abrir el flujo correcto."""
@@ -5108,6 +5318,9 @@ def save_teacher_role_evaluation(
 
                 instrument = _get_instrument(evaluation_cursor, flow)
                 _validate_questions(evaluation_cursor, payload.answers, instrument_id=_safe_int(instrument["Id_Instrumento"]))
+
+                if flow == "auto_docente":
+                    acquire_self_evaluation_lock(evaluation_cursor)
 
                 origin_key = _origin_key(evaluator_code, course, flow)
                 existing = _evaluation_count(

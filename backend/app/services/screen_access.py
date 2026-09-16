@@ -178,10 +178,11 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     _screen("titulacion-responsables", "Responsables de titulación", "Tribunal y responsables del examen complexivo.", "Titulación"),
     _screen("titulos-registrados", "Títulos registrados", "Registro y documentos de títulos emitidos.", "Titulación"),
     _screen("practicas-institucionales", "Prácticas institucionales", "Prácticas preprofesionales y vinculación con la sociedad.", "Prácticas"),
-    _screen("evaluacion-docente", "Evaluación docente", "Formulario de evaluación para estudiantes.", "Evaluación"),
+    _screen("evaluacion-docente", "Evaluación docente", "Formulario de evaluación para estudiantes y docentes.", "Evaluación"),
     _screen("evaluacion-docente-admin", "Administrar evaluación", "Configuración administrativa de evaluaciones.", "Evaluación"),
     _screen("evaluacion-docente-avance", "Avance de evaluación", "Seguimiento y ponderación de evaluaciones.", "Evaluación"),
     _screen("evaluacion-docente-reportes", "Reportes de evaluación", "Documentos y resultados de evaluación docente.", "Evaluación"),
+    _screen("evaluacion-docente-historicas", "Autoevaluaciones históricas", "Generación administrativa identificada y auditable de autoevaluaciones de 2023 a 2025.", "Evaluación"),
     _screen("formato-informe-docente", "Formato de informe docente", "Configuración institucional del informe docente.", "Evaluación"),
     _screen("portal-estudiante", "Inicio del estudiante", "Resumen y estado académico del estudiante.", "Portal estudiante"),
     _screen("portal-estudiante-malla-curricular", "Malla curricular del estudiante", "Materias, niveles, códigos y créditos de la carrera.", "Portal estudiante"),
@@ -439,6 +440,7 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # configurados. La migración solo actúa sobre filas creadas automáticamente por
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "evaluacion-docente-historicas": ("ADMINISTRADOR",),
     "secretaria-general": ("ADMINISTRADOR", "SECRETARIA"),
     "moodle/academic-enrollment": ("ADMINISTRADOR",),
     "moodle/course-cloning": ("ADMINISTRADOR",),
@@ -447,6 +449,7 @@ _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
     "solicitudes-cambio-modalidad": ("ACADEMICO", "SECRETARIA"),
     "practicas-institucionales": ("DOCENTE",),
     "actualizar-malla-carrera": ("ACADEMICO",),
+    "evaluacion-docente": ("ESTUDIANTE", "DOCENTE"),
 }
 
 DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
@@ -505,7 +508,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     "DOCENTE": (
         "portal-docente", "portal-docente-informe", "portal-docente-planificacion",
         "portal-docente-contratos", "practicas-institucionales", "ingles",
-        "carnet-institucional", "moodle/alerts",
+        "carnet-institucional", "evaluacion-docente", "moodle/alerts",
     ),
     "ESTUDIANTE": (
         "portal-estudiante", "portal-estudiante-malla-curricular",

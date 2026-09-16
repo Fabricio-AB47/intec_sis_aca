@@ -6,6 +6,7 @@ import { LoginView } from './features/auth/LoginView'
 import { ProfileSelectionView } from './features/auth/ProfileSelectionView'
 import { SessionStatusView } from './features/auth/SessionStatusView'
 import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
+import { TeacherEvaluationAdminNavigation } from './features/evaluacion/TeacherEvaluationAdminNavigation'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
 import { screenPermissionAllowsCode, screenPermissionAllowsPage, screenPermissionForView } from './lib/screenAccess'
 import type { AcademicEnrollmentMode, MoodleSection, PreinscriptionStage } from './types/app'
@@ -25,6 +26,7 @@ const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'
 const SistemaAcademicoView = lazyView(() => import('./features/academico/SistemaAcademicoView'), 'SistemaAcademicoView')
 const CurriculumUpdaterView = lazyView(() => import('./features/academico/CurriculumUpdaterView'), 'CurriculumUpdaterView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
+const TeacherEvaluationHistoryView = lazyView(() => import('./features/evaluacion/TeacherEvaluationHistoryView'), 'TeacherEvaluationHistoryView')
 const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
 const SecretariaGeneralView = lazyView(() => import('./features/secretaria/SecretariaGeneralView'), 'SecretariaGeneralView')
 const InglesView = lazyView(() => import('./features/ingles/InglesView'), 'InglesView')
@@ -210,6 +212,15 @@ function App() {
 
   if (app.session) {
     let pageContent: ReactNode
+    const evaluationNavigation = (
+      <TeacherEvaluationAdminNavigation
+        activePage={app.activePage}
+        permissions={app.screenAccessPages}
+        onOpenProgress={app.openTeacherEvaluationProgressPage}
+        onOpenReports={app.openTeacherEvaluationReportsPage}
+        onOpenHistory={app.openTeacherEvaluationHistoryPage}
+      />
+    )
     const activePermission = screenPermissionForView(app.activePage, {
       matriculaAcadMode: app.matriculaAcadMode,
       moodleSection: app.activeMoodleSection,
@@ -446,9 +457,11 @@ function App() {
         />
       )
     } else if (app.activePage === 'evaluacion-docente-admin' || app.activePage === 'evaluacion-docente-avance') {
-      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="progress" />
+      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="progress" navigation={evaluationNavigation} />
     } else if (app.activePage === 'evaluacion-docente-reportes') {
-      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="reports" />
+      pageContent = <TeacherEvaluationAdminView displayName={app.displayName} mode="reports" navigation={evaluationNavigation} />
+    } else if (app.activePage === 'evaluacion-docente-historicas') {
+      pageContent = <TeacherEvaluationHistoryView navigation={evaluationNavigation} />
     } else if (
       app.activePage === 'portal-estudiante'
       || app.activePage === 'portal-estudiante-malla-curricular'
@@ -641,6 +654,7 @@ function App() {
           onOpenTeacherEvaluationAdmin={app.openTeacherEvaluationAdminPage}
           onOpenTeacherEvaluationProgress={app.openTeacherEvaluationProgressPage}
           onOpenTeacherEvaluationReports={app.openTeacherEvaluationReportsPage}
+          onOpenTeacherEvaluationHistory={app.openTeacherEvaluationHistoryPage}
           onOpenTeacherComplianceFormat={app.openTeacherComplianceFormatPage}
           onOpenPracticasInstitucionales={app.openPracticasInstitucionalesPage}
           onLogout={() => {

@@ -550,7 +550,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertNotIn("WHEN MATCHED THEN", statement)
         self.assertIn("SISTEMA_CATALOGO", statement)
 
-    def test_new_career_change_screen_is_seeded_without_overwriting_manual_choices(self) -> None:
+    def test_new_screens_are_seeded_without_overwriting_manual_choices(self) -> None:
         class RecordingCursor:
             def __init__(self) -> None:
                 self.executions: list[tuple[str, tuple[object, ...]]] = []
@@ -564,6 +564,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(
             {params for _, params in cursor.executions},
             {
+                ("ADMINISTRADOR", "evaluacion-docente-historicas"),
                 ("ADMINISTRADOR", "moodle/academic-enrollment"),
                 ("ADMINISTRADOR", "moodle/course-cloning"),
                 ("ADMINISTRADOR", "moodle/manual-enrollment"),
@@ -575,6 +576,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
                 ("SECRETARIA", "solicitudes-cambio-modalidad"),
                 ("DOCENTE", "practicas-institucionales"),
                 ("ACADEMICO", "actualizar-malla-carrera"),
+                ("ESTUDIANTE", "evaluacion-docente"),
+                ("DOCENTE", "evaluacion-docente"),
             },
         )
         for statement, _ in cursor.executions:
@@ -594,6 +597,10 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertIn("secretaria-general", ALL_PAGES)
         self.assertIn("secretaria-general", DEFAULT_ACCESS["SECRETARIA"])
         self.assertNotIn("secretaria-general", DEFAULT_ACCESS["ESTUDIANTE"])
+
+    def test_teacher_evaluation_is_available_to_students_and_teachers(self) -> None:
+        self.assertIn("evaluacion-docente", DEFAULT_ACCESS["ESTUDIANTE"])
+        self.assertIn("evaluacion-docente", DEFAULT_ACCESS["DOCENTE"])
 
     def test_complete_role_screen_matrix_avoids_repeating_migrations(self) -> None:
         class CountRow:

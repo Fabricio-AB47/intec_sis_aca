@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from inspect import getsource
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.security import SessionUser
+from app.routers import english_exams
 from app.routers.english_exams import (
     ActivitySettingsPayload,
     PublishGradePayload,
@@ -23,6 +25,7 @@ from app.routers.english_exams import (
     _rubric_grade,
     _safe_filename,
     _safe_video_content_type,
+    _validate_english_graph_document_session,
     _validated_activity_window,
     _validated_reopen_deadline,
     grade_submission,
@@ -30,6 +33,41 @@ from app.routers.english_exams import (
 
 
 class EnglishVideoUploadTests(unittest.TestCase):
+    def test_upload_module_has_no_moodle_storage_dependency(self) -> None:
+        source = getsource(english_exams).casefold()
+
+        for forbidden_reference in (
+            "app.services.moodle",
+            "/api/moodle",
+            "moodle_base_url",
+            "moodle_token",
+        ):
+            with self.subTest(reference=forbidden_reference):
+                self.assertNotIn(forbidden_reference, source)
+
+    def test_upload_session_requires_english_graph_document_context(self) -> None:
+        valid_session = {
+            "TipoExpedienteGraphCodigo": "INGLES",
+            "TipoDocumentoCodigo": "EVIDENCIA_EXAMEN_INGLES",
+            "BaseOrigen": "INTEC_EXPEDIENTE_ESTUDIANTIL",
+            "EsquemaOrigen": "ing",
+            "TablaOrigen": "ExamenIngles",
+        }
+
+        self.assertIsNone(_validate_english_graph_document_session(valid_session))
+        for field, invalid_value in (
+            ("TipoExpedienteGraphCodigo", "MOODLE"),
+            ("TipoDocumentoCodigo", "RECURSO_MOODLE"),
+            ("BaseOrigen", "MOODLE"),
+            ("EsquemaOrigen", "mdl"),
+            ("TablaOrigen", "mdl_files"),
+        ):
+            with self.subTest(field=field):
+                invalid_session = {**valid_session, field: invalid_value}
+                with self.assertRaises(HTTPException) as context:
+                    _validate_english_graph_document_session(invalid_session)
+                self.assertEqual(context.exception.status_code, 403)
+
     def test_accepts_supported_video_extensions(self) -> None:
         for filename in ("parcial.mp4", "parcial.MOV", "parcial.mkv", "parcial.webm"):
             with self.subTest(filename=filename):

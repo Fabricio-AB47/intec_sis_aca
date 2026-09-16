@@ -9,7 +9,7 @@ import type {
   PreinscriptionStage,
   ScreenPermissionCode,
 } from '../types/app'
-import { MoodleGradeAlertIndicator } from '../features/moodle/MoodleGradeAlertIndicator'
+import { UnifiedAcademicAlertsIndicator } from '../features/notifications/UnifiedAcademicAlertsIndicator'
 
 type StudentLayoutProps = {
   activePage: Page
@@ -78,6 +78,7 @@ type StudentLayoutProps = {
   onOpenTeacherEvaluationAdmin: () => void
   onOpenTeacherEvaluationProgress: () => void
   onOpenTeacherEvaluationReports: () => void
+  onOpenTeacherEvaluationHistory: () => void
   onOpenTeacherComplianceFormat: () => void
   onOpenPracticasInstitucionales: (process?: PracticasProcessCode) => void
   onLogout: () => void
@@ -233,7 +234,7 @@ function navItemAllowedForRole(role: string, item: NavItem) {
   if (item.page === 'expedientes-documentales' && !['ADMINISTRADOR', 'ACADEMICO', 'SECRETARIA', 'FINANCIERO'].includes(normalizedRole)) return false
 
   if (normalizedRole === 'ESTUDIANTE') return Boolean(item.page && studentPortalPages.has(item.page)) || item.page === 'ingles' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional'
-  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional' || item.moodleSection === 'alerts'
+  if (normalizedRole === 'DOCENTE') return item.page === 'portal-docente' || item.page === 'ingles' || item.page === 'portal-docente-informe' || item.page === 'portal-docente-planificacion' || item.page === 'portal-docente-contratos' || item.page === 'evaluacion-docente' || item.page === 'practicas-institucionales' || item.page === 'carnet-institucional' || item.moodleSection === 'alerts'
   if (normalizedRole === 'ADMISIONES') {
     if (!item.page || !admissionsPages.has(item.page)) return false
     if (item.page === 'gestion-sisacademico' && item.sectionKey && !admissionsSisSections.has(item.sectionKey)) return false
@@ -624,6 +625,7 @@ export function StudentLayout({
   onOpenTeacherEvaluationAdmin,
   onOpenTeacherEvaluationProgress,
   onOpenTeacherEvaluationReports,
+  onOpenTeacherEvaluationHistory,
   onOpenTeacherComplianceFormat,
   onOpenPracticasInstitucionales,
   onLogout,
@@ -1356,6 +1358,15 @@ export function StudentLayout({
           description: 'Pendientes por período y PDF de calificación docente.',
           page: 'evaluacion-docente-reportes',
           action: onOpenTeacherEvaluationReports,
+        },
+        {
+          label: 'Autoevaluaciones históricas',
+          description: 'Generación administrativa por docente y período, con trazabilidad en informes 360.',
+          page: 'evaluacion-docente-historicas',
+          action: () => {
+            onOpenTeacherEvaluationHistory()
+            setOpenMenuGroups(new Set())
+          },
         },
       ],
     },
@@ -2406,6 +2417,12 @@ export function StudentLayout({
           page: 'portal-docente-contratos',
           action: onOpenPortalDocenteContratos,
         },
+        {
+          label: 'Evaluación docente',
+          description: 'Completar la autoevaluación y las evaluaciones de pares asignadas.',
+          page: 'evaluacion-docente',
+          action: onOpenTeacherEvaluation,
+        },
         ...practicesInstitutionalMenuItems,
         {
           label: 'Carnet institucional',
@@ -2726,14 +2743,38 @@ export function StudentLayout({
       ) : null}
 
       <section className="student-main">
-        {['ADMINISTRADOR', 'ACADEMICO', 'DOCENTE'].includes(normalizedRole)
-          && screenAccessPages?.includes('moodle/alerts')
-          && !(activePage === 'moodle' && activeMoodleSection === 'alerts') ? (
-            <MoodleGradeAlertIndicator
-              role={normalizedRole}
-              onOpen={() => onOpenMoodle('alerts')}
-            />
-          ) : null}
+        {(
+          (['ESTUDIANTE', 'DOCENTE'].includes(normalizedRole)
+            && Boolean(screenAccessPages?.includes('evaluacion-docente')))
+          || (normalizedRole === 'ADMINISTRADOR'
+            && Boolean(screenAccessPages?.includes('evaluacion-docente-avance')))
+          || (['ADMINISTRADOR', 'ACADEMICO', 'DOCENTE'].includes(normalizedRole)
+            && Boolean(screenAccessPages?.includes('moodle/alerts')))
+        ) ? (
+          <UnifiedAcademicAlertsIndicator
+            role={normalizedRole}
+            cedula={cedula}
+            canViewTeacherEvaluation={
+              (
+                ['ESTUDIANTE', 'DOCENTE'].includes(normalizedRole)
+                && Boolean(screenAccessPages?.includes('evaluacion-docente'))
+              ) || (
+                normalizedRole === 'ADMINISTRADOR'
+                && Boolean(screenAccessPages?.includes('evaluacion-docente-avance'))
+              )
+            }
+            canViewMoodle={
+              ['ADMINISTRADOR', 'ACADEMICO', 'DOCENTE'].includes(normalizedRole)
+              && Boolean(screenAccessPages?.includes('moodle/alerts'))
+            }
+            onOpenTeacherEvaluation={
+              normalizedRole === 'ADMINISTRADOR'
+                ? onOpenTeacherEvaluationProgress
+                : onOpenTeacherEvaluation
+            }
+            onOpenMoodle={() => onOpenMoodle('alerts')}
+          />
+        ) : null}
         {children}
       </section>
     </div>

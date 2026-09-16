@@ -2,6 +2,7 @@ import { type FormEvent, useMemo, useState } from 'react'
 import {
   fetchTeacherEvaluationIdentity,
   fetchTeacherEvaluationQuestions,
+  invalidateTeacherEvaluationAlerts,
   saveTeacherEvaluation,
   saveTeacherRoleEvaluation,
 } from '../../lib/api'
@@ -437,6 +438,7 @@ export function TeacherEvaluationView({ publicMode = false, displayName, default
       setAnswers({})
       setShowCoursesModal(true)
       setSuccess(response.message || 'Evaluación registrada correctamente.')
+      invalidateTeacherEvaluationAlerts()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar la evaluación.')
     } finally {

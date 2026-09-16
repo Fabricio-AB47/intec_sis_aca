@@ -48,6 +48,13 @@ _EDIT_WINDOW_MINUTES = 15
 _PASSING_GRADE = Decimal("7.00")
 _LEVEL_NAME = "A2+ - INTERMEDIATE"
 _LOCAL_TIMEZONE = ZoneInfo("America/Guayaquil")
+_ENGLISH_GRAPH_SESSION_CONTEXT = {
+    "TipoExpedienteGraphCodigo": "INGLES",
+    "TipoDocumentoCodigo": "EVIDENCIA_EXAMEN_INGLES",
+    "BaseOrigen": "INTEC_EXPEDIENTE_ESTUDIANTIL",
+    "EsquemaOrigen": "ing",
+    "TablaOrigen": "ExamenIngles",
+}
 _RUBRIC_WEIGHTS: dict[str, Decimal] = {
     "language_mastery": Decimal("0.30"),
     "fluency_pronunciation": Decimal("0.30"),
@@ -960,6 +967,21 @@ def _create_graph_upload_session(path: str) -> dict[str, Any]:
         return response.json()
 
 
+def _validate_english_graph_document_session(session: dict[str, Any]) -> None:
+    invalid_context = any(
+        _clean(session.get(field)).casefold() != expected.casefold()
+        for field, expected in _ENGLISH_GRAPH_SESSION_CONTEXT.items()
+    )
+    if invalid_context:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "La sesión no pertenece al repositorio documental de Inglés "
+                "en Microsoft 365."
+            ),
+        )
+
+
 def _english_graph_upload_session(
     upload_id: UUID,
     upload_url: str,
@@ -995,6 +1017,7 @@ def _english_graph_upload_session(
     session = get_graph_document_upload_session(upload_id)
     if not session or _clean(session.get("EstadoDocumentoGraphCodigo")) != "CARGA_INICIADA":
         raise HTTPException(status_code=409, detail="La sesión documental ya no está disponible.")
+    _validate_english_graph_document_session(session)
     stored_hash = session.get("UploadUrlHash")
     calculated_hash = hashlib.sha256(normalized_url.encode("utf-8")).digest()
     if not stored_hash or not hmac.compare_digest(bytes(stored_hash), calculated_hash):
