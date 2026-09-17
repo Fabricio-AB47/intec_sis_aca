@@ -255,6 +255,41 @@ class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_course_cloning_sends_visible_flag_on_copy_and_update(self) -> None:
+        calls: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            form = parse_qs(request.content.decode("utf-8"), keep_blank_values=True)
+            function = form["wsfunction"][0]
+            calls.append(function)
+            if function == "core_course_duplicate_course":
+                self.assertEqual(form["visible"], ["1"])
+                self.assertFalse(any(key.startswith("options[") for key in form))
+                return json_response(request, {"id": 99})
+            self.assertEqual(function, "core_course_update_courses")
+            self.assertEqual(form["courses[0][visible]"], ["1"])
+            return json_response(request, None)
+
+        client, http_client = await self._client(handler)
+        try:
+            await client.duplicate_course(
+                course_id=12,
+                fullname="R30 - Seguridad en Redes",
+                shortname="VGA-CIB-001-R30",
+                category_id=45,
+                visible=True,
+            )
+            await client.update_course(
+                99,
+                idnumber="VGA-ID-CIB-001-R30",
+                startdate=1_800_000_000,
+                visible=True,
+            )
+        finally:
+            await http_client.aclose()
+
+        self.assertEqual(calls, ["core_course_duplicate_course", "core_course_update_courses"])
+
     async def test_course_cloning_writes_require_dedicated_flag(self) -> None:
         called = False
 

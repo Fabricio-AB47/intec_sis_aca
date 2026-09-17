@@ -267,7 +267,7 @@ class MoodleCourseCloningServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["courses"][0]["shortname"], "VGA-CIB-001-H12027")
         self.assertEqual(result["courses"][0]["idnumber"], "VGA-ID-CIB-001-H12027")
 
-    async def test_apply_creates_hidden_course_without_repeating_it(self) -> None:
+    async def test_apply_creates_visible_course_without_repeating_it(self) -> None:
         first = await self.service.apply(
             self.request([101]), actor="admin", actor_id=1
         )
@@ -279,12 +279,38 @@ class MoodleCourseCloningServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["created_count"], 0)
         self.assertEqual(second["skipped_count"], 1)
         self.assertEqual(len(self.client.duplicates), 1)
-        self.assertFalse(self.client.duplicates[0]["visible"])
-        self.assertFalse(self.client.updates[0]["visible"])
+        self.assertTrue(self.client.duplicates[0]["visible"])
+        self.assertTrue(self.client.updates[0]["visible"])
+        self.assertIn("visible en Moodle", first["courses"][0]["message"])
+        self.assertEqual(self.client.courses[0]["visible"], 0)
         created_names = {item["name"] for item in self.client.created_categories}
         self.assertIn("REGULAR", created_names)
         self.assertIn("HOMOLOGACION", created_names)
         self.assertEqual(len(self.audit_events), 1)
+        self.assertTrue(self.audit_events[0][1]["visible"])
+
+    async def test_apply_creates_visible_homologation_course_from_hidden_template(self) -> None:
+        result = await self.service.apply(
+            self.request([201], offer_type="HOMOLOGACION", period_name="H1"),
+            actor="admin",
+            actor_id=1,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["created_count"], 1)
+        self.assertTrue(self.client.duplicates[0]["visible"])
+        self.assertTrue(self.client.updates[0]["visible"])
+        self.assertEqual(self.client.courses[2]["visible"], 0)
+        self.assertIn("visible en Moodle", result["courses"][0]["message"])
+
+    async def test_apply_keeps_all_new_courses_visible(self) -> None:
+        result = await self.service.apply(
+            self.request([101, 102]), actor="admin", actor_id=1
+        )
+
+        self.assertEqual(result["created_count"], 2)
+        self.assertTrue(all(course["visible"] for course in self.client.duplicates))
+        self.assertTrue(all(course["visible"] for course in self.client.updates))
 
     async def test_rejects_template_from_another_offer_type(self) -> None:
         with self.assertRaises(MoodleCourseCloningError):
@@ -378,6 +404,9 @@ class MoodleCourseCloningServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["warning_count"], 1)
         self.assertEqual(result["courses"][0]["status"], "CREADO_CON_ADVERTENCIA")
         self.assertIn("auditoría", result["courses"][0]["message"])
+        self.assertIn("visible en Moodle", result["courses"][0]["message"])
+        self.assertTrue(self.client.duplicates[0]["visible"])
+        self.assertTrue(self.client.updates[0]["visible"])
 
 
 if __name__ == "__main__":

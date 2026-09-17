@@ -220,7 +220,7 @@ class MoodleCourseCloningService:
                         fullname=planned_course["fullname"],
                         shortname=planned_course["shortname"],
                         category_id=destination["id"],
-                        visible=False,
+                        visible=True,
                     )
                     new_course_id = _integer(duplicate.get("id"))
                     warnings: list[str] = []
@@ -230,7 +230,7 @@ class MoodleCourseCloningService:
                             idnumber=planned_course["idnumber"],
                             startdate=values["startdate"],
                             enddate=values["enddate"],
-                            visible=False,
+                            visible=True,
                         )
                     except MoodleError as exc:
                         warnings.append(
@@ -244,6 +244,7 @@ class MoodleCourseCloningService:
                         "shortname": planned_course["shortname"],
                         "idnumber": planned_course["idnumber"],
                         "categoryid": destination["id"],
+                        "visible": True,
                     }
                     courses.append(created_course)
                     audit_recorded = await asyncio.to_thread(
@@ -279,10 +280,10 @@ class MoodleCourseCloningService:
                                 "CREADO_CON_ADVERTENCIA" if has_warnings else "CREADO"
                             ),
                             "message": (
-                                "El curso se clonó y quedó oculto para revisión. "
+                                "El curso se clonó y quedó visible en Moodle. "
                                 + " ".join(warnings)
                                 if has_warnings
-                                else "El curso se clonó y quedó oculto para revisión."
+                                else "El curso se clonó y quedó visible en Moodle."
                             ),
                             "audit_recorded": audit_recorded,
                         }

@@ -447,7 +447,7 @@ export function MoodleCourseCloningPanel() {
       </section>
 
       <div className="moodle-cloning-actions">
-        <span>Los cursos nuevos quedarán ocultos y sin usuarios matriculados.</span>
+        <span>Los cursos nuevos quedarán visibles y sin usuarios matriculados.</span>
         <button
           type="button"
           className="moodle-button moodle-button--primary"
@@ -562,7 +562,7 @@ export function MoodleCourseCloningPanel() {
             </div>
             <div className="moodle-confirm-dialog__body">
               <p>
-                Se crearán las categorías faltantes y los cursos quedarán ocultos. Las matrículas,
+                Se crearán las categorías faltantes y los cursos quedarán visibles. Las matrículas,
                 usuarios, roles e historiales de la plantilla no se copiarán.
               </p>
             </div>
