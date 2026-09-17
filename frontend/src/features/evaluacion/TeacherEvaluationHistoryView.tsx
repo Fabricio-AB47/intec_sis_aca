@@ -4,8 +4,8 @@ import {
   fetchHistoricalSelfEvaluationCatalog,
   fetchHistoricalSelfEvaluationHistory,
   generateHistoricalSelfEvaluations,
+  invalidateTeacherEvaluationAlerts,
   previewHistoricalSelfEvaluations,
-  TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT,
 } from '../../lib/api'
 import type {
   HistoricalSelfEvaluationCatalog,
@@ -15,6 +15,12 @@ import type {
 } from '../../types/app'
 
 const PAGE_SIZE = 10
+const DATE_FORMATTER = new Intl.DateTimeFormat('es-EC', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Guayaquil' })
+const PERCENT_FORMATTER = new Intl.NumberFormat('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
+function normalizedSearch(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
 
 type GenerationProgress = {
   processed: number
@@ -37,7 +43,19 @@ function teachersForPeriods(catalog: HistoricalSelfEvaluationCatalog | null, per
 
 function formatDate(value: string) {
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('es-EC', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Guayaquil' }).format(date)
+  return Number.isNaN(date.getTime()) ? value : DATE_FORMATTER.format(date)
+}
+
+function GenerationSuccessMessage({ result }: { result: HistoricalSelfEvaluationResult }) {
+  const processed = result.processed ?? result.created + result.skipped
+  return (
+    <div role="status" className="teacher-evaluation__message teacher-evaluation__message--success teacher-evaluation-history__success-summary">
+      <strong>{result.created} {result.created === 1 ? 'autoevaluación generada' : 'autoevaluaciones generadas'} correctamente.</strong>
+      <span>Formularios procesados: <strong>{processed} de {result.total ?? processed}</strong>.</span>
+      <span>{result.skipped} {result.skipped === 1 ? 'autoevaluación existente conservada' : 'autoevaluaciones existentes conservadas'} sin modificaciones.</span>
+      <span className="teacher-evaluation-history__success-batch">Lote: <code>{result.batch_id}</code></span>
+    </div>
+  )
 }
 
 export function TeacherEvaluationHistoryView({ navigation }: { navigation?: ReactNode }) {
@@ -50,17 +68,28 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
   const [preview, setPreview] = useState<HistoricalSelfEvaluationPreview | null>(null)
   const [result, setResult] = useState<HistoricalSelfEvaluationResult | null>(null)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null)
+  const [showGenerationProgress, setShowGenerationProgress] = useState(false)
   const [history, setHistory] = useState<HistoricalSelfEvaluationHistory | null>(null)
   const [reason, setReason] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [page, setPage] = useState(0)
   const [historyPage, setHistoryPage] = useState(0)
   const [activeItem, setActiveItem] = useState<HistoricalSelfEvaluationPreview['items'][number] | null>(null)
   const mounted = useRef(false)
   const generationInFlight = useRef(false)
+  const progressDialog = useRef<HTMLDialogElement>(null)
+  const hasGenerationProgress = Boolean(generationProgress)
+
+  useEffect(() => {
+    const dialog = progressDialog.current
+    if (!dialog) return
+    if (showGenerationProgress && !dialog.open) dialog.showModal()
+    else if (!showGenerationProgress && dialog.open) dialog.close()
+  }, [showGenerationProgress, hasGenerationProgress])
 
   useEffect(() => {
     let cancelled = false
@@ -72,23 +101,32 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
     return () => { cancelled = true; mounted.current = false }
   }, [])
 
-  const visiblePeriods = (catalog?.periods || []).filter((period) => year === 'all' || period.year === Number(year))
+  const visiblePeriods = useMemo(() => (catalog?.periods || []).filter((period) => year === 'all' || period.year === Number(year)), [catalog, year])
   const allTeachers = useMemo(() => teachersForPeriods(catalog, periods), [catalog, periods])
-  const allTeachersSelected = allTeachers.length > 0 && allTeachers.every((teacher) => teachers.includes(teacher.codigo_doc))
+  const selectedTeachers = useMemo(() => new Set(teachers), [teachers])
+  const selectedPeriods = useMemo(() => new Set(periods), [periods])
+  const allTeachersSelected = useMemo(() => allTeachers.length > 0 && allTeachers.every((teacher) => selectedTeachers.has(teacher.codigo_doc)), [allTeachers, selectedTeachers])
+  const searchableTeachers = useMemo(() => allTeachers.map((teacher) => ({ teacher, searchText: normalizedSearch(`${teacher.docente} ${teacher.cedula_doc} ${teacher.codigo_doc}`) })), [allTeachers])
   const visibleTeachers = useMemo(() => {
-    const text = search.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-    return allTeachers.filter((teacher) => `${teacher.docente} ${teacher.cedula_doc} ${teacher.codigo_doc}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(text))
-  }, [allTeachers, search])
-  const teacherIdentities = new Map((catalog?.teachers || []).map((teacher) => [String(teacher.codigo_doc), teacher]))
-  const periodNames = new Map((catalog?.periods || []).map((period) => [String(period.codigo_periodo), period.detalle_periodo]))
+    const text = normalizedSearch(search.trim())
+    return searchableTeachers.filter((item) => item.searchText.includes(text)).map((item) => item.teacher)
+  }, [searchableTeachers, search])
+  const teacherIdentities = useMemo(() => new Map((catalog?.teachers || []).map((teacher) => [String(teacher.codigo_doc), teacher])), [catalog])
+  const periodNames = useMemo(() => new Map((catalog?.periods || []).map((period) => [String(period.codigo_periodo), period.detalle_periodo])), [catalog])
+  const activeAnswers = useMemo(() => new Map((activeItem?.answers || []).map((answer) => [answer.id_pregunta, answer.puntaje])), [activeItem])
   const totalPages = Math.ceil((preview?.items.length || 0) / PAGE_SIZE)
   const historyPages = Math.ceil((history?.items.length || 0) / PAGE_SIZE)
+  const generationComplete = Boolean(generationProgress && generationProgress.processed >= generationProgress.total)
+  const generationPercent = generationProgress?.total ? Math.min(100, generationProgress.processed / generationProgress.total * 100) : 0
+  const generationPercentLabel = PERCENT_FORMATTER.format(generationPercent)
+  const generationStatus = generating ? 'Generando autoevaluaciones' : generationComplete ? 'Generación completada' : 'Generación pendiente'
 
   function invalidatePreview() {
     setPreview(null)
     setActiveItem(null)
     setResult(null)
     setGenerationProgress(null)
+    setShowGenerationProgress(false)
     setConfirmed(false)
     setError('')
   }
@@ -113,6 +151,13 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
     }
   }
 
+  function openHistory(refresh = false) {
+    if (busy) return
+    setShowGenerationProgress(false)
+    setTab('history')
+    if (refresh || !history) void loadHistory()
+  }
+
   async function handlePreview() {
     setBusy(true)
     invalidatePreview()
@@ -129,6 +174,7 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
   async function handleGenerate() {
     if (generationInFlight.current || !preview || !confirmed || reason.trim().length < 10) return
     generationInFlight.current = true
+    setGenerating(true)
     setBusy(true)
     setError('')
     let progress = generationProgress || {
@@ -136,6 +182,7 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
       offset: 0, token: preview.preview_token, reason: reason.trim(),
     }
     setGenerationProgress(progress)
+    setShowGenerationProgress(true)
     try {
       while (mounted.current) {
         const response = await generateHistoricalSelfEvaluations(progress.token, progress.reason, progress.offset)
@@ -168,10 +215,11 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron guardar las autoevaluaciones.')
+      if (mounted.current) setShowGenerationProgress(true)
     } finally {
       generationInFlight.current = false
-      if (progress.processed > 0) window.dispatchEvent(new Event(TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT))
-      if (mounted.current) setBusy(false)
+      if (progress.processed > 0) invalidateTeacherEvaluationAlerts()
+      if (mounted.current) { setGenerating(false); setBusy(false) }
     }
   }
 
@@ -183,22 +231,53 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
           <p className="teacher-evaluation__eyebrow">Evaluación docente 360</p>
           <h1>Autoevaluaciones históricas</h1>
         </div>
-        <span className="teacher-evaluation__summary-pill">2023 - 2025</span>
+        <div className="teacher-evaluation-history__header-actions">
+          <span className="teacher-evaluation__summary-pill">2023 - 2025</span>
+          <button type="button" className="teacher-evaluation__secondary" onClick={() => openHistory(true)} disabled={busy}>Ver histórico</button>
+        </div>
       </section>
 
       <div className="teacher-evaluation-history__tabs" role="tablist" aria-label="Autoevaluaciones históricas">
         <button role="tab" id="historical-generate-tab" aria-controls="historical-generate-panel" aria-selected={tab === 'generate'} onClick={() => setTab('generate')} disabled={busy}>Generación</button>
-        <button role="tab" id="historical-history-tab" aria-controls="historical-history-panel" aria-selected={tab === 'history'} onClick={() => { setTab('history'); if (!history) void loadHistory() }} disabled={busy}>Historial</button>
+        <button role="tab" id="historical-history-tab" aria-controls="historical-history-panel" aria-selected={tab === 'history'} onClick={() => openHistory()} disabled={busy}>Historial</button>
       </div>
 
-      {error ? <div role="alert" className="teacher-evaluation__message teacher-evaluation__message--error">{error}</div> : null}
-      {result ? <div role="status" className="teacher-evaluation__message teacher-evaluation__message--success">{result.created} autoevaluaciones generadas · {result.skipped} existentes conservadas. Lote: {result.batch_id}</div> : null}
+      {error && !showGenerationProgress ? <div role="alert" className="teacher-evaluation__message teacher-evaluation__message--error">{error}</div> : null}
       {generationProgress ? (
-        <section className="teacher-evaluation-history__generation-progress" role="status" aria-live="polite">
-          <div><strong>{busy ? 'Generando autoevaluaciones' : generationProgress.processed >= generationProgress.total ? 'Generación completada' : 'Generación pendiente'}</strong><span>Procesadas {generationProgress.processed} / {generationProgress.total}</span></div>
-          <progress aria-label="Avance de generación" max={generationProgress.total || 1} value={generationProgress.processed} />
-          <small>{generationProgress.created} creadas · {generationProgress.skipped} existentes conservadas</small>
-        </section>
+        <>
+          <div className="teacher-evaluation-history__progress-access">
+            <strong>{generationStatus}</strong>
+            <button type="button" className="teacher-evaluation__secondary" onClick={() => setShowGenerationProgress(true)}>Ver avance</button>
+          </div>
+          <dialog
+            ref={progressDialog}
+            className="teacher-evaluation__modal teacher-evaluation-history__progress-modal"
+            aria-labelledby="historical-progress-title"
+            onClose={() => setShowGenerationProgress(false)}
+            onCancel={() => setShowGenerationProgress(false)}
+          >
+            <header className="teacher-evaluation__modal-header">
+              <div><p className="teacher-evaluation__eyebrow">Autoevaluaciones históricas</p><h2 id="historical-progress-title">Avance de generación</h2></div>
+              <button type="button" className="teacher-evaluation__secondary" onClick={() => setShowGenerationProgress(false)}>Cerrar</button>
+            </header>
+            <div className="teacher-evaluation__modal-body">
+              {error ? <div role="alert" className="teacher-evaluation__message teacher-evaluation__message--error">{error}</div> : null}
+              <section className="teacher-evaluation-history__generation-progress" role="status" aria-live="polite">
+                <div><strong>{generationStatus}</strong><span className="teacher-evaluation-history__progress-percent">{generationPercentLabel}%</span></div>
+                <progress aria-label="Avance de generación" max={generationProgress.total || 1} value={generationProgress.processed} />
+                <span>Procesadas {generationProgress.processed} / {generationProgress.total}</span>
+                <small>{generationProgress.created} creadas · {generationProgress.skipped} existentes conservadas</small>
+              </section>
+              {result ? <GenerationSuccessMessage result={result} /> : null}
+            </div>
+            {!busy && (result || preview && !generationComplete) ? (
+              <footer className="teacher-evaluation__modal-actions">
+                {result ? <button type="button" className="teacher-evaluation__primary" onClick={() => openHistory(true)}>Ver historial</button>
+                  : <button type="button" className="teacher-evaluation__primary" disabled={!confirmed || reason.trim().length < 10} onClick={() => void handleGenerate()}>Reintentar pendientes</button>}
+              </footer>
+            ) : null}
+          </dialog>
+        </>
       ) : null}
 
       {tab === 'generate' ? (
@@ -212,7 +291,7 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
                   <div className="teacher-evaluation-history__selection-actions"><button disabled={busy || !visiblePeriods.length} onClick={() => changePeriods([...new Set([...periods, ...visiblePeriods.map((period) => period.codigo_periodo)])])}>Seleccionar visibles</button><button disabled={busy || !periods.length} onClick={() => changePeriods([])}>Limpiar</button></div>
                   <div className="teacher-evaluation-history__options">
                     {visiblePeriods.length ? visiblePeriods.map((period) => (
-                      <label key={period.codigo_periodo}><input type="checkbox" checked={periods.includes(period.codigo_periodo)} disabled={busy} onChange={() => changePeriods(toggleCode(periods, period.codigo_periodo))} /><span><strong>{period.detalle_periodo}</strong><small>Código {period.codigo_periodo} · Inicio {period.year}</small></span></label>
+                      <label key={period.codigo_periodo}><input type="checkbox" checked={selectedPeriods.has(period.codigo_periodo)} disabled={busy} onChange={() => changePeriods(toggleCode(periods, period.codigo_periodo))} /><span><strong>{period.detalle_periodo}</strong><small>Código {period.codigo_periodo} · Inicio {period.year}</small></span></label>
                     )) : <p>No existen períodos para este año.</p>}
                   </div>
                 </section>
@@ -225,7 +304,7 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
                   </div>
                   <div className="teacher-evaluation-history__options">
                     {visibleTeachers.length ? visibleTeachers.map((teacher) => (
-                      <label key={teacher.codigo_doc}><input type="checkbox" checked={teachers.includes(teacher.codigo_doc)} disabled={busy} onChange={() => { invalidatePreview(); setTeachers(toggleCode(teachers, teacher.codigo_doc)) }} /><span><strong>{teacher.docente}</strong><small>{teacher.cedula_doc} · Código {teacher.codigo_doc}</small></span></label>
+                      <label key={teacher.codigo_doc}><input type="checkbox" checked={selectedTeachers.has(teacher.codigo_doc)} disabled={busy} onChange={() => { invalidatePreview(); setTeachers(toggleCode(teachers, teacher.codigo_doc)) }} /><span><strong>{teacher.docente}</strong><small>{teacher.cedula_doc} · Código {teacher.codigo_doc}</small></span></label>
                     )) : <p>{!periods.length ? 'Sin períodos seleccionados.' : !allTeachers.length ? 'No existen docentes activos con clases asignadas en estos períodos.' : 'No se encontraron docentes activos.'}</p>}
                   </div>
                 </section>
@@ -243,7 +322,7 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
                 ))}
               </tbody></table></div>
               <div className="teacher-evaluation-history__pagination"><span>Página {page + 1} de {totalPages}</span><button disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</button><button disabled={page + 1 >= totalPages} onClick={() => setPage(page + 1)}>Siguiente</button></div>
-              {activeItem ? <section className="teacher-evaluation-history__answers"><header><h3>{activeItem.course.docente} · {activeItem.course.materia}</h3><button className="teacher-evaluation__secondary" onClick={() => setActiveItem(null)}>Cerrar respuestas</button></header><ol>{preview.questions.map((question) => <li key={question.id_pregunta}><span>{question.detalle_preg}</span><strong>{activeItem.answers.find((answer) => answer.id_pregunta === question.id_pregunta)?.puntaje} / 5</strong></li>)}</ol></section> : null}
+              {activeItem ? <section className="teacher-evaluation-history__answers"><header><h3>{activeItem.course.docente} · {activeItem.course.materia}</h3><button className="teacher-evaluation__secondary" onClick={() => setActiveItem(null)}>Cerrar respuestas</button></header><ol>{preview.questions.map((question) => <li key={question.id_pregunta}><span>{question.detalle_preg}</span><strong>{activeAnswers.get(question.id_pregunta)} / 5</strong></li>)}</ol></section> : null}
               {preview.pending > 0 ? (
                 <div className="teacher-evaluation-history__confirmation">
                   <label>
@@ -263,9 +342,9 @@ export function TeacherEvaluationHistoryView({ navigation }: { navigation?: Reac
                     <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={busy || Boolean(generationProgress)} />
                     <span>Autorizo como administrador el registro masivo de {preview.pending} autoevaluaciones vinculadas a los docentes por cédula, identificadas como generación administrativa en los informes oficiales 360.</span>
                   </label>
-                  <button className="teacher-evaluation__primary" disabled={busy || !confirmed || reason.trim().length < 10} onClick={() => void handleGenerate()}>
-                    {busy ? 'Guardando...' : generationProgress ? 'Reintentar pendientes' : 'Confirmar y guardar'}
-                  </button>
+                  {!generationProgress ? <button className="teacher-evaluation__primary" disabled={busy || !confirmed || reason.trim().length < 10} onClick={() => void handleGenerate()}>
+                    {busy ? 'Guardando...' : 'Confirmar y guardar'}
+                  </button> : null}
                 </div>
               ) : null}
             </section>

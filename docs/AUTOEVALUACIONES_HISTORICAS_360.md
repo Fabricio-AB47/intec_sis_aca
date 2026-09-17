@@ -72,7 +72,14 @@ misma confirmación no reemplaza registros creados o existentes.
 La interfaz confirma una sola selección y realiza solicitudes sucesivas de 100
 formularios hasta completar todos. Este tamaño es interno, no un límite total.
 Cada bloque tiene su propia transacción: un error revierte solo el bloque actual,
-conservando los bloques previos. El avance y los contadores se muestran en pantalla;
+conservando los bloques previos. Una subpantalla se abre al iniciar el guardado y
+muestra el porcentaje confirmado, formularios procesados, creados y existentes
+conservados. Los errores y el botón de reintento están en esa misma subpantalla;
+cerrarla solo oculta el avance, sin cancelar el lote mientras la página siga
+abierta. `Ver avance` permite volver a abrirla y admite cierre con Escape.
+El resumen verde de finalización se muestra únicamente dentro de esa subpantalla.
+Al cerrarla se oculta, y al abrirla nuevamente conserva las cantidades y el lote,
+sin repetir el guardado ni mostrar un mensaje duplicado en la página principal.
 `Reintentar pendientes` vuelve al último bloque sin confirmar y omite duplicados.
 El servidor renueva el token después de cada bloque, manteniendo el mismo lote,
 usuario, semilla y configuración. No hay un límite de duración total del proceso,
@@ -93,6 +100,12 @@ selección completa en una transacción, también sin límite funcional de canti
 Se usan las tablas existentes `eval360.Aplicacion`, `eval360.Respuesta` y
 `eval360.Campania` de la conexión de evaluaciones. No se requiere crear otra base
 ni cambiar el esquema de tablas.
+
+La creación de campañas y aplicaciones captura el identificador con `OUTPUT
+INSERTED ... INTO` una variable de tabla y lo devuelve en un `SELECT` final.
+Esto permite guardar con los disparadores de auditoría activos. Usar `OUTPUT`
+sin `INTO` sobre estas tablas provocaba el error 334 de SQL Server y detenía el
+lote antes de confirmar. No se deshabilita ni se omite la auditoría.
 
 `Aplicacion.Observacion_General` guarda el prefijo
 `AUTO_DOCENTE_GENERADA_V1:` y metadatos JSON: lote, responsable, rol, fecha real UTC,
@@ -148,3 +161,6 @@ formularios, interrupción intermedia y continuación hasta completar la selecci
 
 Referencia del bloqueo:
 [Microsoft: sys.sp_getapplock](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-getapplock-transact-sql).
+
+Referencia de compatibilidad con disparadores:
+[Microsoft: OUTPUT y triggers](https://learn.microsoft.com/en-us/sql/t-sql/queries/output-clause-transact-sql#triggers).

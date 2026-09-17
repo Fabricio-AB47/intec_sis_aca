@@ -456,12 +456,29 @@ export function invalidateMoodleGradeAlertCache() {
 }
 
 export function invalidateTeacherEvaluationAlerts() {
+  teacherEvaluationReadRequests.clear()
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT))
   }
 }
 
 let currentSessionRequest: Promise<UserSession | null> | null = null
+const teacherEvaluationReadRequests = new Map<string, Promise<unknown>>()
+
+function teacherEvaluationRead<T>(path: string): Promise<T> {
+  const active = teacherEvaluationReadRequests.get(path)
+  if (active) return active as Promise<T>
+
+  // Share only concurrent reads. Settled responses are never cached.
+  const pending = request<T>(path, { cache: 'no-store' })
+  teacherEvaluationReadRequests.set(path, pending)
+  const release = () => {
+    if (teacherEvaluationReadRequests.get(path) === pending) teacherEvaluationReadRequests.delete(path)
+  }
+  pending.then(release, release)
+  return pending
+}
+
 type ScreenAccessPendingRequest = {
   promise: Promise<ScreenAccessResponse>
   refresh: boolean
@@ -484,6 +501,7 @@ function invalidateScreenAccessRequests(includeAll?: boolean) {
 
 function clearAuthReadRequests() {
   currentSessionRequest = null
+  teacherEvaluationReadRequests.clear()
   invalidateScreenAccessRequests()
 }
 
@@ -3594,9 +3612,8 @@ export async function fetchTeacherEvaluationIdentity(
 }
 
 export async function fetchTeacherEvaluationPendingAlerts(): Promise<TeacherEvaluationPendingAlertResponse> {
-  const response = await request<TeacherEvaluationPendingAlertResponse>(
+  const response = await teacherEvaluationRead<TeacherEvaluationPendingAlertResponse>(
     '/api/evaluacion-docente/alertas/pendientes',
-    { cache: 'no-store' },
   )
   return {
     ...response,
@@ -3689,13 +3706,13 @@ export async function saveTeacherRoleEvaluation(
 }
 
 export async function fetchTeacherEvaluationAdminPeriods(): Promise<TeacherEvaluationAdminPeriodsResponse> {
-  return request<TeacherEvaluationAdminPeriodsResponse>('/api/evaluacion-docente/admin/periodos')
+  return teacherEvaluationRead<TeacherEvaluationAdminPeriodsResponse>('/api/evaluacion-docente/admin/periodos')
 }
 
 const HISTORICAL_SELF_EVALUATION_API = '/api/evaluacion-docente/admin/autoevaluaciones-historicas'
 
 export function fetchHistoricalSelfEvaluationCatalog(): Promise<HistoricalSelfEvaluationCatalog> {
-  return request<HistoricalSelfEvaluationCatalog>(`${HISTORICAL_SELF_EVALUATION_API}/catalogo`)
+  return teacherEvaluationRead<HistoricalSelfEvaluationCatalog>(`${HISTORICAL_SELF_EVALUATION_API}/catalogo`)
 }
 
 export function previewHistoricalSelfEvaluations(selection: HistoricalSelfEvaluationSelection): Promise<HistoricalSelfEvaluationPreview> {
@@ -3709,7 +3726,7 @@ export function generateHistoricalSelfEvaluations(previewToken: string, reason: 
 }
 
 export function fetchHistoricalSelfEvaluationHistory(): Promise<HistoricalSelfEvaluationHistory> {
-  return request<HistoricalSelfEvaluationHistory>(`${HISTORICAL_SELF_EVALUATION_API}/historial?limit=2000`)
+  return teacherEvaluationRead<HistoricalSelfEvaluationHistory>(`${HISTORICAL_SELF_EVALUATION_API}/historial?limit=2000`)
 }
 
 export async function fetchTeacherEvaluationAdminPending(
@@ -3718,7 +3735,7 @@ export async function fetchTeacherEvaluationAdminPending(
   limit = 5000,
 ): Promise<TeacherEvaluationAdminPendingResponse> {
   const params = new URLSearchParams({ periodo, flow, limit: String(limit) })
-  return request<TeacherEvaluationAdminPendingResponse>(`/api/evaluacion-docente/admin/pendientes?${params.toString()}`)
+  return teacherEvaluationRead<TeacherEvaluationAdminPendingResponse>(`/api/evaluacion-docente/admin/pendientes?${params.toString()}`)
 }
 
 export async function fetchTeacherEvaluationProgressDetail(

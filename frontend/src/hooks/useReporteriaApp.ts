@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type SyntheticEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 
 import {
   ApiError,
@@ -291,6 +291,7 @@ export function useReporteriaApp() {
   const [titulosRegistradosTipo, setTitulosRegistradosTipo] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [dashboardMatriculaLoading, setDashboardMatriculaLoading] = useState(false)
+  const dashboardRequestInFlight = useRef<{ session: UserSession | null; promise: Promise<void> } | null>(null)
   const [catalogMessage, setCatalogMessage] = useState('')
   const [catalogError, setCatalogError] = useState('')
   const [dashboardMatriculaError, setDashboardMatriculaError] = useState('')
@@ -478,6 +479,10 @@ export function useReporteriaApp() {
     },
     [handleApiError, resetAfterLogout]
   )
+
+  useEffect(() => {
+    return () => { dashboardRequestInFlight.current = null }
+  }, [session])
 
   useEffect(() => {
     let cancelled = false
@@ -716,20 +721,29 @@ export function useReporteriaApp() {
     [handleApiError]
   )
 
-  const loadDashboardMatricula = useCallback(async () => {
+  const loadDashboardMatricula = useCallback(() => {
+    if (dashboardRequestInFlight.current?.session === session) return dashboardRequestInFlight.current.promise
     setDashboardMatriculaError('')
     setDashboardMatriculaLoading(true)
 
-    try {
-      const payload = await fetchDashboardMatricula()
-      setDashboardMatricula(payload)
-    } catch (apiError) {
-      setDashboardMatriculaError(handleApiError(apiError, 'Error inesperado consultando dashboard'))
-      setDashboardMatricula(null)
-    } finally {
-      setDashboardMatriculaLoading(false)
-    }
-  }, [handleApiError])
+    const pending: Promise<void> = Promise.resolve().then(async () => {
+      try {
+        const payload = await fetchDashboardMatricula()
+        if (dashboardRequestInFlight.current?.promise === pending) setDashboardMatricula(payload)
+      } catch (apiError) {
+        if (dashboardRequestInFlight.current?.promise !== pending) return
+        setDashboardMatriculaError(handleApiError(apiError, 'Error inesperado consultando dashboard'))
+        setDashboardMatricula(null)
+      } finally {
+        if (dashboardRequestInFlight.current?.promise === pending) {
+          dashboardRequestInFlight.current = null
+          setDashboardMatriculaLoading(false)
+        }
+      }
+    })
+    dashboardRequestInFlight.current = { session, promise: pending }
+    return pending
+  }, [handleApiError, session])
 
   const loadAcademicMatriculaSummary = useCallback(async () => {
     setMatriculaSummaryError('')
@@ -956,9 +970,7 @@ export function useReporteriaApp() {
     if (!session || activePage !== 'dashboard') return
 
     const refreshDashboard = () => {
-      if (!dashboardMatriculaLoading) {
-        void loadDashboardMatricula()
-      }
+      if (document.visibilityState === 'visible') void loadDashboardMatricula()
     }
 
     refreshDashboard()
@@ -976,7 +988,7 @@ export function useReporteriaApp() {
       window.removeEventListener('focus', refreshDashboard)
       document.removeEventListener('visibilitychange', refreshOnVisible)
     }
-  }, [activePage, dashboardMatriculaLoading, loadDashboardMatricula, session])
+  }, [activePage, loadDashboardMatricula, session])
 
   useEffect(() => {
     if (!session || activePage !== 'matricula') return

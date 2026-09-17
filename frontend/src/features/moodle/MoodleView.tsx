@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 
 import {
   fetchMoodleCourses,
@@ -14,13 +14,13 @@ import type {
   MoodleUser,
   MoodleUsersResponse,
 } from '../../types/app'
-import { MoodleResourcesPanel } from './MoodleResourcesPanel'
-import { MoodleEvaluationDatesPanel } from './MoodleEvaluationDatesPanel'
-import { MoodleGradeSyncPanel } from './MoodleGradeSyncPanel'
-import { MoodleGradeAlertsPanel } from './MoodleGradeAlertsPanel'
-import { MoodleCourseCloningPanel } from './MoodleCourseCloningPanel'
-import { MoodleAcademicEnrollmentPanel } from './MoodleAcademicEnrollmentPanel'
-import { MoodleManualEnrollmentPanel } from './MoodleManualEnrollmentPanel'
+const MoodleResourcesPanel = lazy(() => import('./MoodleResourcesPanel').then((module) => ({ default: module.MoodleResourcesPanel })))
+const MoodleEvaluationDatesPanel = lazy(() => import('./MoodleEvaluationDatesPanel').then((module) => ({ default: module.MoodleEvaluationDatesPanel })))
+const MoodleGradeSyncPanel = lazy(() => import('./MoodleGradeSyncPanel').then((module) => ({ default: module.MoodleGradeSyncPanel })))
+const MoodleGradeAlertsPanel = lazy(() => import('./MoodleGradeAlertsPanel').then((module) => ({ default: module.MoodleGradeAlertsPanel })))
+const MoodleCourseCloningPanel = lazy(() => import('./MoodleCourseCloningPanel').then((module) => ({ default: module.MoodleCourseCloningPanel })))
+const MoodleAcademicEnrollmentPanel = lazy(() => import('./MoodleAcademicEnrollmentPanel').then((module) => ({ default: module.MoodleAcademicEnrollmentPanel })))
+const MoodleManualEnrollmentPanel = lazy(() => import('./MoodleManualEnrollmentPanel').then((module) => ({ default: module.MoodleManualEnrollmentPanel })))
 
 type MoodleViewProps = {
   displayName: string
@@ -384,13 +384,15 @@ export function MoodleView({
         )}
       </nav>
 
-      {activeTab === 'alerts' && <MoodleGradeAlertsPanel />}
-
-      {activeTab === 'academic-enrollment' && <MoodleAcademicEnrollmentPanel />}
-
-      {activeTab === 'course-cloning' && <MoodleCourseCloningPanel />}
-
-      {activeTab === 'manual-enrollment' && <MoodleManualEnrollmentPanel />}
+      <Suspense fallback={<div className="moodle-section" role="status">Cargando sección...</div>}>
+        {activeTab === 'alerts' && <MoodleGradeAlertsPanel />}
+        {activeTab === 'academic-enrollment' && <MoodleAcademicEnrollmentPanel />}
+        {activeTab === 'course-cloning' && <MoodleCourseCloningPanel />}
+        {activeTab === 'manual-enrollment' && <MoodleManualEnrollmentPanel />}
+        {activeTab === 'resources' && <MoodleResourcesPanel initialCourseId={resourceCourseId} />}
+        {activeTab === 'evaluation-dates' && <MoodleEvaluationDatesPanel />}
+        {activeTab === 'grades' && <MoodleGradeSyncPanel />}
+      </Suspense>
 
       {activeTab === 'status' && (
         <div className="moodle-section">
@@ -842,14 +844,6 @@ export function MoodleView({
           )}
         </div>
       )}
-
-      {activeTab === 'resources' && (
-        <MoodleResourcesPanel initialCourseId={resourceCourseId} />
-      )}
-
-      {activeTab === 'evaluation-dates' && <MoodleEvaluationDatesPanel />}
-
-      {activeTab === 'grades' && <MoodleGradeSyncPanel />}
 
       {usersSuccess && (
         <div className="institutional-email-notification-overlay" role="presentation">

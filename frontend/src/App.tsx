@@ -5,7 +5,6 @@ import { StudentLayout } from './components/StudentLayout'
 import { LoginView } from './features/auth/LoginView'
 import { ProfileSelectionView } from './features/auth/ProfileSelectionView'
 import { SessionStatusView } from './features/auth/SessionStatusView'
-import { TeacherEvaluationView } from './features/evaluacion/TeacherEvaluationView'
 import { TeacherEvaluationAdminNavigation } from './features/evaluacion/TeacherEvaluationAdminNavigation'
 import { useReporteriaApp } from './hooks/useReporteriaApp'
 import { screenPermissionAllowsCode, screenPermissionAllowsPage, screenPermissionForView } from './lib/screenAccess'
@@ -26,6 +25,7 @@ const DashboardView = lazyView(() => import('./features/dashboard/DashboardView'
 const SistemaAcademicoView = lazyView(() => import('./features/academico/SistemaAcademicoView'), 'SistemaAcademicoView')
 const CurriculumUpdaterView = lazyView(() => import('./features/academico/CurriculumUpdaterView'), 'CurriculumUpdaterView')
 const TeacherEvaluationAdminView = lazyView(() => import('./features/evaluacion/TeacherEvaluationAdminView'), 'TeacherEvaluationAdminView')
+const TeacherEvaluationView = lazyView(() => import('./features/evaluacion/TeacherEvaluationView'), 'TeacherEvaluationView')
 const TeacherEvaluationHistoryView = lazyView(() => import('./features/evaluacion/TeacherEvaluationHistoryView'), 'TeacherEvaluationHistoryView')
 const ExpedientesDocumentalesView = lazyView(() => import('./features/expedientes/ExpedientesDocumentalesView'), 'ExpedientesDocumentalesView')
 const SecretariaGeneralView = lazyView(() => import('./features/secretaria/SecretariaGeneralView'), 'SecretariaGeneralView')
@@ -169,11 +169,13 @@ function App() {
 
   if (!app.session && publicTeacherEvaluation) {
     return (
-      <TeacherEvaluationView
-        displayName="Formulario público"
-        publicMode
-        onBackToLogin={() => setPublicTeacherEvaluation(false)}
-      />
+      <Suspense fallback={<SessionStatusView message="Cargando evaluación..." />}>
+        <TeacherEvaluationView
+          displayName="Formulario público"
+          publicMode
+          onBackToLogin={() => setPublicTeacherEvaluation(false)}
+        />
+      </Suspense>
     )
   }
 

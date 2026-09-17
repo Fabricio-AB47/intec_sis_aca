@@ -1659,10 +1659,13 @@ def _get_or_create_campaign(
     campaign_name = f"{config['label']} {detalle_periodo or codigo_periodo}"
     cursor.execute(
         """
+        SET NOCOUNT ON;
+        DECLARE @CampaniaCreada TABLE (Id_Campania int NOT NULL);
         INSERT INTO eval360.Campania
             (Codigo, Nombre, Cod_Periodo, Fecha_Inicio, Fecha_Fin, Estado, Observacion)
-        OUTPUT INSERTED.Id_Campania
-        VALUES (?, ?, ?, ?, ?, 'ABIERTA', ?)
+        OUTPUT INSERTED.Id_Campania INTO @CampaniaCreada (Id_Campania)
+        VALUES (?, ?, ?, ?, ?, 'ABIERTA', ?);
+        SELECT Id_Campania FROM @CampaniaCreada;
         """,
         campaign_code,
         campaign_name,
@@ -3853,6 +3856,8 @@ def _save_application(
     token = str(uuid.uuid4()) if config.get("anonymous") else None
     evaluation_cursor.execute(
         """
+        SET NOCOUNT ON;
+        DECLARE @AplicacionCreada TABLE (Id_Aplicacion bigint NOT NULL);
         INSERT INTO eval360.Aplicacion
             (Id_Asignacion, Id_Campania, Id_Tipo_Evaluacion, Id_Instrumento,
              Cod_Periodo, Cod_Materia, Jornada, Paralelo, Modalidad,
@@ -3861,10 +3866,11 @@ def _save_application(
              Observacion_General, Origen_Tabla, Origen_Clave, Cod_Carrera,
              Id_Autoridad, Origen_Evaluador_Tabla, Origen_Evaluador_Clave,
              Origen_Evaluado_Tabla, Origen_Evaluado_Clave)
-        OUTPUT INSERTED.Id_Aplicacion
+        OUTPUT INSERTED.Id_Aplicacion INTO @AplicacionCreada (Id_Aplicacion)
         VALUES
             (NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'FINALIZADA',
-             ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        SELECT Id_Aplicacion FROM @AplicacionCreada;
         """,
         campaign_id,
         _safe_int(instrument["Id_Tipo_Evaluacion"]),

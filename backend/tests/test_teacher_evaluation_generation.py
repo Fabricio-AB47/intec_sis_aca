@@ -269,6 +269,72 @@ class ActiveTeacherSelectionTests(unittest.TestCase):
 
 
 class DuplicateAndTransactionTests(unittest.TestCase):
+    def test_new_campaign_returns_id_without_bypassing_audit_triggers(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [None, [4]]
+        result = evaluation._get_or_create_campaign(cursor, codigo_periodo=101, detalle_periodo="2023", flow="auto_docente")
+        self.assertEqual(result, 4)
+        sql, *params = cursor.execute.call_args.args
+        self.assertIn("SET NOCOUNT ON;", sql)
+        self.assertIn("DECLARE @CampaniaCreada TABLE (Id_Campania int NOT NULL)", sql)
+        self.assertIn("OUTPUT INSERTED.Id_Campania INTO @CampaniaCreada (Id_Campania)", sql)
+        self.assertIn("SELECT Id_Campania FROM @CampaniaCreada", sql)
+        self.assertEqual(sql.count("?"), len(params))
+        self.assertNotIn("DISABLE TRIGGER", sql)
+
+    def test_existing_active_campaign_is_reused_without_insert(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = [4]
+        result = evaluation._get_or_create_campaign(cursor, codigo_periodo=101, detalle_periodo="2023", flow="auto_docente")
+        self.assertEqual(result, 4)
+        cursor.execute.assert_called_once()
+        self.assertNotIn("INSERT", cursor.execute.call_args.args[0])
+
+    def test_campaign_without_returned_id_stops_generation(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [None, None]
+        with self.assertRaises(HTTPException) as error:
+            evaluation._get_or_create_campaign(cursor, codigo_periodo=101, detalle_periodo="2023", flow="auto_docente")
+        self.assertEqual(error.exception.status_code, 500)
+
+    def test_normal_and_bulk_saves_return_bigint_id_with_audit_compatible_output(self):
+        for bulk in (False, True):
+            with self.subTest(bulk=bulk):
+                cursor = MagicMock()
+                cursor.fetchone.return_value = [2147483649]
+                answers = [evaluation.TeacherEvaluationAnswer(id_pregunta=1, puntaje=4)]
+                result = evaluation._save_application(
+                    cursor, flow="auto_docente", instrument={"Id_Instrumento": 7, "Id_Tipo_Evaluacion": 2},
+                    campaign_id=4, evaluator_code=12, evaluated_student_code=None, course=course(), answers=answers,
+                    origin_table="source", origin_evaluator_table="generated", origin_evaluated_table="teacher", bulk_answers=bulk,
+                )
+                self.assertEqual(result["application_id"], 2147483649)
+                sql, *params = cursor.execute.call_args_list[0].args
+                self.assertIn("SET NOCOUNT ON;", sql)
+                self.assertIn("DECLARE @AplicacionCreada TABLE (Id_Aplicacion bigint NOT NULL)", sql)
+                self.assertIn("OUTPUT INSERTED.Id_Aplicacion INTO @AplicacionCreada (Id_Aplicacion)", sql)
+                self.assertIn("SELECT Id_Aplicacion FROM @AplicacionCreada", sql)
+                self.assertNotIn("DISABLE TRIGGER", sql)
+                self.assertEqual(sql.count("?"), len(params))
+                if bulk:
+                    self.assertEqual(cursor.executemany.call_args.args[1][0][:3], (2147483649, 1, 4))
+                else:
+                    self.assertEqual(cursor.execute.call_args_list[1].args[1:4], (2147483649, 1, 4))
+
+    def test_application_without_returned_id_does_not_save_answers(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        with self.assertRaises(HTTPException) as error:
+            evaluation._save_application(
+                cursor, flow="auto_docente", instrument={"Id_Instrumento": 7, "Id_Tipo_Evaluacion": 2},
+                campaign_id=4, evaluator_code=12, evaluated_student_code=None, course=course(),
+                answers=[evaluation.TeacherEvaluationAnswer(id_pregunta=1, puntaje=4)],
+                origin_table="source", origin_evaluator_table="generated", origin_evaluated_table="teacher", bulk_answers=True,
+            )
+        self.assertEqual(error.exception.status_code, 500)
+        cursor.execute.assert_called_once()
+        cursor.executemany.assert_not_called()
+
     def test_existing_index_supports_legacy_actor_origin(self):
         cursor = MagicMock()
         cursor.fetchall.return_value = [{"Cod_Periodo": "101", "Cod_Materia": "31", "Cod_Evaluador": None,
