@@ -218,7 +218,7 @@ function preinscriptionStage(stage: string | null): PreinscriptionStage {
 }
 
 function enrollmentMode(value: string | null): AcademicEnrollmentMode {
-  return ['individual', 'masiva', 'prerrequisitos'].includes(value || '')
+  return ['individual', 'masiva', 'prerrequisitos', 'ingreso-directo'].includes(value || '')
     ? value as AcademicEnrollmentMode
     : 'individual'
 }

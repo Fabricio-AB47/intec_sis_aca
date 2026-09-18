@@ -814,6 +814,13 @@ export function StudentLayout({
     summary: 'Estudiantes, docentes y configuración académica',
     items: [
       {
+        label: 'ingreso_intec',
+        description: 'Registrar al estudiante, matricular por nivel y gestionar su expediente.',
+        page: 'matricula-acad',
+        sectionKey: 'ingreso-directo',
+        action: () => onOpenMatriculaAcad('ingreso-directo'),
+      },
+      {
         label: 'Consulta de matrícula',
         description: 'Consultar la información general de matrícula.',
         page: 'matricula',

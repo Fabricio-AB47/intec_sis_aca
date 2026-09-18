@@ -5708,7 +5708,106 @@ export type AcademicEnrollmentTypeOption = {
   label: string
 }
 
-export type AcademicEnrollmentMode = 'individual' | 'masiva' | 'prerrequisitos'
+export type AcademicEnrollmentMode = 'individual' | 'masiva' | 'prerrequisitos' | 'ingreso-directo'
+
+export type DirectAdmissionStudent = {
+  identificacion: string
+  tipo_documento: number
+  nombres: string
+  apellidos: string
+  correo: string
+  correo_intec: string
+  telefono: string
+  movil: string
+  fecha_nacimiento: string | null
+  sexo: number
+  estado_civil: number
+  etnia: number
+  pais_nacionalidad: string
+  provincia_nacimiento: string
+  canton_nacimiento: string
+  pais_residencia: string
+  provincia_residencia: number | null
+  canton_residencia: string
+  direccion: string
+  colegio: string
+  titulo_bachiller: string
+}
+
+export type DirectAdmissionPayload = {
+  solicitud_id: string
+  estudiante: DirectAdmissionStudent
+  matricula: Omit<AcademicEnrollmentPayload, 'codigo_estud' | 'control_matricula' | 'remove_unselected'> & { nivel: number }
+  credenciales?: DirectAdmissionCredentialNames | null
+}
+
+export type DirectAdmissionCredentialNames = {
+  primer_nombre: string
+  segundo_nombre: string
+  primer_apellido: string
+  segundo_apellido: string
+}
+
+export type DirectAdmissionCredentialState = {
+  estado_general: string
+  estado_graph?: string
+  estado_licencia?: string
+  estado_moodle?: string
+  estado_correo_academico?: string
+  correo_institucional?: string
+  licencia_nombre?: string
+  observacion?: string
+  errores?: string[]
+  datos_persona?: DirectAdmissionCredentialNames | null
+  datos_credenciales?: { nombres: string; apellidos: string }
+  reporte_credencial_id?: number | null
+}
+
+export type DirectAdmissionCatalog = AcademicEnrollmentCatalogResponse & {
+  datos_catalogos: Record<string, Array<{ value: string; label: string; parent_value?: string }>>
+}
+
+export type DirectAdmissionRecord = {
+  solicitud_id: string
+  codigo_estud: string
+  identificacion: string
+  nombre_estudiante: string
+  nivel: number
+  carrera?: string
+  periodo?: string
+  registrado_por?: string
+  fecha_registro?: string
+  credenciales?: DirectAdmissionCredentialNames | null
+  datos_credenciales?: { nombres: string; apellidos: string }
+  estudiante_existente?: boolean
+}
+
+export type DirectAdmissionSaveResponse = DirectAdmissionRecord & {
+  ok: boolean
+  message: string
+  reused?: boolean
+  documentos_pendientes: boolean
+  matricula: AcademicEnrollmentSaveResponse
+}
+
+export type DirectAdmissionExcelRow = {
+  fila: number
+  identificacion: string
+  nombre_estudiante: string
+  correo: string
+  errores: string[]
+  payload: DirectAdmissionPayload | null
+  estudiante_existente?: boolean | null
+  codigo_estud_existente?: string | null
+}
+
+export type DirectAdmissionExcelResponse = {
+  carrera: AcademicCareerOption
+  total: number
+  validos: number
+  invalidos: number
+  items: DirectAdmissionExcelRow[]
+}
 
 export type AcademicPrerequisiteRule = {
   id: number
@@ -6528,7 +6627,7 @@ export type AcademicTeacherUniqueEnrollmentPayload = {
   semestre?: number | null
   cod_jornada: number
   estado_moodle_doc: number
-  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+  modo_asignacion: 'MASIVA' | 'INDIVIDUAL'
   codigos_estudiantes?: number[]
 }
 
@@ -6545,7 +6644,7 @@ export type AcademicTeacherMultiEnrollmentPayload = {
   semestre?: number | null
   cod_jornada: number
   estado_moodle_doc: number
-  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+  modo_asignacion: 'MASIVA' | 'INDIVIDUAL'
 }
 
 export type AcademicTeacherSubjectEnrollmentPayload = {
@@ -6559,7 +6658,7 @@ export type AcademicTeacherMultiSubjectEnrollmentPayload = {
   materias: AcademicTeacherSubjectEnrollmentPayload[]
   cod_jornada: number
   estado_moodle_doc: number
-  modo_asignacion?: 'MASIVA' | 'INDIVIDUAL'
+  modo_asignacion: 'MASIVA' | 'INDIVIDUAL'
 }
 
 export type AcademicTeacherEnrollmentSaveResponse = {
@@ -6841,6 +6940,7 @@ export type AcademicEnrollmentPayload = {
 }
 
 export type AcademicEnrollmentPreviewResponse = {
+  estudiante?: { accion: 'EXISTENTE' | 'CREAR'; codigo_estud: string | null }
   criteria?: AcademicEnrollmentPayload
   cabecera?: {
     accion?: string

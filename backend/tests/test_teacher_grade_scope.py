@@ -380,6 +380,11 @@ class TeacherContractAnalysisTests(unittest.TestCase):
 
 
 class TeacherGradeScopeTests(unittest.TestCase):
+    def setUp(self):
+        selection_filter = patch("app.routers.portal_academico.teacher_selection_filter", return_value="1 = 1")
+        selection_filter.start()
+        self.addCleanup(selection_filter.stop)
+
     def test_admin_can_select_up_to_three_periods_of_the_same_type(self):
         available = [
             _course("10", "1028", 8),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
   createDocumentExpedientUploadSession,
@@ -350,21 +350,35 @@ export function ExpedientesDocumentalesView({
   const [loading, setLoading] = useState(Boolean(initialIdentification.trim()) || !isReviewer)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
+  const contextIdentity = useRef('')
+  const contextGeneration = useRef(0)
+
+  useEffect(() => () => { contextGeneration.current += 1 }, [])
 
   const loadContext = useCallback(async (identification: string) => {
-    setLoading(true)
+    const generation = ++contextGeneration.current
+    const keepCurrent = Boolean(identification.trim() && contextIdentity.current === identification.trim())
+    if (!keepCurrent) {
+      setLoading(true)
+      setContext(null)
+    }
     setError('')
     try {
       const data = await fetchDocumentExpedientContext(identification)
+      if (generation !== contextGeneration.current) return
+      contextIdentity.current = data.student.identification
       setContext(data)
       setSelectedIdentification(data.student.identification)
       onContextChange?.(data)
     } catch (requestError) {
-      setContext(null)
-      onContextChange?.(null)
+      if (generation !== contextGeneration.current) return
+      if (!keepCurrent) {
+        setContext(null)
+        onContextChange?.(null)
+      }
       setError(errorMessage(requestError, 'No se pudo consultar el expediente documental.'))
     } finally {
-      setLoading(false)
+      if (generation === contextGeneration.current) setLoading(false)
     }
   }, [onContextChange])
 

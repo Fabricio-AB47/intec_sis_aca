@@ -1308,15 +1308,17 @@ class MoodleAcademicEnrollmentService:
                                 int(preview["jornada"]["code"]),
                             )
                             total_teacher_inserted += 1
-                    total_linked += academic._link_teacher_to_enrolled_students(
-                        cursor,
-                        codigo_doc=resolved_principals[course_id],
-                        cod_anio_basica=key[0],
-                        codigo_materia=key[1],
-                        codigo_periodo=int(preview["period"]["code"]),
-                        paralelo=course["parallel"],
-                        student_codes=student_codes,
-                    )
+                    if student_codes:
+                        total_linked += academic._link_teacher_to_enrolled_students(
+                            cursor,
+                            codigo_doc=resolved_principals[course_id],
+                            cod_anio_basica=key[0],
+                            codigo_materia=key[1],
+                            codigo_periodo=int(preview["period"]["code"]),
+                            paralelo=course["parallel"],
+                            modo_asignacion="INDIVIDUAL",
+                            student_codes=student_codes,
+                        )
 
                 result_courses.append(
                     {

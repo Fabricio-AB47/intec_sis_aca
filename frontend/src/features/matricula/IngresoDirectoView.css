@@ -1,0 +1,87 @@
+.direct-admission { color: #15213b; background: #fff; padding: 20px; min-width: 0; }
+.direct-admission .eyebrow { letter-spacing: 0; }
+.direct-admission .document-expedients-page--embedded { padding: 0; background: transparent; }
+.direct-admission .document-expedient-embedded-header { position: static; border: 0; border-radius: 0; padding: 12px 0; }
+.direct-admission-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.direct-admission-header h2 { font-size: 22px; margin: 4px 0 0; }
+.direct-admission-header > span { font-size: 13px; color: #52627b; overflow-wrap: anywhere; }
+.direct-admission-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #ccdbe4; margin-bottom: 20px; }
+.direct-admission-tabs > button { min-height: 42px; padding: 10px 14px; border: 0; background: transparent; color: #35445d; font-weight: 700; font-size: 13px; }
+.direct-admission-tabs > button[aria-current="page"] { color: #126b7a; box-shadow: inset 0 -3px #126b7a; }
+.direct-admission-tabs > button:disabled { color: #8892a2; cursor: not-allowed; }
+.direct-admission-tabs > .direct-admission-new { margin-left: auto; }
+.direct-admission fieldset { min-width: 0; border: 0; border-top: 1px solid #d9e2e7; margin: 0 0 24px; padding: 18px 0 0; }
+.direct-admission legend { padding: 0 12px 0 0; font-weight: 700; font-size: 16px; }
+.direct-admission-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.direct-admission label { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-size: 13px; font-weight: 600; }
+.direct-admission label > span { color: #4f6079; }
+.direct-admission input:not([type="checkbox"]), .direct-admission select, .direct-admission textarea { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid #bdcfdc; border-radius: 6px; padding: 10px 12px; background: #fff; color: #15213b; font-size: 14px; font-weight: 400; }
+.direct-admission input:not([type="checkbox"]), .direct-admission select { height: 43px; }
+.direct-admission input:focus-visible, .direct-admission select:focus-visible, .direct-admission textarea:focus-visible, .direct-admission button:focus-visible { outline: 2px solid #187a8e; outline-offset: 2px; }
+.direct-admission input[type="checkbox"] { width: 18px; height: 18px; accent-color: #176c7c; flex-shrink: 0; }
+.direct-admission button { cursor: pointer; letter-spacing: 0; }
+.direct-admission button:disabled { cursor: not-allowed; }
+.direct-admission .primary-action, .direct-admission .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; font-size: 13px; white-space: normal; }
+.direct-admission-subject-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 22px 0 12px; }
+.direct-admission h3 { font-size: 16px; margin: 0; }
+.direct-admission h3 > small { font-size: 12px; font-weight: 400; margin-left: 12px; color: #52627b; }
+.direct-admission-table-wrap { overflow-x: auto; border: 1px solid #d4e0e7; }
+.direct-admission table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.direct-admission th { background: #eef5f7; text-align: left; font-size: 12px; }
+.direct-admission th, .direct-admission td { padding: 12px; border-bottom: 1px solid #dbe4eb; vertical-align: middle; }
+.direct-admission tbody tr:last-child td { border-bottom: 0; }
+.direct-admission td > small { display: block; margin-top: 5px; color: #5d6d86; }
+.direct-admission td { overflow-wrap: anywhere; }
+.direct-admission-exception { margin-top: 16px; display: grid; gap: 12px; }
+.direct-admission .direct-admission-check { flex-direction: row; align-items: center; }
+.direct-admission textarea { min-height: 76px; resize: vertical; }
+.direct-admission-actions { display: flex; justify-content: flex-end; padding-top: 16px; border-top: 1px solid #dbe4eb; }
+.direct-admission-alert { padding: 13px 16px; border: 1px solid #ccdce4; border-radius: 6px; background: #f5f9fb; line-height: 1.6; overflow-wrap: anywhere; margin: 12px 0; }
+.direct-admission-alert--error { color: #991e18; border-color: #edc3bf; background: #fff1ef; }
+.direct-admission-alert--success { color: #106348; border-color: #add9c9; background: #eaf8f2; }
+.direct-admission-history-toolbar { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 16px; }
+.direct-admission-history-toolbar > label { flex: 1; }
+.direct-admission-history table { min-width: 850px; }
+.direct-admission-excel[hidden] { display: none; }
+.direct-admission-excel-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 16px 0; flex-wrap: wrap; }
+.direct-admission-excel-toolbar > label { flex: 1; min-width: 220px; }
+.direct-admission-excel-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.direct-admission-excel-summary { display: flex; gap: 16px; padding: 14px 0; border-block: 1px solid #dbe4eb; flex-wrap: wrap; font-size: 13px; }
+.direct-admission-excel-progress { display: grid; gap: 8px; margin-top: 16px; font-size: 13px; }
+.direct-admission-excel-progress progress { width: 100%; height: 12px; accent-color: #176c7c; }
+.direct-admission-excel table { min-width: 800px; }
+.direct-admission-excel td ul { padding-left: 18px; margin: 0; color: #991e18; }
+.direct-admission-excel-ok { color: #106348; font-weight: 600; }
+.direct-admission-excel-error { color: #991e18; }
+.direct-admission-credential-fields { margin-top: 16px; }
+.direct-admission-credentials { border-block: 1px solid #dbe4eb; padding: 8px 0 20px; margin-bottom: 20px; }
+.direct-admission-credential-status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 16px 0; font-size: 13px; }
+.direct-admission-credential-status dt { color: #4f6079; margin-bottom: 6px; }
+.direct-admission-credential-status dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.direct-admission-overlay[open] { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; box-sizing: border-box; background: rgb(17 24 39 / 45%); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.direct-admission-overlay::backdrop { background: transparent; }
+.direct-admission-modal { width: 600px; max-width: 100%; max-height: calc(100dvh - 32px); background: #fff; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 12px 32px rgb(0 0 0 / 18%); }
+.direct-admission-modal > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #dbe4eb; background: #f5f9fb; }
+.direct-admission-modal > header button { width: 40px; padding: 0; flex-shrink: 0; }
+.direct-admission-modal-body { padding: 20px; overflow-y: auto; overflow-wrap: anywhere; }
+.direct-admission-modal-body p { line-height: 1.6; font-size: 13px; margin: 8px 0; }
+.direct-admission-modal ul { list-style: none; padding: 0; margin: 16px 0 0; }
+.direct-admission-modal li { padding: 10px 0; border-top: 1px solid #e0e7eb; font-size: 13px; }
+.direct-admission-modal li small { display: block; color: #52627b; margin-top: 5px; }
+.direct-admission-modal > footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px; border-top: 1px solid #dbe4eb; }
+@media (max-width: 1000px) { .direct-admission-grid, .direct-admission-credential-status { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .direct-admission { padding: 16px 12px; }
+  .direct-admission-header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .direct-admission-header h2 { font-size: 20px; }
+  .direct-admission-grid { grid-template-columns: minmax(0, 1fr); }
+  .direct-admission-credential-status { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .direct-admission-tabs > button { padding: 10px; }
+  .direct-admission-tabs > .direct-admission-new { margin-left: 0; }
+  .direct-admission-subject-header h3 > small { display: block; margin: 6px 0 0; }
+  .direct-admission-table-wrap table { min-width: 550px; }
+  .direct-admission-history-toolbar { flex-wrap: wrap; }
+  .direct-admission-history-toolbar > label { flex-basis: 100%; }
+  .direct-admission-modal > header, .direct-admission-modal-body, .direct-admission-modal > footer { padding: 14px; }
+  .direct-admission-modal > footer .primary-action { flex: 1; }
+}

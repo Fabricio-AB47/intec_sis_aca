@@ -60,6 +60,7 @@ from app.services.graph_documents import (
     upload_bytes as upload_graph_document_bytes,
 )
 from app.services.integration_history import record_teacher_report_event
+from app.services.teacher_enrollment_scope import teacher_selection_filter
 from app.services.invoice_documents import (
     MAX_INVOICE_XML_BYTES,
     MAX_RIDE_PDF_BYTES,
@@ -3731,8 +3732,9 @@ def teacher_courses(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor)
             cursor.execute(
-                """
+                f"""
                 SELECT TOP (1000)
                     TRY_CONVERT(varchar(50), cxd.codigo_doc) AS codigo_doc,
                     TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica) AS cod_anio_basica,
@@ -3792,6 +3794,7 @@ def teacher_courses(
                             TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
                             N''
                       ))))
+                      AND {selection_filter}
                 ) stats
                 WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
                 ORDER BY
@@ -3945,10 +3948,14 @@ def teacher_course_students(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor, assignment="ta")
             cursor.execute(
                 f"""
                 WITH teacher_assignment AS (
                     SELECT DISTINCT
+                        cxd.codigo_doc,
+                        cxd.cod_Anio_Basica,
+                        cxd.codigo_materia,
                         cxd.codigo_periodo,
                         cxd.Paralelo,
                         cxd.Cod_Jornada,
@@ -4101,6 +4108,7 @@ def teacher_course_students(
                       SELECT 1
                       FROM teacher_assignment ta
                       WHERE TRY_CONVERT(int, ta.codigo_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
+                        AND {selection_filter}
                         AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), ta.Paralelo)))) =
                             UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo))))
                         AND UPPER(LTRIM(RTRIM(COALESCE(ta.common_subject_code, N'')))) =
@@ -4524,8 +4532,9 @@ def admin_grade_teacher_courses(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor)
             cursor.execute(
-                """
+                f"""
                 SELECT TOP (3000)
                     TRY_CONVERT(varchar(50), cxd.codigo_doc) AS codigo_doc,
                     TRY_CONVERT(varchar(50), cxd.cod_Anio_Basica) AS cod_anio_basica,
@@ -4585,6 +4594,7 @@ def admin_grade_teacher_courses(
                             TRY_CONVERT(nvarchar(100), cxd.codigo_materia),
                             N''
                       ))))
+                      AND {selection_filter}
                 ) stats
                 WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
                 ORDER BY
@@ -10306,6 +10316,27 @@ def teacher_save_grades(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor)
+            where_parts.append(f"""EXISTS (
+                SELECT 1 FROM dbo.CARRERAXDOCENTE cxd
+                LEFT JOIN dbo.PENSUM assigned_pensum
+                  ON TRY_CONVERT(int, assigned_pensum.Cod_AnioBasica) = TRY_CONVERT(int, cxd.cod_Anio_Basica)
+                 AND TRY_CONVERT(int, assigned_pensum.codigo_materia) = TRY_CONVERT(int, cxd.codigo_materia)
+                LEFT JOIN dbo.PENSUM target_pensum
+                  ON TRY_CONVERT(int, target_pensum.Cod_AnioBasica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                 AND TRY_CONVERT(int, target_pensum.codigo_materia) = TRY_CONVERT(int, cxe.codigo_materia)
+                WHERE TRY_CONVERT(int, cxd.codigo_doc) = ?
+                  AND TRY_CONVERT(int, cxd.cod_Anio_Basica) = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                  AND TRY_CONVERT(int, cxd.codigo_periodo) = TRY_CONVERT(int, cxe.codigo_periodo)
+                  AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) =
+                      UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxe.paralelo))))
+                  AND UPPER(LTRIM(RTRIM(COALESCE(NULLIF(TRY_CONVERT(nvarchar(100), assigned_pensum.cod_materia), N''),
+                      TRY_CONVERT(nvarchar(100), cxd.codigo_materia))))) =
+                      UPPER(LTRIM(RTRIM(COALESCE(NULLIF(TRY_CONVERT(nvarchar(100), target_pensum.cod_materia), N''),
+                      TRY_CONVERT(nvarchar(100), cxe.codigo_materia)))))
+                  AND {selection_filter}
+            )""")
+            where_params.append(codigo_doc)
             cursor.execute(
                 """
                 SELECT COUNT(*)
@@ -10361,7 +10392,7 @@ def teacher_save_grades(
             if affected != 1:
                 raise HTTPException(
                     status_code=409,
-                    detail='Solo se pueden actualizar notas de una matrícula única con estudiante activo',
+                    detail='Solo se pueden actualizar notas de una matrícula única con estudiante activo y asignado al docente',
                 )
             conn.commit()
         return {"ok": True, "message": "Notas actualizadas", "affected_rows": affected}

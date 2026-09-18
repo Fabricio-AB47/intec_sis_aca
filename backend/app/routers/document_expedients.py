@@ -37,6 +37,7 @@ from app.services.graph_documents import (
     item_by_path,
     list_documents,
     mark_upload_error,
+    normalize_identification,
     prepare_expedient,
     register_upload_session,
     safe_filename,
@@ -150,7 +151,7 @@ def _role(value: str) -> str:
 
 
 def _identification(value: Any) -> str:
-    return re.sub(r"\D+", "", _clean(value))
+    return normalize_identification(value)
 
 
 def _academic_enrollment_type(*values: Any) -> str:

@@ -69,6 +69,11 @@ def clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def normalize_identification(value: Any) -> str:
+    # Preserve passport letters so two identities with equal digits cannot merge.
+    return re.sub(r"[^A-Z0-9]+", "", clean(value).upper())
+
+
 def safe_filename(value: str, allowed_extensions: set[str] | None = None) -> str:
     filename = Path(value.replace("\\", "/")).name.strip()
     filename = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", filename)
@@ -94,7 +99,7 @@ def safe_folder_part(
 
 def _student_root_from_folder_path(path: str, identification: str) -> str:
     """Return the stable student root only when the path belongs to the identity."""
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     parts = [
         part.strip()
         for part in clean(path).replace("\\", "/").split("/")
@@ -120,7 +125,7 @@ def build_expedient_folder_path(
     student_root_path: str = "",
 ) -> str:
     module = clean(module_code).upper()
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     if module not in GRAPH_MODULE_FOLDERS:
         raise ValueError('Módulo documental no permitido.')
     if not document:
@@ -212,7 +217,7 @@ def ensure_folder(path: str) -> dict[str, Any]:
 
 def _find_graph_student_root(identification: str) -> dict[str, Any] | None:
     """Recover an existing student folder even when its database link is missing."""
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     if not document:
         return None
 
@@ -441,7 +446,7 @@ def _ensure_person(
 
 
 def _find_registered_student_root_path(cursor: Any, identification: str) -> str:
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     if not document:
         return ""
     cursor.execute(
@@ -480,7 +485,7 @@ def prepare_expedient(
     audit_user: str,
 ) -> dict[str, Any]:
     module = clean(module_code).upper()
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     if module not in GRAPH_MODULE_FOLDERS:
         raise ValueError('Módulo documental no permitido.')
     if not document:
@@ -1012,7 +1017,7 @@ def mark_upload_error(session_id: UUID | str, error: str, audit_user: str) -> No
 
 
 def list_documents(identification: str) -> list[dict[str, Any]]:
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     with get_graph_database_connection() as conn:
         cursor = conn.cursor()
         _assert_schema(cursor)
@@ -1062,7 +1067,7 @@ def review_document(
     observation: str,
     audit_user: str,
 ) -> dict[str, Any]:
-    document = re.sub(r"\D+", "", identification)
+    document = normalize_identification(identification)
     module = clean(module_code).upper()
     review_status = clean(status_code).upper()
     allowed_types = {clean(value).upper() for value in allowed_document_types}
@@ -1106,7 +1111,7 @@ def review_document(
         row = cursor.fetchone()
         if not row:
             raise ValueError("No existe el documento seleccionado.")
-        if re.sub(r"\D+", "", clean(row.NumeroIdentificacion)) != document:
+        if normalize_identification(row.NumeroIdentificacion) != document:
             raise PermissionError("El documento no pertenece al estudiante seleccionado.")
         if clean(row.TipoExpedienteGraphCodigo).upper() != module:
             raise ValueError("El documento no pertenece al expediente de Inglés.")

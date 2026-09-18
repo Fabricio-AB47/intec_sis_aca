@@ -223,6 +223,7 @@ PREINSCRIPTION_FLOW_CATALOG: tuple[dict[str, str], ...] = (
 
 
 MATRICULA_FLOW_CATALOG: tuple[dict[str, str], ...] = (
+    _flow("matricula-acad", "ingreso-directo", "ingreso_intec", "Matrícula / Operación"),
     _flow("matricula-acad", "individual", "Matrícula individual", "Matrícula / Operación"),
     _flow("matricula-acad", "masiva", "Matrícula masiva", "Matrícula / Operación"),
     _flow(
@@ -440,6 +441,7 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # configurados. La migración solo actúa sobre filas creadas automáticamente por
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "matricula-acad/ingreso-directo": ("ADMINISTRADOR", "ACADEMICO"),
     "evaluacion-docente-historicas": ("ADMINISTRADOR",),
     "secretaria-general": ("ADMINISTRADOR", "SECRETARIA"),
     "moodle/academic-enrollment": ("ADMINISTRADOR",),

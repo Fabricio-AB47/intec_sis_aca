@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   balanceAcademicEnrollmentParallels,
@@ -31,8 +31,11 @@ import type {
 import { MatriculaIndividualView } from './MatriculaIndividualView'
 import { PrerequisitosMateriasView } from './PrerequisitosMateriasView'
 
+const IngresoDirectoView = lazy(() => import('./IngresoDirectoView').then((module) => ({ default: module.IngresoDirectoView })))
+
 type MatriculaAcadViewProps = {
   displayName: string
+  role: string
   initialMode?: AcademicEnrollmentMode
   onModeChange?: (mode: AcademicEnrollmentMode) => void
   allowedModes?: AcademicEnrollmentMode[]
@@ -2470,6 +2473,7 @@ function MatriculaMasivaView({ displayName }: Readonly<{ displayName: string }>)
 
 export function MatriculaAcadView({
   displayName,
+  role,
   initialMode = 'individual',
   onModeChange,
   allowedModes,
@@ -2479,6 +2483,11 @@ export function MatriculaAcadView({
   }
 
   const modes: Array<{ value: AcademicEnrollmentMode; label: string; description: string }> = [
+    {
+      value: 'ingreso-directo',
+      label: 'ingreso_intec',
+      description: 'Registro, matrícula por nivel y documentos.',
+    },
     {
       value: 'individual',
       label: 'Matrícula individual',
@@ -2511,7 +2520,11 @@ export function MatriculaAcadView({
         ))}
       </nav>
 
-      {initialMode === 'masiva' ? (
+      {initialMode === 'ingreso-directo' ? (
+        <Suspense fallback={<p role="status">Cargando ingreso_intec...</p>}>
+          <IngresoDirectoView displayName={displayName} role={role} />
+        </Suspense>
+      ) : initialMode === 'masiva' ? (
         <MatriculaMasivaView displayName={displayName} />
       ) : (
         <MatriculaIndividualView displayName={displayName} />

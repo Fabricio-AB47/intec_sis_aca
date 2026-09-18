@@ -81,7 +81,7 @@ const InformeCumplimientoView = lazyView(
 )
 const MoodleView = lazyView(() => import('./features/moodle/MoodleView'), 'MoodleView')
 
-const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos']
+const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos', 'ingreso-directo']
 const moodleSections: MoodleSection[] = [
   'alerts',
   'academic-enrollment',
@@ -294,6 +294,7 @@ function App() {
       pageContent = (
         <MatriculaAcadView
           displayName={app.displayName}
+          role={app.session.rol}
           initialMode={app.matriculaAcadMode}
           onModeChange={app.openMatriculaAcadPage}
           allowedModes={allowedAcademicEnrollmentModes}

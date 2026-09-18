@@ -4,11 +4,12 @@ import re
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_screen_access
 from app.services.db import get_connection
+from app.services.teacher_enrollment_scope import ensure_teacher_selection_schema, save_teacher_selection, teacher_selection_filter
 
 router = APIRouter(prefix="/api/students/matricula-acad", tags=["matricula-acad"])
 
@@ -56,6 +57,8 @@ class AcademicParallelBalancePayload(BaseModel):
 
 
 class AcademicTeacherEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     codigo_doc: int
     cod_anio_basica: int
     codigo_materia: int
@@ -66,6 +69,8 @@ class AcademicTeacherEnrollmentPayload(BaseModel):
 
 
 class AcademicTeacherUniqueEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     codigo_doc: int
     cod_materia: str = Field(min_length=1, max_length=100)
     codigo_periodo: int
@@ -73,38 +78,46 @@ class AcademicTeacherUniqueEnrollmentPayload(BaseModel):
     semestre: int | None = Field(default=None, ge=1, le=4)
     cod_jornada: int = Field(default=1, ge=1, le=2)
     estado_moodle_doc: int = 0
-    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"] = "MASIVA"
+    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"]
     codigos_estudiantes: list[int] = Field(default_factory=list)
 
 
 class AcademicTeacherPeriodEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     codigo_periodo: int
     paralelo: str = "A"
     codigos_estudiantes: list[int] = Field(default_factory=list)
 
 
 class AcademicTeacherMultiEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     codigo_doc: int
     cod_materia: str = Field(min_length=1, max_length=100)
     periodos: list[AcademicTeacherPeriodEnrollmentPayload] = Field(min_length=1, max_length=3)
     semestre: int | None = Field(default=None, ge=1, le=4)
     cod_jornada: int = Field(default=1, ge=1, le=2)
     estado_moodle_doc: int = 0
-    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"] = "MASIVA"
+    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"]
 
 
 class AcademicTeacherSubjectEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     cod_materia: str = Field(min_length=1, max_length=100)
     periodos: list[AcademicTeacherPeriodEnrollmentPayload] = Field(min_length=1, max_length=3)
     semestre: int | None = Field(default=None, ge=1, le=4)
 
 
 class AcademicTeacherMultiSubjectEnrollmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     codigo_doc: int
     materias: list[AcademicTeacherSubjectEnrollmentPayload] = Field(min_length=1, max_length=3)
     cod_jornada: int = Field(default=1, ge=1, le=2)
     estado_moodle_doc: int = 0
-    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"] = "MASIVA"
+    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"]
 
 
 class AcademicTeacherStatePayload(BaseModel):
@@ -1449,9 +1462,10 @@ def _ensure_entity_exists(
     cursor: pyodbc.Cursor,
     payload: AcademicEnrollmentPayload,
     allow_preinscription_student: bool = False,
+    student_pending_creation: bool = False,
 ) -> None:
     cursor.execute("SELECT COUNT(*) FROM dbo.DATOS_ESTUD WHERE codigo_estud = ?", payload.codigo_estud)
-    if int(cursor.fetchone()[0] or 0) == 0 and not (
+    if int(cursor.fetchone()[0] or 0) == 0 and not student_pending_creation and not (
         allow_preinscription_student and _resolve_or_create_student_from_preinscription(cursor, payload, False)
     ):
         raise HTTPException(status_code=404, detail='No se encontró el estudiante seleccionado')
@@ -1498,11 +1512,17 @@ def _normalize_teacher_student_selection(
     mode: str,
     student_codes: list[int],
 ) -> list[int] | None:
-    normalized = sorted({int(code) for code in student_codes if int(code) > 0})
+    if mode not in {"MASIVA", "INDIVIDUAL"}:
+        raise HTTPException(status_code=400, detail="Seleccione explícitamente matrícula individual o masiva")
+    if any(int(code) <= 0 for code in student_codes):
+        raise HTTPException(status_code=400, detail="Los estudiantes deben tener un código válido")
+    normalized = sorted({int(code) for code in student_codes})
     if mode == "INDIVIDUAL":
         if not normalized:
             raise HTTPException(status_code=400, detail='Seleccione al menos un estudiante para la matrícula individual')
         return normalized
+    if normalized:
+        raise HTTPException(status_code=400, detail="Una selección de estudiantes requiere matrícula individual; no se puede ampliar al curso completo")
     return None
 
 
@@ -1650,10 +1670,10 @@ def _link_teacher_to_enrolled_students(
     codigo_materia: int,
     codigo_periodo: int,
     paralelo: str,
+    modo_asignacion: Literal["MASIVA", "INDIVIDUAL"],
     student_codes: list[int] | None = None,
 ) -> int:
-    if student_codes is not None and not student_codes:
-        return 0
+    student_codes = _normalize_teacher_student_selection(modo_asignacion, student_codes or [])
 
     teacher_user = str(codigo_doc)[:10]
     student_filter = ""
@@ -2449,9 +2469,17 @@ def _insert_academic_audit_detail(
     )
 
 
-def _preview_with_cursor(cursor: pyodbc.Cursor, payload: AcademicEnrollmentPayload) -> dict[str, Any]:
+def _preview_with_cursor(
+    cursor: pyodbc.Cursor,
+    payload: AcademicEnrollmentPayload,
+    *,
+    student_pending_creation: bool = False,
+) -> dict[str, Any]:
     _validate_payload(payload)
-    _ensure_entity_exists(cursor, payload, allow_preinscription_student=True)
+    _ensure_entity_exists(
+        cursor, payload, allow_preinscription_student=True,
+        student_pending_creation=student_pending_creation,
+    )
 
     pensum_by_code = _fetch_pensum_by_code(cursor, payload.cod_anio_basica)
     selected_codes = set(payload.materia_codes)
@@ -3101,9 +3129,11 @@ def _save_enrollment_with_cursor(
     payload: AcademicEnrollmentPayload,
     user_code: str,
     today: date,
+    *,
+    student_already_resolved: bool = False,
 ) -> dict[str, Any]:
     _validate_payload(payload)
-    if not _resolve_or_create_student_from_preinscription(cursor, payload, True):
+    if student_already_resolved or not _resolve_or_create_student_from_preinscription(cursor, payload, True):
         _ensure_entity_exists(cursor, payload)
     preview = _preview_with_cursor(cursor, payload)
     blocked_by_prerequisite = int(
@@ -4387,6 +4417,7 @@ def matricula_acad_teacher_parallel_students(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor, student="sr")
             cursor.execute(
                 f"""
                 WITH student_rows AS (
@@ -4440,7 +4471,7 @@ def matricula_acad_teacher_parallel_students(
                     TRY_CONVERT(varchar(50), sr.Num_Matricula) AS Num_Matricula,
                     TRY_CONVERT(nvarchar(100), sr.TipoMatricula) AS TipoMatricula,
                     TRY_CONVERT(float, sr.PromedioFinal) AS PromedioFinal,
-                    TRY_CONVERT(nvarchar(100), sr.Usuario) AS codigo_docente_asignado,
+                    assigned_teacher.codigo_doc AS codigo_docente_asignado,
                     TRY_CONVERT(nvarchar(4000), assigned_teacher.apellidos_nombre) AS docente_asignado
                 FROM student_rows sr
                 INNER JOIN dbo.DATOS_ESTUD d ON TRY_CONVERT(int, d.codigo_estud) = TRY_CONVERT(int, sr.codigo_estud)
@@ -4450,9 +4481,21 @@ def matricula_acad_teacher_parallel_students(
                   ON TRY_CONVERT(int, p.Cod_AnioBasica) = TRY_CONVERT(int, sr.cod_anio_Basica)
                  AND TRY_CONVERT(int, p.codigo_materia) = TRY_CONVERT(int, sr.codigo_materia)
                 OUTER APPLY (
-                    SELECT TOP (1) TRY_CONVERT(nvarchar(4000), teacher.apellidos_nombre) AS apellidos_nombre
-                    FROM dbo.DATOSDOCENTE teacher
-                    WHERE TRY_CONVERT(int, teacher.codigo_doc) = TRY_CONVERT(int, sr.Usuario)
+                    SELECT TOP (1)
+                        TRY_CONVERT(nvarchar(100), teacher.codigo_doc) AS codigo_doc,
+                        TRY_CONVERT(nvarchar(4000), teacher.apellidos_nombre) AS apellidos_nombre
+                    FROM dbo.CARRERAXDOCENTE cxd
+                    INNER JOIN dbo.DATOSDOCENTE teacher
+                      ON TRY_CONVERT(int, teacher.codigo_doc) = TRY_CONVERT(int, cxd.codigo_doc)
+                    WHERE TRY_CONVERT(int, cxd.cod_Anio_Basica) = TRY_CONVERT(int, sr.cod_anio_Basica)
+                      AND TRY_CONVERT(int, cxd.codigo_materia) = TRY_CONVERT(int, sr.codigo_materia)
+                      AND TRY_CONVERT(int, cxd.codigo_periodo) = TRY_CONVERT(int, sr.codigo_periodo)
+                      AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), cxd.Paralelo)))) =
+                          UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), sr.paralelo))))
+                      AND {selection_filter}
+                    ORDER BY
+                        CASE WHEN TRY_CONVERT(int, cxd.codigo_doc) = TRY_CONVERT(int, sr.Usuario) THEN 0 ELSE 1 END,
+                        TRY_CONVERT(int, cxd.codigo_doc)
                 ) assigned_teacher
                 WHERE sr.rn = 1
                 ORDER BY
@@ -4552,11 +4595,14 @@ def matricula_acad_teacher_students(
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+            selection_filter = teacher_selection_filter(cursor, assignment="ta")
             cursor.execute(
                 f"""
                 WITH teacher_assignments AS (
                     SELECT DISTINCT
-                        TRY_CONVERT(int, cxd.cod_Anio_Basica) AS cod_anio_basica,
+                        TRY_CONVERT(int, cxd.codigo_doc) AS codigo_doc,
+                        TRY_CONVERT(int, cxd.Cod_Jornada) AS Cod_Jornada,
+                        TRY_CONVERT(int, cxd.cod_Anio_Basica) AS cod_Anio_Basica,
                         TRY_CONVERT(int, cxd.codigo_materia) AS codigo_materia,
                         TRY_CONVERT(int, cxd.codigo_periodo) AS codigo_periodo,
                         UPPER(
@@ -4586,7 +4632,7 @@ def matricula_acad_teacher_students(
                         ) AS rn
                     FROM dbo.CARRERAXESTUD cxe
                     INNER JOIN teacher_assignments ta
-                      ON ta.cod_anio_basica = TRY_CONVERT(int, cxe.cod_anio_Basica)
+                      ON ta.cod_Anio_Basica = TRY_CONVERT(int, cxe.cod_anio_Basica)
                      AND ta.codigo_materia = TRY_CONVERT(int, cxe.codigo_materia)
                      AND ta.codigo_periodo = TRY_CONVERT(int, cxe.codigo_periodo)
                      AND ta.paralelo = UPPER(
@@ -4596,6 +4642,7 @@ def matricula_acad_teacher_students(
                                 )
                             )
                         )
+                    WHERE {selection_filter}
                 )
                 SELECT TOP (1000)
                     TRY_CONVERT(varchar(50), sr.codigo_estud) AS codigo_estud,
@@ -4687,6 +4734,7 @@ def matricula_acad_save_teacher_enrollment(
                 payload.cod_jornada,
             )
             existing_count = int(cursor.fetchone()[0] or 0)
+            ensure_teacher_selection_schema(cursor)
             students_linked = _link_teacher_to_enrolled_students(
                 cursor,
                 codigo_doc=payload.codigo_doc,
@@ -4694,6 +4742,12 @@ def matricula_acad_save_teacher_enrollment(
                 codigo_materia=payload.codigo_materia,
                 codigo_periodo=payload.codigo_periodo,
                 paralelo=payload.paralelo,
+                modo_asignacion="MASIVA",
+            )
+            save_teacher_selection(
+                cursor, codigo_doc=payload.codigo_doc, cod_anio_basica=payload.cod_anio_basica,
+                codigo_materia=payload.codigo_materia, codigo_periodo=payload.codigo_periodo,
+                paralelo=payload.paralelo, cod_jornada=payload.cod_jornada, student_codes=None,
             )
             if existing_count > 0:
                 action = "EXISTENTE"
@@ -4845,6 +4899,7 @@ def _save_teacher_unique_period_with_cursor(
             detail=f"No hay estudiantes elegibles en el período {payload.codigo_periodo}.",
         )
 
+    ensure_teacher_selection_schema(cursor)
     inserted = 0
     existing = 0
     duplicate_count = 0
@@ -4899,9 +4954,16 @@ def _save_teacher_unique_period_with_cursor(
             codigo_materia=codigo_materia,
             codigo_periodo=payload.codigo_periodo,
             paralelo=payload.paralelo,
+            modo_asignacion=payload.modo_asignacion,
             student_codes=target_selection,
         )
-        linked_student_codes.update(target_selection or target_student_codes)
+        save_teacher_selection(
+            cursor, codigo_doc=payload.codigo_doc, cod_anio_basica=cod_anio_basica,
+            codigo_materia=codigo_materia, codigo_periodo=payload.codigo_periodo,
+            paralelo=payload.paralelo, cod_jornada=payload.cod_jornada, student_codes=target_selection,
+        )
+        scoped_student_codes = target_student_codes if target_selection is None else target_selection
+        linked_student_codes.update(scoped_student_codes)
         assignments.append(
             {
                 "cod_anio_basica": str(cod_anio_basica),
@@ -4910,7 +4972,7 @@ def _save_teacher_unique_period_with_cursor(
                 "nombre_carrera": _clean(target.Nombre_Basica),
                 "codigo_periodo": str(payload.codigo_periodo),
                 "paralelo": payload.paralelo,
-                "students_linked": len(target_selection or target_student_codes),
+                "students_linked": len(scoped_student_codes),
             }
         )
 
@@ -5257,6 +5319,7 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
                     detail='No hay estudiantes elegibles para la matrícula docente solicitada.',
                 )
 
+            ensure_teacher_selection_schema(cursor)
             inserted = 0
             existing = 0
             duplicate_count = 0
@@ -5311,16 +5374,23 @@ def matricula_acad_save_teacher_unique_subject_enrollment(
                     codigo_materia=codigo_materia,
                     codigo_periodo=payload.codigo_periodo,
                     paralelo=payload.paralelo,
+                    modo_asignacion=payload.modo_asignacion,
                     student_codes=target_selection,
                 )
-                linked_student_codes.update(target_selection or target_student_codes)
+                save_teacher_selection(
+                    cursor, codigo_doc=payload.codigo_doc, cod_anio_basica=cod_anio_basica,
+                    codigo_materia=codigo_materia, codigo_periodo=payload.codigo_periodo,
+                    paralelo=payload.paralelo, cod_jornada=payload.cod_jornada, student_codes=target_selection,
+                )
+                scoped_student_codes = target_student_codes if target_selection is None else target_selection
+                linked_student_codes.update(scoped_student_codes)
                 assignments.append(
                     {
                         "cod_anio_basica": str(cod_anio_basica),
                         "codigo_materia": str(codigo_materia),
                         "nombre_materia": _clean(target.Nomb_Materia),
                         "nombre_carrera": _clean(target.Nombre_Basica),
-                        "students_linked": len(target_selection or target_student_codes),
+                        "students_linked": len(scoped_student_codes),
                     }
             )
             conn.commit()

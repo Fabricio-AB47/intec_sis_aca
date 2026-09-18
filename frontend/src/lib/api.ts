@@ -1,4 +1,11 @@
 import type {
+  DirectAdmissionPayload,
+  DirectAdmissionCatalog,
+  DirectAdmissionRecord,
+  DirectAdmissionSaveResponse,
+  DirectAdmissionExcelResponse,
+  DirectAdmissionCredentialNames,
+  DirectAdmissionCredentialState,
   AdminGradeCourseSelection,
   AdminGradeStudentsResponse,
   AdminGradeTeachersResponse,
@@ -2774,6 +2781,58 @@ export async function revertPreinscriptionProcess(num: string): Promise<Preinscr
 
 export async function fetchAcademicEnrollmentCatalog(): Promise<AcademicEnrollmentCatalogResponse> {
   return request<AcademicEnrollmentCatalogResponse>('/api/students/matricula-acad/catalog')
+}
+
+export function fetchDirectAdmissionCatalog(): Promise<DirectAdmissionCatalog> {
+  return request<DirectAdmissionCatalog>('/api/students/ingreso-directo/catalog')
+}
+
+export function fetchDirectAdmissionPensum(career: string): Promise<AcademicEnrollmentPensumResponse> {
+  return request<AcademicEnrollmentPensumResponse>(`/api/students/ingreso-directo/pensum?${new URLSearchParams({ cod_anio_basica: career })}`)
+}
+
+export function previewDirectAdmission(payload: DirectAdmissionPayload): Promise<AcademicEnrollmentPreviewResponse> {
+  return request<AcademicEnrollmentPreviewResponse>('/api/students/ingreso-directo/preview', {
+    method: 'POST', body: payload,
+  })
+}
+
+export function saveDirectAdmission(payload: DirectAdmissionPayload): Promise<DirectAdmissionSaveResponse> {
+  return request<DirectAdmissionSaveResponse>('/api/students/ingreso-directo/save', {
+    method: 'POST', body: payload,
+  })
+}
+
+export function fetchDirectAdmissionHistory(): Promise<{ items: DirectAdmissionRecord[] }> {
+  return request<{ items: DirectAdmissionRecord[] }>('/api/students/ingreso-directo/history')
+}
+
+export function downloadDirectAdmissionTemplate(career: string): Promise<Blob> {
+  return request<Blob>(`/api/students/ingreso-directo/excel/plantilla?${new URLSearchParams({ cod_anio_basica: career })}`, { responseType: 'blob' })
+}
+
+export function analyzeDirectAdmissionExcel(file: File, enrollment: DirectAdmissionPayload['matricula'], createCredentials = false): Promise<DirectAdmissionExcelResponse> {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('matricula', JSON.stringify(enrollment))
+  body.append('crear_credenciales', String(createCredentials))
+  return request<DirectAdmissionExcelResponse>('/api/students/ingreso-directo/excel/validar', { method: 'POST', body })
+}
+
+export function fetchDirectAdmissionCredentials(requestId: string): Promise<DirectAdmissionCredentialState> {
+  return request<DirectAdmissionCredentialState>(`/api/students/ingreso-directo/${encodeURIComponent(requestId)}/credenciales`)
+}
+
+export function downloadDirectAdmissionReceipt(requestId: string): Promise<Blob> {
+  return request<Blob>(`/api/students/ingreso-directo/${encodeURIComponent(requestId)}/comprobante`, { responseType: 'blob' })
+}
+
+export function downloadDirectAdmissionReceipts(requestIds: string[]): Promise<Blob> {
+  return request<Blob>('/api/students/ingreso-directo/comprobantes', { method: 'POST', body: { solicitud_ids: requestIds }, responseType: 'blob' })
+}
+
+export function provisionDirectAdmissionCredentials(requestId: string, names: DirectAdmissionCredentialNames): Promise<DirectAdmissionCredentialState> {
+  return request<DirectAdmissionCredentialState>(`/api/students/ingreso-directo/${encodeURIComponent(requestId)}/credenciales`, { method: 'POST', body: names })
 }
 
 export async function fetchAcademicEnrollmentCareers(

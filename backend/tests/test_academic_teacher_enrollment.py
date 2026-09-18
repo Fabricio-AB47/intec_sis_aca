@@ -32,12 +32,15 @@ class TeacherEnrollmentQueryCursor:
         return []
 
 
-def test_mass_teacher_enrollment_ignores_individual_student_filter() -> None:
-    assert _normalize_teacher_student_selection("MASIVA", [10, 20]) is None
+def test_mass_teacher_enrollment_rejects_individual_student_filter() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        _normalize_teacher_student_selection("MASIVA", [10, 20])
+    assert exc_info.value.status_code == 400
+    assert _normalize_teacher_student_selection("MASIVA", []) is None
 
 
 def test_individual_teacher_enrollment_normalizes_student_codes() -> None:
-    assert _normalize_teacher_student_selection("INDIVIDUAL", [20, 10, 20, 0]) == [10, 20]
+    assert _normalize_teacher_student_selection("INDIVIDUAL", [20, 10, 20]) == [10, 20]
 
 
 def test_individual_teacher_enrollment_requires_students() -> None:
@@ -103,6 +106,7 @@ def test_teacher_enrollment_rejects_more_than_three_subjects() -> None:
                 )
                 for code in (17, 18, 19, 20)
             ],
+            modo_asignacion="MASIVA",
         )
 
 
@@ -119,6 +123,7 @@ def test_teacher_enrollment_rejects_duplicate_subjects() -> None:
                 periodos=[AcademicTeacherPeriodEnrollmentPayload(codigo_periodo=1058)],
             ),
         ],
+        modo_asignacion="MASIVA",
     )
 
     with pytest.raises(HTTPException) as exc_info:

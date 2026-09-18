@@ -867,7 +867,7 @@ def _graph_user(email: str) -> dict[str, Any] | None:
     try:
         return graph_get(
             "https://graph.microsoft.com/v1.0/users/"
-            f"{quote(email, safe='')}?$select=id,displayName,mail,userPrincipalName,employeeId,usageLocation,assignedLicenses"
+            f"{quote(email, safe='')}?$select=id,displayName,mail,userPrincipalName,employeeId,usageLocation,assignedLicenses,accountEnabled"
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
@@ -1087,12 +1087,27 @@ async def _provision_moodle(
     person: dict[str, Any],
     email: str,
     password: str,
+    *,
+    strict_identity: bool = False,
 ) -> tuple[dict[str, Any] | None, str, str, bool]:
     if not _moodle_is_configured():
         return None, "NO_CONFIGURADO", "Habilite lecturas y escrituras Moodle con un token válido", False
     cedula = str(person["cedula"])
     try:
-        by_id = await _moodle_users(client, "idnumber", cedula)
+        if strict_identity:
+            matches = {}
+            for field, value in [("idnumber", cedula), ("email", email), ("username", email)]:
+                for item in await _moodle_users(client, field, value):
+                    matches[str(item.get("id"))] = item
+            if len(matches) > 1 or any(
+                not item.get("id") or _clean(item.get("idnumber")) != cedula
+                or _clean(item.get("email")).casefold() != email.casefold() or item.get("suspended")
+                for item in matches.values()
+            ):
+                return None, "CONFLICTO_MOODLE", "La identidad Moodle no es única, está suspendida o tiene otros datos.", False
+            if matches:
+                return next(iter(matches.values())), "EXISTENTE_MOODLE", "", False
+        by_id = [] if strict_identity else await _moodle_users(client, "idnumber", cedula)
         if by_id:
             existing = by_id[0]
             existing_email = _clean(existing.get("email")).casefold()
@@ -1105,7 +1120,7 @@ async def _provision_moodle(
                 )
             return existing, "EXISTENTE_MOODLE", "", False
 
-        by_email = await _moodle_users(client, "email", email)
+        by_email = [] if strict_identity else await _moodle_users(client, "email", email)
         if by_email:
             existing = by_email[0]
             if _clean(existing.get("idnumber")) != cedula:
@@ -1137,6 +1152,8 @@ async def _provision_moodle(
         )
         if not created:
             return None, "ERROR_MOODLE", "Moodle no devolvió el usuario creado", False
+        if strict_identity and not created[0].get("id"):
+            return None, "ERROR_MOODLE", "Moodle no confirmó el identificador creado; verifique su existencia antes de reintentar.", False
         return created[0], "CREADO_MOODLE", "", True
     except MoodleError as exc:
         return None, "ERROR_MOODLE", _clean(exc)[:500], False

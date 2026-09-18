@@ -116,6 +116,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(
             enrollment_flows,
             {
+                "matricula-acad/ingreso-directo",
                 "matricula-acad/individual",
                 "matricula-acad/masiva",
                 "matricula-acad/prerrequisitos",
@@ -124,6 +125,16 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertTrue(enrollment_flows.issubset(DEFAULT_ACCESS["ACADEMICO"]))
         self.assertTrue(enrollment_flows.issubset(DEFAULT_ACCESS["ADMINISTRADOR"]))
         self.assertTrue(enrollment_flows.isdisjoint(DEFAULT_ACCESS["DOCENTE"]))
+
+    def test_ingreso_intec_preserves_its_existing_access_code(self) -> None:
+        screens = [item for item in SCREEN_CATALOG if item["label"] == "ingreso_intec"]
+
+        self.assertEqual(len(screens), 1)
+        self.assertEqual(screens[0]["page"], "matricula-acad/ingreso-directo")
+        self.assertEqual(screens[0]["parent_page"], "matricula-acad")
+        self.assertEqual(screens[0]["group"], "Matrícula")
+        self.assertIn(screens[0]["page"], DEFAULT_ACCESS["ACADEMICO"])
+        self.assertIn(screens[0]["page"], DEFAULT_ACCESS["ADMINISTRADOR"])
 
     def test_teacher_enrollment_is_grouped_with_enrollment(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "matricula-docente")
@@ -564,6 +575,8 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(
             {params for _, params in cursor.executions},
             {
+                ("ADMINISTRADOR", "matricula-acad/ingreso-directo"),
+                ("ACADEMICO", "matricula-acad/ingreso-directo"),
                 ("ADMINISTRADOR", "evaluacion-docente-historicas"),
                 ("ADMINISTRADOR", "moodle/academic-enrollment"),
                 ("ADMINISTRADOR", "moodle/course-cloning"),
