@@ -247,10 +247,10 @@ SELECT
     e.Fecha_Ingreso AS fechaInicioCarrera,
     {fecha_matricula} AS fechaMatricula,
     e.tipoMatriculaId,
-    e.nivelAcademicoQueCursa,
+    {nivel_academico} AS nivelAcademicoQueCursa,
     e.duracionPeriodoAcademico,
     e.haRepetidoAlMenosUnaMateria,
-    e.Paralelo AS paraleloId,
+    {paralelo_id} AS paraleloId,
     e.haPerdidoLaGratuidad,
     e.recibePensionDiferenciada,
     e.Ocupacion AS estudianteocupacionId,
@@ -295,7 +295,10 @@ OUTER APPLY (
 ) correo
 """
 
-_QUERY = _MATRICULA_CNE_CTE + _STUDENT_SELECT.format(fecha_matricula="e.fechaMatricula") + """
+_QUERY = _MATRICULA_CNE_CTE + _STUDENT_SELECT.format(
+    fecha_matricula="e.fechaMatricula", nivel_academico="e.nivelAcademicoQueCursa",
+    paralelo_id="e.Paralelo",
+) + """
 FROM matricula_cne_catalogada cne
 OUTER APPLY (
     SELECT TOP (1) datos.*
@@ -554,7 +557,7 @@ def _normalize_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_report() -> dict[str, Any]:
-    raw = _read_dataframe()
+    raw = _read_student_audit_source(None, None)
     final = _normalize_dataframe(raw)
     total_report = len(final)
     total_active_dashboard = _count_scalar(_DASHBOARD_ACTIVE_COUNT_QUERY)
@@ -632,7 +635,7 @@ def _build_report() -> dict[str, Any]:
         "missing_fields": missing_fields[:15],
         "warnings": warnings,
         "criteria": {
-            "fuente": "DATOS_ESTUD directo para los datos del estudiante; CARRERAXESTUD/PENSUM solo definen carrera y estado del reporte",
+            "fuente": "DATOS_ESTUD para datos personales; CARRERAXESTUD y PENSUM para el semestre más alto; PERIODO y CARRERAXESTUD para la matrícula del último período elegible y PARALELOS.num para paraleloId.",
             "activos": "Mismo criterio del tablero de matrícula; excluye a los estudiantes sin carrera registrada.",
             "matricula": "Matrícula actual validada contra la carrera, el pensum y el estado del tablero.",
             "export": "Un archivo de Excel por carrera dentro de un ZIP.",
@@ -943,36 +946,58 @@ def _academic_scope_sql(periods: list[int] | None, cutoff: date | None, *, targe
 
 def _read_student_audit_source(periods: list[int] | None, cutoff: date | None) -> pd.DataFrame:
     scope, params = _academic_scope_sql(periods, cutoff, target="estudiantes")
-    # Aggregate subject enrollments before choosing the last eligible period per career.
+    # Resolve the parallel within each eligible period, never across a student's history.
+    # Use the institutional enrollment catalog ID, not the separate scheduling catalog Paralelo.
     sql = """
     WITH matriculas AS (
         SELECT cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo,
             MIN(TRY_CONVERT(date, cx.Fecha_Matricula)) AS fecha_matricula,
-            MAX(p.fechain) AS inicio_periodo
+            MAX(p.fechain) AS inicio_periodo,
+            MAX(CASE WHEN TRY_CONVERT(int, pen.Semestre) > 0
+                THEN TRY_CONVERT(int, pen.Semestre) END) AS semestre,
+            CASE WHEN COUNT(DISTINCT NULLIF(UPPER(LTRIM(RTRIM(cx.paralelo))), '')) = 1
+                AND COUNT(NULLIF(LTRIM(RTRIM(cx.paralelo)), '')) = COUNT(*)
+                THEN MIN(UPPER(LTRIM(RTRIM(cx.paralelo)))) END AS paralelo
         FROM dbo.CARRERAXESTUD cx
         INNER JOIN dbo.PERIODO p ON cx.codigo_periodo = p.cod_periodo
+        LEFT JOIN dbo.PENSUM pen ON pen.codigo_materia = cx.codigo_materia
+            AND pen.Cod_AnioBasica = cx.cod_anio_Basica
         WHERE UPPER(LTRIM(RTRIM(p.TipoMatricula))) IN ('R', 'H')
             AND cx.cod_anio_Basica NOT IN (12, 13)
     """ + scope + """
         GROUP BY cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo
     ), seleccion AS (
-        SELECT *, ROW_NUMBER() OVER (
+        SELECT *, MAX(semestre) OVER (
+            PARTITION BY codigo_estud, cod_anio_Basica
+        ) AS nivel_academico,
+        ROW_NUMBER() OVER (
             PARTITION BY codigo_estud, cod_anio_Basica
             ORDER BY COALESCE(inicio_periodo, fecha_matricula) DESC,
                 codigo_periodo DESC, fecha_matricula DESC
         ) AS posicion
         FROM matriculas
     ), matricula_cne_catalogada AS (
-        SELECT s.codigo_estud, s.fecha_matricula, e.Cedula_Est, e.Apellidos_nombre,
+        SELECT s.codigo_estud, s.fecha_matricula, s.nivel_academico,
+            catalogo.paralelo_id, e.Cedula_Est, e.Apellidos_nombre,
             LTRIM(RTRIM(c.Nombre_Basica)) AS nombre_carrera
         FROM seleccion s
         INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = s.codigo_estud
         INNER JOIN dbo.ESTADO estado ON e.Estado = estado.IDESTADO
         INNER JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = s.cod_anio_Basica
+        OUTER APPLY (
+            SELECT CASE WHEN COUNT(*) = 1
+                THEN MIN(TRY_CONVERT(int, par.num)) END AS paralelo_id
+            FROM dbo.PARALELOS par
+            WHERE UPPER(LTRIM(RTRIM(par.paralelo))) = s.paralelo
+                AND TRY_CONVERT(int, par.num) BETWEEN 1 AND 20
+        ) catalogo
         WHERE s.posicion = 1
             AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estado.IDESTADO)))) = 'A'
     )
-    """ + _STUDENT_SELECT.format(fecha_matricula="cne.fecha_matricula") + """
+    """ + _STUDENT_SELECT.format(
+        fecha_matricula="cne.fecha_matricula", nivel_academico="cne.nivel_academico",
+        paralelo_id="cne.paralelo_id",
+    ) + """
     FROM matricula_cne_catalogada cne
     INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = cne.codigo_estud
         AND e.Cedula_Est = cne.Cedula_Est
@@ -1268,6 +1293,7 @@ _STUDENT_GUIDE_CODES = {
     "jornadaCarrera": {str(code) for code in range(1, 5)},
     "tipoMatriculaId": {"1", "2", "3"},
     "nivelAcademicoQueCursa": {str(code) for code in range(1, 10)},
+    "paraleloId": {str(code) for code in range(1, 21)},
     "haRepetidoAlMenosUnaMateria": {"1", "2"},
     "haPerdidoLaGratuidad": {"1", "2", "3"},
     "recibePensionDiferenciada": {"1", "2", "3"},
