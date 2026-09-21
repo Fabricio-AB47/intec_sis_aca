@@ -19958,6 +19958,65 @@
   align-items: start;
 }
 
+.senescyt-academic-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 16px;
+  align-items: start;
+  padding-top: 16px;
+  border-top: 1px solid rgba(141, 187, 199, 0.54);
+}
+
+.senescyt-period-picker {
+  min-width: 0;
+}
+
+.senescyt-period-picker summary {
+  cursor: pointer;
+  min-height: 46px;
+  padding: 12px;
+  border: 1px solid rgba(141, 187, 199, 0.72);
+  border-radius: 6px;
+  color: #17213f;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+
+.senescyt-period-picker summary strong {
+  margin-left: 12px;
+  font-size: 13px;
+  color: #177886;
+}
+
+.senescyt-period-picker .senescyt-career-toolbar {
+  margin-top: 12px;
+}
+
+.senescyt-period-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.senescyt-period-list .senescyt-career-check {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.senescyt-period-list small {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400;
+}
+
+.senescyt-filter-pending {
+  margin: 0;
+  color: #875500;
+}
+
 .senescyt-target-control,
 .senescyt-career-toolbar label {
   display: grid;
@@ -21095,6 +21154,8 @@
   }
 
   .senescyt-filter-layout,
+  .senescyt-academic-filters,
+  .senescyt-period-list,
   .senescyt-career-toolbar {
     grid-template-columns: 1fr;
   }

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 import re
 from typing import Annotated, Any
@@ -6,7 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 from pydantic import BaseModel, Field
 
@@ -83,6 +83,12 @@ _REPORT_COLUMNS = [
     "ingresoTotalHogar",
     "cantidadMiembrosHogar",
 ]
+
+_STUDENT_MODEL_ALIASES = {
+    "ingresosestudianteId": "ingresoEstudianteId",
+    "bonodesarrolloId": "bonoDesarrolloId",
+}
+_STUDENT_MODEL_COLUMNS = [_STUDENT_MODEL_ALIASES.get(column, column) for column in _REPORT_COLUMNS]
 
 _NUMERIC_COLUMNS = [
     "tipoDocumentoId",
@@ -206,7 +212,7 @@ WHERE cne.estado_codigo = 'A';
 """
 )
 
-_QUERY = _MATRICULA_CNE_CTE + """
+_STUDENT_SELECT = """
 SELECT
     TRY_CONVERT(varchar(50), e.codigo_estud) AS codigoEstud,
     e.tipodocumento AS tipoDocumentoId,
@@ -233,13 +239,13 @@ SELECT
     e.provinciaNacimeintoId AS provinciaNacimientoId,
     e.cantonNacimeintoId AS cantonNacimientoId,
     e.paisResidenciaId,
-    COALESCE(e.codprov, e.provinciaNacimeintoId) AS provinciaResidenciaId,
-    COALESCE(e.Canton, e.cantonNacimeintoId) AS cantonResidenciaId,
+    e.codprov AS provinciaResidenciaId,
+    e.Canton AS cantonResidenciaId,
     e.tipoColegioId,
     e.ModalidadEstudio AS modalidadCarrera,
     e.Jornada AS jornadaCarrera,
     e.Fecha_Ingreso AS fechaInicioCarrera,
-    e.fechaMatricula,
+    {fecha_matricula} AS fechaMatricula,
     e.tipoMatriculaId,
     e.nivelAcademicoQueCursa,
     e.duracionPeriodoAcademico,
@@ -276,13 +282,9 @@ SELECT
     e.IngresoHogar AS ingresoTotalHogar,
     e.Numpersonasvive AS cantidadMiembrosHogar,
     cne.nombre_carrera AS nombreCarrera
-FROM matricula_cne_catalogada cne
-OUTER APPLY (
-    SELECT TOP (1) datos.*
-    FROM dbo.DATOS_ESTUD datos
-    WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
-    ORDER BY TRY_CONVERT(bigint, datos.codigo_estud) DESC
-) e
+"""
+
+_STUDENT_EMAIL_APPLY = """
 OUTER APPLY (
     SELECT TOP (1) correos.CorreoIntec
     FROM dbo.CorreosEstudIntec correos
@@ -291,6 +293,17 @@ OUTER APPLY (
         CASE WHEN NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(320), correos.CorreoIntec))), '') IS NULL THEN 1 ELSE 0 END,
         TRY_CONVERT(nvarchar(320), correos.CorreoIntec)
 ) correo
+"""
+
+_QUERY = _MATRICULA_CNE_CTE + _STUDENT_SELECT.format(fecha_matricula="e.fechaMatricula") + """
+FROM matricula_cne_catalogada cne
+OUTER APPLY (
+    SELECT TOP (1) datos.*
+    FROM dbo.DATOS_ESTUD datos
+    WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
+    ORDER BY TRY_CONVERT(bigint, datos.codigo_estud) DESC
+) e
+""" + _STUDENT_EMAIL_APPLY + """
 WHERE cne.estado_codigo = 'A';
 """
 
@@ -311,23 +324,25 @@ def _count_scalar(sql: str) -> int:
         return int(cursor.fetchone()[0] or 0)
 
 
-def _clean_income(value: Any) -> float:
+def _clean_income(value: Any) -> float | None:
     if pd.isna(value):
-        return 0
+        return None
     match = re.search(r"[-+]?\d+(?:[.,]\d+)?", str(value))
     if not match:
-        return 0
+        return None
     try:
         return float(match.group(0).replace(",", "."))
     except ValueError:
-        return 0
+        return None
 
 
 def _clean_amount(value: Any) -> Any:
     if pd.isna(value):
-        return "NA"
+        return None
     text = str(value).strip()
-    if not text or text.upper() == "NA":
+    if not text:
+        return None
+    if text.upper() == "NA":
         return "NA"
     try:
         number = float(text.replace(",", "."))
@@ -336,30 +351,22 @@ def _clean_amount(value: Any) -> Any:
     return number
 
 
-def _normalize_conadis(value: Any) -> str:
+def _normalize_conadis(value: Any) -> str | None:
     if pd.isna(value):
-        return "NA"
+        return None
     text = str(value).strip()
     if not text:
+        return None
+    if text.upper() == "NA":
         return "NA"
     digits = re.sub(r"\D", "", text)
     if digits and int(digits) == 0:
         return "0"
-    return digits if len(digits) == 10 else "NA"
+    return digits if len(digits) == 7 else "NA"
 
 
 def _format_province(value: Any) -> str | None:
-    if pd.isna(value):
-        return None
-    digits = re.sub(r"\D", "", str(value).strip())
-    if not digits:
-        return None
-    base = str(int(digits))
-    if base == "50":
-        return "05"
-    if len(base) >= 2:
-        return base[:2]
-    return base.zfill(2)
+    return _model_geographic_code(value, 2)
 
 
 def _split_names(full_name: Any) -> pd.Series:
@@ -507,47 +514,29 @@ def _normalize_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
         df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df["ingresoTotalHogar"] = df["ingresoTotalHogar"].apply(_clean_income)
-    df["ingresoTotalHogar"] = pd.to_numeric(df["ingresoTotalHogar"], errors="coerce").fillna(0)
+    df["ingresoTotalHogar"] = pd.to_numeric(df["ingresoTotalHogar"], errors="coerce")
 
-    df["porcentajeDiscapacidad"] = df["porcentajeDiscapacidad"].fillna(0)
-    df["tipoSangre"] = df["tipoSangre"].fillna(0).replace(0, 7)
-    df["tipoDiscapacidad"] = df["tipoDiscapacidad"].fillna(7).replace(0, 7)
-    df["discapacidad"] = df["discapacidad"].fillna(0).replace(0, 2)
-    df["pueblonacionalidadId"] = df["pueblonacionalidadId"].fillna(0).replace(0, 34)
-    df["tipoColegioId"] = df["tipoColegioId"].fillna(0).replace(0, 1)
-    df["financiamientoBeca"] = df["financiamientoBeca"].fillna(4).replace(0, 4)
+    # Do not turn missing source values into affirmative SENESCYT codes.
+    for column in ("tipoSangre", "tipoDiscapacidad", "discapacidad", "pueblonacionalidadId",
+                   "tipoColegioId", "financiamientoBeca", "tipoDocumentoId", "haPerdidoLaGratuidad",
+                   "recibePensionDiferenciada", "haRepetidoAlMenosUnaMateria", "sectorEconomicoPracticaProfesional",
+                   "tipoBecaId", "bonodesarrolloId", "paraleloId", "ingresosestudianteId",
+                   "haRealizadoPracticasPreprofesionales", "entornoInstitucionalPracticasProfesionales",
+                   "participaEnProyectoVinculacionSociedad", "tipoAlcanceProyectoVinculacionId"):
+        df[column] = df[column].where(df[column].ne(0))
     df["numeroCelular"] = df["numeroCelular"].where(df["numeroCelular"].isna(), df["numeroCelular"].astype(str))
-    df["tipoDocumentoId"] = df["tipoDocumentoId"].fillna(0).replace(0, 1)
-    df["haPerdidoLaGratuidad"] = df["haPerdidoLaGratuidad"].fillna(0).replace(0, 3)
-    df["recibePensionDiferenciada"] = df["recibePensionDiferenciada"].fillna(0).replace(0, 2)
-    df["haRepetidoAlMenosUnaMateria"] = df["haRepetidoAlMenosUnaMateria"].fillna(0).replace(0, 2)
-    df["sectorEconomicoPracticaProfesional"] = df["sectorEconomicoPracticaProfesional"].fillna(0).replace(0, 22)
-    df["tipoBecaId"] = df["tipoBecaId"].fillna(0).replace(0, 3)
-    df["bonodesarrolloId"] = df["bonodesarrolloId"].fillna(0).replace(0, 2)
-    df["paraleloId"] = df["paraleloId"].fillna(0).replace(0, 1)
-    df["ingresosestudianteId"] = df["ingresosestudianteId"].fillna(0).replace(0, 4)
-    for column in [
-        "primeraRazonBecaId",
-        "segundaRazonBecaId",
-        "terceraRazonBecaId",
-        "cuartaRazonBecaId",
-        "quintaRazonBecaId",
-        "sextaRazonBecaId",
-    ]:
-        df[column] = df[column].fillna(0).replace(0, 2)
-    df["haRealizadoPracticasPreprofesionales"] = df["haRealizadoPracticasPreprofesionales"].fillna(0).replace(0, 2)
-    df["entornoInstitucionalPracticasProfesionales"] = df["entornoInstitucionalPracticasProfesionales"].fillna(0).replace(0, 5)
+    for column in ("primeraRazonBecaId", "segundaRazonBecaId", "terceraRazonBecaId",
+                   "cuartaRazonBecaId", "quintaRazonBecaId", "sextaRazonBecaId"):
+        df[column] = df[column].where(df[column].ne(0))
     for column in ["montoAyudaEconomica", "montoCreditoEducativo"]:
         df[column] = df[column].apply(_clean_amount)
-    df["montoBeca"] = pd.to_numeric(df["montoBeca"], errors="coerce").fillna(0)
-    df["participaEnProyectoVinculacionSociedad"] = df["participaEnProyectoVinculacionSociedad"].fillna(0).replace(0, 3)
-    df["tipoAlcanceProyectoVinculacionId"] = df["tipoAlcanceProyectoVinculacionId"].fillna(0).replace(0, 5)
+    df["montoBeca"] = pd.to_numeric(df["montoBeca"], errors="coerce")
     df["nroHorasPracticasPreprofesionalesPorPeriodo"] = df[
         "nroHorasPracticasPreprofesionalesPorPeriodo"
-    ].apply(lambda value: "NA" if pd.isna(value) or str(value).strip() == "" else value)
+    ].apply(lambda value: None if pd.isna(value) or str(value).strip() == "" else value)
     df["porcientoBecaCoberturaArancel"] = pd.to_numeric(
         df["porcientoBecaCoberturaArancel"], errors="coerce"
-    ).apply(lambda value: "NA" if pd.isna(value) else int(value))
+    ).apply(lambda value: None if pd.isna(value) else int(value))
     df["numCarnetConadis"] = df["numCarnetConadis"].apply(_normalize_conadis)
     df["provinciaResidenciaId"] = df["provinciaResidenciaId"].apply(_format_province)
 
@@ -652,17 +641,7 @@ def _build_report() -> dict[str, Any]:
 
 
 def _dataframe_to_workbook_bytes(dataframe: pd.DataFrame) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        dataframe.to_excel(writer, index=False, sheet_name="Datos")
-        worksheet = writer.book["Datos"]
-        _style_header(worksheet)
-        for column in worksheet.columns:
-            column_letter = column[0].column_letter
-            width = min(max(len(str(cell.value or "")) for cell in column) + 2, 42)
-            worksheet.column_dimensions[column_letter].width = max(width, 12)
-    output.seek(0)
-    return output.getvalue()
+    return _student_model_workbook(dataframe)
 
 
 @router.get("/estudiantes/buscar")
@@ -850,7 +829,7 @@ _TEACHER_REPORT_COLUMNS = [
     "fechaIngresoIES",
     "fechaSalidaIES",
     "relacionLaboralIESId",
-    "ingresoConCursoMeritos",
+    "ingresoConConcursoMeritos",
     "escalafonDocenteId",
     "cargoDirectivoId",
     "tiempoDedicacionId",
@@ -922,12 +901,92 @@ def _split_report_name(full_name: Any) -> dict[str, Any]:
     return {key: _normalize_payload_value(values.get(key)) for key in _NAME_FIELDS}
 
 
-def _prepare_student_audit_dataframe() -> pd.DataFrame:
-    raw = _read_dataframe()
+def _period_catalog() -> list[dict[str, Any]]:
+    dataframe = _read_sql_dataframe("""
+        SELECT cod_periodo AS codigo_periodo,
+            LTRIM(RTRIM(Detalle_Periodo)) AS nombre_periodo,
+            CONVERT(varchar(10), fechain, 23) AS fecha_inicio,
+            CONVERT(varchar(10), fechafin, 23) AS fecha_fin
+        FROM dbo.PERIODO
+        ORDER BY fechain DESC, cod_periodo DESC
+    """)
+    return [
+        {
+            "codigo_periodo": int(row.codigo_periodo),
+            "nombre_periodo": str(row.nombre_periodo or row.codigo_periodo).strip(),
+            "fecha_inicio": _normalize_payload_value(row.fecha_inicio),
+            "fecha_fin": _normalize_payload_value(row.fecha_fin),
+        }
+        for row in dataframe.itertuples()
+    ]
+
+
+def _academic_scope_sql(periods: list[int] | None, cutoff: date | None, *, target: str) -> tuple[str, list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+    selected = list(dict.fromkeys(periods or []))
+    if selected:
+        conditions.append(f"p.cod_periodo IN ({', '.join('?' for _ in selected)})")
+        params.extend(selected)
+    if cutoff:
+        if target == "estudiantes":
+            # Missing enrollment dates cannot establish eligibility before the cutoff.
+            conditions.append("TRY_CONVERT(date, cx.Fecha_Matricula) <= ?")
+            params.append(cutoff)
+        else:
+            conditions.append("p.fechain <= ?")
+            params.append(cutoff)
+            conditions.append("(ingreso.fecha IS NULL OR ingreso.fecha <= ?)")
+            params.append(cutoff)
+    return "".join(f" AND {condition}" for condition in conditions), params
+
+
+def _read_student_audit_source(periods: list[int] | None, cutoff: date | None) -> pd.DataFrame:
+    scope, params = _academic_scope_sql(periods, cutoff, target="estudiantes")
+    # Aggregate subject enrollments before choosing the last eligible period per career.
+    sql = """
+    WITH matriculas AS (
+        SELECT cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo,
+            MIN(TRY_CONVERT(date, cx.Fecha_Matricula)) AS fecha_matricula,
+            MAX(p.fechain) AS inicio_periodo
+        FROM dbo.CARRERAXESTUD cx
+        INNER JOIN dbo.PERIODO p ON cx.codigo_periodo = p.cod_periodo
+        WHERE UPPER(LTRIM(RTRIM(p.TipoMatricula))) IN ('R', 'H')
+            AND cx.cod_anio_Basica NOT IN (12, 13)
+    """ + scope + """
+        GROUP BY cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo
+    ), seleccion AS (
+        SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY codigo_estud, cod_anio_Basica
+            ORDER BY COALESCE(inicio_periodo, fecha_matricula) DESC,
+                codigo_periodo DESC, fecha_matricula DESC
+        ) AS posicion
+        FROM matriculas
+    ), matricula_cne_catalogada AS (
+        SELECT s.codigo_estud, s.fecha_matricula, e.Cedula_Est, e.Apellidos_nombre,
+            LTRIM(RTRIM(c.Nombre_Basica)) AS nombre_carrera
+        FROM seleccion s
+        INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = s.codigo_estud
+        INNER JOIN dbo.ESTADO estado ON e.Estado = estado.IDESTADO
+        INNER JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = s.cod_anio_Basica
+        WHERE s.posicion = 1
+            AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estado.IDESTADO)))) = 'A'
+    )
+    """ + _STUDENT_SELECT.format(fecha_matricula="cne.fecha_matricula") + """
+    FROM matricula_cne_catalogada cne
+    INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = cne.codigo_estud
+        AND e.Cedula_Est = cne.Cedula_Est
+    """ + _STUDENT_EMAIL_APPLY
+    return _read_sql_dataframe(sql, params)
+
+
+def _prepare_student_audit_dataframe(periods: list[int] | None = None, cutoff: date | None = None) -> pd.DataFrame:
+    raw = _read_student_audit_source(periods, cutoff)
     if raw.empty:
         return pd.DataFrame(columns=_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
 
-    df = _normalize_dataframe(raw).rename(columns={"codigoEstud": "codigo"})
+    df = _dedupe_career_model_rows(_apply_student_model_context(_normalize_dataframe(raw)), "fechaMatricula")
+    df = df.rename(columns={"codigoEstud": "codigo"})
     for column in _STUDENT_AUDIT_COLUMNS:
         if column not in df.columns:
             df[column] = None
@@ -938,7 +997,8 @@ def _prepare_student_audit_dataframe() -> pd.DataFrame:
     return df[_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"]]
 
 
-def _read_teacher_audit_dataframe() -> pd.DataFrame:
+def _read_teacher_audit_dataframe(periods: list[int] | None = None, cutoff: date | None = None) -> pd.DataFrame:
+    scope, params = _academic_scope_sql(periods, cutoff, target="docentes")
     sql = """
     SELECT DISTINCT
         TRY_CONVERT(varchar(50), d.codigo_doc) AS codigo,
@@ -972,7 +1032,7 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
         d.fechaIngresoIES,
         d.fechaSalidaIES,
         d.relacionLaboralIESId,
-        d.ingresoConCursoMeritos,
+        d.ingresoConCursoMeritos AS ingresoConConcursoMeritos,
         d.escalafonDocenteId,
         d.cargoDirectivoId,
         d.tiempoDedicacionId,
@@ -1011,15 +1071,24 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
         ON TRY_CONVERT(varchar(50), cd.cod_Anio_Basica) = TRY_CONVERT(varchar(50), c.Cod_AnioBasica)
     INNER JOIN dbo.DATOSDOCENTE d
         ON TRY_CONVERT(varchar(50), cd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
+    INNER JOIN dbo.PERIODO p ON cd.codigo_periodo = p.cod_periodo
+    OUTER APPLY (
+        SELECT COALESCE(
+            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(d.fechaIngresoIES)), ''), 23),
+            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(d.fechaIngresoIES)), ''), 126),
+            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(d.fechaIngresoIES)), ''), 103)
+        ) AS fecha
+    ) ingreso
     WHERE EXISTS (
         SELECT 1
         FROM dbo.USUARIOS u
         WHERE LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) = LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
           AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
     )
+    """ + scope + """
     ORDER BY nombreCarrera, nombreOriginal
     """
-    raw = _read_sql_dataframe(sql)
+    raw = _read_sql_dataframe(sql, params)
     if raw.empty:
         return pd.DataFrame(columns=_TEACHER_REPORT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
 
@@ -1028,6 +1097,7 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
     for column in _TEACHER_REPORT_COLUMNS:
         if column not in df.columns:
             df[column] = None
+    df = _apply_teacher_model_context(df)
     df["nombreCompleto"] = df.apply(
         lambda row: " ".join(str(row.get(field) or "").strip() for field in [
             "primerApellido",
@@ -1040,14 +1110,17 @@ def _read_teacher_audit_dataframe() -> pd.DataFrame:
     df["nombreCarrera"] = df["nombreCarrera"].apply(
         lambda value: re.sub(r"\s+", " ", str(value or "Sin carrera")).strip() or "Sin carrera"
     )
+    df = _dedupe_career_model_rows(df, "fechaIngresoIES")
     return df[_TEACHER_REPORT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"]]
 
 
-def _load_senescyt_audit_dataframe(target: str) -> tuple[pd.DataFrame, list[str]]:
+def _load_senescyt_audit_dataframe(
+    target: str, periods: list[int] | None = None, cutoff: date | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
     if target == "estudiantes":
-        return _prepare_student_audit_dataframe(), _STUDENT_AUDIT_COLUMNS
+        return _prepare_student_audit_dataframe(periods, cutoff), _STUDENT_AUDIT_COLUMNS
     if target == "docentes":
-        return _read_teacher_audit_dataframe(), _TEACHER_REPORT_COLUMNS
+        return _read_teacher_audit_dataframe(periods, cutoff), _TEACHER_REPORT_COLUMNS
     raise HTTPException(status_code=400, detail='Tipo de reporte SENESCYT no válido.')
 
 
@@ -1067,10 +1140,7 @@ def _filter_by_career(dataframe: pd.DataFrame, careers: list[str] | None) -> pd.
     if not selected:
         return dataframe
     names = dataframe["nombreCarrera"].fillna("").astype(str).str.casefold()
-    mask = pd.Series(False, index=dataframe.index)
-    for career in selected:
-        needle = career.casefold()
-        mask = mask | names.eq(needle) | names.str.contains(re.escape(needle), regex=True, na=False)
+    mask = names.isin({career.casefold() for career in selected})
     return dataframe[mask].copy()
 
 
@@ -1097,8 +1167,7 @@ _ZERO_CONTEXT_FIELDS = {
     ("estudiantes", "numCarnetConadis"),
     ("estudiantes", "montoBeca"),
     ("docentes", "porcentajeDiscapacidad"),
-    ("docentes", "carnetConadis"),
-    ("docentes", "numeroCarnetConadis"),
+    ("docentes", "numCarnetDiscapacidad"),
     ("docentes", "montoBeca"),
     ("docentes", "numPubRevistasCientifIndexadas"),
 }
@@ -1156,17 +1225,16 @@ _TEACHER_CODE_FIELDS = {
     "tipoDocumentoId",
     "sexoId",
     "generoId",
-    "estadoCivilId",
+    "estadocivilId",
     "etniaId",
-    "nacionalidadId",
+    "pueblonacionalidadId",
     "provinciaSufragio",
     "discapacidad",
     "tipoDiscapacidad",
-    "carnetConadis",
     "paisNacionalidadId",
     "nivelFormacion",
     "relacionLaboralIESId",
-    "ingresoConCursoMeritos",
+    "ingresoConConcursoMeritos",
     "escalafonDocenteId",
     "cargoDirectivoId",
     "tiempoDedicacionId",
@@ -1184,6 +1252,62 @@ _TEACHER_CODE_FIELDS = {
     "pubRevistasCienInIndexadasId",
 }
 
+_COMMON_GUIDE_CODES = {
+    "sexoId": {"1", "2"},
+    "generoId": {"1", "2"},
+    "estadocivilId": {str(code) for code in range(1, 6)},
+    "etniaId": {str(code) for code in range(1, 10)},
+    "discapacidad": {"1", "2"},
+    "tipoDiscapacidad": {str(code) for code in range(1, 8)},
+}
+_STUDENT_GUIDE_CODES = {
+    **_COMMON_GUIDE_CODES,
+    "tipoSangre": {str(code) for code in range(1, 9)},
+    "tipoColegioId": {str(code) for code in range(1, 7)},
+    "modalidadCarrera": {str(code) for code in range(1, 7)},
+    "jornadaCarrera": {str(code) for code in range(1, 5)},
+    "tipoMatriculaId": {"1", "2", "3"},
+    "nivelAcademicoQueCursa": {str(code) for code in range(1, 10)},
+    "haRepetidoAlMenosUnaMateria": {"1", "2"},
+    "haPerdidoLaGratuidad": {"1", "2", "3"},
+    "recibePensionDiferenciada": {"1", "2", "3"},
+    "estudianteocupacionId": {"1", "2"},
+    "ingresosestudianteId": {"1", "2", "3", "4"},
+    "bonodesarrolloId": {"1", "2"},
+    "haRealizadoPracticasPreprofesionales": {"1", "2"},
+    "tipoBecaId": {"1", "2", "3"},
+    "financiamientoBeca": {"1", "2", "3", "4"},
+    "participaEnProyectoVinculacionSociedad": {"1", "2", "3"},
+    "tipoAlcanceProyectoVinculacionId": {str(code) for code in range(1, 6)},
+    "nivelFormacionPadre": {str(code) for code in range(1, 11)},
+    "nivelFormacionMadre": {str(code) for code in range(1, 11)},
+}
+_STUDENT_GUIDE_CODES.update({
+    column: {"1", "2"} for column in (
+        "primeraRazonBecaId", "segundaRazonBecaId", "terceraRazonBecaId",
+        "cuartaRazonBecaId", "quintaRazonBecaId", "sextaRazonBecaId"
+    )
+})
+_TEACHER_GUIDE_CODES = {
+    **_COMMON_GUIDE_CODES,
+    "relacionLaboralIESId": {str(code) for code in range(1, 6)},
+    "ingresoConConcursoMeritos": {"1", "2"},
+    "escalafonDocenteId": {str(code) for code in range(1, 7)},
+    "cargoDirectivoId": {str(code) for code in range(1, 8)},
+    "tiempoDedicacionId": {"1", "2", "3"},
+    "estaCursandoEstudiosId": {str(code) for code in range(1, 12)},
+    "poseeBecaId": {"1", "2"},
+    "tipoBecaId": {"1", "2", "3"},
+    "financiamientoBecaId": {str(code) for code in range(1, 6)},
+    "pubRevistasCienInIndexadasId": {"1", "2"},
+}
+_TEACHER_GUIDE_CODES.update({
+    column: {"1", "2"} for column in (
+        "docenciaTecnicoSuperior", "docenciaTecnologico", "docenciaTecnologicoUniversitario",
+        "docenciaEspecializacionTecnologica", "docenciaMaestriaTecnologica", "estaEnPeriodoSabatico"
+    )
+})
+
 _DOCUMENT_TYPE_CEDULA = "1"
 _DOCUMENT_TYPE_PASSPORT = "2"
 _DOCUMENT_TYPE_LABELS = {
@@ -1193,6 +1317,7 @@ _DOCUMENT_TYPE_LABELS = {
 _PASSPORT_PATTERNS = (
     ("Ecuador / Espana / Argentina", re.compile(r"^[A-Z]{3}\d{6}$")),
     ("Estados Unidos", re.compile(r"^[A-Z]\d{8}$")),
+    ("Pasaporte de 9 caracteres", re.compile(r"^[A-Z0-9]{9}$")),
 )
 
 
@@ -1344,7 +1469,7 @@ def _field_allows_zero(row: pd.Series, column: str, target: str) -> bool:
         if column == "montoBeca":
             return _is_no_beca_student(row)
     if target == "docentes":
-        if column in {"porcentajeDiscapacidad", "carnetConadis", "numeroCarnetConadis"}:
+        if column in {"porcentajeDiscapacidad", "numCarnetDiscapacidad"}:
             return _is_no_code(row.get("discapacidad"))
         if column == "montoBeca":
             return _is_no_beca_teacher(row)
@@ -1355,6 +1480,12 @@ def _field_allows_zero(row: pd.Series, column: str, target: str) -> bool:
 
 def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
     if target == "estudiantes":
+        if column in {"correoElectronico", "ingresoTotalHogar"}:
+            return True
+        if column in {"provinciaNacimientoId", "cantonNacimientoId"}:
+            return _has_selected_code(row.get("paisNacionalidadId")) and _cell_code(row.get("paisNacionalidadId")) != "56"
+        if column in {"provinciaResidenciaId", "cantonResidenciaId"}:
+            return _has_selected_code(row.get("paisResidenciaId")) and _cell_code(row.get("paisResidenciaId")) != "56"
         if column == "pueblonacionalidadId":
             etnia = row.get("etniaId")
             return _has_selected_code(etnia) and _cell_code(etnia) != "1"
@@ -1393,11 +1524,16 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
             return True
 
     if target == "docentes":
+        if column == "numDomicilio":
+            return True
+        if column == "provinciaSufragio":
+            return _has_selected_code(row.get("paisNacionalidadId")) and _cell_code(row.get("paisNacionalidadId")) != "56"
+        if column == "fechaSalidaIES":
+            return True  # The teacher source is limited to active users.
         if _is_no_code(row.get("discapacidad")) and column in {
             "tipoDiscapacidad",
             "porcentajeDiscapacidad",
-            "carnetConadis",
-            "numeroCarnetConadis",
+            "numCarnetDiscapacidad",
         }:
             return True
         if _is_no_code(row.get("estaEnPeriodoSabatico")) and column == "fechaInicioPeriodoSabatico":
@@ -1440,6 +1576,32 @@ def _audit_field_filled(row: pd.Series, column: str, target: str) -> bool:
         return _field_allows_no_aplica(row, column, target)
     if code in {"0001-01-01", "0001-01-01 00:00:00"}:
         return _field_allows_no_aplica(row, column, target)
+    date_columns = {"fechaNacimiento", "fechaInicioCarrera", "fechaMatricula"} if target == "estudiantes" else {
+        "fechaNacimiento", "fechaIngresoIES", "fechaSalidaIES", "fechaInicioPeriodoSabatico"
+    }
+    if column in date_columns:
+        normalized_date = _model_date(row.get(column))
+        return bool(normalized_date and re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_date))
+    if column == "numeroCelular":
+        return bool(re.fullmatch(r"\d{10}", text))
+    if column in {"numCarnetConadis", "numCarnetDiscapacidad"}:
+        return bool(re.fullmatch(r"\d{7}", text))
+    if column == "correoElectronico":
+        return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text))
+    if target == "docentes" and column == "nroHorasLaborablesSemanaEnCarreraPrograma":
+        parts = ("nroHorasClaseSemanaCarreraPrograma", "nroHorasInvestigacionSemanaCarreraPrograma",
+                 "nroHorasAdministrativasSemanaCarreraPrograma", "nroHorasOtrasActividadesSemanaCarreraPrograma",
+                 "nroHorasVinculacionSociedad")
+        hours = [_cell_text(row.get(field)) for field in (column, *parts)]
+        return all(value.isdigit() for value in hours) and int(hours[0]) == sum(int(value) for value in hours[1:])
+    if target == "estudiantes" and column in {
+        "provinciaNacimientoId", "cantonNacimientoId", "provinciaResidenciaId", "cantonResidenciaId"
+    }:
+        width = 4 if column.startswith("canton") else 2
+        return bool(re.fullmatch(rf"\d{{{width}}}", _model_geographic_code(row.get(column), width) or ""))
+    guide_codes = _STUDENT_GUIDE_CODES if target == "estudiantes" else _TEACHER_GUIDE_CODES
+    if column in guide_codes:
+        return code in guide_codes[column]
     code_fields = _STUDENT_CODE_FIELDS if target == "estudiantes" else _TEACHER_CODE_FIELDS
     if column in code_fields and code in _UNSELECTED_MARKERS:
         return False
@@ -1547,7 +1709,7 @@ def _build_document_summary(dataframe: pd.DataFrame) -> dict[str, Any]:
             {
                 "codigo": 2,
                 "tipo": "Pasaporte",
-                "formato": "Ecuador/Espana/Argentina: 3 letras + 6 numeros; Estados Unidos: 1 letra + 8 numeros",
+                "formato": "9 caracteres alfanumericos en mayusculas",
             },
         ],
     }
@@ -1695,11 +1857,21 @@ def _build_senescyt_audit_from_dataframe(
     }
 
 
-def _build_senescyt_audit(target: str, careers: list[str] | None = None) -> dict[str, Any]:
+def _build_senescyt_audit(
+    target: str, careers: list[str] | None = None,
+    periods: list[int] | None = None, cutoff: date | None = None,
+) -> dict[str, Any]:
     selected_careers = _normalize_career_filters(careers)
-    dataframe, report_columns = _load_senescyt_audit_dataframe(target)
+    selected_periods = list(dict.fromkeys(periods or []))
+    dataframe, report_columns = _load_senescyt_audit_dataframe(target, selected_periods, cutoff)
     dataframe = _filter_by_career(dataframe, selected_careers)
-    return _build_senescyt_audit_from_dataframe(target, dataframe, report_columns, selected_careers)
+    report = _build_senescyt_audit_from_dataframe(target, dataframe, report_columns, selected_careers)
+    report.update({
+        "period_filter": selected_periods,
+        "cutoff_date": cutoff.isoformat() if cutoff else None,
+        "active_only": True,
+    })
+    return report
 
 
 def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
@@ -1777,6 +1949,203 @@ def _audit_export_workbook(report: dict[str, Any], mode: str) -> bytes:
     return output.getvalue()
 
 
+def _model_workbook(dataframe: pd.DataFrame, columns: list[str], *, text_columns: tuple[str, ...]) -> bytes:
+    values = dataframe.reindex(columns=columns)
+    if "numeroIdentificacion" in values:
+        values["numeroIdentificacion"] = values["numeroIdentificacion"].map(_normalize_document_number)
+    for column in ("primerApellido", "segundoApellido", "primerNombre", "segundoNombre", "nombreUnidadAcademica"):
+        if column in values:
+            values[column] = values[column].map(
+                lambda value: _cell_text(value).upper() if _cell_text(value) else None)
+    for column in ("fechaNacimiento", "fechaIngresoIES", "fechaSalidaIES", "fechaInicioPeriodoSabatico",
+                   "fechaInicioCarrera", "fechaMatricula"):
+        if column in values:
+            values[column] = values[column].map(_model_date)
+    values = values.map(_normalize_payload_value)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        values.to_excel(writer, index=False, sheet_name="Sheet1", na_rep="")
+        worksheet = writer.book["Sheet1"]
+        header_border = Border(left=Side(style="thin"), right=Side(style="thin"))
+        for cell in worksheet[1]:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="top")
+            cell.border = header_border
+        for column in text_columns:
+            index = columns.index(column) + 1
+            for cells in worksheet.iter_cols(min_col=index, max_col=index, min_row=2):
+                for cell in cells:
+                    cell.number_format = "@"
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
+    return output.getvalue()
+
+
+def _model_date(value: Any) -> str | None:
+    normalized = _normalize_payload_value(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, datetime):
+        return normalized.date().isoformat()
+    if isinstance(normalized, date):
+        return normalized.isoformat()
+    value_text = str(normalized)
+    try:
+        return datetime.fromisoformat(value_text).date().isoformat()
+    except ValueError:
+        pass
+    for format_string in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(value_text, format_string).date().isoformat()
+        except ValueError:
+            continue
+    return value_text
+
+
+def _dedupe_model_rows(dataframe: pd.DataFrame, date_column: str) -> pd.DataFrame:
+    if dataframe.empty:
+        return dataframe.copy()
+    rows = dataframe.copy()
+    identities = []
+    for position, (_, row) in enumerate(rows.iterrows()):
+        document = _normalize_document_number(row.get("numeroIdentificacion"))
+        code = _cell_text(row.get("codigo"))
+        identities.append(f"documento:{document}" if document else f"codigo:{code}" if code else f"fila:{position}")
+    rows["_model_identity"] = identities
+    if date_column in rows:
+        rows["_model_date"] = pd.to_datetime(rows[date_column].map(_model_date), format="%Y-%m-%d", errors="coerce")
+        rows = rows.sort_values("_model_date", ascending=False, kind="stable", na_position="last")
+        rows = rows.drop(columns="_model_date")
+    return rows.drop_duplicates(subset="_model_identity").drop(columns="_model_identity")
+
+
+def _dedupe_career_model_rows(dataframe: pd.DataFrame, date_column: str) -> pd.DataFrame:
+    if dataframe.empty or "nombreCarrera" not in dataframe:
+        return dataframe.copy()
+    return pd.concat(
+        [_dedupe_model_rows(group, date_column) for _, group in dataframe.groupby("nombreCarrera", dropna=False)],
+        ignore_index=True,
+    )
+
+
+def _teacher_model_workbook(report: dict[str, Any]) -> bytes:
+    dataframe: pd.DataFrame = report["dataframe"]
+    unique = _apply_teacher_model_context(_dedupe_model_rows(dataframe, "fechaIngresoIES"))
+    if "provinciaSufragio" in unique:
+        unique["provinciaSufragio"] = unique["provinciaSufragio"].map(lambda value: _model_geographic_code(value, 2))
+    if "fechaSalidaIES" in unique:
+        unique["fechaSalidaIES"] = unique["fechaSalidaIES"].map(lambda value: _model_date(value) or "NA")
+    unique = unique.reindex(columns=_TEACHER_REPORT_COLUMNS)
+    if not unique.empty:
+        unique = unique.sort_values(by=["primerApellido", "segundoApellido", "primerNombre", "segundoNombre"],
+                                    key=lambda series: series.fillna("").astype(str).str.casefold())
+    return _model_workbook(unique, _TEACHER_REPORT_COLUMNS,
+                           text_columns=("numeroIdentificacion", "numeroCelular", "provinciaSufragio",
+                                         "numCarnetDiscapacidad"))
+
+
+def _model_geographic_code(value: Any, width: int) -> str | None:
+    normalized = _normalize_payload_value(value)
+    if normalized is None:
+        return None
+    code = str(normalized)
+    if re.fullmatch(r"\d+(?:\.0+)?", code):
+        return code.split(".", 1)[0].zfill(width)
+    return code
+
+
+def _set_model_values_for_codes(dataframe: pd.DataFrame, source: str, codes: set[str], updates: dict[str, Any]) -> None:
+    if source not in dataframe:
+        return
+    selected = dataframe[source].map(_cell_code).isin(codes)
+    for column, value in updates.items():
+        if column in dataframe:
+            if isinstance(value, str):
+                dataframe[column] = dataframe[column].astype(object)
+            dataframe.loc[selected, column] = value
+
+
+def _apply_student_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
+    values = dataframe.reindex(columns=list(dict.fromkeys([*dataframe.columns, *_REPORT_COLUMNS]))).copy()
+    if "etniaId" in values and "pueblonacionalidadId" in values:
+        known_non_indigenous = values["etniaId"].map(lambda value: _cell_code(value) in {str(code) for code in range(2, 10)})
+        values.loc[known_non_indigenous, "pueblonacionalidadId"] = 34
+    _set_model_values_for_codes(values, "discapacidad", {"2"}, {
+        "porcentajeDiscapacidad": "NA", "numCarnetConadis": "NA", "tipoDiscapacidad": 7,
+    })
+    _set_model_values_for_codes(values, "estudianteocupacionId", {"1"}, {"ingresosestudianteId": 4})
+    _set_model_values_for_codes(values, "haRealizadoPracticasPreprofesionales", {"2"}, {
+        "nroHorasPracticasPreprofesionalesPorPeriodo": "NA",
+        "entornoInstitucionalPracticasProfesionales": 5,
+        "sectorEconomicoPracticaProfesional": 22,
+    })
+    _set_model_values_for_codes(values, "tipoBecaId", {"3"}, {
+        "primeraRazonBecaId": 2, "segundaRazonBecaId": 2, "terceraRazonBecaId": 2,
+        "cuartaRazonBecaId": 2, "quintaRazonBecaId": 2, "sextaRazonBecaId": 2,
+        "montoBeca": "NA", "porcientoBecaCoberturaArancel": "NA",
+        "porcientoBecaCoberturaManuntencion": "NA", "financiamientoBeca": 4,
+    })
+    _set_model_values_for_codes(values, "participaEnProyectoVinculacionSociedad", {"2", "3"}, {
+        "tipoAlcanceProyectoVinculacionId": 5,
+    })
+    for column in ("montoAyudaEconomica", "montoCreditoEducativo", "ingresoTotalHogar"):
+        if column in values:
+            zero = values[column].map(lambda value: _cell_code(value) in {"0", "0.0"})
+            values[column] = values[column].astype(object)
+            values.loc[zero, column] = "NA"
+    for country, columns in (("paisNacionalidadId", ("provinciaNacimientoId", "cantonNacimientoId")),
+                             ("paisResidenciaId", ("provinciaResidenciaId", "cantonResidenciaId"))):
+        if country in values:
+            foreign = values[country].map(lambda value: bool(re.fullmatch(r"\d+", _cell_code(value)))
+                                          and _cell_code(value) != "56")
+            for column in columns:
+                if column in values:
+                    values[column] = values[column].astype(object)
+                    values.loc[foreign, column] = "NA"
+    return values
+
+
+def _apply_teacher_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
+    values = dataframe.reindex(columns=list(dict.fromkeys([*dataframe.columns, *_TEACHER_REPORT_COLUMNS]))).copy()
+    if "fechaSalidaIES" in values:
+        missing_exit = values["fechaSalidaIES"].map(lambda value: not _cell_text(value))
+        values["fechaSalidaIES"] = values["fechaSalidaIES"].astype(object)
+        values.loc[missing_exit, "fechaSalidaIES"] = "NA"
+    if "etniaId" in values and "pueblonacionalidadId" in values:
+        known_non_indigenous = values["etniaId"].map(lambda value: _cell_code(value) in {str(code) for code in range(2, 10)})
+        values["pueblonacionalidadId"] = values["pueblonacionalidadId"].astype(object)
+        values.loc[known_non_indigenous, "pueblonacionalidadId"] = "NA"
+    _set_model_values_for_codes(values, "discapacidad", {"2"}, {
+        "porcentajeDiscapacidad": "NA", "numCarnetDiscapacidad": "NA", "tipoDiscapacidad": 7,
+    })
+    _set_model_values_for_codes(values, "estaEnPeriodoSabatico", {"2"}, {"fechaInicioPeriodoSabatico": "NA"})
+    _set_model_values_for_codes(values, "estaCursandoEstudiosId", {"8"}, {
+        "institucionDondeCursaEstudios": "NA", "paisEstudiosId": "NA", "tituloAObtener": "NA",
+    })
+    _set_model_values_for_codes(values, "poseeBecaId", {"2"}, {
+        "tipoBecaId": 3, "montoBeca": "NA", "financiamientoBecaId": 5,
+    })
+    _set_model_values_for_codes(values, "pubRevistasCienInIndexadasId", {"2"}, {
+        "numPubRevistasCientifIndexadas": "NA",
+    })
+    return values
+
+
+def _student_model_workbook(dataframe: pd.DataFrame) -> bytes:
+    values = _apply_student_model_context(_dedupe_model_rows(dataframe, "fechaMatricula"))
+    values = values.rename(columns=_STUDENT_MODEL_ALIASES)
+    for column, width in (("provinciaNacimientoId", 2), ("cantonNacimientoId", 4),
+                          ("provinciaResidenciaId", 2), ("cantonResidenciaId", 4)):
+        if column in values:
+            values[column] = values[column].map(lambda value: _model_geographic_code(value, width))
+    return _model_workbook(values, _STUDENT_MODEL_COLUMNS,
+                           text_columns=("numeroIdentificacion", "numeroCelular", "provinciaNacimientoId",
+                                         "cantonNacimientoId", "provinciaResidenciaId", "cantonResidenciaId",
+                                         "numCarnetConadis"))
+
+
 def _audit_export_zip(report: dict[str, Any], mode: str) -> bytes:
     dataframe: pd.DataFrame = report["dataframe"]
     output = BytesIO()
@@ -1784,7 +2153,9 @@ def _audit_export_zip(report: dict[str, Any], mode: str) -> bytes:
         if dataframe.empty or "nombreCarrera" not in dataframe.columns:
             archive.writestr(
                 f"senescyt_{report['target']}_{mode}.xlsx",
-                _audit_export_workbook(report, mode),
+                (_student_model_workbook(dataframe) if report["target"] == "estudiantes" and mode == "completo"
+                 else _teacher_model_workbook(report) if report["target"] == "docentes" and mode == "completo"
+                 else _audit_export_workbook(report, mode)),
             )
         else:
             career_series = (
@@ -1804,7 +2175,10 @@ def _audit_export_zip(report: dict[str, Any], mode: str) -> bytes:
                     [str(career_name)],
                 )
                 filename = f"{index:02d}_{_safe_filename(str(career_name))}_{mode}.xlsx"
-                archive.writestr(filename, _audit_export_workbook(career_report, mode))
+                archive.writestr(filename,
+                    _student_model_workbook(group) if report["target"] == "estudiantes" and mode == "completo"
+                    else _teacher_model_workbook(career_report) if report["target"] == "docentes" and mode == "completo"
+                    else _audit_export_workbook(career_report, mode))
     output.seek(0)
     return output.getvalue()
 
@@ -1816,10 +2190,12 @@ def senescyt_catalog(
     del current_user
     try:
         careers = _career_catalog()
+        periods = _period_catalog()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error cargando catálogo SENESCYT: {exc}") from exc
     return {
         "careers": careers,
+        "periods": periods,
         "targets": sorted(_REPORT_TARGETS),
         "export_modes": sorted(_EXPORT_MODES),
     }
@@ -1830,10 +2206,12 @@ def senescyt_audit_report(
     current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
     target: Annotated[str, Query(pattern="^(estudiantes|docentes)$")] = "estudiantes",
     carrera: Annotated[list[str] | None, Query()] = None,
+    periodo: Annotated[list[Annotated[int, Field(ge=1, le=2147483647)]] | None, Query()] = None,
+    fecha_limite: Annotated[date | None, Query()] = None,
 ) -> dict[str, Any]:
     del current_user
     try:
-        report = _build_senescyt_audit(target, carrera)
+        report = _build_senescyt_audit(target, carrera, periodo, fecha_limite)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1843,6 +2221,9 @@ def senescyt_audit_report(
         "generated_at": report["generated_at"],
         "target": report["target"],
         "career_filter": report["career_filter"],
+        "period_filter": report["period_filter"],
+        "cutoff_date": report["cutoff_date"],
+        "active_only": True,
         "summary": report["summary"],
         "careers": report["careers"],
         "rows": report["rows"],
@@ -1857,15 +2238,17 @@ def senescyt_audit_export(
     target: Annotated[str, Query(pattern="^(estudiantes|docentes)$")] = "estudiantes",
     mode: Annotated[str, Query(pattern="^(completo|faltantes)$")] = "completo",
     carrera: Annotated[list[str] | None, Query()] = None,
+    periodo: Annotated[list[Annotated[int, Field(ge=1, le=2147483647)]] | None, Query()] = None,
+    fecha_limite: Annotated[date | None, Query()] = None,
 ) -> StreamingResponse:
     del current_user
     try:
-        report = _build_senescyt_audit(target, carrera)
+        report = _build_senescyt_audit(target, carrera, periodo, fecha_limite)
         content = _audit_export_zip(report, mode)
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error exportando ZIP SENESCYT: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Error exportando reporte SENESCYT: {exc}") from exc
 
     selected_careers = _normalize_career_filters(carrera)
     suffix = _safe_filename("_".join(selected_careers[:3])) if selected_careers else "todas_las_carreras"

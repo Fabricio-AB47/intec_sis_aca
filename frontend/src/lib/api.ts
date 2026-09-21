@@ -4073,9 +4073,13 @@ export async function fetchSenescytCatalog(): Promise<SenescytCatalogResponse> {
 export async function fetchSenescytAuditReport(
   target: SenescytTarget,
   careers?: string[],
+  periods?: number[],
+  cutoffDate?: string,
 ): Promise<SenescytAuditResponse> {
   const params = new URLSearchParams({ target })
   careers?.filter(Boolean).forEach((career) => params.append('carrera', career))
+  periods?.forEach((period) => params.append('periodo', String(period)))
+  if (cutoffDate) params.set('fecha_limite', cutoffDate)
   return request<SenescytAuditResponse>(`/api/students/senescyt/datos?${params.toString()}`)
 }
 
@@ -4083,9 +4087,13 @@ export async function downloadSenescytAuditWorkbook(
   target: SenescytTarget,
   mode: SenescytExportMode,
   careers?: string[],
+  periods?: number[],
+  cutoffDate?: string,
 ): Promise<Blob> {
   const params = new URLSearchParams({ target, mode })
   careers?.filter(Boolean).forEach((career) => params.append('carrera', career))
+  periods?.forEach((period) => params.append('periodo', String(period)))
+  if (cutoffDate) params.set('fecha_limite', cutoffDate)
   const response = await fetch(`/api/students/senescyt/datos/export?${params.toString()}`, {
     credentials: 'include',
   })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   downloadSenescytAuditWorkbook,
@@ -50,6 +50,11 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const [catalog, setCatalog] = useState<SenescytCatalogResponse | null>(null)
   const [target, setTarget] = useState<SenescytTarget>('estudiantes')
   const [selectedCareers, setSelectedCareers] = useState<string[]>([])
+  const [selectedPeriods, setSelectedPeriods] = useState<number[]>([])
+  const [cutoffDate, setCutoffDate] = useState('')
+  const [periodSearch, setPeriodSearch] = useState('')
+  const [reportFilterKey, setReportFilterKey] = useState('')
+  const reportRequest = useRef(0)
   const [report, setReport] = useState<SenescytAuditResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -60,8 +65,14 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   const [previewOpen, setPreviewOpen] = useState(false)
   const [detailRow, setDetailRow] = useState<SenescytAuditRow | null>(null)
 
-  const summary = report?.summary
-  const rows = report?.rows || []
+  const filterKey = JSON.stringify([target, [...selectedCareers].sort(), [...selectedPeriods].sort((a, b) => a - b), cutoffDate])
+  const reportCurrent = reportFilterKey === filterKey && report !== null
+  const summary = reportCurrent ? report?.summary : undefined
+  const rows = reportCurrent ? report?.rows || [] : []
+  const periods = catalog?.periods || []
+  const filteredPeriods = periods.filter((period) =>
+    `${period.nombre_periodo} ${period.codigo_periodo}`.toLocaleLowerCase('es-EC').includes(periodSearch.trim().toLocaleLowerCase('es-EC')),
+  )
   const careers = useMemo(() => {
     const items = catalog?.careers || []
     const seen = new Set<string>()
@@ -84,6 +95,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
     : 'Se consultarán todas las carreras disponibles'
   const selectedCareerOverflow = Math.max(selectedCareers.length - 3, 0)
   const selectedCareerDisplay = `${selectedCareerPreview}${selectedCareerOverflow ? ` y ${selectedCareerOverflow} más` : ''}`
+  const selectedPeriodLabel = selectedPeriods.length ? `${selectedPeriods.length} período(s) seleccionado(s)` : 'Todos los períodos'
 
   async function loadCatalog() {
     setCatalogLoading(true)
@@ -96,16 +108,23 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
     }
   }
 
-  async function loadReport(nextTarget = target, nextCareers = selectedCareers) {
+  async function loadReport() {
+    const requestId = ++reportRequest.current
     setLoading(true)
     setError('')
     try {
-      setReport(await fetchSenescytAuditReport(nextTarget, nextCareers))
+      const result = await fetchSenescytAuditReport(target, selectedCareers, selectedPeriods, cutoffDate)
+      if (requestId === reportRequest.current) {
+        setReport(result)
+        setReportFilterKey(filterKey)
+      }
     } catch (requestError) {
-      setError(handleError(requestError, 'No se pudo generar el reporte SENESCYT.'))
-      setReport(null)
+      if (requestId === reportRequest.current) {
+        setError(handleError(requestError, 'No se pudo generar el reporte SENESCYT.'))
+        setReport(null)
+      }
     } finally {
-      setLoading(false)
+      if (requestId === reportRequest.current) setLoading(false)
     }
   }
 
@@ -130,23 +149,28 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
     setSelectedCareers([])
   }
 
+  function togglePeriod(code: number) {
+    setSelectedPeriods((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code])
+  }
+
   function closePreview() {
     setPreviewOpen(false)
     setDetailRow(null)
   }
 
   async function download(targetToDownload: SenescytTarget, mode: SenescytExportMode) {
+    if (!reportCurrent) return
     const key = `${targetToDownload}-${mode}`
     setDownloading(key)
     setError('')
     try {
-      const blob = await downloadSenescytAuditWorkbook(targetToDownload, mode, selectedCareers)
+      const blob = await downloadSenescytAuditWorkbook(targetToDownload, mode, selectedCareers, selectedPeriods, cutoffDate)
       const suffix = selectedCareers.length
         ? `${selectedCareers.length}-carreras`
         : 'todas-las-carreras'
       saveBlob(blob, `senescyt-${targetToDownload}-${mode}-${suffix}.zip`)
     } catch (requestError) {
-      setError(handleError(requestError, 'No se pudo descargar el ZIP SENESCYT.'))
+      setError(handleError(requestError, 'No se pudo descargar el reporte SENESCYT.'))
     } finally {
       setDownloading('')
     }
@@ -157,7 +181,8 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
   }, [])
 
   useEffect(() => {
-    void loadReport(target, selectedCareers)
+    void loadReport()
+    return () => { reportRequest.current += 1 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target])
 
@@ -172,7 +197,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <p className="eyebrow">SENESCYT</p>
           <h1>Datos SENESCYT</h1>
           <p className="report-description">
-            Reportes regulatorios de estudiantes y docentes activos por carrera, con control de campos vacíos y descarga en ZIP.
+            Reportes regulatorios de estudiantes y docentes activos por carrera, con control de campos vacíos y descargas.
           </p>
         </div>
 
@@ -195,6 +220,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
           <div className="senescyt-filter-summary">
             <span>{TARGET_LABELS[target]}</span>
             <strong>{selectedCareerLabel}</strong>
+            <span>Solo activos</span>
           </div>
         </div>
 
@@ -294,10 +320,44 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
             )}
           </div>
 
-          <button type="button" className="senescyt-query-button" onClick={() => void loadReport()} disabled={loading}>
+          <button type="button" className="senescyt-query-button" onClick={() => void loadReport()} disabled={loading || catalogLoading}>
             {loading ? 'Procesando...' : 'Consultar'}
           </button>
         </div>
+
+        <div className="senescyt-academic-filters">
+          <details className="senescyt-period-picker">
+            <summary>Períodos académicos <strong>{selectedPeriodLabel}</strong></summary>
+            <div className="senescyt-career-toolbar">
+              <label>
+                Buscar período
+                <input value={periodSearch} onChange={(event) => setPeriodSearch(event.target.value)} placeholder="Nombre, año o código" />
+              </label>
+              <div className="senescyt-career-picker__actions">
+                <button type="button" onClick={() => setSelectedPeriods((current) => [...new Set([...current, ...filteredPeriods.map((period) => period.codigo_periodo)])])} disabled={catalogLoading || !filteredPeriods.length}>
+                  Seleccionar visibles
+                </button>
+                <button type="button" onClick={() => setSelectedPeriods([])} disabled={!selectedPeriods.length}>Limpiar</button>
+              </div>
+            </div>
+            <div className="senescyt-period-list" aria-label="Selección múltiple de períodos">
+              {filteredPeriods.map((period) => (
+                <label key={period.codigo_periodo} className={`senescyt-career-check${selectedPeriods.includes(period.codigo_periodo) ? ' is-selected' : ''}`}>
+                  <input type="checkbox" checked={selectedPeriods.includes(period.codigo_periodo)} onChange={() => togglePeriod(period.codigo_periodo)} />
+                  <span>{period.nombre_periodo}<small>Código {period.codigo_periodo} · Inicio: {period.fecha_inicio?.split('-').reverse().join('/') || 'Sin fecha'}</small></span>
+                </label>
+              ))}
+              {!filteredPeriods.length ? <p>{catalogLoading ? 'Cargando períodos...' : 'No hay períodos disponibles.'}</p> : null}
+            </div>
+          </details>
+          <label className="senescyt-target-control">
+            Fecha límite (inclusive)
+            <input type="date" value={cutoffDate} onChange={(event) => setCutoffDate(event.target.value)} />
+            <small>{target === 'estudiantes' ? 'Fecha de matrícula registrada.' : 'Inicio del período y fecha de ingreso registrada.'}</small>
+            {!cutoffDate ? <small>Sin fecha límite</small> : null}
+          </label>
+        </div>
+        {report && !reportCurrent ? <p className="senescyt-filter-pending" role="status">Filtros modificados. Consulta pendiente.</p> : null}
       </section>
 
       {error ? <p className="form-error">{error}</p> : null}
@@ -329,13 +389,18 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         <article className="student-card student-card--wide senescyt-download-card senescyt-action-card">
           <div className="card-head">
             <div>
-              <p className="eyebrow">Descargas ZIP</p>
+              <p className="eyebrow">Descargas</p>
               <h3>Generación por carrera y faltantes</h3>
               <p className="report-description">
-                Cada ZIP contiene un Excel por carrera. Los faltantes incluyen lista sin duplicidad y detalle de campos pendientes.
+                {target === 'docentes'
+                  ? 'Cada ZIP contiene un Excel por carrera con el modelo SENESCYT de docentes, sin duplicados dentro de cada matriz.'
+                  : 'Cada ZIP contiene un Excel por carrera con el modelo SENESCYT de estudiantes. Los faltantes incluyen el detalle de campos pendientes.'}
+              </p>
+              <p className="report-description">
+                Solo registros actualmente activos. Los datos personales y las horas docentes corresponden a la información registrada actualmente; no a una reconstrucción histórica.
               </p>
             </div>
-            <span>{report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta'}</span>
+            <span>{reportCurrent && report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta vigente'}</span>
           </div>
 
           <div className="senescyt-download-actions">
@@ -343,7 +408,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
               type="button"
               className="senescyt-action-button senescyt-action-button--primary"
               onClick={() => void download(target, 'completo')}
-              disabled={downloading === `${target}-completo`}
+              disabled={!reportCurrent || loading || !!downloading}
             >
               {downloading === `${target}-completo`
                 ? 'Generando...'
@@ -353,7 +418,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
               type="button"
               className="senescyt-action-button senescyt-action-button--secondary"
               onClick={() => void download(target, 'faltantes')}
-              disabled={downloading === `${target}-faltantes`}
+              disabled={!reportCurrent || loading || !!downloading}
             >
               {downloading === `${target}-faltantes`
                 ? 'Generando...'
@@ -377,6 +442,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
                 type="button"
                 className="senescyt-action-button senescyt-action-button--primary"
                 onClick={() => setPreviewOpen(true)}
+                disabled={!reportCurrent || loading}
               >
                 Vista previa
               </button>
@@ -385,7 +451,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         </article>
       </section>
 
-      {previewOpen ? (
+      {previewOpen && reportCurrent ? (
         <div className="senescyt-modal-backdrop senescyt-preview-backdrop" role="presentation">
           <section
             className="senescyt-modal senescyt-preview-modal"
@@ -478,7 +544,7 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
         </div>
       ) : null}
 
-      {detailRow ? (
+      {detailRow && reportCurrent ? (
         <div className="senescyt-modal-backdrop senescyt-modal-backdrop--stacked" role="presentation">
           <section
             className="senescyt-modal senescyt-detail-modal"

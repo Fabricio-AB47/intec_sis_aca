@@ -7846,6 +7846,12 @@ export type SenescytCatalogCareer = {
 
 export type SenescytCatalogResponse = {
   careers?: SenescytCatalogCareer[]
+  periods?: {
+    codigo_periodo: number
+    nombre_periodo: string
+    fecha_inicio?: string | null
+    fecha_fin?: string | null
+  }[]
   targets?: SenescytTarget[]
   export_modes?: SenescytExportMode[]
   detail?: string
@@ -7902,6 +7908,9 @@ export type SenescytAuditResponse = {
   generated_at?: string
   target?: SenescytTarget
   career_filter?: string[] | null
+  period_filter?: number[]
+  cutoff_date?: string | null
+  active_only?: boolean
   summary?: SenescytAuditSummary
   careers?: SenescytAuditCareer[]
   rows?: SenescytAuditRow[]
