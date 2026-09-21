@@ -110,6 +110,7 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     ),
     _screen("estado-docente", "Estado docente", "Activación, inactivación y observaciones docentes.", "Docencia"),
     _screen("actualizar-datos-estudiante", "Actualización de datos", "Datos personales de estudiantes y docentes.", "Actualización"),
+    _screen("actualizar-datos-personas", "Datos de estudiantes y docentes", "Búsqueda por nombre y edición de datos personales.", "Actualización"),
     _screen(
         "actualizar-correo-intec",
         "Actualización de correo INTEC",
@@ -385,7 +386,7 @@ def _combine_pages(*collections: Iterable[str]) -> tuple[str, ...]:
 _ACADEMIC_PAGES = (
     "dashboard", "preinscripcion", "matricula", "matricula-acad",
     "matricula-docente", "solicitudes-cambio-carrera", "solicitudes-cambio-modalidad",
-    "estado-docente", "actualizar-datos-estudiante",
+    "estado-docente", "actualizar-datos-estudiante", "actualizar-datos-personas",
     "actualizar-correo-intec",
     "reportes-individuales", "admin-notas-asignatura", "reporteria-integral",
     "gestion-sisacademico", "periodo-academico",
@@ -441,6 +442,7 @@ _SYSTEM_GENERATED_ACCESS_USERS = (
 # configurados. La migración solo actúa sobre filas creadas automáticamente por
 # el catálogo, por lo que una decisión posterior del administrador se conserva.
 _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
+    "actualizar-datos-personas": ("ADMINISTRADOR", "ACADEMICO", "BIENESTAR", "RECTOR", "VICERRECTOR"),
     "matricula-acad/ingreso-directo": ("ADMINISTRADOR", "ACADEMICO"),
     "evaluacion-docente-historicas": ("ADMINISTRADOR",),
     "secretaria-general": ("ADMINISTRADOR", "SECRETARIA"),
@@ -466,7 +468,7 @@ DEFAULT_ACCESS: dict[str, tuple[str, ...]] = {
     ),
     "BIENESTAR": _combine_pages(
         (
-            "dashboard", "preinscripcion", "actualizar-datos-estudiante",
+            "dashboard", "preinscripcion", "actualizar-datos-estudiante", "actualizar-datos-personas",
             "admin-notas-asignatura", "reportes-individuales", "reporteria-integral",
             "carnet-institucional",
         ),

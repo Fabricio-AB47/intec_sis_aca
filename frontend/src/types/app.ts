@@ -76,6 +76,7 @@ export type Page =
   | 'estado-docente'
   | 'senescyt-estudiantes'
   | 'actualizar-datos-estudiante'
+  | 'actualizar-datos-personas'
   | 'actualizar-correo-intec'
   | 'preinscripcion'
   | 'reporteria-carreras'
@@ -7754,6 +7755,8 @@ export type LegacyDataUpdateSearchResponse = {
   rows?: LegacyDataUpdatePerson[]
   total?: number
   limit?: number
+  offset?: number
+  has_more?: boolean
   query?: string
   target?: LegacyDataUpdateTarget
   detail?: string

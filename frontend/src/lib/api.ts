@@ -4019,8 +4019,9 @@ export async function updateSenescytStudentData(
 export async function searchLegacyDataUpdate(
   target: LegacyDataUpdateTarget,
   query: string,
+  options: { limit?: number; offset?: number } = {},
 ): Promise<LegacyDataUpdateSearchResponse> {
-  const params = new URLSearchParams({ q: query, limit: '80' })
+  const params = new URLSearchParams({ q: query, limit: String(options.limit ?? 80), offset: String(options.offset ?? 0) })
   return request<LegacyDataUpdateSearchResponse>(
     `/api/students/actualizacion-datos/${encodeURIComponent(target)}/buscar?${params.toString()}`,
   )

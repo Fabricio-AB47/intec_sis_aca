@@ -147,6 +147,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_update_screens_share_one_catalog_group(self) -> None:
         update_pages = {
             "actualizar-datos-estudiante",
+            "actualizar-datos-personas",
             "actualizar-correo-intec",
             "fecha-grado",
             "gestion-sisacademico/actualizacion_est",
@@ -157,6 +158,12 @@ class ScreenAccessCatalogTests(unittest.TestCase):
             with self.subTest(page=page):
                 screen = next(item for item in SCREEN_CATALOG if item["page"] == page)
                 self.assertEqual(screen["group"], "Actualización")
+
+    def test_person_data_directory_is_available_to_academic_staff_not_self_service_roles(self) -> None:
+        for role in ("ADMINISTRADOR", "ACADEMICO", "BIENESTAR"):
+            self.assertIn("actualizar-datos-personas", DEFAULT_ACCESS[role])
+        for role in ("ESTUDIANTE", "DOCENTE"):
+            self.assertNotIn("actualizar-datos-personas", DEFAULT_ACCESS[role])
 
     def test_enrollment_flows_share_one_catalog_group(self) -> None:
         enrollment_pages = {
@@ -575,6 +582,11 @@ class ScreenAccessCatalogTests(unittest.TestCase):
         self.assertEqual(
             {params for _, params in cursor.executions},
             {
+                ("ADMINISTRADOR", "actualizar-datos-personas"),
+                ("ACADEMICO", "actualizar-datos-personas"),
+                ("BIENESTAR", "actualizar-datos-personas"),
+                ("RECTOR", "actualizar-datos-personas"),
+                ("VICERRECTOR", "actualizar-datos-personas"),
                 ("ADMINISTRADOR", "matricula-acad/ingreso-directo"),
                 ("ACADEMICO", "matricula-acad/ingreso-directo"),
                 ("ADMINISTRADOR", "evaluacion-docente-historicas"),

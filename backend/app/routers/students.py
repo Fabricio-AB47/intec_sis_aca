@@ -6320,6 +6320,7 @@ def _numeric_catalog_options(values: list[int | str]) -> list[dict[str, str]]:
 
 
 _YES_NO_OPTIONS = [("1", "Sí"), ("2", "No")]
+_IDENTITY_DOCUMENT_OPTIONS = [("1", "Cédula"), ("2", "Pasaporte")]
 _BLOOD_TYPE_OPTIONS = [
     ("1", "A +"),
     ("2", "A -"),
@@ -6334,9 +6335,11 @@ _BLOOD_TYPE_OPTIONS = [
 
 _LEGACY_STATIC_CATALOGS_BY_TARGET: dict[str, dict[str, list[dict[str, str]]]] = {
     "estudiantes": {
+        "tipodocumento": _catalog_options_from_pairs(_IDENTITY_DOCUMENT_OPTIONS),
         "tiposangre": _catalog_options_from_pairs(_BLOOD_TYPE_OPTIONS),
     },
     "docentes": {
+        "tipoDocumentoId": _catalog_options_from_pairs(_IDENTITY_DOCUMENT_OPTIONS),
         "tiposangre": _catalog_options_from_pairs(_BLOOD_TYPE_OPTIONS),
         "tipoEnfermedadCatastrofica": _catalog_options_from_pairs([
             ("1", "Cancer"),
@@ -6694,6 +6697,8 @@ def _sanitize_student_data_field(field: str, value: Any) -> str:
     text = _clean_cell(value)
     if not text:
         return ""
+    if field == "No_Carnet" and text.upper() == "NA":
+        return "NA"
     if field in {"correo", "correointec"}:
         return text if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text) else ""
     if field in _STUDENT_NUMERIC_TEXT_FIELDS:
@@ -6707,6 +6712,8 @@ def _sanitize_teacher_data_field(field: str, value: Any) -> str:
     text = _clean_cell(value)
     if not text:
         return ""
+    if field == "carnet_conadis" and text.upper() == "NA":
+        return "NA"
     if field in {"correo", "correop"}:
         return text if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text) else ""
     if field in _TEACHER_NUMERIC_TEXT_FIELDS:
@@ -7139,17 +7146,37 @@ def _coerce_data_update_value(field: str, value: Any, metadata: dict[str, Any]) 
     return text
 
 
+def _data_update_search_filter(target: str, query: str) -> tuple[str, list[str]]:
+    if not query:
+        return "1 = 1", []
+
+    def pattern(value: str) -> str:
+        return "%" + value.replace("~", "~~").replace("%", "~%").replace("_", "~_").replace("[", "~[") + "%"
+
+    fields = ["codigo_estud", "Cedula_Est", "correo"] if target == "estudiantes" else ["codigo_doc", "cedula_doc", "correo", "correop"]
+    name_field = "Apellidos_nombre" if target == "estudiantes" else "apellidos_nombre"
+    conditions = [f"TRY_CONVERT(nvarchar(4000), d.[{field}]) COLLATE Latin1_General_CI_AI LIKE ? ESCAPE '~'" for field in fields]
+    params = [pattern(query)] * len(fields)
+    tokens = list(dict.fromkeys(query.split()))
+    conditions.append("(" + " AND ".join(
+        f"d.[{name_field}] COLLATE Latin1_General_CI_AI LIKE ? ESCAPE '~'" for _ in tokens
+    ) + ")")
+    params.extend(pattern(token) for token in tokens)
+    return "(" + " OR ".join(conditions) + ")", params
+
+
 @router.get("/actualizacion-datos/{target}/buscar")
 def search_legacy_data_update_records(
     target: str,
     current_user: Annotated[SessionUser, Depends(_STUDENT_ACCESS)],
     q: str = Query(default="", max_length=120),
     limit: int = Query(default=60, ge=1, le=200),
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
     if target not in {"estudiantes", "docentes"}:
         raise HTTPException(status_code=404, detail="Tipo de actualización no soportado")
-    query = _clean_cell(q)
-    like = f"%{query}%"
+    query = " ".join(_clean_cell(q).split())
+    search_sql, search_params = _data_update_search_filter(target, query)
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -7157,7 +7184,7 @@ def search_legacy_data_update_records(
             if target == "estudiantes":
                 cursor.execute(
                     f"""
-                    SELECT TOP ({limit})
+                    SELECT
                         d.codigo_estud,
                         d.Cedula_Est,
                         d.Apellidos_nombre,
@@ -7173,25 +7200,18 @@ def search_legacy_data_update_records(
                         WHERE TRY_CONVERT(varchar(50), cm.codigo_estud) = TRY_CONVERT(varchar(50), d.codigo_estud)
                         ORDER BY TRY_CONVERT(int, cm.codigo_periodo) DESC, cm.fecha_pago DESC
                     ) c
-                    WHERE
-                        NULLIF(?, '') IS NULL
-                        OR TRY_CONVERT(varchar(50), d.codigo_estud) LIKE ?
-                        OR TRY_CONVERT(varchar(50), d.Cedula_Est) LIKE ?
-                        OR d.Apellidos_nombre LIKE ?
-                        OR d.correo LIKE ?
-                    ORDER BY d.Apellidos_nombre
+                    WHERE {search_sql}
+                    ORDER BY d.Apellidos_nombre, d.codigo_estud
+                    OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
                     """,
-                    query,
-                    like,
-                    like,
-                    like,
-                    like,
+                    *search_params, offset, limit + 1,
                 )
-                rows = [_student_data_summary(row, editable_columns) for row in cursor.fetchall()]
+                records = cursor.fetchall()
+                rows = [_student_data_summary(row, editable_columns) for row in records[:limit]]
             else:
                 cursor.execute(
                     f"""
-                    SELECT TOP ({limit})
+                    SELECT
                         d.codigo_doc,
                         d.cedula_doc,
                         d.apellidos_nombre,
@@ -7200,24 +7220,16 @@ def search_legacy_data_update_records(
                         d.nombreUnidadAcademica AS unidad_academica,
                         {", ".join("d." + _quote_sql_name(column) for column in editable_columns)}
                     FROM dbo.DATOSDOCENTE d
-                    WHERE
-                        NULLIF(?, '') IS NULL
-                        OR TRY_CONVERT(varchar(50), d.codigo_doc) LIKE ?
-                        OR TRY_CONVERT(varchar(50), d.cedula_doc) LIKE ?
-                        OR d.apellidos_nombre LIKE ?
-                        OR d.correo LIKE ?
-                        OR d.correop LIKE ?
-                    ORDER BY d.apellidos_nombre
+                    WHERE {search_sql}
+                    ORDER BY d.apellidos_nombre, d.codigo_doc
+                    OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
                     """,
-                    query,
-                    like,
-                    like,
-                    like,
-                    like,
-                    like,
+                    *search_params, offset, limit + 1,
                 )
-                rows = [_teacher_data_summary(row, editable_columns) for row in cursor.fetchall()]
-            return {"rows": rows, "total": len(rows), "limit": limit, "query": query, "target": target}
+                records = cursor.fetchall()
+                rows = [_teacher_data_summary(row, editable_columns) for row in records[:limit]]
+            return {"rows": rows, "total": len(rows), "limit": limit, "offset": offset,
+                    "has_more": len(records) > limit, "query": query, "target": target}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"No se pudo buscar datos para actualización: {exc}") from exc
 
@@ -7248,9 +7260,11 @@ def _load_legacy_data_update_record(cursor: pyodbc.Cursor, target: str, record_i
             ) c
             WHERE TRY_CONVERT(varchar(50), d.codigo_estud) = ?
                OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.Cedula_Est), '-', ''), ' ', '') = ?
+            ORDER BY CASE WHEN TRY_CONVERT(varchar(50), d.codigo_estud) = ? THEN 0 ELSE 1 END, d.codigo_estud
             """,
             record_id,
             re.sub(r"\D+", "", record_id),
+            record_id,
         )
         row = cursor.fetchone()
         if not row:
@@ -7270,9 +7284,11 @@ def _load_legacy_data_update_record(cursor: pyodbc.Cursor, target: str, record_i
             FROM dbo.DATOSDOCENTE d
             WHERE TRY_CONVERT(varchar(50), d.codigo_doc) = ?
                OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), d.cedula_doc), '-', ''), ' ', '') = ?
+            ORDER BY CASE WHEN TRY_CONVERT(varchar(50), d.codigo_doc) = ? THEN 0 ELSE 1 END, d.codigo_doc
             """,
             record_id,
             re.sub(r"\D+", "", record_id),
+            record_id,
         )
         row = cursor.fetchone()
         if not row:
@@ -7358,9 +7374,12 @@ def update_legacy_data_update_record(
                     FROM dbo.{_quote_sql_name(table)}
                     WHERE TRY_CONVERT(varchar(50), {_quote_sql_name(id_column)}) = ?
                        OR REPLACE(REPLACE(TRY_CONVERT(varchar(50), {_quote_sql_name(cedula_column)}), '-', ''), ' ', '') = ?
+                    ORDER BY CASE WHEN TRY_CONVERT(varchar(50), {_quote_sql_name(id_column)}) = ? THEN 0 ELSE 1 END,
+                        {_quote_sql_name(id_column)}
                     """,
                     record_id,
                     re.sub(r"\D+", "", record_id),
+                    record_id,
                 )
                 current_row = cursor.fetchone()
                 if not current_row:
@@ -7387,7 +7406,7 @@ def update_legacy_data_update_record(
                     if field in writable_columns and _clean_cell(value) != _clean_cell(current_fields.get(field))
                 }
                 if not valid_updates:
-                    response = _load_legacy_data_update_record(cursor, target, record_id)
+                    response = _load_legacy_data_update_record(cursor, target, resolved_record_id)
                     response.update({
                         "message": "No hay cambios nuevos para guardar",
                         "updated_fields": [],
@@ -7413,7 +7432,7 @@ def update_legacy_data_update_record(
             if affected == 0:
                 raise HTTPException(status_code=404, detail="Registro no encontrado para actualizar")
             conn.commit()
-            response = _load_legacy_data_update_record(cursor, target, record_id)
+            response = _load_legacy_data_update_record(cursor, target, resolved_record_id)
             response.update({
                 "message": "Datos actualizados correctamente",
                 "updated_fields": list(valid_updates.keys()),

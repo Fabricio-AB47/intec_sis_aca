@@ -69,6 +69,7 @@ const ACADEMIC_ALLOWED_PAGES = new Set<Page>([
   'solicitudes-cambio-modalidad',
   'estado-docente',
   'actualizar-datos-estudiante',
+  'actualizar-datos-personas',
   'actualizar-correo-intec',
   'reportes-individuales',
   'admin-notas-asignatura',
@@ -1218,6 +1219,9 @@ export function useReporteriaApp() {
   const openActualizarDatosEstudiantePage = () => {
     activateAssignedScreen('actualizar-datos-estudiante')
   }
+  const openActualizarDatosPersonasPage = () => {
+    activateAssignedScreen('actualizar-datos-personas')
+  }
   const openActualizarCorreoIntecPage = () => {
     activateAssignedScreen('actualizar-correo-intec')
   }
@@ -1435,6 +1439,7 @@ export function useReporteriaApp() {
     openEstadoDocentePage,
     openSenescytEstudiantesPage,
     openActualizarDatosEstudiantePage,
+    openActualizarDatosPersonasPage,
     openActualizarCorreoIntecPage,
     openPreinscripcionPage,
     openPreinscripcionStage,

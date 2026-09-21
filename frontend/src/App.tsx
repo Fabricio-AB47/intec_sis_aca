@@ -311,7 +311,9 @@ function App() {
     } else if (app.activePage === 'senescyt-estudiantes') {
       pageContent = <SenescytEstudiantesView displayName={app.displayName} />
     } else if (app.activePage === 'actualizar-datos-estudiante') {
-      pageContent = <ActualizarDatosEstudianteView displayName={app.displayName} />
+      pageContent = <ActualizarDatosEstudianteView key="documento" displayName={app.displayName} />
+    } else if (app.activePage === 'actualizar-datos-personas') {
+      pageContent = <ActualizarDatosEstudianteView key="personas" displayName={app.displayName} searchMode="name" />
     } else if (app.activePage === 'actualizar-correo-intec') {
       pageContent = <ActualizarCorreoIntecView displayName={app.displayName} />
     } else if (app.activePage === 'preinscripcion') {
@@ -627,6 +629,7 @@ function App() {
           onOpenEstadoDocente={app.openEstadoDocentePage}
           onOpenSenescytEstudiantes={app.openSenescytEstudiantesPage}
           onOpenActualizarDatosEstudiante={app.openActualizarDatosEstudiantePage}
+          onOpenActualizarDatosPersonas={app.openActualizarDatosPersonasPage}
           onOpenActualizarCorreoIntec={app.openActualizarCorreoIntecPage}
           onOpenPreinscripcion={app.openPreinscripcionStage}
           onOpenReporteriaCarreras={app.openReporteriaCarrerasPage}

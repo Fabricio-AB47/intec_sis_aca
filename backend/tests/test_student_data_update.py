@@ -11,6 +11,26 @@ from app.core.security import SessionUser
 
 
 class StudentDataUpdateSchemaTests(unittest.TestCase):
+    def test_identity_document_catalogs_use_institutional_codes_not_generic_tables(self) -> None:
+        for target, field in [("estudiantes", "tipodocumento"), ("docentes", "tipoDocumentoId")]:
+            with self.subTest(target=target):
+                cursor = Mock()
+                catalogs = students._legacy_data_update_catalogs(cursor, [field], target)
+                self.assertEqual(catalogs, {field: [
+                    {"value": "1", "label": "C\u00e9dula"},
+                    {"value": "2", "label": "Pasaporte"},
+                ]})
+                cursor.execute.assert_not_called()
+
+    def test_identity_document_values_keep_their_codes_when_saved(self) -> None:
+        for field in ["tipodocumento", "tipoDocumentoId"]:
+            for code in ["1", "2"]:
+                for data_type, expected in [("nchar", code), ("int", int(code)), ("numeric", Decimal(code))]:
+                    with self.subTest(field=field, code=code, data_type=data_type):
+                        self.assertEqual(students._coerce_data_update_value(field, code, {
+                            "data_type": data_type, "max_length": 1, "nullable": True,
+                        }), expected)
+
     def test_data_update_uses_only_columns_declared_for_each_source_table(self) -> None:
         self.assertIn("paisResidenciaId", students._LEGACY_STUDENT_DATA_FIELDS)
         self.assertIn("codprov", students._LEGACY_STUDENT_DATA_FIELDS)

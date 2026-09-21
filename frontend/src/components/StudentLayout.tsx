@@ -48,6 +48,7 @@ type StudentLayoutProps = {
   onOpenEstadoDocente: () => void
   onOpenSenescytEstudiantes: () => void
   onOpenActualizarDatosEstudiante: () => void
+  onOpenActualizarDatosPersonas: () => void
   onOpenActualizarCorreoIntec: () => void
   onOpenPreinscripcion: (stage?: PreinscriptionStage) => void
   onOpenReporteriaCarreras: () => void
@@ -150,6 +151,7 @@ const academicPages = new Set<Page>([
   'solicitudes-cambio-modalidad',
   'estado-docente',
   'actualizar-datos-estudiante',
+  'actualizar-datos-personas',
   'actualizar-correo-intec',
   'reportes-individuales',
   'admin-notas-asignatura',
@@ -595,6 +597,7 @@ export function StudentLayout({
   onOpenEstadoDocente,
   onOpenSenescytEstudiantes,
   onOpenActualizarDatosEstudiante,
+  onOpenActualizarDatosPersonas,
   onOpenActualizarCorreoIntec,
   onOpenPreinscripcion,
   onOpenReporteriaCarreras,
@@ -773,6 +776,12 @@ export function StudentLayout({
         description: 'Actualizar información personal de estudiantes y docentes.',
         page: 'actualizar-datos-estudiante',
         action: onOpenActualizarDatosEstudiante,
+      },
+      {
+        label: 'Datos de estudiantes y docentes',
+        description: 'Buscar por nombre y completar información personal.',
+        page: 'actualizar-datos-personas',
+        action: onOpenActualizarDatosPersonas,
       },
       {
         label: 'Actualizar malla por carrera',

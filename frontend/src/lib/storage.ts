@@ -20,6 +20,7 @@ function isPage(value: string): value is Page {
     value === 'estado-docente' ||
     value === 'senescyt-estudiantes' ||
     value === 'actualizar-datos-estudiante' ||
+    value === 'actualizar-datos-personas' ||
     value === 'actualizar-correo-intec' ||
     value === 'preinscripcion' ||
     value === 'reporteria-carreras' ||

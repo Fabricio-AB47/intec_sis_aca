@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ChevronLeft, ChevronRight, GraduationCap, LoaderCircle, Pencil, RotateCcw, Save, Search, Trash2, Users, X } from 'lucide-react'
+import './ActualizarDatosPersonas.css'
 
 import {
   fetchLegacyDataUpdateRecord,
@@ -13,6 +15,7 @@ import type {
 
 type ActualizarDatosEstudianteViewProps = {
   displayName: string
+  searchMode?: 'document' | 'name'
 }
 
 type DataUpdateProfileMatch = {
@@ -379,7 +382,14 @@ const TEACHER_FIELD_LABELS: Record<string, string> = {
   tiposangre: 'Tipo de sangre',
 }
 
+const IDENTITY_DOCUMENT_OPTIONS = [
+  { value: '1', label: 'Cédula' },
+  { value: '2', label: 'Pasaporte' },
+]
+
 const FALLBACK_FIELD_CATALOGS: Record<string, Array<{ value: string; label: string }>> = {
+  tipodocumento: IDENTITY_DOCUMENT_OPTIONS,
+  tipoDocumentoId: IDENTITY_DOCUMENT_OPTIONS,
   tiposangre: [
     { value: '1', label: 'A +' },
     { value: '2', label: 'A -' },
@@ -396,7 +406,6 @@ const DATE_FIELDS = new Set(['Fecha_Nac', 'Fecha_Ingreso', 'fechaMatricula', 'fe
 const NUMERIC_FIELDS = new Set([
   'Cedula_Est',
   'cedula_doc',
-  'No_Carnet',
   'NumHogar',
   'Numpersonasvive',
   'IngresoHogar',
@@ -408,7 +417,6 @@ const NUMERIC_FIELDS = new Set([
   'numPubRevistasCientifIndexadas',
   'nroasignaturasdocente',
   'numDomicilio',
-  'carnet_conadis',
   'nroHorasLaborablesSemanaEnCarreraPrograma',
   'nroHorasClaseSemanaCarreraPrograma',
   'nroHorasInvestigacionSemanaCarreraPrograma',
@@ -601,8 +609,18 @@ function groupedColumns(columns: string[], target: LegacyDataUpdateTarget): Arra
   return rest.length ? [...groups, { title: target === 'docentes' ? 'Otros campos docente' : 'Otros campos estudiante', fields: rest }] : groups
 }
 
-export function ActualizarDatosEstudianteView({ displayName }: Readonly<ActualizarDatosEstudianteViewProps>) {
+export function ActualizarDatosEstudianteView({ displayName, searchMode = 'document' }: Readonly<ActualizarDatosEstudianteViewProps>) {
+  const directoryMode = searchMode === 'name'
   const [target, setTarget] = useState<LegacyDataUpdateTarget>('estudiantes')
+  const [results, setResults] = useState<LegacyDataUpdatePerson[]>([])
+  const [searchedQuery, setSearchedQuery] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const searchVersion = useRef(0)
+  const detailVersion = useRef(0)
+  const editor = useRef<HTMLDialogElement>(null)
+  const closeNotice = useRef<HTMLDialogElement>(null)
+  const [closeRequested, setCloseRequested] = useState(false)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<LegacyDataUpdatePerson | null>(null)
   const [detail, setDetail] = useState<LegacyDataUpdateDetailResponse | null>(null)
@@ -614,10 +632,11 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [messageKind, setMessageKind] = useState<'success' | 'info'>('success')
 
   const columns = useMemo(() => detail?.columns || [], [detail?.columns])
   const catalogs = detail?.catalogs || {}
-  const fieldMetadata = detail?.field_metadata || {}
+  const fieldMetadata = useMemo(() => detail?.field_metadata || {}, [detail?.field_metadata])
   const visibleColumns = useMemo(
     () => target === 'estudiantes' ? columns.filter((field) => shouldShowStudentField(field, formFields)) : columns,
     [columns, formFields, target],
@@ -627,8 +646,71 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
     () => target === 'estudiantes' ? applyStudentDerivedValues(formFields) : formFields,
     [formFields, target],
   )
-  const changedFields = useMemo(() => buildChangedFields(preparedFormFields, originalFields), [originalFields, preparedFormFields])
+  const changedFields = useMemo(() => Object.fromEntries(
+    Object.entries(buildChangedFields(preparedFormFields, originalFields)).filter(([field]) => (
+      columns.includes(field) && !fieldMetadata[field]?.readonly
+      && !(target === 'estudiantes' && STUDENT_READONLY_FIELDS.has(field))
+    )),
+  ), [columns, fieldMetadata, originalFields, preparedFormFields, target])
   const changedCount = Object.keys(changedFields).length
+
+  useEffect(() => () => {
+    searchVersion.current += 1
+    detailVersion.current += 1
+  }, [])
+
+  useEffect(() => {
+    if (selected && editor.current && !editor.current.open) editor.current.showModal()
+  }, [selected])
+
+  useEffect(() => {
+    if (closeRequested && closeNotice.current && !closeNotice.current.open) {
+      closeNotice.current.showModal()
+      closeNotice.current.querySelector<HTMLButtonElement>('[data-continue-editing]')?.focus()
+    } else if (!closeRequested) {
+      closeNotice.current?.close()
+    }
+  }, [closeRequested])
+
+  async function runNameSearch(nextOffset = 0, searchQuery = query) {
+    const cleanQuery = searchQuery.trim()
+    if (cleanQuery.length < 2) {
+      setError('Ingrese al menos dos caracteres del nombre, apellido o identificación.')
+      return
+    }
+    const version = ++searchVersion.current
+    setLoading(true)
+    setError('')
+    setMessage('')
+    setResults([])
+    setHasMore(false)
+    setSearchedQuery('')
+    try {
+      const payload = await searchLegacyDataUpdate(target, cleanQuery, { limit: 20, offset: nextOffset })
+      if (version !== searchVersion.current) return
+      setResults(payload.rows || [])
+      setSearchedQuery(cleanQuery)
+      setOffset(nextOffset)
+      setHasMore(Boolean(payload.has_more))
+    } catch (requestError) {
+      if (version === searchVersion.current) setError(handleError(requestError, 'No se pudo realizar la búsqueda.'))
+    } finally {
+      if (version === searchVersion.current) setLoading(false)
+    }
+  }
+
+  function changeTarget(nextTarget: LegacyDataUpdateTarget) {
+    if (target === nextTarget) return
+    searchVersion.current += 1
+    setTarget(nextTarget)
+    setResults([])
+    setSearchedQuery('')
+    setOffset(0)
+    setHasMore(false)
+    setLoading(false)
+    setError('')
+    setMessage('')
+  }
 
   async function runSearch() {
     const cleanQuery = query.trim()
@@ -681,53 +763,72 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   }
 
   async function loadPerson(person: LegacyDataUpdatePerson, nextTarget: LegacyDataUpdateTarget = target) {
+    const version = ++detailVersion.current
+    setTarget(nextTarget)
     setSelected(person)
+    setDetail(null)
+    setFormFields({})
+    setOriginalFields({})
     setDetailLoading(true)
     setError('')
     setMessage('')
     try {
       const payload = await fetchLegacyDataUpdateRecord(nextTarget, person.id)
+      if (version !== detailVersion.current) return
       const fields = payload.fields || {}
       const normalizedFields = nextTarget === 'estudiantes' ? applyStudentDerivedValues(fields) : fields
       setDetail(payload)
       setFormFields(normalizedFields)
       setOriginalFields(fields)
     } catch (requestError) {
+      if (version !== detailVersion.current) return
       setError(handleError(requestError, 'Error cargando datos para actualización.'))
       setSelected(null)
       setDetail(null)
       setFormFields({})
       setOriginalFields({})
     } finally {
-      setDetailLoading(false)
+      if (version === detailVersion.current) setDetailLoading(false)
     }
   }
 
-  async function saveChanges() {
+  async function saveChanges(closeAfterSave = false) {
+    if (saving || detailLoading) return
     if (!selected || changedCount === 0) {
       setMessage('No hay cambios para guardar.')
+      setMessageKind('info')
       return
     }
     setSaving(true)
     setError('')
     setMessage('')
+    const version = detailVersion.current
     try {
       const payload = await updateLegacyDataUpdateRecord(target, selected.id, changedFields)
+      if (version !== detailVersion.current) return
       const fields = payload.fields || {}
       const normalizedFields = target === 'estudiantes' ? applyStudentDerivedValues(fields) : fields
       setDetail(payload)
       setFormFields(normalizedFields)
       setOriginalFields(fields)
       setSelected(payload.person || selected)
-      setMessage(payload.message || 'Datos actualizados.')
+      if (payload.person) setResults((current) => current.map((person) => person.id === selected.id ? payload.person! : person))
+      const savedMessage = payload.message || 'Datos actualizados.'
+      setMessageKind('success')
+      if (closeAfterSave) {
+        finishClose(`${savedMessage} · ${payload.person?.nombre || selected.nombre}`, 'success')
+      } else {
+        setMessage(savedMessage)
+      }
     } catch (requestError) {
-      setError(handleError(requestError, 'Error actualizando datos.'))
+      if (version === detailVersion.current) setError(handleError(requestError, 'Error actualizando datos.'))
     } finally {
-      setSaving(false)
+      if (version === detailVersion.current) setSaving(false)
     }
   }
 
   function updateField(field: string, value: string) {
+    setMessage('')
     setFormFields((current) => {
       const next = { ...current, [field]: value }
       if (valueText(current[field]) !== value) {
@@ -740,11 +841,33 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
   }
 
   function closeSubscreen() {
+    if (saving) return
+    if (changedCount > 0) {
+      setCloseRequested(true)
+      return
+    }
+    finishClose()
+  }
+
+  function continueEditing() {
+    if (saving) return
+    setCloseRequested(false)
+  }
+
+  function finishClose(notice = message, kind = messageKind) {
+    detailVersion.current += 1
+    setCloseRequested(false)
+    closeNotice.current?.close()
+    editor.current?.close()
+    setDetailLoading(false)
+    setSaving(false)
     setSelected(null)
     setDetail(null)
     setFormFields({})
     setOriginalFields({})
-    setMessage('')
+    setMessage(notice)
+    setMessageKind(kind)
+    setError('')
   }
 
   function closeProfileSelector() {
@@ -762,10 +885,10 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
       <header className="student-topbar">
         <div>
           <p className="eyebrow">Actualización</p>
-          <h1>Actualización de datos</h1>
-          <p className="report-description">
+          <h1>{directoryMode ? 'Datos de estudiantes y docentes' : 'Actualización de datos'}</h1>
+          {!directoryMode && <p className="report-description">
             Edita solo la información que debe completar la persona. Los datos de matrícula, jornada, becas y campos repetitivos se toman del sistema.
-          </p>
+          </p>}
         </div>
 
         <div className="student-topbar__right">
@@ -778,7 +901,60 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
         </div>
       </header>
 
-      <section className="data-update-workspace">
+      {directoryMode ? (
+        <section className="data-update-directory" aria-label="Actualización de personas">
+          <div className="data-update-directory__tabs" role="tablist" aria-label="Tipo de persona">
+            {(['estudiantes', 'docentes'] as const).map((value) => (
+              <button key={value} id={`person-tab-${value}`} type="button" role="tab" aria-selected={target === value}
+                aria-controls="person-results" onClick={() => changeTarget(value)}>
+                {value === 'estudiantes' ? <GraduationCap size={18} aria-hidden="true" /> : <Users size={18} aria-hidden="true" />}
+                {value === 'estudiantes' ? 'Estudiantes' : 'Docentes'}
+              </button>
+            ))}
+          </div>
+          <div id="person-results" role="tabpanel" aria-labelledby={`person-tab-${target}`}>
+            <form className="data-update-directory__search" onSubmit={(event) => { event.preventDefault(); void runNameSearch() }}>
+              <label htmlFor="person-query">Nombre, apellido, cédula o código
+                <input id="person-query" type="search" value={query} maxLength={120} autoComplete="off"
+                  onChange={(event) => setQuery(event.target.value)} placeholder={target === 'estudiantes' ? 'Buscar estudiante' : 'Buscar docente'} />
+              </label>
+              <button type="submit" disabled={loading}>
+                {loading ? <LoaderCircle className="data-update-spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+                {loading ? 'Buscando...' : 'Buscar'}
+              </button>
+            </form>
+            {!selected && error ? <p className="form-error" role="alert">{error}</p> : null}
+            {!selected && message ? <p className={`form-success data-update-notice data-update-notice--${messageKind}`} role="status">{message}</p> : null}
+            <div className="data-update-directory__status" role="status">
+              {loading ? 'Buscando coincidencias...' : searchedQuery
+                ? `${results.length} coincidencia(s) en esta página para «${searchedQuery}»`
+                : target === 'estudiantes' ? 'Sin estudiantes seleccionados' : 'Sin docentes seleccionados'}
+            </div>
+            {results.length > 0 ? <>
+              <div className="data-update-directory__table">
+                <table>
+                  <thead><tr><th>Nombre</th><th>Identificación</th><th>{target === 'estudiantes' ? 'Carrera' : 'Unidad académica'}</th><th>Pendientes</th><th>Acción</th></tr></thead>
+                  <tbody>{results.map((person) => (
+                    <tr key={person.id}>
+                      <td><strong>{person.nombre}</strong><small>Código {person.codigo}</small>{person.correo && <small>{person.correo}</small>}</td>
+                      <td data-label="Identificación">{person.cedula || '-'}</td>
+                      <td data-label={target === 'estudiantes' ? 'Carrera' : 'Unidad académica'}>{person.carrera || '-'}</td>
+                      <td data-label="Campos pendientes">{formatNumber(person.campos_pendientes)}</td>
+                      <td><button type="button" title={`Editar datos de ${person.nombre}`} aria-label={`Editar datos de ${person.nombre}`}
+                        onClick={() => void loadPerson(person)}><Pencil size={16} aria-hidden="true" /><span>Editar datos</span></button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              <nav className="data-update-directory__pagination" aria-label="Paginación de personas">
+                <span>Página {Math.floor(offset / 20) + 1}</span>
+                <button type="button" disabled={loading || offset === 0} onClick={() => void runNameSearch(offset - 20, searchedQuery)} aria-label="Página anterior" title="Página anterior"><ChevronLeft size={18} /></button>
+                <button type="button" disabled={loading || !hasMore} onClick={() => void runNameSearch(offset + 20, searchedQuery)} aria-label="Página siguiente" title="Página siguiente"><ChevronRight size={18} /></button>
+              </nav>
+            </> : !loading && searchedQuery ? <p className="data-update-directory__empty">No se encontraron {target} para «{searchedQuery}».</p> : null}
+          </div>
+        </section>
+      ) : <section className="data-update-workspace">
         <article className="student-card data-update-search-card">
           <div className="card-head">
             <div>
@@ -810,13 +986,13 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
             </button>
           </form>
 
-          {error ? <p className="form-error">{error}</p> : null}
-          {message ? <p className="form-success">{message}</p> : null}
+          {!selected && error ? <p className="form-error" role="alert">{error}</p> : null}
+          {!selected && message ? <p className={`form-success data-update-notice data-update-notice--${messageKind}`} role="status">{message}</p> : null}
 
           {!selected && !error ? <p className="data-update-search-help">Se verificará la identificación en los registros de estudiantes y docentes.</p> : null}
         </article>
 
-      </section>
+      </section>}
 
       {profileMatches.length > 1 ? (
         <div className="senescyt-update-subscreen-backdrop data-update-profile-backdrop" role="presentation">
@@ -869,21 +1045,25 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
       ) : null}
 
       {selected ? (
-        <div className="senescyt-update-subscreen-backdrop" role="presentation">
-          <section className="senescyt-update-subscreen" role="dialog" aria-modal="true" aria-label="Subpantalla de actualización de datos">
+        <>
+          <dialog ref={editor} className="senescyt-update-subscreen data-update-editor" aria-labelledby="data-update-editor-title"
+            onCancel={(event) => { event.preventDefault(); closeSubscreen() }}>
             <div className="senescyt-update-subscreen__head">
               <div>
                 <span>{target === 'docentes' ? 'Actualizar docente' : 'Actualizar estudiante'}</span>
-                <h2>{selected.nombre}</h2>
+                <h2 id="data-update-editor-title">{selected.nombre}</h2>
               </div>
               <div className="senescyt-update-subscreen__actions">
                 <span>{detailLoading ? 'Cargando...' : `${formatNumber(changedCount)} cambio(s)`}</span>
-                <button type="button" onClick={closeSubscreen}>Cerrar</button>
+                <button type="button" onClick={closeSubscreen} disabled={saving} aria-label="Cerrar ficha" title="Cerrar ficha"><X size={20} aria-hidden="true" /></button>
               </div>
             </div>
 
+            {error ? <p className="form-error data-update-editor__message" role="alert">{error}</p> : null}
+            {message ? <p className={`form-success data-update-editor__message data-update-notice--${messageKind}`} role="status">{message}</p> : null}
+
             {detail?.person ? (
-              <div className="matricula-acad-preview senescyt-update-summary">
+              <div className="data-update-editor__summary">
                 <div>
                   <span>Cédula</span>
                   <strong>{detail.person.cedula}</strong>
@@ -907,6 +1087,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
               <>
                 <div className="senescyt-update-actions">
                   <button type="button" onClick={() => void saveChanges()} disabled={saving || changedCount === 0}>
+                    <Save size={17} aria-hidden="true" />
                     {saving ? 'Guardando...' : 'Guardar cambios'}
                   </button>
                   <button
@@ -915,6 +1096,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                     onClick={() => setFormFields(originalFields)}
                     disabled={saving || changedCount === 0}
                   >
+                    <RotateCcw size={17} aria-hidden="true" />
                     Restaurar
                   </button>
                 </div>
@@ -955,7 +1137,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                               <select
                                 value={valueText(formFields[field])}
                                 onChange={(event) => updateField(field, event.target.value)}
-                                disabled={isReadonly || dependencyUnavailable}
+                                disabled={saving || isReadonly || dependencyUnavailable}
                               >
                                 <option value="">
                                   {dependencyMissing && dependency
@@ -977,6 +1159,7 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                                 value={valueText(formFields[field])}
                                 onChange={(event) => updateField(field, event.target.value)}
                                 readOnly={isReadonly}
+                                disabled={saving}
                                 maxLength={metadata?.max_length || undefined}
                               />
                             )}
@@ -990,10 +1173,39 @@ export function ActualizarDatosEstudianteView({ displayName }: Readonly<Actualiz
                 </div>
               </>
             ) : (
-              <p className="form-success">Cargando campos editables...</p>
+              <p className="data-update-editor__message" role="status">{detailLoading ? 'Cargando campos editables...' : 'No hay campos editables disponibles.'}</p>
             )}
-          </section>
-        </div>
+          </dialog>
+          <dialog ref={closeNotice} className="data-update-close-notice" role="alertdialog"
+            aria-labelledby="data-update-close-title" aria-describedby="data-update-close-description"
+            onCancel={(event) => { event.preventDefault(); continueEditing() }}>
+            <header className="data-update-close-notice__head">
+              <AlertTriangle size={24} aria-hidden="true" />
+              <h2 id="data-update-close-title">Cambios sin guardar</h2>
+              <button type="button" className="data-update-close-notice__dismiss" disabled={saving}
+                onClick={continueEditing} aria-label="Cancelar cierre" title="Cancelar cierre"><X size={20} aria-hidden="true" /></button>
+            </header>
+            <div className="data-update-close-notice__body">
+              <strong>{selected.nombre}</strong>
+              <p>{target === 'docentes' ? 'Docente' : 'Estudiante'} · Código {selected.codigo}</p>
+              <p id="data-update-close-description">{changedCount} campo(s) con cambios pendientes de guardar.</p>
+              <ul aria-label="Campos modificados">
+                {Object.keys(changedFields).map((field) => <li key={field}>{fieldLabel(field, target)}</li>)}
+              </ul>
+              {error ? <p className="form-error" role="alert">{error}</p> : null}
+              {saving ? <p className="data-update-close-notice__saving" role="status"><LoaderCircle className="data-update-spin" size={18} aria-hidden="true" />Guardando datos...</p> : null}
+            </div>
+            <footer className="data-update-close-notice__actions">
+              <button type="button" data-continue-editing disabled={saving} onClick={continueEditing}>Continuar editando</button>
+              <button type="button" className="data-update-close-notice__discard" disabled={saving}
+                onClick={() => finishClose(`Se descartaron los cambios pendientes de ${selected.nombre}. Los datos guardados se conservaron.`, 'info')}>
+                <Trash2 size={17} aria-hidden="true" />Descartar cambios
+              </button>
+              <button type="button" className="data-update-close-notice__save" disabled={saving || changedCount === 0}
+                onClick={() => void saveChanges(true)}><Save size={17} aria-hidden="true" />{saving ? 'Guardando...' : 'Guardar y cerrar'}</button>
+            </footer>
+          </dialog>
+        </>
       ) : null}
     </>
   )
