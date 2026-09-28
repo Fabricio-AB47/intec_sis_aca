@@ -1,4 +1,5 @@
 import unittest
+from xml.etree.ElementTree import fromstring
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
@@ -92,6 +93,31 @@ class SecretariaGeneralRulesTests(unittest.TestCase):
             candidate_codes=[101, 202],
         )
         self.assertEqual(result["total"], 0)
+
+    @patch("app.routers.secretaria_general.get_connection")
+    def test_large_missing_document_filter_uses_one_structured_parameter(self, connection_factory):
+        cursor = connection_factory.return_value.__enter__.return_value.cursor.return_value
+        cursor.description = []
+        cursor.fetchall.return_value = []
+        _query_candidates(candidate_codes=list(range(1, 3002)) + [1, 2])
+        sql, *parameters = cursor.execute.call_args.args
+        self.assertIn("CAST(? AS xml)", sql)
+        self.assertEqual(len(parameters), 12)
+        self.assertTrue(sql.startswith('DECLARE @candidate_codes xml'))
+        self.assertIn("FROM @candidate_codes.nodes('/codes/code')", sql)
+        codes = fromstring(parameters[0])
+        self.assertEqual(len(codes), 3001)
+        self.assertEqual(codes[0].text, '1')
+        self.assertEqual(codes[-1].text, '3001')
+
+    @patch("app.routers.secretaria_general._case_summaries", return_value={})
+    @patch("app.routers.secretaria_general._query_candidates")
+    def test_empty_later_page_refreshes_first_page_instead_of_false_zero(self, query, _summaries):
+        query.side_effect = [([], 0), ([{'codigo_estud': 101}], 1)]
+        result = secretaria_candidates(profile(), page=3)
+        self.assertEqual(result['page'], 1)
+        self.assertEqual(result['total'], 1)
+        self.assertEqual(query.call_count, 2)
 
     def test_observation_requires_a_useful_reason(self) -> None:
         payload = RequirementReviewPayload(estado="OBSERVADO", observacion="x")

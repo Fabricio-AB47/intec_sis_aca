@@ -8,7 +8,10 @@
     "dev": "vite",
     "dev:full": "node scripts/free-vite-port.cjs && node scripts/ensure-backend.cjs && vite",
     "check:screens": "node scripts/check-screen-catalog.cjs",
-    "build": "npm run check:screens && tsc -b && vite build",
+    "check:styles": "node scripts/unify-styles.cjs --check",
+    "check:frontend": "node scripts/check-single-frontend.cjs",
+    "test:frontend": "node --test scripts/check-single-frontend.test.cjs",
+    "build": "npm run check:frontend && npm run check:screens && npm run check:styles && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -27,6 +30,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "postcss": "^8.5.26",
+    "postcss-value-parser": "^4.2.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4"

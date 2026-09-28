@@ -327,6 +327,7 @@ MOODLE_FLOW_CATALOG: tuple[dict[str, str], ...] = (
     _flow("moodle", "resources", "Recursos por curso", "Moodle"),
     _flow("moodle", "grades", "Migración de notas", "Moodle"),
     _flow("moodle", "manual-enrollment", "Matricular usuarios", "Moodle"),
+    _flow("moodle", "enrollment-validation", "Validación de matrículas Moodle", "Integraciones"),
     _flow("moodle", "status", "Estado de la integración", "Moodle"),
     _flow("moodle", "users", "Usuarios", "Moodle"),
 )
@@ -449,6 +450,7 @@ _NEW_SCREEN_DEFAULT_ASSIGNMENTS: dict[str, tuple[str, ...]] = {
     "moodle/academic-enrollment": ("ADMINISTRADOR",),
     "moodle/course-cloning": ("ADMINISTRADOR",),
     "moodle/manual-enrollment": ("ADMINISTRADOR",),
+    "moodle/enrollment-validation": ("ADMINISTRADOR",),
     "solicitudes-cambio-carrera": ("ACADEMICO", "SECRETARIA"),
     "solicitudes-cambio-modalidad": ("ACADEMICO", "SECRETARIA"),
     "practicas-institucionales": ("DOCENTE",),
@@ -542,6 +544,7 @@ _SPLIT_SCREEN_MIGRATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "moodle/resources",
             "moodle/grades",
             "moodle/manual-enrollment",
+            "moodle/enrollment-validation",
             "moodle/status",
             "moodle/users",
         ),

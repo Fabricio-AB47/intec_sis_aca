@@ -1,0 +1,50 @@
+@layer legacy {
+  .student-main > .unified-alert-indicator { box-sizing: border-box; min-height: 76px; margin: 0 0 16px; padding: 12px 16px; gap: 14px; border-radius: var(--ui-radius-control); }
+  .student-main > .unified-alert-indicator:hover { transform: none; }
+  .unified-alert-indicator .moodle-grade-alert-indicator__action { box-sizing: border-box; min-width: 132px; height: var(--ui-control-height); border-radius: var(--ui-radius-control); }
+  dialog.unified-alert-center { box-sizing: border-box; padding: 0; margin: auto; color: var(--ui-text); background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-panel); }
+  dialog.unified-alert-center::backdrop { background: color-mix(in srgb, var(--ui-text) 55%, transparent); }
+  .unified-alert-center .unified-alert-center__header { padding: 16px 20px; gap: 16px; }
+  .unified-alert-center .unified-alert-center__header h2 { font-size: var(--ui-size-20); margin: 4px 0; }
+  .unified-alert-center .unified-alert-center__header p { font-size: var(--ui-size-12); }
+  .unified-alert-center .unified-alert-center__body { padding: 16px 20px; min-width: 0; }
+  .unified-alert-center button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; }
+  .unified-alert-center button svg { flex-shrink: 0; }
+  .unified-alert-center__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .unified-alert-center .unified-alert-close { width: 40px; height: 40px; padding: 0; flex-shrink: 0; }
+  .unified-alert-center .unified-alert-center__summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); grid-auto-rows: 176px; gap: 8px; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+  .unified-alert-center .unified-alert-source { display: grid; box-sizing: border-box; grid-template-rows: 40px 32px minmax(0, 1fr); gap: 8px; align-items: start; justify-content: stretch; width: 100%; min-width: 0; height: 176px; padding: 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-control); color: var(--ui-text); background: var(--ui-surface-alt); text-align: left; }
+  .unified-alert-center .unified-alert-source > span { font-size: var(--ui-size-13); line-height: 20px; text-transform: none; }
+  .unified-alert-center .unified-alert-source > strong { font-size: var(--ui-size-20); line-height: 32px; }
+  .unified-alert-center .unified-alert-source > .unified-alert-source__unavailable { font-size: var(--ui-size-16); }
+  .unified-alert-center .unified-alert-source > small { font-size: var(--ui-size-12); line-height: 16px; font-weight: var(--ui-weight-normal); }
+  .unified-alert-center .unified-alert-source > * { min-width: 0; overflow-wrap: anywhere; }
+  .unified-alert-center .unified-alert-source:hover { border-color: var(--ui-accent); }
+  .unified-alert-center .unified-alert-source[aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-accent-soft); }
+  .unified-alert-center .unified-alert-center__filter label, .unified-alert-center .unified-alert-center__filter > div { border: 0; border-radius: 0; padding: 0; background: transparent; }
+  .administrative-pending-details { min-width: 0; }
+  .administrative-pending-details .academic-pending-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin: 16px 0; }
+  .academic-pending-search label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+  .administrative-pending-details .academic-pending-search > button { width: auto; }
+  .academic-pending-search input { min-width: 0; width: 100%; box-sizing: border-box; }
+  .academic-pending-table { max-width: 100%; overflow: auto; }
+  .academic-pending-table table { min-width: 720px; width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .academic-pending-table th, .academic-pending-table td { text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  .academic-pending-table th:first-child { width: 30%; }
+  .academic-pending-table small { display: block; color: var(--ui-muted); margin-top: 4px; }
+  .academic-pending-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
+  .academic-pending-pagination .academic-icon-button { width: 40px; height: 40px; flex-shrink: 0; padding: 0; }
+  @media (max-width: 820px) {
+    .unified-alert-center .unified-alert-center__header { flex-wrap: wrap; }
+    .unified-alert-center__actions { margin-left: auto; }
+  }
+  @media (max-width: 560px) {
+    .unified-alert-center .unified-alert-center__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    dialog.unified-alert-center { width: calc(100vw - 20px); height: auto; max-height: calc(100dvh - 20px); }
+    .unified-alert-center .unified-alert-center__header, .unified-alert-center .unified-alert-center__body { padding: 12px; }
+    .student-main > .unified-alert-indicator { padding: 12px; gap: 10px; }
+  }
+  @media (max-width: 380px) {
+    .unified-alert-center .unified-alert-center__summary { grid-template-columns: minmax(0, 1fr); }
+  }
+}

@@ -52,6 +52,32 @@ def json_response(request: httpx.Request, payload: object, status_code: int = 20
 
 
 class MoodleClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_user_courses_is_read_only_and_skips_expensive_user_counts(self) -> None:
+        async def handler(request):
+            form = parse_qs(request.content.decode("utf-8"))
+            self.assertEqual(form["wsfunction"], ["core_enrol_get_users_courses"])
+            self.assertEqual(form["userid"], ["15"])
+            self.assertEqual(form["returnusercount"], ["0"])
+            return json_response(request, [{"id": 20, "fullname": "Materia"}])
+        client, http_client = await self._client(handler, moodle_writes_enabled=False)
+        try:
+            self.assertEqual(await client.get_user_courses(15), [{"id": 20, "fullname": "Materia"}])
+            with self.assertRaises(MoodleConfigurationError):
+                await client.get_user_courses(0)
+        finally:
+            await http_client.aclose()
+
+    async def test_user_courses_rejects_malformed_response(self) -> None:
+        for payload in [{}, [{}], ["bad"]]:
+            async def handler(request):
+                return json_response(request, payload)
+            client, http_client = await self._client(handler)
+            try:
+                with self.assertRaises(MoodleInvalidResponseError):
+                    await client.get_user_courses(15)
+            finally:
+                await http_client.aclose()
+
     async def _client(self, handler, **settings_overrides: object) -> tuple[MoodleClient, httpx.AsyncClient]:
         http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         client = MoodleClient(moodle_settings(**settings_overrides), http_client=http_client)

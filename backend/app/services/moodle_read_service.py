@@ -537,6 +537,10 @@ class MoodleReadService:
         entry, _cached = await self._users(refresh=refresh)
         return [dict(item) for item in entry.items]
 
+    async def get_user_courses(self, user_id: int) -> list[dict[str, Any]]:
+        """Fresh active enrolments visible to the integration account, not a full history."""
+        return [self._normalize_course(item) for item in await self._client.get_user_courses(user_id)]
+
     async def get_users_by_ids(self, user_ids: list[int]) -> list[dict[str, Any]]:
         """Resolve an explicit selection without scanning the complete directory."""
         normalized_ids = list(

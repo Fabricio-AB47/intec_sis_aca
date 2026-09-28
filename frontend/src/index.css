@@ -1,9 +1,10 @@
+@layer legacy {
 :root {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: var(--ui-font);
   line-height: 1.5;
-  font-weight: 400;
-  color: #1f2742;
-  background: #f4f5f7;
+  font-weight: var(--ui-weight-normal);
+  color: var(--ui-text);
+  background: var(--ui-surface-alt);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -35,4 +36,5 @@ textarea {
 
 a {
   color: inherit;
+}
 }

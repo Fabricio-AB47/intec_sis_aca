@@ -1,0 +1,19 @@
+@layer legacy {
+  .academic-work-center { min-width: 0; }
+  .academic-work-center :is(.academic-system-hero, .academic-system-summary, .academic-lifecycle, .academic-integration) {
+    border: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--ui-border);
+  }
+  .academic-work-center .academic-system-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .academic-work-center .academic-system-summary strong { font-size: var(--ui-size-20); overflow-wrap: anywhere; }
+  .academic-work-center button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  .academic-work-center button svg { flex-shrink: 0; }
+  .academic-work-center h2 { margin: 0; font-size: var(--ui-size-18); }
+  .academic-work-center .academic-lifecycle__row > strong { min-width: 0; overflow-wrap: anywhere; }
+  .academic-work-center .academic-integration summary { cursor: pointer; padding: 16px; font-weight: var(--ui-weight-bold); }
+  @media (max-width: 900px) {
+    .academic-work-center .academic-system-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 480px) {
+    .academic-work-center .academic-system-summary { grid-template-columns: minmax(0, 1fr); }
+  }
+}

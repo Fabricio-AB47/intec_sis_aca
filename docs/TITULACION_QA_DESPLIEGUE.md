@@ -7,8 +7,8 @@ Cobertura automatizada agregada:
 - Backend unitario: calculo de notas, validadores FluentValidation, servicios de habilitacion, responsables, calificaciones, documentos, titulos y actas.
 - Backend integracion: endpoints con autenticacion de prueba y validacion de roles 401/403/200.
 - SQL smoke: objetos criticos, catalogos, columnas, vistas y procedimientos de `TITULACION_INTEC`.
-- Frontend unitario: guard de roles, formularios de titulos y carga documental.
-- Frontend E2E Playwright: dashboard, estudiantes aptos, bloqueo de ruta por rol y validacion SENESCYT.
+- Puente FastAPI: sesion, permisos, identidad, rutas permitidas, archivos y errores.
+- Frontend E2E Playwright: portal integral React, documentos, reportes y restricciones por rol.
 
 ## Comandos de pruebas
 
@@ -23,11 +23,11 @@ dotnet test backend-dotnet/Titulacion.slnx --no-build
 Frontend:
 
 ```powershell
-cd frontend-angular
+cd frontend
 npm install
 npm run build
-npm test -- --watch=false --browsers=ChromeHeadless
-npm run e2e
+cd ..
+.venv/Scripts/python.exe frontend/tests/verify_titulation_portal.py
 ```
 
 SQL smoke:
@@ -64,6 +64,10 @@ Reglas protegidas en backend:
 ## Variables de entorno
 
 Archivo ejemplo: `backend-dotnet/deploy/titulacion.env.example`.
+
+La interfaz Angular fue integrada a React. Configurar ademas el puente de sesion
+FastAPI segun [Frontend unificado](FRONTEND_UNIFICADO.md). No se publica un
+segundo frontend.
 
 Variables principales:
 
@@ -153,7 +157,7 @@ El rollback cambia temporalmente la base a `SINGLE_USER`, ejecuta `RESTORE DATAB
 - Confirmar ruta de storage con permisos de escritura para la API.
 - Confirmar permisos Microsoft Graph `Calendars.ReadWrite` y organizador Teams valido para `POST /api/titulacion/grupos/complexivo/teams`.
 - Confirmar politica de retencion de PDFs, titulos y respaldos.
-- Ejecutar `dotnet test`, `npm test` y `npm run e2e`.
+- Ejecutar `dotnet test`, `npm run build` y las pruebas Playwright del frontend unico.
 - Validar manualmente un flujo completo: apto -> habilitacion -> grupo/defensa -> 3 notas -> acta -> titulo SENESCYT -> titulo INTEC.
 - Revisar logs de autenticacion y errores SQL despues del despliegue.
 

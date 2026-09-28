@@ -439,6 +439,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
 
     def test_moodle_is_exposed_as_assignable_subscreens(self) -> None:
         expected = {
+            "moodle/enrollment-validation",
             "moodle/alerts",
             "moodle/academic-enrollment",
             "moodle/course-cloning",
@@ -475,6 +476,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
 
     def test_automatic_moodle_grants_are_removed_only_outside_administration(self) -> None:
         optional_pages = {
+            "moodle/enrollment-validation",
             "moodle/academic-enrollment",
             "moodle/course-cloning",
             "moodle/courses",
@@ -593,6 +595,7 @@ class ScreenAccessCatalogTests(unittest.TestCase):
                 ("ADMINISTRADOR", "moodle/academic-enrollment"),
                 ("ADMINISTRADOR", "moodle/course-cloning"),
                 ("ADMINISTRADOR", "moodle/manual-enrollment"),
+                ("ADMINISTRADOR", "moodle/enrollment-validation"),
                 ("ADMINISTRADOR", "secretaria-general"),
                 ("SECRETARIA", "secretaria-general"),
                 ("ACADEMICO", "solicitudes-cambio-carrera"),

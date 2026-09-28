@@ -6,7 +6,7 @@ import pyodbc
 from fastapi import APIRouter, Depends
 
 from app.core.config import get_settings
-from app.core.security import SessionUser, require_roles
+from app.core.security import SessionUser, require_screen_access
 from app.services.db import (
     get_connection,
     get_evaluation_connection,
@@ -20,17 +20,7 @@ from app.services.db import (
 )
 
 router = APIRouter(prefix="/api/academic-system", tags=["academic-system"])
-_ACCESS = require_roles(
-    "ADMINISTRADOR",
-    "FINANCIERO",
-    "BIENESTAR",
-    "ACADEMICO",
-    "ADMISIONES",
-    "RECTOR",
-    "VICERRECTOR",
-    "SOPORTE",
-    "SECRETARIA",
-)
+_ACCESS = require_screen_access("sistema-academico")
 
 
 def _check_database(

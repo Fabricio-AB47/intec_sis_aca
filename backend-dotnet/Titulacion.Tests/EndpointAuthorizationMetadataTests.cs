@@ -75,7 +75,7 @@ public sealed class EndpointAuthorizationMetadataTests
         while (directory is not null)
         {
             if (Directory.Exists(Path.Combine(directory.FullName, "backend-dotnet")) &&
-                Directory.Exists(Path.Combine(directory.FullName, "frontend-angular")))
+                Directory.Exists(Path.Combine(directory.FullName, "frontend")))
             {
                 return directory.FullName;
             }

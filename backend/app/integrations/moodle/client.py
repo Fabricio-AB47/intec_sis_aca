@@ -33,6 +33,7 @@ COURSES_FUNCTION = "core_course_get_courses_by_field"
 COURSE_CATEGORIES_FUNCTION = "core_course_get_categories"
 COURSE_CONTENTS_FUNCTION = "core_course_get_contents"
 ENROLLED_USERS_FUNCTION = "core_enrol_get_enrolled_users"
+USER_COURSES_FUNCTION = "core_enrol_get_users_courses"
 GRADE_ITEMS_FUNCTION = "gradereport_user_get_grade_items"
 URLS_FUNCTION = "mod_url_get_urls_by_courses"
 UPDATE_USERS_FUNCTION = "core_user_update_users"
@@ -52,6 +53,7 @@ READ_FUNCTIONS = frozenset(
         COURSE_CATEGORIES_FUNCTION,
         COURSE_CONTENTS_FUNCTION,
         ENROLLED_USERS_FUNCTION,
+        USER_COURSES_FUNCTION,
         GRADE_ITEMS_FUNCTION,
         URLS_FUNCTION,
     }
@@ -550,6 +552,14 @@ class MoodleClient:
                 "La matrícula del curso Moodle no tiene el formato esperado"
             )
         return [item for item in payload if isinstance(item, dict)]
+
+    async def get_user_courses(self, user_id: int) -> list[dict[str, Any]]:
+        if int(user_id) <= 0:
+            raise MoodleConfigurationError("El usuario Moodle no es válido")
+        payload = await self._post(USER_COURSES_FUNCTION, {"userid": int(user_id), "returnusercount": 0})
+        if not isinstance(payload, list) or any(not isinstance(item, dict) or not item.get("id") for item in payload):
+            raise MoodleInvalidResponseError("Los cursos del usuario Moodle no tienen el formato esperado")
+        return payload
 
     async def manual_enrol_users(self, enrolments: list[dict[str, Any]]) -> None:
         if not enrolments:

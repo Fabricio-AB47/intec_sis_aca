@@ -1,4 +1,5 @@
 import type { FormEventHandler } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 
 import { AuthShell } from './AuthShell'
 
@@ -57,8 +58,10 @@ export function LoginView({
               className="password-toggle"
               onClick={onTogglePassword}
               aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              aria-pressed={showPassword}
+              title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
             >
-              {showPassword ? 'Ocultar' : 'Mostrar'}
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
         </label>

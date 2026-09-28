@@ -43,12 +43,16 @@ from app.services.moodle_course_cloning import MoodleCourseCloningService
 from app.services.moodle_grade_alerts import MoodleGradeAlertService
 from app.services.moodle_grade_sync import MoodleGradeSyncError, MoodleGradeSyncService
 from app.services.moodle_manual_enrollment import MoodleManualEnrollmentService
+from app.services.moodle_enrollment_validation import MoodleEnrollmentValidationService
+from app.services.moodle_academic_validation import MoodleAcademicValidationService
+from app.services.moodle_enrollment_validation_report import excel_report, pdf_report
 
 router = APIRouter(prefix="/api/moodle", tags=["moodle"])
 _MOODLE_STATUS_ACCESS = require_screen_access("moodle/status")
 _MOODLE_USERS_ACCESS = require_screen_access("moodle/users")
 _MOODLE_ACADEMIC_ENROLLMENT_ACCESS = require_screen_access("moodle/academic-enrollment")
 _MOODLE_MANUAL_ENROLLMENT_ACCESS = require_screen_access("moodle/manual-enrollment")
+_MOODLE_ENROLLMENT_VALIDATION_ACCESS = require_screen_access("moodle/enrollment-validation")
 _MOODLE_COURSES_ACCESS = require_any_screen_access(
     "moodle/courses",
     "moodle-teams",
@@ -60,6 +64,114 @@ _MOODLE_GRADES_ACCESS = require_screen_access("moodle/grades")
 _MOODLE_ALERTS_ACCESS = require_screen_access("moodle/alerts")
 _MOODLE_EVALUATION_DATES_ACCESS = require_screen_access("moodle/evaluation-dates")
 _MOODLE_COURSE_CLONING_ACCESS = require_screen_access("moodle/course-cloning")
+
+
+class MoodleValidationCourse(BaseModel):
+    id: int = Field(gt=0)
+    parallel: str = Field(min_length=1, max_length=20)
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("parallel")
+    @classmethod
+    def validate_parallel(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized or (normalized != "*" and not normalized.isalnum()):
+            raise ValueError("Indique el paralelo o * para todos los paralelos")
+        return normalized
+
+
+class MoodleEnrollmentValidationPayload(BaseModel):
+    period_code: int = Field(gt=0)
+    courses: list[MoodleValidationCourse] = Field(min_length=1, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def unique_courses(self):
+        if len({course.id for course in self.courses}) != len(self.courses):
+            raise ValueError("Un curso no puede seleccionarse más de una vez")
+        return self
+
+
+class MoodleAcademicValidationPayload(BaseModel):
+    period_code: int = Field(gt=0)
+    career_code: int = Field(gt=0)
+    courses: list[MoodleValidationCourse] | None = Field(default=None, min_length=1, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def unique_courses(self):
+        if self.courses is not None and len({course.id for course in self.courses}) != len(self.courses):
+            raise ValueError("Un curso no puede seleccionarse más de una vez")
+        return self
+
+
+@lru_cache
+def get_moodle_enrollment_validation_service() -> MoodleEnrollmentValidationService:
+    return MoodleEnrollmentValidationService(get_moodle_read_service())
+
+
+@lru_cache
+def get_moodle_academic_validation_service() -> MoodleAcademicValidationService:
+    return MoodleAcademicValidationService(get_moodle_enrollment_validation_service())
+
+
+@router.post("/enrollment-validation/academic", status_code=202)
+async def enrollment_academic_validation_start(
+    payload: MoodleAcademicValidationPayload,
+    user: SessionUser = Depends(_MOODLE_ENROLLMENT_VALIDATION_ACCESS),
+    service: MoodleAcademicValidationService = Depends(get_moodle_academic_validation_service),
+):
+    selection = {"courses": [course.model_dump() for course in payload.courses]} if payload.courses is not None else {}
+    return await service.start(period_code=payload.period_code, career_code=payload.career_code, actor=user.login, **selection)
+
+
+@router.get("/enrollment-validation/academic/{job_id}")
+def enrollment_academic_validation_status(
+    job_id: str,
+    user: SessionUser = Depends(_MOODLE_ENROLLMENT_VALIDATION_ACCESS),
+    service: MoodleAcademicValidationService = Depends(get_moodle_academic_validation_service),
+):
+    return service.get(job_id, user.login)
+
+
+@router.get("/enrollment-validation/catalog")
+async def enrollment_validation_catalog(
+    user: SessionUser = Depends(_MOODLE_ENROLLMENT_VALIDATION_ACCESS),
+    service: MoodleEnrollmentValidationService = Depends(get_moodle_enrollment_validation_service),
+):
+    try:
+        return await service.catalog()
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.post("/enrollment-validation/preview")
+async def enrollment_validation_preview(
+    payload: MoodleEnrollmentValidationPayload,
+    user: SessionUser = Depends(_MOODLE_ENROLLMENT_VALIDATION_ACCESS),
+    service: MoodleEnrollmentValidationService = Depends(get_moodle_enrollment_validation_service),
+):
+    try:
+        return await service.validate(period_code=payload.period_code,
+                                      courses=[c.model_dump() for c in payload.courses], actor=user.login)
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/enrollment-validation/reports/{report_id}/{format}")
+def enrollment_validation_report(
+    report_id: str,
+    format: Literal["xlsx", "pdf"],
+    user: SessionUser = Depends(_MOODLE_ENROLLMENT_VALIDATION_ACCESS),
+    service: MoodleEnrollmentValidationService = Depends(get_moodle_enrollment_validation_service),
+):
+    report = service.report(report_id, user.login)
+    content = excel_report(report) if format == "xlsx" else pdf_report(report)
+    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if format == "xlsx" else "application/pdf"
+    return StreamingResponse(iter([content]), media_type=media_type, headers={
+        "Content-Disposition": f'attachment; filename="validacion_matriculas_{report["period"]["code"]}.{format}"',
+        "Cache-Control": "private, no-store",
+    })
 
 
 class MoodleUserStatusPayload(BaseModel):

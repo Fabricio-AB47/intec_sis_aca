@@ -1,4 +1,6 @@
+import type { AcademicValidationJob, AcademicValidationSelection, ValidationCatalog, ValidationReport, ValidationSelection } from '../features/moodle/enrollmentValidationTypes'
 import type {
+  AcademicPendingRequestsResponse,
   DirectAdmissionPayload,
   DirectAdmissionCatalog,
   DirectAdmissionRecord,
@@ -346,6 +348,30 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
   }
+}
+
+export function fetchEnrollmentValidationCatalog(signal?: AbortSignal): Promise<ValidationCatalog> {
+  return request('/api/moodle/enrollment-validation/catalog', { signal })
+}
+
+export function validateMoodleEnrollments(body: ValidationSelection, signal?: AbortSignal): Promise<ValidationReport> {
+  return request('/api/moodle/enrollment-validation/preview', { method: 'POST', body, signal })
+}
+
+export function startAcademicEnrollmentValidation(body: AcademicValidationSelection, signal?: AbortSignal): Promise<AcademicValidationJob> {
+  return request('/api/moodle/enrollment-validation/academic', { method: 'POST', body, signal })
+}
+
+export function fetchAcademicEnrollmentValidation(jobId: string, signal?: AbortSignal): Promise<AcademicValidationJob> {
+  return request(`/api/moodle/enrollment-validation/academic/${encodeURIComponent(jobId)}`, { signal })
+}
+
+export function downloadEnrollmentValidation(reportId: string, format: 'xlsx' | 'pdf'): Promise<Blob> {
+  return request(`/api/moodle/enrollment-validation/reports/${encodeURIComponent(reportId)}/${format}`, { responseType: 'blob' })
+}
+
+export function titulationPortalRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return request<T>(`/api/titulation-portal/${path}`, { cache: 'no-store', ...options })
 }
 
 function isBodyInit(value: RequestOptions['body']): value is BodyInit {
@@ -1721,8 +1747,8 @@ export async function fetchDashboardMatricula(): Promise<DashboardMatriculaRespo
   return request<DashboardMatriculaResponse>('/api/students/dashboard-matricula', { cache: 'no-store' })
 }
 
-export async function fetchAcademicSystemIntegrationStatus(): Promise<AcademicSystemIntegrationResponse> {
-  return request<AcademicSystemIntegrationResponse>('/api/academic-system/integration-status', { cache: 'no-store' })
+export async function fetchAcademicSystemIntegrationStatus(signal?: AbortSignal): Promise<AcademicSystemIntegrationResponse> {
+  return request<AcademicSystemIntegrationResponse>('/api/academic-system/integration-status', { cache: 'no-store', signal })
 }
 
 export async function fetchDashboardMatriculaTrendStudents(
@@ -5583,6 +5609,7 @@ export async function fetchSecretariaCandidates(params: {
   onlyMissingDocuments?: boolean
   page?: number
   pageSize?: number
+  signal?: AbortSignal
 } = {}): Promise<SecretariaCandidatesResponse> {
   const query = new URLSearchParams({
     stage: params.stage || 'TODOS',
@@ -5593,6 +5620,7 @@ export async function fetchSecretariaCandidates(params: {
   if (params.onlyMissingDocuments) query.set('only_missing_documents', 'true')
   return request<SecretariaCandidatesResponse>(`/api/secretaria-general/candidates?${query.toString()}`, {
     cache: 'no-store',
+    signal: params.signal,
   })
 }
 
@@ -5659,6 +5687,20 @@ export async function createCareerChangeRequest(formData: FormData): Promise<Car
   return request<CareerChangeActionResponse>('/api/requests/career-change', {
     method: 'POST',
     body: formData,
+  })
+}
+
+export async function fetchAcademicPendingRequests(
+  source: 'career' | 'modality',
+  params: { query?: string; page?: number; pageSize?: number; signal?: AbortSignal } = {},
+): Promise<AcademicPendingRequestsResponse> {
+  const query = new URLSearchParams({
+    query: params.query?.trim() || '',
+    page: String(params.page || 1),
+    page_size: String(params.pageSize || 10),
+  })
+  return request<AcademicPendingRequestsResponse>(`/api/requests/${source}-change/pending?${query}`, {
+    cache: 'no-store', signal: params.signal,
   })
 }
 

@@ -1,0 +1,92 @@
+@layer ui {
+  @media screen {
+    :root { font-family: var(--ui-font); font-size: 16px; color: var(--ui-text); background: var(--ui-background); }
+    body { font-family: var(--ui-font); color: var(--ui-text); background: var(--ui-background); }
+    :where(.app, .app-error-boundary, .intec-ui) { font-size: var(--ui-size-14); line-height: var(--ui-leading); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(h1, h2, h3, h4, p, label, button, input, select, textarea, th, td, small) { letter-spacing: 0; }
+    :where(.app, .app-error-boundary, .intec-ui) h1 { font-size: var(--ui-size-28); line-height: var(--ui-leading-tight); font-weight: var(--ui-weight-bold); }
+    :where(.app, .app-error-boundary, .intec-ui) h2 { font-size: var(--ui-size-20); line-height: var(--ui-leading-tight); font-weight: var(--ui-weight-bold); }
+    :where(.app, .app-error-boundary, .intec-ui) h3 { font-size: var(--ui-size-18); line-height: var(--ui-leading-tight); font-weight: var(--ui-weight-bold); }
+    :where(.app, .app-error-boundary, .intec-ui) h4 { font-size: var(--ui-size-16); line-height: var(--ui-leading-tight); font-weight: var(--ui-weight-bold); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(button, input, select, textarea) { font-family: var(--ui-font); }
+    :where(.app, .app-error-boundary, .intec-ui) button { font-size: var(--ui-size-13); font-weight: var(--ui-weight-medium); border-radius: var(--ui-radius-control); box-shadow: none; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.primary-action, .secondary-action, .ghost-button, .danger-button, .submit-button, button[class*='--primary'], button[class*='--secondary'], button[class$='__primary'], button[class$='__secondary'], button[class$='__ghost'], .enrollment-check button, .data-update-directory button) {
+      min-height: var(--ui-control-height); line-height: var(--ui-leading-tight);
+      border: 1px solid var(--ui-border); background: var(--ui-surface); color: var(--ui-text);
+      transition: background-color 120ms ease, border-color 120ms ease;
+    }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.primary-action, .secondary-action, .ghost-button, .danger-button, .submit-button, button[class*='--primary'], button[class*='--secondary'], button[class$='__primary'], button[class$='__secondary'], button[class$='__ghost']):not(:has(svg:only-child)) { padding: var(--ui-space-8) var(--ui-space-16); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.primary-action, .submit-button, button[class*='--primary'], button[class$='__primary'], .app-error-boundary__actions > button:not(.app-error-boundary__secondary), .data-update-directory__search button, .titulacion-search-button) { background: var(--ui-primary); border-color: var(--ui-primary); color: var(--ui-on-primary); background-image: none; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.primary-action, .submit-button, button[class*='--primary'], button[class$='__primary'], .data-update-directory__search button, .titulacion-search-button):hover:not(:disabled) { background: var(--ui-primary-hover); border-color: var(--ui-primary-hover); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.ghost-button, .secondary-action, button[class*='--secondary'], button[class$='__secondary'], button[class$='__ghost']):hover:not(:disabled) { background: var(--ui-surface-alt); border-color: var(--ui-accent); color: var(--ui-text); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.danger-button, button[class*='--danger']) { background: var(--ui-danger-soft); color: var(--ui-danger); border-color: var(--ui-danger-border); }
+    :where(.app, .app-error-boundary, .intec-ui) :where([role='tab'][aria-selected='true'], .enrollment-check__modes button[aria-selected='true'], .data-update-directory__tabs button[aria-selected='true']) { background: var(--ui-accent-soft); color: var(--ui-accent-hover); border-color: var(--ui-accent); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='hidden']), select, textarea) {
+      font-size: var(--ui-size-14); font-weight: var(--ui-weight-normal); line-height: var(--ui-leading);
+      color: var(--ui-text); background: var(--ui-surface); border: 1px solid var(--ui-border-strong);
+      border-radius: var(--ui-radius-control); padding: var(--ui-space-8) var(--ui-space-12); box-shadow: none;
+    }
+    :where(.app, .app-error-boundary, .intec-ui) :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='hidden']), select) { min-height: var(--ui-control-height); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(input[type='checkbox'], input[type='radio'], progress, input[type='range']) { accent-color: var(--ui-accent); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(button, input, select, textarea, a):focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(input, select, textarea)[aria-invalid='true'] { border-color: var(--ui-danger); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(button, input, select, textarea):disabled { cursor: not-allowed; box-shadow: none; opacity: .65; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(button, input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']), select, textarea):disabled { background: var(--ui-neutral-soft); color: var(--ui-muted); border-color: var(--ui-border); background-image: none; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(th, td) { font-size: var(--ui-size-13); padding: var(--ui-space-8) var(--ui-space-12); border-color: var(--ui-border); line-height: var(--ui-leading); }
+    :where(.app, .app-error-boundary, .intec-ui) th { font-size: var(--ui-size-12); font-weight: var(--ui-weight-bold); background: var(--ui-surface-alt); color: var(--ui-text); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.student-card, .student-hero, .secretaria-hero, .curriculum-hero, .ingreso-directo-hero) { background: var(--ui-surface); border-color: var(--ui-border); border-radius: var(--ui-radius-panel); box-shadow: none; }
+    :where(.app, .app-error-boundary, .intec-ui) :where(dialog, [role='dialog']:not([class*='backdrop'], [class*='overlay']), .modal-panel, .modal-content) { background: var(--ui-surface); color: var(--ui-text); border-color: var(--ui-border); border-radius: var(--ui-radius-panel); box-shadow: var(--ui-shadow-dialog); }
+    :where(.app, .intec-ui) dialog::backdrop { background: var(--ui-backdrop); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.form-error, .error-message) { color: var(--ui-danger); background: var(--ui-danger-soft); border-color: var(--ui-danger-border); }
+    :where(.app, .app-error-boundary, .intec-ui) :where(.form-success, .success-message) { color: var(--ui-success); background: var(--ui-success-soft); border-color: var(--ui-success-border); }
+    /* Authentication keeps its established composition, separate from work surfaces. */
+    .app--auth { background: radial-gradient(circle at 15% 20%, var(--ui-brand-sky), var(--ui-auth-background) 48%, var(--ui-primary)); }
+    .app--auth .showcase-panel { padding: 22px; background: color-mix(in srgb, var(--ui-surface) 6%, transparent); color: var(--ui-on-primary); }
+    .app--auth .showcase-copy :where(h1, p, .eyebrow) { color: var(--ui-on-primary); }
+    .app--auth .showcase-copy h1 { font-size: 54px; line-height: 1; overflow-wrap: anywhere; }
+    .app--auth .showcase-copy h1 span { display: block; color: var(--ui-brand-sky); }
+    .app--auth .showcase-copy p { max-width: 460px; font-size: var(--ui-size-14); }
+    .app--auth .login-panel { background: var(--ui-auth-panel); color: var(--ui-on-primary); }
+    .app--auth .login-panel h2 { font-size: 56px; line-height: 1; }
+    .app--auth :where(.login-panel h2, .login-copy, .field > span, .profile-selection__summary) { color: var(--ui-on-primary); }
+    .app--auth :where(.profile-option, .profile-logout) { background: transparent; color: var(--ui-on-primary); border: 1px solid var(--ui-brand-sky); }
+    .app--auth :where(.public-evaluation-button, .profile-option, .profile-logout):hover:not(:disabled) { background: var(--ui-auth-background); color: var(--ui-on-primary); }
+    .app--auth :where(.profile-option__copy small, .profile-option__copy > span, .profile-option__arrow) { color: var(--ui-on-primary); }
+    .app--auth .profile-option__icon { color: var(--ui-on-primary); background: var(--ui-primary); }
+    .app--auth :where(.submit-button, .password-toggle, .public-evaluation-button, .field input) { border-radius: var(--ui-radius-panel); }
+    .app--auth .field input { height: 48px; padding: 12px 14px; color: var(--ui-text); background: var(--ui-auth-input); border-color: var(--ui-auth-input); }
+    .app--auth .password-shell { grid-template-columns: minmax(0, 1fr) 48px; }
+    .app--auth .submit-button { min-height: 48px; font-size: var(--ui-size-24); font-weight: var(--ui-weight-bold); color: var(--ui-on-primary); border: 0; background: var(--ui-primary) linear-gradient(90deg, var(--ui-primary), var(--ui-brand-sky)); }
+    .app--auth .submit-button:hover:not(:disabled) { background: var(--ui-primary-hover) linear-gradient(90deg, var(--ui-primary-hover), var(--ui-brand-sky)); }
+    .app--auth .submit-button:disabled { background: var(--ui-primary) linear-gradient(90deg, var(--ui-primary), var(--ui-brand-sky)); color: var(--ui-on-primary); cursor: wait; }
+    .app--auth .password-toggle { width: 48px; height: 48px; min-height: 48px; display: grid; place-items: center; padding: 0; color: var(--ui-on-primary); background: var(--ui-primary); border: 0; }
+    .app--auth .password-toggle:hover { background: var(--ui-primary-hover); }
+    .app--auth .public-evaluation-button { min-height: 40px; padding: 8px 12px; color: var(--ui-on-primary); background: var(--ui-auth-panel); border: 1px solid color-mix(in srgb, var(--ui-surface) 20%, transparent); font-size: var(--ui-size-14); font-weight: var(--ui-weight-bold); }
+    .app--auth :where(button, input):focus-visible { outline-color: var(--ui-brand-sky); }
+    .app--auth input::placeholder { color: var(--ui-muted); opacity: 1; }
+    .app--auth .planet--main { background: radial-gradient(circle at 35% 30%, var(--ui-surface), var(--ui-brand-sky) 58%, var(--ui-auth-background)); }
+    .app--auth .planet--small { background: radial-gradient(circle at 35% 30%, var(--ui-surface), var(--ui-auth-silver) 62%, var(--ui-auth-background)); }
+    .app--auth .planet--tiny { background: radial-gradient(circle at 30% 30%, var(--ui-brand-sky), var(--ui-auth-background) 75%); }
+    .app--auth .shooting { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-surface) 90%, transparent)); }
+    /* Work surfaces stay neutral; saturated colors identify actions and status. */
+    .app--dashboard { background: var(--ui-background); }
+    .app--dashboard :where(.student-topbar, .student-hero, .secretaria-hero, .curriculum-hero, .ingreso-directo-hero) { background: transparent; border: 0; border-bottom: 1px solid var(--ui-border); border-radius: 0; box-shadow: none; }
+    .app--dashboard :where(button, .primary-action, .secondary-action, .ghost-button):hover { transform: none; }
+    .app--dashboard .dashboard-metric-tile { background: var(--ui-surface-alt); border-color: var(--ui-border); box-shadow: none; }
+    .app--dashboard .dashboard-metric-tile--red { border-top: 2px solid var(--ui-primary); }
+    .app--dashboard .dashboard-metric-tile--cyan { border-top: 2px solid var(--ui-accent); }
+    .app--dashboard .dashboard-metric-tile--purple { border-top: 2px solid var(--ui-chart-violet); }
+    .app--dashboard .dashboard-metric-tile--gold { border-top: 2px solid var(--ui-chart-gold); }
+    .app--dashboard .dashboard-metric-tile small { font-weight: var(--ui-weight-normal); }
+    .app--dashboard :where(.mass-email-mode-selector button, .portal-course-button, .senescyt-action-button--secondary) { background: var(--ui-surface); color: var(--ui-text); border-color: var(--ui-border); }
+    .app--dashboard button:is(.is-active, .is-selected, [class$='--active'], [aria-pressed='true'], [role='tab'][aria-selected='true']):not(.student-nav__item, .student-nav__group-button) { background: var(--ui-accent-soft); color: var(--ui-accent-hover); border-color: var(--ui-accent); }
+    .app--dashboard button:is(.is-active, .is-selected, [class$='--active'], [aria-pressed='true'], [role='tab'][aria-selected='true']):not(.student-nav__item, .student-nav__group-button) :where(strong, span, small) { color: inherit; }
+    @media (max-width: 767px) {
+      .app--auth .showcase-copy h1 { font-size: var(--ui-size-32); }
+      .app--auth .login-panel h2 { font-size: var(--ui-size-32); }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(.app, .app-error-boundary, .intec-ui) *, :where(.app, .intec-ui) *::before, :where(.app, .intec-ui) *::after { animation-duration: .01ms; animation-iteration-count: 1; transition-duration: .01ms; scroll-behavior: auto; }
+  }
+}

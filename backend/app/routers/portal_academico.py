@@ -204,6 +204,9 @@ class AcademicPlanningPayload(BaseModel):
     correquisitos: str = Field(default="", max_length=500)
     horario_clases: str = Field(default="", max_length=500)
     horario_tutorias: str = Field(default="", max_length=500)
+    horas_docencia: int | None = Field(default=None, ge=0, le=1000)
+    horas_autonomo: int | None = Field(default=None, ge=0, le=1000)
+    horas_practica: int | None = Field(default=None, ge=0, le=1000)
     descripcion: str = Field(default="", max_length=5000)
     objetivo_general: str = Field(default="", max_length=3000)
     resultados_aprendizaje: str = Field(default="", max_length=5000)
@@ -9185,9 +9188,9 @@ def _teacher_academic_planning_pdf(
         result.setStyle(TableStyle(commands))
         return result
 
-    total_docencia = sum(topic.horas_docencia for unit in payload.unidades for topic in unit.temas)
-    total_practica = sum(topic.horas_practica for unit in payload.unidades for topic in unit.temas)
-    total_autonomo = sum(topic.horas_autonomo for unit in payload.unidades for topic in unit.temas)
+    total_docencia = payload.horas_docencia if payload.horas_docencia is not None else sum(topic.horas_docencia for unit in payload.unidades for topic in unit.temas)
+    total_practica = payload.horas_practica if payload.horas_practica is not None else sum(topic.horas_practica for unit in payload.unidades for topic in unit.temas)
+    total_autonomo = payload.horas_autonomo if payload.horas_autonomo is not None else sum(topic.horas_autonomo for unit in payload.unidades for topic in unit.temas)
     document_label = "PEA" if payload.document_type == "pea" else "Silabo"
     subject = _clean(meta.get("nombre_materia") or meta.get("cod_materia") or payload.codigo_materia)
     career = _clean(meta.get("nombre_carrera"))
@@ -9213,15 +9216,13 @@ def _teacher_academic_planning_pdf(
         [p("CONTROL DE CAMBIOS", "PlanningCellBold"), "", "", ""],
         [p("Descripción", "PlanningCellBold"), p("Versión", "PlanningCellBold"), p("Responsable", "PlanningCellBold"), p("Fecha", "PlanningCellBold")],
         [p(f"Desarrollo de {document_label}", "PlanningCell"), p(payload.version, "PlanningCellCenter"), p(teacher_name.upper(), "PlanningCell"), p(change_date, "PlanningCellCenter")],
-        ["", "", "", ""],
-        ["", "", "", ""],
     ], control_widths, 2, h_align="CENTER")
     control_table.setStyle(TableStyle([
         ("SPAN", (0, 0), (-1, 0)),
         ("ALIGN", (0, 0), (-1, 1), "CENTER"),
     ]))
     story.append(control_table)
-    story.append(Spacer(1, 8))
+    story.append(PageBreak())
     if payload.document_type == "silabo":
         story.append(Indenter(left=1.0 * cm))
     overview_widths = [
@@ -9245,10 +9246,10 @@ def _teacher_academic_planning_pdf(
         [p(payload.horario_clases), "", "", p(payload.horario_tutorias), "", ""],
     ], overview_widths)
     overview_table.setStyle(TableStyle([
-        ("TOPPADDING", (0, 0), (-1, -1), 1.4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("SPAN", (0, 0), (-1, 0)),
         ("SPAN", (1, 1), (-1, 1)),
         ("SPAN", (0, 2), (-1, 2)),

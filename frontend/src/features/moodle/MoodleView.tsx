@@ -21,6 +21,7 @@ const MoodleGradeAlertsPanel = lazy(() => import('./MoodleGradeAlertsPanel').the
 const MoodleCourseCloningPanel = lazy(() => import('./MoodleCourseCloningPanel').then((module) => ({ default: module.MoodleCourseCloningPanel })))
 const MoodleAcademicEnrollmentPanel = lazy(() => import('./MoodleAcademicEnrollmentPanel').then((module) => ({ default: module.MoodleAcademicEnrollmentPanel })))
 const MoodleManualEnrollmentPanel = lazy(() => import('./MoodleManualEnrollmentPanel').then((module) => ({ default: module.MoodleManualEnrollmentPanel })))
+const MoodleEnrollmentValidationPanel = lazy(() => import('./MoodleEnrollmentValidationPanel').then((module) => ({ default: module.MoodleEnrollmentValidationPanel })))
 
 type MoodleViewProps = {
   displayName: string
@@ -292,6 +293,10 @@ export function MoodleView({
       </header>
 
       <nav className="moodle-tabs" aria-label="Secciones de Moodle">
+        {availableSections.includes('enrollment-validation') && (
+          <button type="button" className={activeTab === 'enrollment-validation' ? 'is-active' : ''}
+            onClick={() => selectTab('enrollment-validation')}>Validación de matrículas</button>
+        )}
         {availableSections.includes('alerts') && (
           <button
             type="button"
@@ -385,6 +390,7 @@ export function MoodleView({
       </nav>
 
       <Suspense fallback={<div className="moodle-section" role="status">Cargando sección...</div>}>
+        {activeTab === 'enrollment-validation' && <MoodleEnrollmentValidationPanel />}
         {activeTab === 'alerts' && <MoodleGradeAlertsPanel />}
         {activeTab === 'academic-enrollment' && <MoodleAcademicEnrollmentPanel />}
         {activeTab === 'course-cloning' && <MoodleCourseCloningPanel />}

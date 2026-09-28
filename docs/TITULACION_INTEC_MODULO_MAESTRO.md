@@ -4,11 +4,11 @@
 
 - Base de datos: SQL Server con `INTECBDD`, `TITULACION_INTEC` e `INTEC_PRACTICAS_PREPROFESIONALES`.
 - Backend nuevo: .NET 8 Web API en `backend-dotnet/`.
-- Frontend nuevo: Angular standalone en `frontend-angular/`.
+- Frontend unico: React/Vite en `frontend/`, incluyendo el portal integral.
 - Backend legacy existente: FastAPI en `backend/`, conservado para compatibilidad del proyecto original.
-- Frontend legacy existente: React/Vite en `frontend/`, conservado sin reemplazar.
 
-El modulo de titulacion del Prompt 08 queda implementado como modulo completo .NET 8 + Angular, sin eliminar el sistema academico existente.
+El servicio .NET 8 se conserva. Su interfaz se integro al frontend React existente.
+Configuracion y permisos actuales: [Frontend unificado](FRONTEND_UNIFICADO.md).
 
 ## Diagrama logico
 
@@ -20,7 +20,8 @@ flowchart LR
   REQ --> TIT
 
   TIT --> API[.NET 8 Web API]
-  API --> UI[Angular portal titulacion]
+  API --> BFF[FastAPI y sesion academica]
+  BFF --> UI[Frontend unico React]
 
   UI --> DASH[Dashboard]
   UI --> EST[Estudiantes aptos]
@@ -130,23 +131,17 @@ Roles validados:
 - `AUTORIDAD_ACADEMICA`
 - `CONSULTA_TITULACION`
 
-## Frontend Angular
+## Frontend React
 
 Aplicacion:
 
-- `frontend-angular/`
+- `frontend/src/features/titulacion/`
 
-Rutas principales:
+Secciones de Gestion integral, dentro de Proceso de titulacion:
 
-- `/titulacion/dashboard`
-- `/titulacion/aptos`
-- `/titulacion/grupos`
-- `/titulacion/responsables`
-- `/titulacion/calificaciones`
-- `/titulacion/documentos`
-- `/titulacion/actas`
-- `/titulacion/titulos`
-- `/titulacion/reportes`
+- Resumen, estudiantes aptos y habilitaciones.
+- Grupos, complexivo, defensa y responsables.
+- Calificaciones, documentos, actas, titulos y reportes.
 
 Componentes principales:
 
@@ -180,8 +175,8 @@ Componentes principales:
 Pruebas:
 
 - Backend: `dotnet test backend-dotnet/Titulacion.slnx`
-- Frontend: `npm test -- --watch=false --browsers=ChromeHeadless`
-- E2E: `npm run e2e` en `frontend-angular/`
+- Frontend: `npm run build` en `frontend/`
+- E2E: `.venv/Scripts/python.exe frontend/tests/verify_titulation_portal.py`
 - SQL smoke: `backend/sql/TITULACION_INTEC_QA_SMOKE.sql`
 
 Despliegue:

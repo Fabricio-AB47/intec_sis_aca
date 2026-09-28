@@ -16,22 +16,22 @@ type DashboardViewProps = {
 }
 
 const activeTypeColors: Record<string, string> = {
-  R: '#1f6f8b',
-  H: '#931913',
+  R: 'var(--ui-accent)',
+  H: 'var(--ui-primary)',
 }
 
 const stateColors: Record<string, string> = {
-  A: '#1f6f8b',
-  G: '#5c7c35',
-  P: '#d19a2a',
-  R: '#9b2d25',
+  A: 'var(--ui-accent)',
+  G: 'var(--ui-success)',
+  P: 'var(--ui-chart-gold)',
+  R: 'var(--ui-danger)',
 }
 
 const dashboardStateCodes = new Set(['A', 'G', 'P', 'R'])
 const dashboardIgnoredCedulas = new Set(['1708531189'])
 
 const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-const trendLineColors = ['#1f6f8b', '#7a5aa6', '#d19a2a', '#5c7c35', '#9b2d25', '#8dbbc7']
+const trendLineColors = ['var(--ui-accent)', 'var(--ui-chart-violet)', 'var(--ui-chart-gold)', 'var(--ui-success)', 'var(--ui-danger)', 'var(--ui-chart-neutral)']
 const trendChartWidth = 1200
 const trendChartBaseY = 285
 const trendChartTopY = 34
@@ -286,7 +286,7 @@ export function DashboardView({
       : states).map((item) => ({
       key: item.estado_codigo,
       total_estudiantes: item.total_estudiantes,
-      color: item.estado_codigo === 'PEN' ? '#d19a2a' : stateColors[item.estado_codigo] || '#8dbbc7',
+      color: item.estado_codigo === 'PEN' ? 'var(--ui-chart-gold)' : stateColors[item.estado_codigo] || 'var(--ui-chart-neutral)',
     }))
   )
   const currentYearTrend = buildMonthlyTrend(trend, currentYear)
@@ -504,12 +504,12 @@ export function DashboardView({
                 <small>{statePercent(admissionsRetired, personalTotal)} · {admissionsRetired}</small>
               </button>
               <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'PENDIENTE_MATRICULA', label: 'Pendientes matrícula', total: admissionsPendingEnrollment })}>
-                <span style={{ backgroundColor: '#8dbbc7' }} />
+                <span style={{ backgroundColor: 'var(--ui-chart-neutral)' }} />
                 <strong>Pendientes matrícula</strong>
                 <small>{statePercent(admissionsPendingEnrollment, personalTotal)} · {admissionsPendingEnrollment}</small>
               </button>
               <button type="button" onClick={() => void openAdmissionsStudents({ estado: 'SIN_ESTADO', label: 'Sin estado', total: admissionsWithoutState })}>
-                <span style={{ backgroundColor: '#6b7280' }} />
+                <span style={{ backgroundColor: 'var(--ui-muted)' }} />
                 <strong>Sin estado</strong>
                 <small>{statePercent(admissionsWithoutState, personalTotal)} · {admissionsWithoutState}</small>
               </button>
@@ -986,7 +986,7 @@ export function DashboardView({
                       </small>
                     </div>
                     <div>
-                      <span style={{ backgroundColor: '#d19a2a' }} />
+                      <span style={{ backgroundColor: 'var(--ui-chart-gold)' }} />
                       <strong>Pendientes o no activos</strong>
                       <small>
                         {statePercent(admissionTotals.pendientes_o_no_activos ?? 0, totalStudents)} · {admissionTotals.pendientes_o_no_activos ?? 0}
@@ -996,7 +996,7 @@ export function DashboardView({
                 ) : states.length > 0 ? (
                   states.map((item) => (
                     <button key={item.estado_codigo} type="button" onClick={() => void openStateStudents(item)}>
-                      <span style={{ backgroundColor: stateColors[item.estado_codigo] || '#8dbbc7' }} />
+                      <span style={{ backgroundColor: stateColors[item.estado_codigo] || 'var(--ui-chart-neutral)' }} />
                       <strong>{item.estado_nombre}</strong>
                       <small>
                         {statePercent(item.total_estudiantes, totalStudents)} · {item.total_estudiantes}
@@ -1037,7 +1037,7 @@ export function DashboardView({
                   >
                     <span
                       className="dashboard-active-type-dot"
-                      style={{ backgroundColor: activeTypeColors[item.tipo_matricula] || '#8dbbc7' }}
+                      style={{ backgroundColor: activeTypeColors[item.tipo_matricula] || 'var(--ui-chart-neutral)' }}
                     />
                     <div className="dashboard-active-type-copy">
                       <strong>{item.label}</strong>

@@ -1,0 +1,27 @@
+@layer legacy {
+  .titulation-workspace__tabs, .titulation-portal__tabs, .titulation-portal__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .titulation-workspace__tabs, .titulation-portal__tabs { padding: 12px 0; border-bottom: 1px solid var(--ui-border); margin-bottom: 16px; }
+  .titulation-workspace__tabs button, .titulation-portal__tabs button { padding: 8px 12px; background: var(--ui-surface); color: var(--ui-text); border: 1px solid var(--ui-border); min-height: var(--ui-control-height); }
+  .titulation-portal { min-width: 0; max-width: 100%; background: var(--ui-surface); padding: 16px; }
+  .titulation-portal header, .titulation-portal__toolbar, .titulation-portal__toolbar form, .titulation-portal__dialog footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+  .titulation-portal h1, .titulation-portal h2 { margin: 0; }
+  .titulation-portal__toolbar { margin: 16px 0; justify-content: flex-start; }
+  .titulation-portal__toolbar form { align-items: end; }
+  .titulation-portal label { display: grid; gap: 6px; min-width: 0; }
+  .titulation-portal button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  .titulation-portal__table { max-width: 100%; overflow: auto; margin: 16px 0; }
+  .titulation-portal table { width: 100%; border-collapse: collapse; }
+  .titulation-portal td { border-bottom: 1px solid var(--ui-border); vertical-align: top; min-width: 110px; overflow-wrap: anywhere; }
+  .titulation-portal th { text-align: left; }
+  .titulation-portal__summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+  .titulation-portal__summary > div { border-bottom: 1px solid var(--ui-border); padding: 12px 0; }
+  .titulation-portal__summary dd { font-size: var(--ui-size-24); font-weight: var(--ui-weight-bold); margin: 8px 0; }
+  .titulation-portal__group, .titulation-portal__detail { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--ui-border); }
+  .titulation-portal__detail dd { margin: 4px 0 12px; overflow-wrap: anywhere; }
+  .titulation-portal__dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 20px; box-sizing: border-box; border: 1px solid var(--ui-border); }
+  .titulation-portal__dialog header button { width: 40px; height: 40px; flex-shrink: 0; border: 1px solid var(--ui-border); background: var(--ui-surface); color: var(--ui-text); }
+  .titulation-portal__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 20px 0; margin: 0; border: 0; }
+  .titulation-portal__fields :is(input, select, textarea) { max-width: 100%; box-sizing: border-box; }
+  .titulation-portal__dialog footer { justify-content: flex-end; }
+  @media (max-width: 600px) { .titulation-portal__fields { grid-template-columns: minmax(0, 1fr); } .titulation-portal__toolbar form { width: 100%; } .titulation-portal__toolbar label { flex: 1; } }
+}

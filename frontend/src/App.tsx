@@ -52,6 +52,7 @@ const ReportesIndividualesView = lazyView(() => import('./features/matricula/Rep
 const SenescytEstudiantesView = lazyView(() => import('./features/matricula/SenescytEstudiantesView'), 'SenescytEstudiantesView')
 const TitulosRegistradosView = lazyView(() => import('./features/matricula/TitulosRegistradosView'), 'TitulosRegistradosView')
 const TitulacionView = lazyView(() => import('./features/matricula/TitulacionView'), 'TitulacionView')
+const TitulationWorkspace = lazyView(() => import('./features/titulacion/TitulationWorkspace'), 'TitulationWorkspace')
 const PortalDocenteView = lazyView(() => import('./features/portal/PortalDocenteView'), 'PortalDocenteView')
 const PortalDocentePlanificacionView = lazyView(() => import('./features/portal/PortalDocentePlanificacionView'), 'PortalDocentePlanificacionView')
 const PortalDocenteContratosView = lazyView(() => import('./features/portal/PortalDocenteContratosView'), 'PortalDocenteContratosView')
@@ -84,6 +85,7 @@ const MoodleView = lazyView(() => import('./features/moodle/MoodleView'), 'Moodl
 const academicEnrollmentModes: AcademicEnrollmentMode[] = ['individual', 'masiva', 'prerrequisitos', 'ingreso-directo']
 const moodleSections: MoodleSection[] = [
   'alerts',
+  'enrollment-validation',
   'academic-enrollment',
   'course-cloning',
   'courses',
@@ -253,7 +255,7 @@ function App() {
       pageContent = (
         <SistemaAcademicoView
           displayName={app.displayName}
-          role={app.session.rol}
+          permissions={app.screenAccessPages}
           data={app.dashboardMatricula}
           error={app.dashboardMatriculaError}
           onOpenAdmissions={() => app.openPreinscripcionStage('registro')}
@@ -430,7 +432,7 @@ function App() {
         />
       )
     } else if (app.activePage === 'titulacion-proceso') {
-      pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="proceso" />
+      pageContent = <TitulationWorkspace displayName={app.displayName} role={app.session.rol} />
     } else if (app.activePage === 'titulacion-responsables') {
       pageContent = <TitulacionView displayName={app.displayName} role={app.session.rol} section="responsables" />
     } else if (app.activePage === 'titulos-registrados') {

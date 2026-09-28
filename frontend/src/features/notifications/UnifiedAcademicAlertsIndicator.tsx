@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, RefreshCw, X } from 'lucide-react'
+import { AdministrativePendingDetails } from './AdministrativePendingDetails'
+import { ADMINISTRATIVE_SOURCES, loadAdministrativeSource, type AdministrativeSource, type PendingPage } from './academicPendingSources'
+import './UnifiedAcademicAlerts.css'
 
 import {
   fetchMoodleGradeAlerts,
@@ -14,6 +18,7 @@ import type {
   TeacherEvaluationAdminPendingResponse,
   TeacherEvaluationPendingAlertItem,
   TeacherEvaluationPendingAlertResponse,
+  ScreenPermissionCode,
 } from '../../types/app'
 
 type UnifiedAcademicAlertsIndicatorProps = {
@@ -23,6 +28,10 @@ type UnifiedAcademicAlertsIndicatorProps = {
   canViewTeacherEvaluation: boolean
   onOpenMoodle: () => void
   onOpenTeacherEvaluation: () => void
+  permissions: readonly ScreenPermissionCode[]
+  onOpenSecretaria: () => void
+  onOpenCareerRequests: () => void
+  onOpenModalityRequests: () => void
 }
 
 type LoadResult<T> = {
@@ -148,7 +157,7 @@ function Pager({
         disabled={page <= 1}
         onClick={() => onChange(page - 1)}
       >
-        Anterior
+        <ChevronLeft size={16} />Anterior
       </button>
       <span>Página {page} de {totalPages}</span>
       <button
@@ -157,7 +166,7 @@ function Pager({
         disabled={page >= totalPages}
         onClick={() => onChange(page + 1)}
       >
-        Siguiente
+        Siguiente<ChevronRight size={16} />
       </button>
     </div>
   )
@@ -170,6 +179,10 @@ export function UnifiedAcademicAlertsIndicator({
   canViewTeacherEvaluation,
   onOpenMoodle,
   onOpenTeacherEvaluation,
+  permissions,
+  onOpenSecretaria,
+  onOpenCareerRequests,
+  onOpenModalityRequests,
 }: UnifiedAcademicAlertsIndicatorProps) {
   const normalizedRole = role.trim().toUpperCase()
   const isAdminEvaluationObserver = normalizedRole === 'ADMINISTRADOR'
@@ -178,6 +191,15 @@ export function UnifiedAcademicAlertsIndicator({
   const [moodleError, setMoodleError] = useState('')
   const [evaluationError, setEvaluationError] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [refreshing, setRefreshing] = useState(true)
+  const [refreshedAt, setRefreshedAt] = useState('')
+  const [administrativeAlerts, setAdministrativeAlerts] = useState<Partial<Record<AdministrativeSource, LoadResult<PendingPage>>>>({})
+  const [selectedSource, setSelectedSource] = useState('')
+  const [detailRevision, setDetailRevision] = useState(0)
+  const refreshRef = useRef<() => void>(() => undefined)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const administrativeKey = ADMINISTRATIVE_SOURCES.filter((source) => permissions.includes(source.permission)).map((source) => source.key).join(',')
+  const administrativeSources = ADMINISTRATIVE_SOURCES.filter((source) => administrativeKey.split(',').includes(source.key))
   const [dialogOpen, setDialogOpen] = useState(false)
   const [evaluationPage, setEvaluationPage] = useState(1)
   const [evaluationQuery, setEvaluationQuery] = useState('')
@@ -187,6 +209,9 @@ export function UnifiedAcademicAlertsIndicator({
   useEffect(() => {
     let active = true
     let requestGeneration = 0
+    let inFlight = false
+    let queuedRefresh = false
+    let controller: AbortController | null = null
     setLoaded(false)
     setMoodleAlerts(null)
     setEvaluationAlerts(null)
@@ -196,10 +221,20 @@ export function UnifiedAcademicAlertsIndicator({
     setEvaluationPage(1)
     setEvaluationQuery('')
     setMoodlePage(1)
+    setAdministrativeAlerts({})
+    setSelectedSource('')
+    setRefreshedAt('')
+    const sources = ADMINISTRATIVE_SOURCES.filter((source) => administrativeKey.split(',').includes(source.key))
 
     const load = async (refreshMoodle = false) => {
+      if (inFlight) { queuedRefresh ||= refreshMoodle; return }
+      inFlight = true
+      controller?.abort()
+      const requestController = new AbortController()
+      controller = requestController
+      setRefreshing(true)
       const generation = ++requestGeneration
-      const [evaluationResult, moodleResult] = await Promise.all([
+      const [evaluationResult, moodleResult, administrativeResults] = await Promise.all([
         capture<TeacherEvaluationAlertData>(
           canViewTeacherEvaluation
             ? isAdminEvaluationObserver
@@ -214,46 +249,65 @@ export function UnifiedAcademicAlertsIndicator({
           canViewMoodle ? fetchMoodleGradeAlerts(refreshMoodle) : null,
           'No se pudieron verificar las calificaciones de Moodle.',
         ),
+        Promise.all(sources.map(async (source) => ({
+          key: source.key,
+          result: await capture(loadAdministrativeSource(source.key, '', 1, requestController.signal), `No se pudo consultar ${source.title.toLocaleLowerCase('es-EC')}.`),
+        }))),
       ])
       if (!active || generation !== requestGeneration) return
 
       if (canViewTeacherEvaluation) {
-        if (evaluationResult.data) setEvaluationAlerts(evaluationResult.data)
+        setEvaluationAlerts(evaluationResult.data)
         setEvaluationError(evaluationResult.error)
       } else {
         setEvaluationAlerts(null)
         setEvaluationError('')
       }
       if (canViewMoodle) {
-        if (moodleResult.data) setMoodleAlerts(moodleResult.data)
+        setMoodleAlerts(moodleResult.data)
         setMoodleError(moodleResult.error)
       } else {
         setMoodleAlerts(null)
         setMoodleError('')
       }
+      setAdministrativeAlerts(Object.fromEntries(administrativeResults.map((item) => [item.key, item.result])))
       setLoaded(true)
+      setRefreshing(false)
+      setRefreshedAt(new Date().toLocaleString('es-EC'))
+      setDetailRevision((value) => value + 1)
+      inFlight = false
+      if (queuedRefresh) { queuedRefresh = false; void load(true) }
     }
 
-    void load()
+    // Avoid starting a second SQL read during React's development remount check.
+    queueMicrotask(() => { if (active) void load() })
     const refreshMoodle = () => void load(true)
-    const refreshEvaluation = () => void load(false)
+    const refreshEvaluation = () => {
+      if (inFlight) queuedRefresh = true
+      else void load(false)
+    }
+    refreshRef.current = refreshMoodle
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void load(false)
     }
-    const intervalId = window.setInterval(refreshMoodle, REFRESH_INTERVAL_MS)
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshMoodle()
+    }, REFRESH_INTERVAL_MS)
     window.addEventListener(MOODLE_GRADE_ALERT_INVALIDATED_EVENT, refreshMoodle)
     window.addEventListener(TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT, refreshEvaluation)
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
       active = false
+      controller?.abort()
+      refreshRef.current = () => undefined
       window.clearInterval(intervalId)
       window.removeEventListener(MOODLE_GRADE_ALERT_INVALIDATED_EVENT, refreshMoodle)
       window.removeEventListener(TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT, refreshEvaluation)
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
-  }, [canViewMoodle, canViewTeacherEvaluation, cedula, isAdminEvaluationObserver, role])
+  }, [administrativeKey, canViewMoodle, canViewTeacherEvaluation, cedula, isAdminEvaluationObserver, role])
 
   const adminEvaluationAlerts = isAdminEvaluationAlerts(evaluationAlerts) ? evaluationAlerts : null
   const personalEvaluationAlerts = evaluationAlerts && !adminEvaluationAlerts
@@ -263,12 +317,14 @@ export function UnifiedAcademicAlertsIndicator({
     ? adminEvaluationAlerts.summary.reduce((total, item) => total + Number(item.pending || 0), 0)
     : personalEvaluationAlerts?.total_pending ?? 0
   const moodlePending = moodleAlerts?.summary.total ?? 0
-  const totalPending = evaluationPending + moodlePending
-  const hasErrors = Boolean(evaluationError || moodleError)
+  const personalPending = evaluationPending + moodlePending
+  const administrativePending = administrativeSources.reduce((sum, source) => sum + (administrativeAlerts[source.key]?.data?.total ?? 0), 0)
+  const totalPending = personalPending + administrativePending
+  const hasErrors = Boolean(evaluationError || moodleError || administrativeSources.some((source) => administrativeAlerts[source.key]?.error))
   const receivesDailyReminder = ['ESTUDIANTE', 'DOCENTE'].includes(normalizedRole)
 
   useEffect(() => {
-    if (!loaded || totalPending <= 0 || !receivesDailyReminder) return
+    if (!loaded || personalPending <= 0 || !receivesDailyReminder) return
 
     const today = localDateKey()
     const reminderIdentity = `${normalizedRole}:${cedula || 'sin-cedula'}:${today}`
@@ -283,15 +339,20 @@ export function UnifiedAcademicAlertsIndicator({
       // El recordatorio sigue funcionando durante la sesión si el almacenamiento está bloqueado.
     }
     setDialogOpen(true)
-  }, [cedula, loaded, normalizedRole, receivesDailyReminder, totalPending])
+  }, [cedula, loaded, normalizedRole, receivesDailyReminder, personalPending])
 
   useEffect(() => {
     if (!dialogOpen) return
-    const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setDialogOpen(false)
+    const dialog = dialogRef.current
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    dialog?.showModal()
+    return () => {
+      dialog?.close()
+      document.body.style.overflow = previousOverflow
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true })
     }
-    window.addEventListener('keydown', closeWithEscape)
-    return () => window.removeEventListener('keydown', closeWithEscape)
   }, [dialogOpen])
 
   const evaluationCourses = useMemo<EvaluationPendingCourse[]>(() => (
@@ -395,9 +456,21 @@ export function UnifiedAcademicAlertsIndicator({
     currentMoodlePage * PAGE_SIZE,
   )
 
-  if (!canViewMoodle && !canViewTeacherEvaluation) return null
+  const sources = [
+    ...(canViewTeacherEvaluation ? [{ key: 'evaluation', title: isAdminEvaluationObserver ? 'Evaluación 360' : 'Evaluación docente',
+      total: evaluationAlerts ? evaluationPending : null,
+      unit: evaluationAlerts ? isAdminEvaluationObserver ? `${formatCount(adminPendingPeople)} ${adminPendingPeople === 1 ? 'responsable identificado' : 'responsables identificados'}` : 'actividades pendientes' : 'evaluaciones por verificar' }] : []),
+    ...(canViewMoodle ? [{ key: 'moodle', title: 'Moodle y calificaciones', total: moodleAlerts ? moodlePending : null, unit: 'alertas por atender' }] : []),
+    ...administrativeSources.map((source) => ({ ...source, total: administrativeAlerts[source.key]?.data?.total ?? null })),
+  ]
+  const activeSource = sources.find((source) => source.key === selectedSource)?.key
+    ?? sources.find((source) => (source.total ?? 0) > 0)?.key ?? sources[0]?.key
+  const selectedAdministrativeSource = administrativeSources.find((source) => source.key === activeSource)
+  const administrativeActions = { secretaria: onOpenSecretaria, career: onOpenCareerRequests, modality: onOpenModalityRequests }
+
+  if (!sources.length) return null
   if (!loaded && !hasErrors) return null
-  if (totalPending <= 0 && !hasErrors) return null
+  if (totalPending <= 0 && !hasErrors && !dialogOpen) return null
 
   const sourceSummaries = [
     evaluationPending > 0
@@ -408,17 +481,21 @@ export function UnifiedAcademicAlertsIndicator({
     moodlePending > 0
       ? `${formatCount(moodlePending)} ${moodlePending === 1 ? 'alerta de calificaciones Moodle' : 'alertas de calificaciones Moodle'}`
       : '',
+    ...administrativeSources.map((source) => {
+      const count = administrativeAlerts[source.key]?.data?.total ?? 0
+      return count > 0 ? `${formatCount(count)} ${source.key === 'secretaria' ? `${count === 1 ? 'estudiante' : 'estudiantes'} con documentación pendiente` : `${count === 1 ? 'solicitud' : 'solicitudes'} de ${source.title.toLocaleLowerCase('es-EC')}`}` : ''
+    }),
   ].filter(Boolean)
   const title = totalPending > 0
     ? totalPending === 1
       ? '1 pendiente académico'
       : `${formatCount(totalPending)} pendientes académicos`
-    : 'No se pudieron verificar todos los pendientes'
+    : hasErrors ? 'No se pudieron verificar todos los pendientes' : 'Sin pendientes académicos'
   const detail = totalPending > 0
-    ? `${receivesDailyReminder ? 'Recordatorio diario: falta completar' : 'Pendientes por atender:'} ${sourceSummaries.join(' y ')}.`
-    : 'Abra el centro de pendientes para revisar las fuentes que no respondieron.'
+    ? `${receivesDailyReminder ? 'Recordatorio diario: falta completar' : 'Pendientes por atender:'} ${sourceSummaries.join(' · ')}.`
+    : hasErrors ? 'Abra el centro de pendientes para revisar las fuentes que no respondieron.' : 'Todas las fuentes consultadas están al día.'
   const visibleDetail = hasErrors && totalPending > 0
-    ? `${detail} Una fuente no pudo actualizarse en la revisión más reciente.`
+    ? `${detail} Hay fuentes sin verificar en la revisión más reciente.`
     : detail
 
   const openEvaluation = () => {
@@ -434,81 +511,67 @@ export function UnifiedAcademicAlertsIndicator({
     <>
       <button
         type="button"
-        className={`moodle-grade-alert-indicator unified-alert-indicator${totalPending <= 0 ? ' moodle-grade-alert-indicator--error' : ''}`}
+        className={`moodle-grade-alert-indicator unified-alert-indicator${hasErrors && totalPending <= 0 ? ' moodle-grade-alert-indicator--error' : ''}`}
         aria-label={`${title}. ${visibleDetail} Ver detalle de pendientes.`}
         onClick={() => setDialogOpen(true)}
       >
         <span className="moodle-grade-alert-indicator__count" aria-hidden="true">
           {totalPending <= 0 ? '!' : totalPending > 99 ? '99+' : totalPending}
         </span>
-        <div className="moodle-grade-alert-indicator__copy" aria-live="polite">
+        <span className="moodle-grade-alert-indicator__copy" aria-live="polite">
           <strong>{title}</strong>
           <span>{visibleDetail}</span>
-        </div>
+        </span>
         <span className="moodle-grade-alert-indicator__action" aria-hidden="true">
           Ver pendientes
         </span>
       </button>
 
       {dialogOpen ? (
-        <div
-          className="moodle-confirm-overlay unified-alert-center__overlay"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setDialogOpen(false)
-          }}
-        >
-          <section
+          <dialog
+            ref={dialogRef}
             className="moodle-confirm-dialog unified-alert-center"
-            role="dialog"
-            aria-modal="true"
             aria-labelledby="unified-alert-center-title"
+            onCancel={() => setDialogOpen(false)}
           >
             <header className="moodle-confirm-dialog__header unified-alert-center__header">
               <div>
                 <span>{receivesDailyReminder ? 'Recordatorio diario' : 'Centro unificado'}</span>
                 <h2 id="unified-alert-center-title">Pendientes académicos</h2>
-                <p>El aviso continuará activo hasta completar cada actividad.</p>
+                {refreshedAt ? <p>Última consulta: {refreshedAt}</p> : null}
               </div>
+              <div className="unified-alert-center__actions">
+              <button type="button" className="ghost-button" disabled={refreshing} onClick={() => refreshRef.current()}><RefreshCw size={16} />{refreshing ? 'Actualizando...' : 'Actualizar'}</button>
               <button
                 type="button"
-                className="moodle-button moodle-button--secondary moodle-dialog-close"
+                className="ghost-button unified-alert-close"
+                aria-label="Cerrar pendientes"
+                title="Cerrar pendientes"
                 onClick={() => setDialogOpen(false)}
               >
-                Cerrar
+                <X size={18} />
               </button>
+              </div>
             </header>
 
             <div className="moodle-confirm-dialog__body unified-alert-center__body">
-              <div className="unified-alert-center__summary">
-                {canViewTeacherEvaluation ? (
-                  <div>
-                    <span>{isAdminEvaluationObserver ? 'Evaluación 360' : 'Evaluación docente'}</span>
-                    <strong>{formatCount(evaluationPending)}</strong>
-                    <small>
-                      {isAdminEvaluationObserver
-                        ? `${formatCount(adminPendingPeople)} ${adminPendingPeople === 1 ? 'responsable identificado' : 'responsables identificados'}`
-                        : evaluationPending === 1 ? 'actividad pendiente' : 'actividades pendientes'}
-                    </small>
-                  </div>
-                ) : null}
-                {canViewMoodle ? (
-                  <div>
-                    <span>Moodle y calificaciones</span>
-                    <strong>{formatCount(moodlePending)}</strong>
-                    <small>{moodlePending === 1 ? 'alerta por atender' : 'alertas por atender'}</small>
-                  </div>
-                ) : null}
+              <div className="unified-alert-center__summary" role="group" aria-label="Fuentes de notificación">
+                {sources.map((source) => <button type="button" key={source.key} className="unified-alert-source" aria-label={source.title} aria-pressed={activeSource === source.key} onClick={() => setSelectedSource(source.key)}>
+                  <span>{source.title}</span>
+                  <strong className={source.total === null ? 'unified-alert-source__unavailable' : ''}>{source.total === null ? 'No disponible' : formatCount(source.total)}</strong>
+                  <small>{source.unit}</small>
+                </button>)}
               </div>
 
-              {evaluationError || moodleError ? (
+              {hasErrors ? (
                 <div className="unified-alert-center__errors" role="alert">
                   {evaluationError ? <p>{evaluationError}</p> : null}
                   {moodleError ? <p>{moodleError}</p> : null}
+                  {administrativeSources.map((source) => administrativeAlerts[source.key]?.error ? <p key={source.key}>{administrativeAlerts[source.key]?.error}</p> : null)}
                 </div>
               ) : null}
 
-              {evaluationPending > 0 ? (
+              {activeSource === 'evaluation' ? (
                 <section className="unified-alert-center__section">
                   <header>
                     <div>
@@ -560,7 +623,7 @@ export function UnifiedAcademicAlertsIndicator({
                     ))}
                     {filteredEvaluationRows.length === 0 ? (
                       <div className="unified-alert-center__list-empty">
-                        No se encontraron pendientes con el criterio indicado.
+                        {evaluationError ? 'Pendientes de evaluación sin verificar.' : 'No se encontraron pendientes con el criterio indicado.'}
                       </div>
                     ) : null}
                   </div>
@@ -568,7 +631,7 @@ export function UnifiedAcademicAlertsIndicator({
                 </section>
               ) : null}
 
-              {moodlePending > 0 ? (
+              {activeSource === 'moodle' ? (
                 <section className="unified-alert-center__section">
                   <header>
                     <div>
@@ -604,18 +667,14 @@ export function UnifiedAcademicAlertsIndicator({
                       </article>
                     ))}
                   </div>
+                  {!moodleItems.length ? <p className="unified-alert-center__list-empty">{moodleError ? 'Pendientes de Moodle sin verificar.' : 'No hay alertas de calificaciones pendientes.'}</p> : null}
                   <Pager page={currentMoodlePage} totalPages={moodlePages} onChange={setMoodlePage} />
                 </section>
               ) : null}
 
-              {totalPending <= 0 ? (
-                <div className="unified-alert-center__empty">
-                  No existen pendientes confirmados. Revise los avisos de conexión mostrados arriba.
-                </div>
-              ) : null}
+              {selectedAdministrativeSource ? <AdministrativePendingDetails key={selectedAdministrativeSource.key} source={selectedAdministrativeSource} refreshToken={detailRevision} onOpenModule={() => { setDialogOpen(false); administrativeActions[selectedAdministrativeSource.key]() }} /> : null}
             </div>
-          </section>
-        </div>
+          </dialog>
       ) : null}
     </>
   )

@@ -36,7 +36,8 @@ function newUnit(index = 1): PortalAcademicPlanningUnit {
 function initialDraft(): Draft {
   return {
     nivel: '', unidad_curricular: '', campo_formacion: '', modalidad: 'Presencial / En línea',
-    prerrequisitos: '', correquisitos: '', horario_clases: '', horario_tutorias: '', descripcion: '',
+    prerrequisitos: '', correquisitos: '', horario_clases: '', horario_tutorias: '',
+    horas_docencia: 32, horas_autonomo: 76, horas_practica: 48, descripcion: '',
     objetivo_general: '', resultados_aprendizaje: '', mision_intec: MISION_INTEC, mision_escuela: '',
     mision_carrera: '', unidades: [newUnit(1)], estrategias_metodologicas: '', formacion_ciudadana: '',
     sostenibilidad: '', recursos_didacticos: '', evaluacion_tareas: 30, evaluacion_individual: 15,
@@ -52,6 +53,20 @@ function draftWithPensumData(course: PortalTeacherCourse, base: Draft): Draft {
     ...base,
     nivel: Number.isFinite(semester) && semester > 0 ? `${semester}.º semestre` : '',
     unidad_curricular: course.unidad_curricular || '',
+  }
+}
+
+function restoreDraft(saved: string | null): Draft {
+  const defaults = initialDraft()
+  if (!saved) return defaults
+  const previous = JSON.parse(saved) as Partial<Draft>
+  const draft = { ...defaults, ...previous }
+  const topics = draft.unidades.flatMap((unit) => unit.temas)
+  return {
+    ...draft,
+    horas_docencia: previous.horas_docencia ?? topics.reduce((sum, topic) => sum + topic.horas_docencia, 0),
+    horas_autonomo: previous.horas_autonomo ?? topics.reduce((sum, topic) => sum + topic.horas_autonomo, 0),
+    horas_practica: previous.horas_practica ?? topics.reduce((sum, topic) => sum + topic.horas_practica, 0),
   }
 }
 
@@ -74,6 +89,7 @@ function safeName(value: string) {
 export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>) {
   const [courses, setCourses] = useState<PortalTeacherCourse[]>([])
   const [selectedKey, setSelectedKey] = useState('')
+  const [loadedDraftKey, setLoadedDraftKey] = useState('')
   const [draft, setDraft] = useState<Draft>(initialDraft)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState<'pea' | 'silabo' | null>(null)
@@ -130,15 +146,24 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
     if (!selectedCourse) return
     try {
       const saved = globalThis.localStorage.getItem(planningStorageKey(selectedCourse))
-      const storedDraft = saved ? { ...initialDraft(), ...JSON.parse(saved) } : initialDraft()
-      setDraft(draftWithPensumData(selectedCourse, storedDraft))
+      setDraft(draftWithPensumData(selectedCourse, restoreDraft(saved)))
     } catch {
       setDraft(draftWithPensumData(selectedCourse, initialDraft()))
     }
+    setLoadedDraftKey(keyOf(selectedCourse))
     setMessage('')
     setError('')
     setActiveModule(0)
   }, [selectedCourse])
+
+  useEffect(() => {
+    if (!selectedCourse || loadedDraftKey !== selectedKey) return
+    try {
+      globalThis.localStorage.setItem(planningStorageKey(selectedCourse), JSON.stringify(draft))
+    } catch {
+      // The explicit save action reports storage failures to the teacher.
+    }
+  }, [draft, loadedDraftKey, selectedCourse, selectedKey])
 
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl)
@@ -159,12 +184,24 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
   }
 
   const persistPlanning = () => {
-    if (!selectedCourse) return
-    globalThis.localStorage.setItem(planningStorageKey(selectedCourse), JSON.stringify(draft))
+    if (!selectedCourse) return false
+    try {
+      globalThis.localStorage.setItem(planningStorageKey(selectedCourse), JSON.stringify(draft))
+      return true
+    } catch {
+      setError('No se pudo guardar el borrador en este navegador.')
+      return false
+    }
   }
 
   const buildPayload = (documentType: 'pea' | 'silabo', allowIncomplete = false): PortalAcademicPlanningPayload | null => {
     if (!selectedCourse) return null
+    if ([draft.horas_docencia, draft.horas_autonomo, draft.horas_practica].some(
+      (hours) => typeof hours !== 'number' || !Number.isInteger(hours) || hours < 0 || hours > 1000,
+    )) {
+      setError('Las horas de docencia, trabajo autónomo y prácticas deben ser números enteros entre 0 y 1000.')
+      return null
+    }
     if (!allowIncomplete && evaluationTotal !== 100) {
       setError('Los porcentajes de evaluación deben sumar 100%.')
       return null
@@ -319,6 +356,12 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
             </select>
           </label>
           <div className="planning-actions">
+            <button type="button" className="ghost-button" onClick={() => {
+              if (persistPlanning()) {
+                setError('')
+                setMessage('Borrador guardado para continuar editándolo en este navegador.')
+              }
+            }} disabled={!selectedCourse}>Guardar borrador</button>
             <button type="button" className="ghost-button" onClick={() => void previewDocument(selectedDocument)} disabled={!selectedCourse || previewing !== null}>{previewing === selectedDocument ? 'Preparando...' : `Vista previa ${selectedDocument === 'pea' ? 'PEA' : 'Sílabo'}`}</button>
             <button type="button" className="primary-action" onClick={() => void generate(selectedDocument)} disabled={!selectedCourse || generating !== null}>{generating === selectedDocument ? 'Generando...' : `Generar ${selectedDocument === 'pea' ? 'PEA' : 'Sílabo'} PDF`}</button>
           </div>
@@ -356,6 +399,9 @@ export function PortalDocentePlanificacionView({ displayName }: Readonly<Props>)
             <label><span>Correquisitos</span><input value={draft.correquisitos} onChange={(e) => setField('correquisitos', e.target.value)} /></label>
             <label><span>Horario de clases</span><input value={draft.horario_clases} onChange={(e) => setField('horario_clases', e.target.value)} /></label>
             <label><span>Horario de tutorías</span><input value={draft.horario_tutorias} onChange={(e) => setField('horario_tutorias', e.target.value)} /></label>
+            <label><span>Docencia (horas)</span><input type="number" min="0" max="1000" step="1" value={draft.horas_docencia ?? 0} onChange={(e) => setField('horas_docencia', Number(e.target.value))} /></label>
+            <label><span>Trabajo Autónomo (horas)</span><input type="number" min="0" max="1000" step="1" value={draft.horas_autonomo ?? 0} onChange={(e) => setField('horas_autonomo', Number(e.target.value))} /></label>
+            <label><span>Prácticas Aprendizaje (horas)</span><input type="number" min="0" max="1000" step="1" value={draft.horas_practica ?? 0} onChange={(e) => setField('horas_practica', Number(e.target.value))} /></label>
             <label><span>Versión</span><input value={draft.version} onChange={(e) => setField('version', e.target.value)} /></label>
             <label><span>Fecha de elaboración</span><input type="date" value={draft.fecha_elaboracion} onChange={(e) => setField('fecha_elaboracion', e.target.value)} /></label>
           </div>

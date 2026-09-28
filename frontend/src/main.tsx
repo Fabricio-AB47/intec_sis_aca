@@ -1,6 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import '../../shared/ui/tokens.css'
+import '../../shared/ui/components.css'
+import '../../shared/ui/navigation.css'
 import App from './App.tsx'
 import { AppErrorBoundary } from './components/AppErrorBoundary.tsx'
 

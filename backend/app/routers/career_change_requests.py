@@ -25,6 +25,7 @@ from app.services.academic_movement_audit import (
     record_academic_movement,
 )
 from app.services.db import get_connection, get_integration_control_connection
+from app.services.academic_pending_requests import read_pending_requests
 from app.services.graph_documents import (
     complete_upload_session,
     delete_item,
@@ -1750,6 +1751,16 @@ def list_career_change_requests(
         return {"total": len(items), "items": items}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"No se pudieron consultar las solicitudes: {exc}") from exc
+
+
+@router.get("/pending")
+def pending_career_change_requests(
+    _current_user: Annotated[SessionUser, Depends(_SCREEN_ACCESS)],
+    query: Annotated[str, Query(max_length=120)] = "",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> dict[str, Any]:
+    return read_pending_requests("career", query=query, page=page, page_size=page_size)
 
 
 @router.get("/{request_id}")

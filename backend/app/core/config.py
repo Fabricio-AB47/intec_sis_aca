@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = Field(default=2_200_000_000, ge=1_048_576, le=2_500_000_000)
     jwt_issuer: str = "intec-sis-aca"
     jwt_audience: str = "intec-sis-aca-web"
+    titulation_portal_url: str = ""
+    titulation_portal_signing_key: SecretStr | None = Field(default=None, repr=False)
+    titulation_portal_issuer: str = "INTEC"
+    titulation_portal_audience: str = "INTEC_PORTAL_TITULACION"
     login_rate_limit_attempts: int = Field(default=5, ge=1, le=50)
     login_rate_limit_window_seconds: int = Field(default=300, ge=30, le=3600)
     login_rate_limit_lockout_seconds: int = Field(default=900, ge=30, le=86400)

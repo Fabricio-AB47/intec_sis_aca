@@ -85,19 +85,18 @@ El proyecto no necesita otra aplicación paralela. Necesita una capa de orquesta
 - El menú continúa condicionado por perfil.
 - El centro **Sistema académico** funciona como mapa operativo, no como reemplazo de las pantallas.
 - Los procesos se filtran por Ingreso, Formación, Culminación y Control.
-- Cada fila muestra responsable, registro central, resultado y disponibilidad de integración.
+- Cada fila muestra responsable, registro y acceso autorizado. Los pendientes reales se consultan en una bandeja; el diagnóstico de conexiones se abre bajo demanda.
 - Los portales de estudiante y docente permanecen separados del espacio administrativo.
 
-## Estado técnico comprobado
+## Verificación técnica
 
-- Nueve bases operativas disponibles.
-- Tres contratos de lectura instalados y disponibles.
-- Ocho dominios del ciclo académico con estado `READY`.
+- La disponibilidad depende del entorno y debe consultarse en tiempo real; no se garantiza un número fijo de bases o contratos disponibles.
+- Una conexión disponible no demuestra que todas las reglas del proceso estén configuradas o que sus expedientes estén completos.
 - Endpoint de diagnóstico: `GET /api/academic-system/integration-status`.
 
 ## Próximas mejoras recomendadas
 
-1. Crear una bandeja unificada de tareas pendientes por perfil usando estados reales, no contadores duplicados.
+1. Ampliar la bandeja de pendientes incorporada el 22/09/2026 a otros procesos, sin duplicar las alertas existentes de Moodle y evaluación. Ver `REVISION_FUNCIONAL_SIS_20260922.md`.
 2. Registrar toda transición de estado con origen, usuario, fecha, motivo y documento.
 3. Centralizar reglas configurables como nota mínima, horas, umbrales de beca y requisitos de titulación.
 4. Añadir pruebas de contrato para las vistas de integración y pruebas transaccionales para cada cambio de etapa.

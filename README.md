@@ -9,7 +9,8 @@ El sistema trabaja contra SQL Server `INTECBDD` y concentra admisiones, matricul
 - `backend/app`: API FastAPI, seguridad, SQL Server, Microsoft Graph, reportes y PDF.
 - `backend/sql`: scripts SQL complementarios.
 - `backend/uploads`: archivos subidos en ejecucion local.
-- `frontend/src`: SPA React/Vite con modulos por dominio.
+- `frontend/src`: frontend unico React/Vite con modulos por dominio, incluido Titulacion.
+- `shared/ui`: tema comun, botones, menu y login.
 - `frontend/public`: recursos publicos como logos.
 - `frontend/doc`: plantillas usadas para documentos.
 - `SisAcademicoV1`: fuente legacy usada como referencia funcional.
@@ -77,7 +78,7 @@ npm run dev
 La aplicacion queda disponible en:
 
 ```text
-http://localhost:5173
+http://127.0.0.1:5174
 ```
 
 El proxy de Vite apunta por defecto a:
@@ -95,6 +96,10 @@ npm run dev
 
 ## Modulos Principales
 
+Titulacion ya no necesita un segundo frontend: abrir **Titulacion > Proceso de
+titulacion > Gestion integral**. La conexion al servicio existente se configura
+en el backend; ver [Frontend unificado](docs/FRONTEND_UNIFICADO.md).
+
 - Autenticacion por roles desde tablas legacy.
 - Portal estudiante: dashboard, malla curricular, malla academica y calificaciones.
 - Portal docente: materias asignadas, alumnos por periodo/paralelo y carga de notas.
@@ -103,11 +108,17 @@ npm run dev
 - Administracion academica: carreras, pensum, periodos, mallas, textos HOMO y catalogos.
 - Reporteria: consultas exportables desde datos legacy.
 - Integraciones Microsoft 365: credenciales y operaciones Graph.
-- Integración Moodle de solo lectura: estado del servicio, usuarios y cursos con filtros y paginación local.
+- Integración Moodle: consultas de usuarios y cursos, copia de plantillas, matrículas, fechas de actividades, validación y migración de notas, sujetas a permisos y configuración.
 
 ## Integración Moodle
 
-La primera fase de Moodle expone únicamente consultas administrativas. No crea ni modifica usuarios, cursos, matrículas o calificaciones. La configuración y las medidas operativas se documentan en `docs/MOODLE_READ_INTEGRATION.md`.
+La integración incluye consultas y operaciones de escritura controladas. La disponibilidad de cada operación depende de las funciones habilitadas en Moodle, la configuración del backend y los permisos de pantalla. `docs/MOODLE_READ_INTEGRATION.md` documenta la fase inicial de lectura, no el alcance completo actual.
+
+## Centro de trabajo académico
+
+En la **franja superior > Ver pendientes** se reúnen evaluación 360, calificaciones Moodle, documentación de Secretaría y solicitudes de cambio de carrera o modalidad. Las tarjetas comparten tamaño y muestran el detalle de la fuente seleccionada, según los permisos asignados. Cada fuente conserva su unidad de conteo y enlace al proceso original; el total representa pendientes, no personas únicas. Las listas tienen búsqueda y paginación; los errores no se presentan como cero pendientes. En **Inicio > Sistema académico** se mantienen los procesos y la verificación de conexiones bajo demanda, sin duplicar la bandeja.
+
+Investigación, cobertura funcional, cambios y próximos pasos: [Revisión funcional del sistema académico](docs/REVISION_FUNCIONAL_SIS_20260922.md).
 
 ## Comandos Utiles
 

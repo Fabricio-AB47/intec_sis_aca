@@ -1,3 +1,4 @@
+@layer legacy {
 .modality-change-destination {
   grid-template-columns: repeat(2, minmax(220px, 1fr)) auto;
 }
@@ -14,22 +15,22 @@
 .career-change-state--matricular,
 .career-change-state--pendiente,
 .career-change-state--migrar {
-  background: #fff0cf;
-  color: #865807;
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
 }
 
 .career-change-state--matriculada,
 .career-change-state--existente,
 .career-change-state--migrada {
-  background: #dcf3e4;
-  color: #12653b;
+  background: var(--ui-neutral-soft);
+  color: var(--ui-success);
 }
 
 .career-change-alert--warning {
   margin-top: 14px;
-  border: 1px solid #e4bd72;
-  background: #fff7e7;
-  color: #704b08;
+  border: 1px solid var(--ui-warning-border);
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
 }
 
 .modality-change-upload {
@@ -56,9 +57,9 @@
   align-items: center;
   gap: 9px;
   padding: 8px;
-  border: 1px solid #d4dfe3;
-  border-radius: 6px;
-  background: #f8fbfc;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-alt);
 }
 
 .modality-change-file-order {
@@ -66,12 +67,12 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid #bfd3db;
-  border-radius: 5px;
-  background: #eaf4f6;
-  color: #075b68;
-  font-size: 0.74rem;
-  font-weight: 900;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-hover);
+  font-size: var(--ui-size-12);
+  font-weight: var(--ui-weight-bold);
 }
 
 .modality-change-file-details {
@@ -84,16 +85,16 @@
 
 .modality-change-file-details strong {
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: var(--ui-size-12);
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .modality-change-file-details small {
-  color: #5c6880;
-  font-size: 0.72rem;
-  font-weight: 700;
+  color: var(--ui-muted);
+  font-size: var(--ui-size-12);
+  font-weight: var(--ui-weight-bold);
 }
 
 .modality-change-file-list button {
@@ -101,25 +102,25 @@
   min-width: 32px;
   height: 32px;
   padding: 0;
-  border: 1px solid #c8d4da;
-  border-radius: 5px;
-  background: #fff;
-  color: #8d1d1d;
-  font-size: 1.25rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface);
+  color: var(--ui-primary);
+  font-size: var(--ui-size-20);
   line-height: 1;
   cursor: pointer;
 }
 
 .modality-change-file-list button:hover,
 .modality-change-file-list button:focus-visible {
-  border-color: #b43a3a;
-  background: #fff0f0;
+  border-color: var(--ui-danger);
+  background: var(--ui-danger-soft);
 }
 
 .modality-change-document-heading span {
-  color: #536079;
-  font-size: 0.78rem;
-  font-weight: 800;
+  color: var(--ui-muted);
+  font-size: var(--ui-size-12);
+  font-weight: var(--ui-weight-bold);
 }
 
 .career-change-detail-block > .modality-change-document-actions {
@@ -138,10 +139,10 @@
 
 .modality-change-document-pending {
   padding: 9px 11px;
-  border: 1px solid #d5dde1;
-  border-radius: 6px;
-  color: #58657b;
-  font-size: 0.8rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+  color: var(--ui-muted);
+  font-size: var(--ui-size-13);
 }
 
 @media (max-width: 1250px) {
@@ -171,4 +172,5 @@
   .modality-change-document-actions .career-change-button {
     width: 100%;
   }
+}
 }

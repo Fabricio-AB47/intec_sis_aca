@@ -50,6 +50,7 @@ from app.routers.teacher_evaluation import router as teacher_evaluation_router
 from app.routers.teacher_evaluation_history import router as teacher_evaluation_history_router
 from app.routers.titulos_registrados import router as titulos_registrados_router
 from app.routers.titulacion import router as titulacion_router
+from app.routers.titulation_portal import router as titulation_portal_router
 
 settings = get_settings()
 logger = logging.getLogger("intec_sis_aca.security")
@@ -297,6 +298,7 @@ app.include_router(practicas_institucionales_router)
 app.include_router(practicas_operativas_router)
 app.include_router(titulos_registrados_router)
 app.include_router(titulacion_router)
+app.include_router(titulation_portal_router)
 
 
 @app.get("/uploads/{file_path:path}", include_in_schema=False)

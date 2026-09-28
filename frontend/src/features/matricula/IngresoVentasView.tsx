@@ -54,10 +54,10 @@ function salesRisk(index: number, total: number): RiskFilter {
 }
 
 function salesRiskColor(risk: RiskFilter): string {
-  if (risk === 'green') return '#1f7a4d'
-  if (risk === 'yellow') return '#d19a2a'
-  if (risk === 'red') return '#b42318'
-  return '#1f6f8b'
+  if (risk === 'green') return 'var(--ui-success)'
+  if (risk === 'yellow') return 'var(--ui-chart-gold)'
+  if (risk === 'red') return 'var(--ui-danger)'
+  return 'var(--ui-accent)'
 }
 
 function formatNumber(value?: number): string {

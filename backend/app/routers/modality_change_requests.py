@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 import pyodbc
 
 from app.core.security import SessionUser, require_screen_access
+from app.services.academic_pending_requests import read_pending_requests
 from app.core.file_security import read_secure_upload
 from app.services.academic_movement_audit import (
     build_snapshot_row,
@@ -2582,6 +2583,16 @@ def list_modality_change_requests(
         return {"total": len(items), "items": items}
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"No se pudieron consultar las solicitudes: {exc}") from exc
+
+
+@router.get("/pending")
+def pending_modality_change_requests(
+    _current_user: Annotated[SessionUser, Depends(_SCREEN_ACCESS)],
+    query: Annotated[str, Query(max_length=120)] = "",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> dict[str, Any]:
+    return read_pending_requests("modality", query=query, page=page, page_size=page_size)
 
 
 @router.get("/{request_id}")

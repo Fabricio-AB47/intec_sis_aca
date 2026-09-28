@@ -225,7 +225,7 @@ function enrollmentMode(value: string | null): AcademicEnrollmentMode {
 }
 
 function moodleSection(value: string | null): MoodleSection {
-  return ['alerts', 'academic-enrollment', 'course-cloning', 'manual-enrollment', 'status', 'users', 'courses', 'resources', 'evaluation-dates', 'grades'].includes(value || '')
+  return ['alerts', 'enrollment-validation', 'academic-enrollment', 'course-cloning', 'manual-enrollment', 'status', 'users', 'courses', 'resources', 'evaluation-dates', 'grades'].includes(value || '')
     ? value as MoodleSection
     : 'status'
 }
@@ -968,14 +968,14 @@ export function useReporteriaApp() {
   }, [handleApiError])
 
   useEffect(() => {
-    if (!session || activePage !== 'dashboard') return
+    if (!session || (activePage !== 'dashboard' && activePage !== 'sistema-academico')) return
 
     const refreshDashboard = () => {
       if (document.visibilityState === 'visible') void loadDashboardMatricula()
     }
 
     refreshDashboard()
-    const intervalId = window.setInterval(refreshDashboard, 30000)
+    const intervalId = window.setInterval(refreshDashboard, activePage === 'dashboard' ? 30000 : 60000)
     const refreshOnVisible = () => {
       if (document.visibilityState === 'visible') {
         refreshDashboard()

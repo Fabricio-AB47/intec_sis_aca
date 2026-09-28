@@ -6,6 +6,7 @@ import json
 import re
 from typing import Annotated, Any, Literal
 from uuid import uuid4
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -319,9 +320,21 @@ def _query_candidates(
     if candidate_codes is not None and not filtered_codes:
         return [], 0
     code_filter = ""
+    codes_xml = ""
     if candidate_codes is not None:
-        code_filter = f" AND codigo_estud IN ({','.join('?' for _ in filtered_codes)})"
-    sql = _CANDIDATE_CTE + f"""
+        # One structured parameter avoids SQL Server's 2100-parameter limit.
+        codes = Element("codes")
+        for code in filtered_codes:
+            SubElement(codes, "code").text = str(code)
+        codes_xml = tostring(codes, encoding="unicode")
+        code_filter = """
+            AND codigo_estud IN (
+                SELECT item.value('(text())[1]', 'int')
+                FROM @candidate_codes.nodes('/codes/code') AS selected(item)
+            )
+        """
+    prefix = "DECLARE @candidate_codes xml = CAST(? AS xml);\n" if candidate_codes is not None else ""
+    sql = prefix + _CANDIDATE_CTE + f"""
 SELECT
     COUNT(1) OVER() AS total_registros,
     codigo_estud,
@@ -361,7 +374,8 @@ ORDER BY
     apellidos_nombres
 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY;
 """
-    parameters: list[Any] = [
+    parameters: list[Any] = [codes_xml] if candidate_codes is not None else []
+    parameters.extend([
         normalized_stage,
         normalized_stage,
         exact_code,
@@ -371,8 +385,7 @@ OFFSET ? ROWS FETCH NEXT ? ROWS ONLY;
         like,
         like,
         like,
-    ]
-    parameters.extend(filtered_codes)
+    ])
     parameters.extend((offset, page_size))
     with get_connection() as connection:
         cursor = connection.cursor()
@@ -1223,6 +1236,12 @@ def secretaria_candidates(
             page_size=page_size,
             candidate_codes=candidate_codes,
         )
+        if not items and page > 1:
+            page = 1
+            items, total = _query_candidates(
+                search=search, stage=stage, page=page, page_size=page_size,
+                candidate_codes=candidate_codes,
+            )
         cases = _case_summaries([int(item["codigo_estud"]) for item in items])
         for item in items:
             item["secretaria"] = cases.get(int(item["codigo_estud"]))

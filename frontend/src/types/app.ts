@@ -123,6 +123,24 @@ export type Page =
   | 'practicas-institucionales'
 
 export type SecretariaStage = 'TODOS' | 'PROXIMO' | 'EGRESADO' | 'GRADUADO'
+export type AcademicPendingRequestsResponse = {
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  checked_at: string
+  items: Array<{
+    id: number
+    student_code: number
+    identification: string
+    student: string
+    career: string
+    period: string
+    state: 'PENDIENTE' | 'APROBADA'
+    created_at: string | null
+  }>
+}
+
 export type SecretariaHomologationClassification = 'INTERNA_ART81' | 'EXTERNA_ART82' | 'EXTERNA_ART83'
 
 export type SecretariaCaseSummary = {
@@ -2197,6 +2215,7 @@ export type EnglishApprovalReviewResponse = {
 export type PortalStudentSection = 'dashboard' | 'curricular' | 'academica' | 'notas'
 export type MoodleSection =
   | 'alerts'
+  | 'enrollment-validation'
   | 'academic-enrollment'
   | 'course-cloning'
   | 'manual-enrollment'
@@ -6518,6 +6537,9 @@ export type PortalAcademicPlanningPayload = {
   correquisitos: string
   horario_clases: string
   horario_tutorias: string
+  horas_docencia?: number | null
+  horas_autonomo?: number | null
+  horas_practica?: number | null
   descripcion: string
   objetivo_general: string
   resultados_aprendizaje: string
