@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'r
 
 import {
   ApiError,
+  STUDENT_STATE_CHANGED_EVENT,
   createClassroom,
   downloadExcelSqlCrossWorkbook,
   fetchDashboardMatricula,
@@ -745,6 +746,29 @@ export function useReporteriaApp() {
     dashboardRequestInFlight.current = { session, promise: pending }
     return pending
   }, [handleApiError, session])
+
+  useEffect(() => {
+    if (!session) return
+    const invalidateStudentDashboard = () => {
+      // A response started before the change must never restore stale counters.
+      dashboardRequestInFlight.current = null
+      setDashboardMatricula(null)
+      setDashboardMatriculaLoading(false)
+      if (screenPermissionAllowsPage(screenAccessPages, 'dashboard')
+        || screenPermissionAllowsPage(screenAccessPages, 'sistema-academico')) {
+        void loadDashboardMatricula()
+      }
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === STUDENT_STATE_CHANGED_EVENT && event.newValue) invalidateStudentDashboard()
+    }
+    window.addEventListener(STUDENT_STATE_CHANGED_EVENT, invalidateStudentDashboard)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener(STUDENT_STATE_CHANGED_EVENT, invalidateStudentDashboard)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [loadDashboardMatricula, screenAccessPages, session])
 
   const loadAcademicMatriculaSummary = useCallback(async () => {
     setMatriculaSummaryError('')

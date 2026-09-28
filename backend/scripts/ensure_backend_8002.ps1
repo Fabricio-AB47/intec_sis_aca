@@ -102,6 +102,9 @@ $arguments = @(
     '127.0.0.1',
     '--port',
     "$port",
+    # Moodle validation jobs and reports are local to this single process.
+    '--workers',
+    '1',
     '--proxy-headers',
     '--forwarded-allow-ips',
     '127.0.0.1,204.168.250.176',

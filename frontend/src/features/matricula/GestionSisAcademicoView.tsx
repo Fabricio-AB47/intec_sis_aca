@@ -894,6 +894,7 @@ export function GestionSisAcademicoView({
     const key = recordKey(row)
     const localValue = inlineEstadoValues[key]?.[fieldName]
     if (localValue !== undefined) return localValue
+    if (isStudentEstadoSection && fieldName === 'Informacion') return ''
     return inputValue(row[fieldName])
   }
 
@@ -903,47 +904,51 @@ export function GestionSisAcademicoView({
       ...current,
       [key]: {
         Estado: current[key]?.Estado ?? inputValue(row.Estado),
-        Informacion: current[key]?.Informacion ?? inputValue(row.Informacion),
+        Informacion: current[key]?.Informacion ?? (isStudentEstadoSection ? '' : inputValue(row.Informacion)),
         ...values,
       },
     }))
   }
 
-  async function saveInlineEstado(row: SisAcademicoRow) {
+  async function saveInlineEstado(row: SisAcademicoRow, soloDocumento = false) {
     if (!selectedSection || !isEstadoInlineSection) return
     const key = recordKey(row)
-    const estado = inlineEstadoValue(row, 'Estado').trim()
+    const estado = soloDocumento ? inputValue(row.Estado).trim() : inlineEstadoValue(row, 'Estado').trim()
     const informacion = inlineEstadoValue(row, 'Informacion').trim()
     const documento = inlineEstadoValues[key]?.Documento || null
     if (!estado) {
       setError('Seleccione un estado antes de guardar.')
       return
     }
-    if (isStudentEstadoSection && informacion.length < 5) {
+    if (isStudentEstadoSection && !soloDocumento && estado.toUpperCase() === inputValue(row.Estado).trim().toUpperCase()) {
+      setError('Seleccione un estado diferente al estado actual.')
+      return
+    }
+    if (isStudentEstadoSection && !soloDocumento && informacion.length < 5) {
       setError('Describe el motivo del cambio de estado.')
       return
     }
-    if (isStudentEstadoSection && !documento) {
-      setError('Adjunte el documento que respalda el cambio de estado.')
+    if (isStudentEstadoSection && soloDocumento && !documento) {
+      setError('Seleccione un documento para subir el respaldo.')
       return
     }
     setError('')
     setMessage('')
     setInlineSavingKey(key)
     try {
-      const payload = isStudentEstadoSection && documento
-        ? await updateStudentStateWithDocument(key, estado, informacion, documento)
+      const payload = isStudentEstadoSection
+        ? await updateStudentStateWithDocument(key, estado, informacion, documento, soloDocumento)
         : await updateSisAcademicoRecord(selectedSection.key, key, {
             Estado: estado,
             Informacion: informacion,
           })
-      setMessage(payload.message || 'Estado actualizado')
       await loadRows(
         selectedSection.key,
         query,
         listPage,
         listPageSize,
       )
+      setMessage(payload.message || 'Estado actualizado')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo actualizar el estado')
     } finally {
@@ -2001,7 +2006,7 @@ export function GestionSisAcademicoView({
                 </div>
                 <small>
                   {isStudentEstadoSection
-                    ? 'Cada cambio requiere motivo y documento de respaldo.'
+                    ? 'Estado y descripción obligatorios. Documento opcional: puede adjuntarlo ahora o posteriormente.'
                     : isEstadoInlineSection
                       ? 'Edita estado y descripción directamente en la fila.'
                       : isTeacherAssignmentSection
@@ -2069,11 +2074,17 @@ export function GestionSisAcademicoView({
                                     </select>
                                   </td>
                                   <td>
+                                    {isStudentEstadoSection ? (
+                                      <div className="gestion-sis-state-description">
+                                        <strong>Descripción guardada</strong>
+                                        <p>{String(row.DescripcionEstado || row.Informacion || 'Sin descripción registrada')}</p>
+                                      </div>
+                                    ) : null}
                                     <input
                                       className="gestion-sis-inline-input"
                                       value={inlineEstadoValue(row, 'Informacion')}
                                       onChange={(event) => updateInlineEstado(row, { Informacion: event.target.value })}
-                                      placeholder="Descripción u observación"
+                                      placeholder={isStudentEstadoSection ? 'Motivo del nuevo cambio' : 'Descripción u observación'}
                                     />
                                   </td>
                                   {isStudentEstadoSection ? (
@@ -2086,6 +2097,15 @@ export function GestionSisAcademicoView({
                                           onChange={(event) => updateInlineEstado(row, { Documento: event.target.files?.[0] || null })}
                                         />
                                       </label>
+                                      <button
+                                        type="button"
+                                        className="ghost-button"
+                                        disabled={Boolean(inlineSavingKey) || !inlineEstadoValues[recordKey(row)]?.Documento}
+                                        onClick={() => void saveInlineEstado(row, true)}
+                                      >
+                                        Subir respaldo sin cambiar estado
+                                      </button>
+                                      <small>Opcional. Para cambiar el estado, use Guardar.</small>
                                       {row.DocumentoEstado ? (
                                         <a
                                           className="gestion-sis-state-document__current"

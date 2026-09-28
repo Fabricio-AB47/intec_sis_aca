@@ -116,6 +116,22 @@ control de propietario y vencimiento.
 
 ## Verificacion
 
+### Despliegue IIS con varios workers
+
+`frontend/public/web.config` dirige exclusivamente
+`/api/moodle/enrollment-validation` y sus subrutas al backend local `127.0.0.1:8002`,
+antes de la regla general de la API. Esta instancia debe mantenerse con un solo
+worker mediante `backend/scripts/ensure_backend_8002.ps1` y su watchdog. El backend
+principal puede conservar sus dos workers en el puerto 8001. No hay fallback de
+estos trabajos al backend principal: tanto el inicio como el seguimiento y las
+exportaciones deben llegar al mismo proceso.
+
+Al desplegar, actualizar y verificar `/health/ready` en ambas instancias antes de
+publicar el frontend. La instancia 8002 conserva la misma autenticacion y permisos;
+el puerto debe permanecer enlazado a loopback, no expuesto directamente. Reiniciarla
+invalida los trabajos y reportes temporales: el usuario debe repetir la consulta.
+En otros entornos se requiere una ruta equivalente o un almacen compartido.
+
 ```powershell
 # Desde backend
 ../.venv/Scripts/python.exe -m pytest tests/test_moodle_enrollment_validation.py -q

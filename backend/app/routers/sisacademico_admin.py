@@ -3059,7 +3059,7 @@ LOOKUP_QUERIES: dict[str, dict[str, list[str]]] = {
     "actualizacion_estudiantes": {
         "Estado": [
             """
-            SELECT TOP (100)
+            SELECT
                 LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO))) AS option_value,
                 CONCAT(
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), IDESTADO))),
@@ -3703,6 +3703,41 @@ def _rows_from_cursor(cursor: Any, section_key: str, key_fields: list[str]) -> l
     return rows
 
 
+def _student_state_description(detail: Any) -> str:
+    """Read the reason from both audit formats without reusing it for a new change."""
+    text = str(detail or "").strip()
+    if "Motivo: " not in text:
+        return text
+    reason = text.split("Motivo: ", 1)[1]
+    # Older records put the actor/date after the reason; newer ones put them first.
+    if text.index("Motivo: ") < text.find("Usuario: "):
+        reason = reason.rsplit(". Usuario: ", 1)[0]
+    elif reason.endswith("."):
+        reason = reason[:-1]
+    return reason.strip()
+
+
+def _student_state_audit_joins(student_match: str) -> str:
+    return f"""
+        OUTER APPLY (
+            SELECT TOP (1) rd.DETALLE
+            FROM dbo.REGISTRODOCESTUD rd
+            WHERE {student_match}
+              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
+              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) NOT LIKE N'[[]CAMBIO DE ESTADO] Respaldo posterior%'
+            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
+        ) state_change
+        OUTER APPLY (
+            SELECT TOP (1) rd.LINKURL
+            FROM dbo.REGISTRODOCESTUD rd
+            WHERE {student_match}
+              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
+              AND NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), rd.LINKURL))), '') IS NOT NULL
+            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
+        ) state_document
+    """
+
+
 def _actualizacion_estudiante_row(row: Any) -> dict[str, Any]:
     record = {
         "codigo_estud": _serialize_value(getattr(row, "codigo_estud", "")),
@@ -3712,6 +3747,7 @@ def _actualizacion_estudiante_row(row: Any) -> dict[str, Any]:
         "Estado": _serialize_value(getattr(row, "Estado", "")),
         "estado_nombre": _serialize_value(getattr(row, "estado_nombre", "")) or _serialize_value(getattr(row, "Estado", "")),
         "Informacion": _serialize_value(getattr(row, "Informacion", "")),
+        "DescripcionEstado": _student_state_description(getattr(row, "Informacion", "")),
         "DocumentoEstado": _serialize_value(getattr(row, "DocumentoEstado", "")),
         "correo": _serialize_value(getattr(row, "correo", "")),
         "correointec": _serialize_value(getattr(row, "correointec", "")),
@@ -3739,7 +3775,7 @@ def _actualizacion_estudiante_select(limit: int | None, where_sql: str = "", per
             TRY_CONVERT(varchar(50), {periodo_value}) AS codigo_periodo,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Estado))) AS Estado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), est.ESTADO))) AS estado_nombre,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.DETALLE))) AS Informacion,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_change.DETALLE))) AS Informacion,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.LINKURL))) AS DocumentoEstado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))) AS correo,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correointec))) AS correointec,
@@ -3762,15 +3798,7 @@ def _actualizacion_estudiante_select(limit: int | None, where_sql: str = "", per
             FROM dbo.CARRERAXESTUD cm
             WHERE TRY_CONVERT(decimal(18, 0), cm.codigo_estud) = TRY_CONVERT(decimal(18, 0), d.codigo_estud)
         ) stats
-        OUTER APPLY (
-            SELECT TOP (1)
-                rd.DETALLE,
-                rd.LINKURL
-            FROM dbo.REGISTRODOCESTUD rd
-            WHERE TRY_CONVERT(decimal(18, 0), rd.IDESTUD) = TRY_CONVERT(decimal(18, 0), d.codigo_estud)
-              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
-            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
-        ) state_document
+        {_student_state_audit_joins('TRY_CONVERT(decimal(18, 0), rd.IDESTUD) = TRY_CONVERT(decimal(18, 0), d.codigo_estud)')}
         {where_sql}
         ORDER BY
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))),
@@ -3811,7 +3839,7 @@ def _actualizacion_estudiante_list_select(
             TRY_CONVERT(varchar(50), {periodo_value}) AS codigo_periodo,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Estado))) AS Estado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.estado_nombre))) AS estado_nombre,
-            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.DETALLE))) AS Informacion,
+            LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_change.DETALLE))) AS Informacion,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(1000), state_document.LINKURL))) AS DocumentoEstado,
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), d.correo))) AS correo,
             latest_period.codigo_periodo AS ultimo_periodo
@@ -3821,15 +3849,7 @@ def _actualizacion_estudiante_list_select(
             FROM dbo.CARRERAXESTUD cm
             WHERE cm.codigo_estud = d.codigo_estud
         ) latest_period
-        OUTER APPLY (
-            SELECT TOP (1)
-                rd.DETALLE,
-                rd.LINKURL
-            FROM dbo.REGISTRODOCESTUD rd
-            WHERE rd.IDESTUD = d.codigo_estud
-              AND TRY_CONVERT(nvarchar(1000), rd.DETALLE) LIKE N'[[]CAMBIO DE ESTADO]%'
-            ORDER BY TRY_CONVERT(bigint, rd.num) DESC
-        ) state_document
+        {_student_state_audit_joins('rd.IDESTUD = d.codigo_estud')}
         ORDER BY
             LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))),
             TRY_CONVERT(int, d.codigo_estud)
@@ -3897,7 +3917,10 @@ def _list_actualizacion_estudiantes_records(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='No se pudo consultar la actualización de estados de estudiantes') from exc
     return {
-        "section": _section_meta("actualizacion_estudiantes", section).model_dump(),
+        "section": _section_meta(
+            "actualizacion_estudiantes", section,
+            _lookup_options_for_section("actualizacion_estudiantes"),
+        ).model_dump(),
         "rows": rows,
         "total": total,
         "page": current_page,
@@ -3921,14 +3944,20 @@ def _get_actualizacion_estudiantes_record(section: dict[str, Any], record_key: s
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo consultar el estado del estudiante") from exc
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Estudiante no encontrado")
-    return {"section": _section_meta("actualizacion_estudiantes", section).model_dump(), "record": _actualizacion_estudiante_row(row)}
+    return {
+        "section": _section_meta(
+            "actualizacion_estudiantes", section,
+            _lookup_options_for_section("actualizacion_estudiantes"),
+        ).model_dump(),
+        "record": _actualizacion_estudiante_row(row),
+    }
 
 
 def _update_actualizacion_estudiantes_record(section: dict[str, Any], record_key: str, payload: SavePayload) -> dict[str, Any]:
     del section, record_key, payload
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="El cambio de estado requiere motivo y documento de respaldo",
+        detail="El cambio de estado requiere estado y descripción mediante el formulario de actualización; el documento es opcional",
     )
 
 
@@ -4846,33 +4875,39 @@ def _student_state_safe_filename(filename: str) -> str:
 async def update_student_state_with_document(
     record_key: str,
     estado: str = Form(...),
-    detalle: str = Form(...),
-    documento: UploadFile = File(...),
+    detalle: str = Form(""),
+    documento: UploadFile | None = File(default=None),
+    solo_documento: bool = Form(False),
     current_user: SessionUser = AllowedEditor,
 ) -> dict[str, Any]:
     cedula = str(_decode_key(record_key, 1)[0] or "").strip()
     estado_codigo = str(estado or "").strip().upper()
     motivo = str(detalle or "").strip()
-    original_name = Path(str(documento.filename or "")).name
+    original_name = Path(str(documento.filename or "")).name if documento is not None else ""
     extension = Path(original_name).suffix.lower()
 
     if not cedula:
         raise HTTPException(status_code=400, detail="Clave de estudiante incompleta")
     if not estado_codigo:
         raise HTTPException(status_code=400, detail='Seleccione el nuevo estado')
-    if len(motivo) < 5:
+    if not solo_documento and len(motivo) < 5:
         raise HTTPException(status_code=400, detail="Describe el motivo del cambio de estado")
-    if extension not in _STUDENT_STATE_ALLOWED_EXTENSIONS:
+    if solo_documento and documento is None:
+        raise HTTPException(status_code=400, detail="Seleccione un documento para subir el respaldo")
+    if documento is not None and extension not in _STUDENT_STATE_ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail='Adjunte un documento PDF, imagen, DOC o DOCX')
 
-    _, file_bytes = await read_secure_upload(
-        documento,
-        maximum=_STUDENT_STATE_MAX_FILE_SIZE,
-        label="documento de respaldo",
-        allowed_extensions=_STUDENT_STATE_ALLOWED_EXTENSIONS,
-    )
+    file_bytes = None
+    if documento is not None:
+        _, file_bytes = await read_secure_upload(
+            documento,
+            maximum=_STUDENT_STATE_MAX_FILE_SIZE,
+            label="documento de respaldo",
+            allowed_extensions=_STUDENT_STATE_ALLOWED_EXTENSIONS,
+        )
 
     saved_path: Path | None = None
+    document_url = ""
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -4882,7 +4917,7 @@ async def update_student_state_with_document(
                     TRY_CONVERT(varchar(50), d.codigo_estud) AS codigo_estud,
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), d.Estado))) AS estado_anterior,
                     LTRIM(RTRIM(TRY_CONVERT(nvarchar(4000), d.Apellidos_nombre))) AS estudiante
-                FROM dbo.DATOS_ESTUD d
+                FROM dbo.DATOS_ESTUD d WITH (UPDLOCK, HOLDLOCK)
                 WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), d.Cedula_Est))) = ?
                 """,
                 cedula,
@@ -4906,33 +4941,46 @@ async def update_student_state_with_document(
                 raise HTTPException(status_code=400, detail="El estado seleccionado no existe en dbo.ESTADO")
 
             estado_anterior = str(student.estado_anterior or "").strip().upper()
-            if estado_anterior == estado_codigo:
+            if solo_documento and estado_anterior != estado_codigo:
+                raise HTTPException(status_code=409, detail="El estado cambió; actualice el listado antes de adjuntar el respaldo")
+            if not solo_documento and estado_anterior == estado_codigo:
                 raise HTTPException(status_code=400, detail='Seleccione un estado diferente al estado actual')
 
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            target_dir = _STUDENT_STATE_DOCUMENT_ROOT / str(student.codigo_estud)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            saved_name = f"{timestamp}_{_student_state_safe_filename(original_name)}"
-            saved_path = target_dir / saved_name
-            saved_path.write_bytes(file_bytes)
-            document_url = f"/uploads/estados_estudiantes/{student.codigo_estud}/{saved_name}"
+            if file_bytes is not None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                target_dir = _STUDENT_STATE_DOCUMENT_ROOT / str(student.codigo_estud)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                saved_name = f"{timestamp}_{_student_state_safe_filename(original_name)}"
+                saved_path = target_dir / saved_name
+                saved_path.write_bytes(file_bytes)
+                document_url = f"/uploads/estados_estudiantes/{student.codigo_estud}/{saved_name}"
 
             user_name = str(current_user.nombres or current_user.login or "usuario").strip()
-            state_detail = (
-                f"[CAMBIO DE ESTADO] {estado_anterior or 'SIN ESTADO'} -> {estado_codigo}. "
-                f"Motivo: {motivo}. Usuario: {user_name}. Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
-            )[:1000]
-
-            cursor.execute(
-                """
-                UPDATE dbo.DATOS_ESTUD
-                SET Estado = ?
-                WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), Cedula_Est))) = ?
-                """,
-                estado_codigo,
-                cedula,
+            action = (
+                f"Respaldo posterior del estado {estado_codigo} (sin cambio)."
+                if solo_documento else f"{estado_anterior or 'SIN ESTADO'} -> {estado_codigo}."
             )
-            affected = cursor.rowcount
+            state_detail = (
+                f"[CAMBIO DE ESTADO] {action} "
+                f"Usuario: {user_name[:40]}. Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
+                f"Motivo: {motivo or 'Documento de respaldo adjuntado posteriormente'}."
+            )
+            # REGISTRODOCESTUD.DETALLE is varchar(250). Do not silently lose the description.
+            if len(state_detail) > 250:
+                raise HTTPException(status_code=400, detail="La descripción es demasiado larga para el registro de auditoría; resúmala e intente nuevamente")
+
+            affected = 0
+            if not solo_documento:
+                cursor.execute(
+                    """
+                    UPDATE dbo.DATOS_ESTUD
+                    SET Estado = ?
+                    WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), Cedula_Est))) = ?
+                    """,
+                    estado_codigo,
+                    cedula,
+                )
+                affected = cursor.rowcount
             cursor.execute(
                 """
                 INSERT INTO dbo.REGISTRODOCESTUD (IDESTUD, LINKURL, DETALLE, TIPO)
@@ -4954,7 +5002,12 @@ async def update_student_state_with_document(
 
     return {
         "ok": True,
-        "message": f"Estado actualizado a {_serialize_value(state.nombre) or estado_codigo} con documento de respaldo",
+        "message": (
+            "Documento de respaldo adjuntado sin modificar el estado"
+            if solo_documento else
+            f"Estado actualizado a {_serialize_value(state.nombre) or estado_codigo}"
+            + (" con documento de respaldo" if document_url else "; puede adjuntar el respaldo posteriormente")
+        ),
         "affected_rows": affected,
         "document_url": document_url,
     }

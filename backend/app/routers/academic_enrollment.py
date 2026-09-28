@@ -23,6 +23,8 @@ _CARRERAXESTUD_COD_USUA_MAT = "95"
 _CARRERAXESTUD_TIPO_CURSO_MIGRA = "N"
 _VALID_TEACHER_STATE_CODES = {"A", "P"}
 _PASSING_FINAL_GRADE = 7.0
+# Codigo institucional de la carrera de Ingles (no de una materia de idiomas).
+_ENGLISH_CAREER_CODE = 12
 
 
 class AcademicEnrollmentPayload(BaseModel):
@@ -2864,7 +2866,13 @@ def _bulk_allowed_subjects(
     required_current_count = len(current_level_codes)
     if required_current_count <= 0:
         return block_all("No hay materias configuradas en el nivel actual del estudiante")
-    if int(progress["aprobadas_nivel_actual"] or 0) < required_current_count:
+    # Ingles no exige aprobar el nivel anterior para la promocion masiva.
+    # La excepcion no cambia el nivel destino, el pensum, las reglas explicitas
+    # de materias consecutivas ni los controles de duplicados e intentos.
+    if (
+        payload.cod_anio_basica != _ENGLISH_CAREER_CODE
+        and int(progress["aprobadas_nivel_actual"] or 0) < required_current_count
+    ):
         return block_all(
             "El estudiante no alcanzo PromedioFinal mayor o igual a "
             f"{_PASSING_FINAL_GRADE:g} en todas las materias del nivel actual "

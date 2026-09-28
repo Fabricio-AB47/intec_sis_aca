@@ -1,0 +1,98 @@
+{
+  "fecha": "2026-09-21",
+  "zona_horaria": "America/Guayaquil",
+  "commit": "b9521f2c",
+  "metodo": "Consultas de lectura; configuración seleccionada sin secretos; pruebas HTTP/TLS de bajo impacto; pruebas locales con datos ficticios",
+  "configuracion_proyecto": {
+    "app_environment": "development",
+    "api_docs_enabled": true,
+    "expose_internal_errors": false,
+    "security_headers_enabled": true,
+    "security_hsts_enabled": false,
+    "csrf_protection_enabled": true,
+    "csrf_require_origin": false,
+    "trusted_hosts": "*",
+    "max_request_body_bytes": 2200000000,
+    "rate_limit_backend": "memory",
+    "session_revocation_enabled": true,
+    "upload_antimalware_enabled": false,
+    "auth_legacy_plaintext_enabled": true,
+    "session_cookie_secure": true,
+    "session_cookie_samesite": "lax",
+    "session_expire_minutes": 480,
+    "moodle_verify_tls": true,
+    "moodle_https": true,
+    "secreto_sesion_independiente_configurado": false,
+    "secreto_firma_al_menos_32_caracteres": true,
+    "db_encrypt": "no",
+    "db_trust_cert": "yes"
+  },
+  "sql_academico": {
+    "cuenta_sa": true,
+    "sysadmin": true,
+    "db_owner": true,
+    "encrypt_option": "FALSE",
+    "base_auditoria_en_servidor_academico_existe": false,
+    "trigger_ddl_habilitado": true,
+    "trigger_retorna_si_base_auditoria_ausente": true
+  },
+  "servicio": {
+    "tarea": "intec_sis_aca_backend",
+    "usuario": "SYSTEM",
+    "run_level": "Highest",
+    "workers_configurados": 2,
+    "api_escucha_loopback": true,
+    "sitio_auxiliar_http_puerto": 89
+  },
+  "tls_443": {
+    "TLS1_0": "rechazado",
+    "TLS1_1": "rechazado",
+    "TLS1_2": "aceptado",
+    "TLS1_3": "aceptado",
+    "certificado_verificado": true,
+    "certificado_expira_utc": "2026-11-03T15:42:49Z",
+    "cipher_tls1_2": "ECDHE-RSA-AES256-GCM-SHA384",
+    "cipher_tls1_3": "TLS_AES_256_GCM_SHA384"
+  },
+  "http": {
+    "sitio_https_head": 200,
+    "sitio_http_head": 301,
+    "api_auth_me_anonimo": 401,
+    "uploads_ruta_ficticia_anonimo": 401,
+    "backend89_docs_local": 200,
+    "backend89_openapi_local": 200,
+    "backend89_openapi_dominio_desde_servidor": 200,
+    "hsts_en_respuesta_html": false,
+    "csp_en_respuesta_html": true,
+    "validacion_desde_red_externa_independiente": false
+  },
+  "pruebas": {
+    "comando": "python -B -m pytest -q -p no:cacheprovider tests/test_http_security.py tests/test_security_hardening.py tests/test_config_security.py tests/test_file_security.py",
+    "tests_aprobados": 27,
+    "subtests_aprobados": 13,
+    "advertencias": 1,
+    "advertencia": "StarletteDeprecationWarning: compatibilidad httpx en TestClient",
+    "simulaciones_adicionales": [
+      "Académico aceptado por dependencia y creación de perfil administrador con cursor simulado",
+      "Contraseña ficticia insertada literalmente en cursor simulado",
+      "Token de evaluación emitido sin sesión con identidad ficticia y DB simulada",
+      "Revocación de token ficticio no compartida entre dos almacenes en memoria",
+      "Límite de intentos no compartido entre dos limitadores en memoria"
+    ]
+  },
+  "herramientas_dependencias": {
+    "pip_audit": "2.10.1 en entorno temporal aislado",
+    "npm": "11.12.1",
+    "node": "24.15.0",
+    "python_backend": "3.14.5",
+    "pip_check": "sin incompatibilidades"
+  },
+  "limites": [
+    "Sin ataques de carga o explotación contra producción",
+    "Sin lectura de documentos personales ni claves reales",
+    "No se validó el contenido actual de contraseñas almacenadas en SQL",
+    "No se auditó el historial Git con Gitleaks ni se ejecutó CodeQL/Bandit/Semgrep",
+    "La configuración se obtuvo al cargar Settings del proyecto; no se inspeccionó memoria de procesos productivos",
+    "Las señales de privilegios/SQL/HTTP/TLS se comprobaron además por consultas y respuestas efectivas"
+  ]
+}

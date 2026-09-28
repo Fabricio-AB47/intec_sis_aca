@@ -17239,6 +17239,17 @@
   background: color-mix(in srgb, var(--ui-accent-border) 24%, transparent);
 }
 
+.gestion-sis-state-description {
+  min-width: 220px;
+  max-width: 360px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.gestion-sis-state-description p {
+  margin: 4px 0 10px;
+}
+
 .gestion-sis-state-document {
   display: grid;
   min-width: 190px;

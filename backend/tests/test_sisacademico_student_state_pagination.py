@@ -17,6 +17,9 @@ class RecordingCursor:
     def fetchval(self) -> int:
         return self.total
 
+    def fetchone(self) -> SimpleNamespace:
+        return self.fetchall()[0]
+
     def fetchall(self) -> list[SimpleNamespace]:
         return [
             SimpleNamespace(
@@ -49,6 +52,47 @@ class RecordingConnection:
 
 
 class StudentStatePaginationTests(unittest.TestCase):
+    def test_description_supports_old_and_current_audit_formats(self):
+        for detail in (
+            '[CAMBIO DE ESTADO] A -> R. Motivo: Retiro solicitado. Usuario: Prueba. Fecha: 2026-09-28 10:00:00.',
+            '[CAMBIO DE ESTADO] A -> R. Usuario: Prueba. Fecha: 2026-09-28 10:00:00. Motivo: Retiro solicitado.',
+        ):
+            with self.subTest(detail=detail):
+                row = sisacademico_admin._actualizacion_estudiante_row(SimpleNamespace(Informacion=detail))
+                self.assertEqual(row['DescripcionEstado'], 'Retiro solicitado')
+                self.assertEqual(row['Informacion'], detail)
+        self.assertEqual(sisacademico_admin._student_state_description(None), '')
+        self.assertEqual(sisacademico_admin._student_state_description('Descripción antigua'), 'Descripción antigua')
+
+    def test_later_upload_cannot_replace_change_description_and_blank_url_cannot_hide_file(self):
+        for query in (sisacademico_admin._actualizacion_estudiante_select(1),
+                      sisacademico_admin._actualizacion_estudiante_list_select(25, 0)):
+            with self.subTest(query=query):
+                self.assertIn('state_change.DETALLE', query)
+                self.assertIn("NOT LIKE N'[[]CAMBIO DE ESTADO] Respaldo posterior%'", query)
+                self.assertIn('state_document.LINKURL', query)
+                self.assertIn("rd.LINKURL))), '') IS NOT NULL", query)
+
+    def setUp(self) -> None:
+        self.state_options = [
+            {"value": code, "label": f"{code} - {name}"}
+            for code, name in (
+                ("A", "Activo"), ("C", "Cambio Periodo"), ("D", "E Continua"),
+                ("E", "Reingreso"), ("G", "Graduado"), ("P", "Inactivo"), ("R", "Retirado"),
+            )
+        ]
+        lookup_patch = patch.object(
+            sisacademico_admin, "_lookup_options_for_section",
+            return_value={"Estado": self.state_options},
+        )
+        self.lookup = lookup_patch.start()
+        self.addCleanup(lookup_patch.stop)
+
+    def assert_complete_state_catalog(self, result: dict) -> None:
+        for group in ("list_fields", "detail_fields", "editable_fields"):
+            state = next(field for field in result["section"][group] if field["name"] == "Estado")
+            self.assertEqual(state["options"], self.state_options)
+
     def test_list_paginates_before_enriching_student_rows(self) -> None:
         statement = sisacademico_admin._actualizacion_estudiante_list_select(
             page_size=25,
@@ -85,6 +129,37 @@ class StudentStatePaginationTests(unittest.TestCase):
         self.assertIn("COUNT_BIG(*)", cursor.calls[0][0])
         self.assertIn("OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY", cursor.calls[1][0])
         self.assertEqual(cursor.calls[0][1], cursor.calls[1][1])
+        self.assert_complete_state_catalog(result)
+        self.assertEqual(result["rows"][0]["Estado"], "A")
+        self.lookup.assert_called_once_with("actualizacion_estudiantes")
+
+    def test_empty_search_still_returns_all_state_options(self) -> None:
+        cursor = RecordingCursor(total=0)
+        cursor.fetchall = Mock(return_value=[])
+        with patch.object(sisacademico_admin, "get_connection", return_value=RecordingConnection(cursor)):
+            result = sisacademico_admin._list_actualizacion_estudiantes_records(
+                sisacademico_admin.SECTIONS["actualizacion_estudiantes"], "sin resultados",
+            )
+        self.assertEqual(result["rows"], [])
+        self.assert_complete_state_catalog(result)
+
+    def test_record_detail_preserves_all_state_options(self) -> None:
+        cursor = RecordingCursor()
+        with patch.object(sisacademico_admin, "get_connection", return_value=RecordingConnection(cursor)):
+            result = sisacademico_admin._get_actualizacion_estudiantes_record(
+                sisacademico_admin.SECTIONS["actualizacion_estudiantes"],
+                sisacademico_admin._encode_key(["1724036536"]),
+            )
+        self.assert_complete_state_catalog(result)
+        self.assertEqual(result["record"]["Estado"], "A")
+
+    def test_student_catalog_is_not_limited_to_first_states_or_teacher_states(self) -> None:
+        query = sisacademico_admin.LOOKUP_QUERIES["actualizacion_estudiantes"]["Estado"][0]
+        self.assertNotRegex(query, r"(?i)\bTOP\s*\(")
+        self.assertNotIn("IN (N'A', N'P')", query)
+        self.assertIn("FROM dbo.ESTADO", query)
+        teacher_query = sisacademico_admin.LOOKUP_QUERIES["actualizacion_est"]["Estado"][0]
+        self.assertIn("IN (N'A', N'P')", teacher_query)
 
     def test_public_route_forwards_page_configuration(self) -> None:
         expected = {"rows": [], "total": 0, "page": 2, "page_size": 50}

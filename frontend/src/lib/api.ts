@@ -467,6 +467,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 const MOODLE_GRADE_ALERT_CACHE_MS = 30_000
 export const MOODLE_GRADE_ALERT_INVALIDATED_EVENT = 'moodle-grade-alerts:invalidate'
+export const STUDENT_STATE_CHANGED_EVENT = 'student-state:changed'
 export const TEACHER_EVALUATION_ALERT_INVALIDATED_EVENT = 'teacher-evaluation-alerts:invalidate'
 let moodleGradeAlertCache: {
   expiresAt: number
@@ -3208,19 +3209,28 @@ export async function updateStudentStateWithDocument(
   recordKey: string,
   estado: string,
   detalle: string,
-  documento: File
+  documento: File | null = null,
+  soloDocumento: boolean = false,
 ): Promise<SisAcademicoSaveResponse> {
   const formData = new FormData()
   formData.append('estado', estado)
   formData.append('detalle', detalle)
-  formData.append('documento', documento)
-  return request<SisAcademicoSaveResponse>(
+  if (documento) formData.append('documento', documento)
+  formData.append('solo_documento', String(soloDocumento))
+  const response = await request<SisAcademicoSaveResponse>(
     `/api/students/sisacademico/actualizacion_estudiantes/${encodeURIComponent(recordKey)}/cambio-estado-documentado`,
     {
       method: 'POST',
       body: formData,
     }
   )
+  invalidateSisAcademicoRows('actualizacion_estudiantes')
+  if (!soloDocumento && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(STUDENT_STATE_CHANGED_EVENT))
+    // Notify other open tabs without putting student information in browser storage.
+    try { window.localStorage.setItem(STUDENT_STATE_CHANGED_EVENT, String(Date.now())) } catch { /* Storage may be disabled. */ }
+  }
+  return response
 }
 
 export async function downloadPortalStudentSecretaryPdf(
