@@ -7862,7 +7862,7 @@ export type InstitutionalEmailUpdateResponse = {
 }
 
 export type SenescytTarget = 'estudiantes' | 'docentes'
-export type SenescytExportMode = 'completo' | 'faltantes'
+export type SenescytExportMode = 'completo' | 'faltantes' | 'listos'
 
 export type SenescytCatalogCareer = {
   codigo_carrera?: string

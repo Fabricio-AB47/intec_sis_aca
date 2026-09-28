@@ -392,13 +392,14 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
               <p className="eyebrow">Descargas</p>
               <h3>Generación por carrera y faltantes</h3>
               <p className="report-description">
-                {target === 'docentes'
-                  ? 'Cada ZIP contiene un Excel por carrera con el modelo SENESCYT de docentes, sin duplicados dentro de cada matriz.'
-                  : 'Cada ZIP contiene un Excel por carrera con el modelo SENESCYT de estudiantes. Los faltantes incluyen el detalle de campos pendientes.'}
+                Las matrices listas para SICS se separan por carrera. Los registros con datos obligatorios por corregir quedan en NO_SUBIR; el archivo completo es solo para revisión.
               </p>
               <p className="report-description">
                 Solo registros actualmente activos. Los datos personales y las horas docentes corresponden a la información registrada actualmente; no a una reconstrucción histórica.
               </p>
+              {reportCurrent ? <p className="report-description">
+                {formatNumber((summary?.total_registros ?? 0) - (summary?.registros_con_pendientes ?? 0))} registro(s) sin pendientes y {formatNumber(summary?.registros_con_pendientes)} por corregir antes de cargar en SICS.
+              </p> : null}
             </div>
             <span>{reportCurrent && report?.generated_at ? `Actualizado ${report.generated_at}` : 'Sin consulta vigente'}</span>
           </div>
@@ -407,12 +408,20 @@ export function SenescytEstudiantesView({ displayName }: Readonly<SenescytEstudi
             <button
               type="button"
               className="senescyt-action-button senescyt-action-button--primary"
+              onClick={() => void download(target, 'listos')}
+              disabled={!reportCurrent || loading || !!downloading}
+            >
+              {downloading === `${target}-listos` ? 'Generando...' : `Descargar listos para SICS (${formatNumber((summary?.total_registros ?? 0) - (summary?.registros_con_pendientes ?? 0))})`}
+            </button>
+            <button
+              type="button"
+              className="senescyt-action-button senescyt-action-button--secondary"
               onClick={() => void download(target, 'completo')}
               disabled={!reportCurrent || loading || !!downloading}
             >
               {downloading === `${target}-completo`
                 ? 'Generando...'
-                : `Archivo ${TARGET_LABELS[target].toLowerCase()} por carrera`}
+                : `Archivo completo ${TARGET_LABELS[target].toLowerCase()} (revisión)`}
             </button>
             <button
               type="button"

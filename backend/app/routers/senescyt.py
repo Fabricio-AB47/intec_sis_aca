@@ -84,11 +84,7 @@ _REPORT_COLUMNS = [
     "cantidadMiembrosHogar",
 ]
 
-_STUDENT_MODEL_ALIASES = {
-    "ingresosestudianteId": "ingresoEstudianteId",
-    "bonodesarrolloId": "bonoDesarrolloId",
-}
-_STUDENT_MODEL_COLUMNS = [_STUDENT_MODEL_ALIASES.get(column, column) for column in _REPORT_COLUMNS]
+_STUDENT_MODEL_COLUMNS = _REPORT_COLUMNS.copy()
 
 _NUMERIC_COLUMNS = [
     "tipoDocumentoId",
@@ -867,7 +863,7 @@ _TEACHER_REPORT_COLUMNS = [
 _STUDENT_AUDIT_COLUMNS = _REPORT_COLUMNS
 
 _REPORT_TARGETS = {"estudiantes", "docentes"}
-_EXPORT_MODES = {"completo", "faltantes"}
+_EXPORT_MODES = {"completo", "faltantes", "listos"}
 
 
 def _read_sql_dataframe(sql: str, params: list[Any] | None = None) -> pd.DataFrame:
@@ -1314,6 +1310,17 @@ _STUDENT_GUIDE_CODES.update({
         "cuartaRazonBecaId", "quintaRazonBecaId", "sextaRazonBecaId"
     )
 })
+_STUDENT_INTEGER_LENGTHS = {
+    "duracionPeriodoAcademico": 2,
+    "nroHorasPracticasPreprofesionalesPorPeriodo": 3,
+    "montoBeca": 5,
+    "porcientoBecaCoberturaArancel": 3,
+    "porcientoBecaCoberturaManuntencion": 3,
+    "montoAyudaEconomica": 5,
+    "montoCreditoEducativo": 5,
+    "ingresoTotalHogar": 4,
+    "cantidadMiembrosHogar": 2,
+}
 _TEACHER_GUIDE_CODES = {
     **_COMMON_GUIDE_CODES,
     "relacionLaboralIESId": {str(code) for code in range(1, 6)},
@@ -1505,6 +1512,8 @@ def _field_allows_zero(row: pd.Series, column: str, target: str) -> bool:
 
 
 def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
+    if column in {"segundoApellido", "segundoNombre"}:
+        return True
     if target == "estudiantes":
         if column in {"correoElectronico", "ingresoTotalHogar"}:
             return True
@@ -1516,7 +1525,7 @@ def _field_allows_no_aplica(row: pd.Series, column: str, target: str) -> bool:
             etnia = row.get("etniaId")
             return _has_selected_code(etnia) and _cell_code(etnia) != "1"
         if column == "porcientoBecaCoberturaManuntencion":
-            return True
+            return _is_no_beca_student(row)
         if column == "porcientoBecaCoberturaArancel":
             return _is_no_beca_student(row)
         if column in {"montoAyudaEconomica", "montoCreditoEducativo"}:
@@ -1607,13 +1616,23 @@ def _audit_field_filled(row: pd.Series, column: str, target: str) -> bool:
     }
     if column in date_columns:
         normalized_date = _model_date(row.get(column))
-        return bool(normalized_date and re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_date))
+        try:
+            return bool(normalized_date and date.fromisoformat(normalized_date).isoformat() == normalized_date)
+        except ValueError:
+            return False
     if column == "numeroCelular":
         return bool(re.fullmatch(r"\d{10}", text))
     if column in {"numCarnetConadis", "numCarnetDiscapacidad"}:
         return bool(re.fullmatch(r"\d{7}", text))
     if column == "correoElectronico":
-        return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text))
+        return len(text) <= 30 and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text))
+    if target == "estudiantes" and column in _STUDENT_INTEGER_LENGTHS:
+        maximum = _STUDENT_INTEGER_LENGTHS[column]
+        return bool(re.fullmatch(rf"\d{{1,{maximum}}}", text)) and (
+            int(text) > 0 or column in {"porcientoBecaCoberturaArancel", "porcientoBecaCoberturaManuntencion"}
+        )
+    if column in {"primerApellido", "segundoApellido", "primerNombre", "segundoNombre"}:
+        return len(text) <= 60 and bool(text)
     if target == "docentes" and column == "nroHorasLaborablesSemanaEnCarreraPrograma":
         parts = ("nroHorasClaseSemanaCarreraPrograma", "nroHorasInvestigacionSemanaCarreraPrograma",
                  "nroHorasAdministrativasSemanaCarreraPrograma", "nroHorasOtrasActividadesSemanaCarreraPrograma",
@@ -2095,6 +2114,16 @@ def _set_model_values_for_codes(dataframe: pd.DataFrame, source: str, codes: set
 
 def _apply_student_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
     values = dataframe.reindex(columns=list(dict.fromkeys([*dataframe.columns, *_REPORT_COLUMNS]))).copy()
+    majority = values[_REPORT_COLUMNS].apply(
+        lambda row: sum(bool(_cell_text(value)) for value in row) > len(_REPORT_COLUMNS) / 2,
+        axis=1,
+    )
+    missing_type = values["tipoDocumentoId"].map(
+        lambda value: _cell_code(value) in _EMPTY_MARKERS | _UNSELECTED_MARKERS
+    )
+    inferred_type = values["numeroIdentificacion"].map(_infer_document_type)
+    values["tipoDocumentoId"] = values["tipoDocumentoId"].astype(object)
+    values.loc[majority & missing_type & inferred_type.ne(""), "tipoDocumentoId"] = inferred_type
     if "etniaId" in values and "pueblonacionalidadId" in values:
         known_non_indigenous = values["etniaId"].map(lambda value: _cell_code(value) in {str(code) for code in range(2, 10)})
         values.loc[known_non_indigenous, "pueblonacionalidadId"] = 34
@@ -2118,9 +2147,16 @@ def _apply_student_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
     })
     for column in ("montoAyudaEconomica", "montoCreditoEducativo", "ingresoTotalHogar"):
         if column in values:
-            zero = values[column].map(lambda value: _cell_code(value) in {"0", "0.0"})
+            zero = values[column].map(lambda value: _is_zero_text(_cell_text(value)))
+            empty = majority & values[column].map(lambda value: _cell_code(value) in _EMPTY_MARKERS)
             values[column] = values[column].astype(object)
-            values.loc[zero, column] = "NA"
+            values.loc[zero | empty, column] = "NA"
+    for column in ("segundoApellido", "segundoNombre", "correoElectronico"):
+        missing = majority & values[column].map(
+            lambda value: _cell_code(value) in _EMPTY_MARKERS or _is_zero_text(_cell_text(value))
+        )
+        values[column] = values[column].astype(object)
+        values.loc[missing, column] = "NA"
     for country, columns in (("paisNacionalidadId", ("provinciaNacimientoId", "cantonNacimientoId")),
                              ("paisResidenciaId", ("provinciaResidenciaId", "cantonResidenciaId"))):
         if country in values:
@@ -2135,6 +2171,16 @@ def _apply_student_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
 
 def _apply_teacher_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
     values = dataframe.reindex(columns=list(dict.fromkeys([*dataframe.columns, *_TEACHER_REPORT_COLUMNS]))).copy()
+    majority = values[_TEACHER_REPORT_COLUMNS].apply(
+        lambda row: sum(bool(_cell_text(value)) for value in row) > len(_TEACHER_REPORT_COLUMNS) / 2,
+        axis=1,
+    )
+    for column in ("segundoApellido", "segundoNombre", "numDomicilio"):
+        missing = majority & values[column].map(
+            lambda value: _cell_code(value) in _EMPTY_MARKERS or _is_zero_text(_cell_text(value))
+        )
+        values[column] = values[column].astype(object)
+        values.loc[missing, column] = "NA"
     if "fechaSalidaIES" in values:
         missing_exit = values["fechaSalidaIES"].map(lambda value: not _cell_text(value))
         values["fechaSalidaIES"] = values["fechaSalidaIES"].astype(object)
@@ -2161,7 +2207,6 @@ def _apply_teacher_model_context(dataframe: pd.DataFrame) -> pd.DataFrame:
 
 def _student_model_workbook(dataframe: pd.DataFrame) -> bytes:
     values = _apply_student_model_context(_dedupe_model_rows(dataframe, "fechaMatricula"))
-    values = values.rename(columns=_STUDENT_MODEL_ALIASES)
     for column, width in (("provinciaNacimientoId", 2), ("cantonNacimientoId", 4),
                           ("provinciaResidenciaId", 2), ("cantonResidenciaId", 4)):
         if column in values:
@@ -2172,7 +2217,63 @@ def _student_model_workbook(dataframe: pd.DataFrame) -> bytes:
                                          "numCarnetConadis"))
 
 
+def _audit_ready_zip(report: dict[str, Any]) -> bytes:
+    target = report["target"]
+    dataframe: pd.DataFrame = report["dataframe"]
+    date_column = "fechaMatricula" if target == "estudiantes" else "fechaIngresoIES"
+    columns = _REPORT_COLUMNS if target == "estudiantes" else _TEACHER_REPORT_COLUMNS
+    output = BytesIO()
+    pending: list[dict[str, Any]] = []
+    total_ready = 0
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        if "nombreCarrera" in dataframe:
+            groups = list(dataframe.groupby("nombreCarrera", dropna=False))
+        else:
+            groups = [("Sin carrera", dataframe)]
+        for index, (career, group) in enumerate(groups, start=1):
+            unique = _dedupe_model_rows(group, date_column)
+            prepared = (_apply_student_model_context(unique) if target == "estudiantes"
+                        else _apply_teacher_model_context(unique))
+            ready_positions: list[Any] = []
+            for excel_row, (position, row) in enumerate(prepared.iterrows(), start=2):
+                missing = _missing_columns(row, columns, target)
+                if missing:
+                    pending.append({
+                        "Carrera": str(career or "Sin carrera"),
+                        "Fila en archivo completo": excel_row,
+                        "Código institucional": _cell_text(row.get("codigo")),
+                        "Identificación": _cell_text(row.get("numeroIdentificacion")),
+                        "Nombre": _cell_text(row.get("nombreCompleto")),
+                        "Campos por corregir": ", ".join(missing),
+                    })
+                else:
+                    ready_positions.append(position)
+            if not ready_positions:
+                continue
+            ready = prepared.loc[ready_positions]
+            total_ready += len(ready)
+            filename = f"MATRICES_LISTAS/{index:02d}_{_safe_filename(str(career))}.xlsx"
+            content = (_student_model_workbook(ready) if target == "estudiantes"
+                       else _teacher_model_workbook({"dataframe": ready}))
+            archive.writestr(filename, content)
+
+        archive.writestr("LEAME.txt", (
+            "MATRICES_LISTAS: archivos validados para cargar en SICS.\n"
+            "NO_SUBIR: registros que requieren corrección; no los cargue en SICS.\n"
+            f"Registros listos: {total_ready}. Registros pendientes: {len(pending)}.\n"
+            "Los códigos obligatorios sin respaldo no se reemplazaron por NA.\n"
+        ))
+        if pending:
+            issues = BytesIO()
+            with pd.ExcelWriter(issues, engine="openpyxl") as writer:
+                pd.DataFrame(pending).to_excel(writer, index=False, sheet_name="Corregir")
+            archive.writestr("NO_SUBIR/PENDIENTES_CORRECCION.xlsx", issues.getvalue())
+    return output.getvalue()
+
+
 def _audit_export_zip(report: dict[str, Any], mode: str) -> bytes:
+    if mode == "listos":
+        return _audit_ready_zip(report)
     dataframe: pd.DataFrame = report["dataframe"]
     output = BytesIO()
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
@@ -2262,7 +2363,7 @@ def senescyt_audit_report(
 def senescyt_audit_export(
     current_user: Annotated[SessionUser, Depends(_SENESCYT_ACCESS)],
     target: Annotated[str, Query(pattern="^(estudiantes|docentes)$")] = "estudiantes",
-    mode: Annotated[str, Query(pattern="^(completo|faltantes)$")] = "completo",
+    mode: Annotated[str, Query(pattern="^(completo|faltantes|listos)$")] = "completo",
     carrera: Annotated[list[str] | None, Query()] = None,
     periodo: Annotated[list[Annotated[int, Field(ge=1, le=2147483647)]] | None, Query()] = None,
     fecha_limite: Annotated[date | None, Query()] = None,

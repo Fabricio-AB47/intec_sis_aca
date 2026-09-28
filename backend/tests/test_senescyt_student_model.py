@@ -12,7 +12,7 @@ from app.core.security import SessionUser
 from app.routers import senescyt
 
 
-HEADERS = """tipoDocumentoId numeroIdentificacion primerApellido segundoApellido primerNombre segundoNombre sexoId generoId estadocivilId etniaId pueblonacionalidadId tipoSangre discapacidad porcentajeDiscapacidad numCarnetConadis tipoDiscapacidad fechaNacimiento paisNacionalidadId provinciaNacimientoId cantonNacimientoId paisResidenciaId provinciaResidenciaId cantonResidenciaId tipoColegioId modalidadCarrera jornadaCarrera fechaInicioCarrera fechaMatricula tipoMatriculaId nivelAcademicoQueCursa duracionPeriodoAcademico haRepetidoAlMenosUnaMateria paraleloId haPerdidoLaGratuidad recibePensionDiferenciada estudianteocupacionId ingresoEstudianteId bonoDesarrolloId haRealizadoPracticasPreprofesionales nroHorasPracticasPreprofesionalesPorPeriodo entornoInstitucionalPracticasProfesionales sectorEconomicoPracticaProfesional tipoBecaId primeraRazonBecaId segundaRazonBecaId terceraRazonBecaId cuartaRazonBecaId quintaRazonBecaId sextaRazonBecaId montoBeca porcientoBecaCoberturaArancel porcientoBecaCoberturaManuntencion financiamientoBeca montoAyudaEconomica montoCreditoEducativo participaEnProyectoVinculacionSociedad tipoAlcanceProyectoVinculacionId correoElectronico numeroCelular nivelFormacionPadre nivelFormacionMadre ingresoTotalHogar cantidadMiembrosHogar""".split()
+HEADERS = """tipoDocumentoId numeroIdentificacion primerApellido segundoApellido primerNombre segundoNombre sexoId generoId estadocivilId etniaId pueblonacionalidadId tipoSangre discapacidad porcentajeDiscapacidad numCarnetConadis tipoDiscapacidad fechaNacimiento paisNacionalidadId provinciaNacimientoId cantonNacimientoId paisResidenciaId provinciaResidenciaId cantonResidenciaId tipoColegioId modalidadCarrera jornadaCarrera fechaInicioCarrera fechaMatricula tipoMatriculaId nivelAcademicoQueCursa duracionPeriodoAcademico haRepetidoAlMenosUnaMateria paraleloId haPerdidoLaGratuidad recibePensionDiferenciada estudianteocupacionId ingresosestudianteId bonodesarrolloId haRealizadoPracticasPreprofesionales nroHorasPracticasPreprofesionalesPorPeriodo entornoInstitucionalPracticasProfesionales sectorEconomicoPracticaProfesional tipoBecaId primeraRazonBecaId segundaRazonBecaId terceraRazonBecaId cuartaRazonBecaId quintaRazonBecaId sextaRazonBecaId montoBeca porcientoBecaCoberturaArancel porcientoBecaCoberturaManuntencion financiamientoBeca montoAyudaEconomica montoCreditoEducativo participaEnProyectoVinculacionSociedad tipoAlcanceProyectoVinculacionId correoElectronico numeroCelular nivelFormacionPadre nivelFormacionMadre ingresoTotalHogar cantidadMiembrosHogar""".split()
 
 
 def rows():
@@ -52,7 +52,7 @@ def test_student_model_has_exact_supplied_headers_values_and_no_audit_columns():
     assert values["fechaNacimiento"] == "1995-01-12"
     assert values["fechaInicioCarrera"] == values["fechaMatricula"] == "2025-09-09"
     assert values["correoElectronico"] == "tania@intec.edu.ec"
-    assert values["ingresoEstudianteId"] == values["bonoDesarrolloId"] == 2
+    assert values["ingresosestudianteId"] == values["bonodesarrolloId"] == 2
     assert values["pueblonacionalidadId"] is None
     assert "codigo" not in HEADERS and "nombreCarrera" not in HEADERS
     workbook.close()
@@ -133,6 +133,61 @@ def test_student_guide_context_uses_na_only_when_an_answer_supports_it():
     assert values["provinciaNacimientoId"] == values["cantonNacimientoId"] == "NA"
     assert values["ingresoTotalHogar"] == values["montoAyudaEconomica"] == "NA"
     workbook.close()
+
+
+def test_majority_filled_student_uses_documented_na_without_inventing_required_codes():
+    data = pd.DataFrame([{column: 1 for column in senescyt._REPORT_COLUMNS}])
+    data["numeroIdentificacion"] = "0106889843"
+    data["tipoDocumentoId"] = 0
+    data["segundoApellido"] = None
+    data["segundoNombre"] = None
+    data["correoElectronico"] = None
+    data["montoAyudaEconomica"] = 0
+    data["montoCreditoEducativo"] = None
+    data["ingresoTotalHogar"] = None
+    data["nivelAcademicoQueCursa"] = 0
+    values = senescyt._apply_student_model_context(data).iloc[0]
+    assert values["tipoDocumentoId"] == "1"
+    for column in ("segundoApellido", "segundoNombre", "correoElectronico",
+                   "montoAyudaEconomica", "montoCreditoEducativo", "ingresoTotalHogar"):
+        assert values[column] == "NA", column
+    assert values["nivelAcademicoQueCursa"] == 0
+    assert not senescyt._audit_field_filled(values, "nivelAcademicoQueCursa", "estudiantes")
+    assert senescyt._audit_field_filled(values, "segundoNombre", "estudiantes")
+
+
+def test_ready_zip_separates_invalid_rows_and_uses_official_headers():
+    valid = {column: 1 for column in senescyt._REPORT_COLUMNS}
+    valid.update({
+        "codigo": "123", "nombreCarrera": "Administración", "nombreCompleto": "PEREZ LOPEZ ANA MARIA",
+        "numeroIdentificacion": "0106889843", "primerApellido": "PEREZ", "segundoApellido": "LOPEZ",
+        "primerNombre": "ANA", "segundoNombre": "MARIA", "fechaNacimiento": "1995-01-12",
+        "fechaInicioCarrera": "2025-09-09", "fechaMatricula": "2025-09-09",
+        "paisNacionalidadId": "56", "provinciaNacimientoId": "01", "cantonNacimientoId": "0101",
+        "paisResidenciaId": "56", "provinciaResidenciaId": "01", "cantonResidenciaId": "0101",
+        "discapacidad": 2, "estudianteocupacionId": 1, "haRealizadoPracticasPreprofesionales": 2,
+        "tipoBecaId": 3, "participaEnProyectoVinculacionSociedad": 2,
+        "bonodesarrolloId": 2, "duracionPeriodoAcademico": 16, "ingresoTotalHogar": 500,
+        "cantidadMiembrosHogar": 2, "correoElectronico": "ana@intec.edu.ec",
+        "numeroCelular": "0981234567", "montoAyudaEconomica": None, "montoCreditoEducativo": 0,
+    })
+    invalid = {**valid, "codigo": "456", "numeroIdentificacion": "0805575735",
+               "nombreCompleto": "GOMEZ DIAZ LUIS JOSE", "nivelAcademicoQueCursa": 0}
+    content = senescyt._audit_export_zip(report(pd.DataFrame([valid, invalid])), "listos")
+    with ZipFile(BytesIO(content)) as archive:
+        ready_names = [name for name in archive.namelist() if name.startswith("MATRICES_LISTAS/")]
+        assert len(ready_names) == 1
+        workbook = load_workbook(BytesIO(archive.read(ready_names[0])))
+        assert [cell.value for cell in workbook.active[1]] == HEADERS
+        assert workbook.active.max_row == 2
+        exported = dict(zip(HEADERS, (cell.value for cell in workbook.active[2])))
+        assert exported["montoAyudaEconomica"] == exported["montoCreditoEducativo"] == "NA"
+        workbook.close()
+        pending = load_workbook(BytesIO(archive.read("NO_SUBIR/PENDIENTES_CORRECCION.xlsx")))
+        assert pending.active.max_row == 2
+        assert "nivelAcademicoQueCursa" in pending.active.cell(2, 6).value
+        pending.close()
+        assert "Registros listos: 1. Registros pendientes: 1." in archive.read("LEAME.txt").decode()
 
 
 def test_student_normalization_does_not_invent_codes_for_missing_source_values():
