@@ -193,7 +193,8 @@ class AcademicPlanningUnitPayload(BaseModel):
 
 class AcademicPlanningPayload(BaseModel):
     document_type: Literal["pea", "silabo"]
-    codigo_periodos: list[int] = Field(min_length=1, max_length=4)
+    # A grouped assignment may span any number of academic periods.
+    codigo_periodos: list[int] = Field(min_length=1)
     codigo_materia: str = Field(min_length=1, max_length=100)
     paralelo: str = Field(min_length=1, max_length=10)
     cod_anio_basica: int | None = None
@@ -4715,13 +4716,14 @@ def _teacher_course_report_meta(
     if not period_codes:
         return {}
     parallel_filter = None if parallel in {"*", "TODOS", "VARIOS"} else parallel
-    period_placeholders = ", ".join("?" for _ in period_codes)
+    # Keep SQL Server's parameter limit independent of the size of a grouped course.
+    period_codes = sorted(set(period_codes), reverse=True)
+    period_placeholders = "__REPORT_PERIOD_PARAMETERS__"
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                f"""
-                SELECT TOP (50)
+            query = f"""
+                SELECT
                     TRY_CONVERT(nvarchar(4000), c.Nombre_Basica) AS nombre_carrera,
                     TRY_CONVERT(varchar(50), cxd.codigo_materia) AS codigo_materia,
                     COALESCE(
@@ -4761,17 +4763,22 @@ def _teacher_course_report_meta(
                         OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
                   )
                 ORDER BY TRY_CONVERT(int, cxd.codigo_periodo) DESC
-                """,
-                codigo_doc,
-                cod_anio_basica,
-                cod_anio_basica,
-                subject_filter,
-                subject_filter,
-                *period_codes,
-                parallel_filter,
-                parallel_filter,
-            )
-            rows = cursor.fetchall()
+                """
+            rows = []
+            for offset in range(0, len(period_codes), 500):
+                batch = period_codes[offset:offset + 500]
+                cursor.execute(
+                    query.replace(period_placeholders, ", ".join("?" for _ in batch)),
+                    codigo_doc,
+                    cod_anio_basica,
+                    cod_anio_basica,
+                    subject_filter,
+                    subject_filter,
+                    *batch,
+                    parallel_filter,
+                    parallel_filter,
+                )
+                rows.extend(cursor.fetchall())
     except pyodbc.Error as exc:
         raise HTTPException(status_code=500, detail=f"Error consultando datos del reporte docente: {exc}") from exc
 

@@ -54,7 +54,7 @@ def verify(browser, name, viewport):
         params = parse_qs(parsed.query)
         if parsed.path == "/api/students/senescyt/catalogo":
             route.fulfill(content_type="application/json", body=json.dumps({
-                "careers": [], "targets": ["estudiantes", "docentes"], "export_modes": ["completo", "faltantes"],
+                "careers": [], "targets": ["estudiantes", "docentes"], "export_modes": ["completo", "faltantes", "listos"],
                 "periods": [
                     {"codigo_periodo": 1032, "nombre_periodo": "C2-HOMO-2025-PB", "fecha_inicio": "2025-10-01"},
                     {"codigo_periodo": 1033, "nombre_periodo": "C2-2025-PC OCTUBRE 2025 - MARZO 2026", "fecha_inicio": "2025-10-01"},
@@ -83,7 +83,7 @@ def verify(browser, name, viewport):
     page.get_by_role("heading", name="Datos SENESCYT", exact=True).wait_for()
     target_select = page.locator(".senescyt-target-control select")
     target_select.select_option("docentes", timeout=10000)
-    complete = page.get_by_role("button", name="Archivo docentes por carrera", exact=True)
+    complete = page.get_by_role("button", name="Archivo completo docentes (revisión)", exact=True)
     expect(complete).to_be_visible()
     expect(page.get_by_role("heading", name="Generación por carrera y faltantes", exact=True)).to_be_visible()
     page.screenshot(path=str(ROOT / ".runlogs" / f"senescyt-teacher-model-{name}.png"), full_page=True)
@@ -99,9 +99,9 @@ def verify(browser, name, viewport):
         page.get_by_role("button", name="Faltantes docentes global/carreras", exact=True).click()
     assert missing.value.suggested_filename.endswith(".zip")
     target_select.select_option("estudiantes")
-    expect(page.get_by_text("Cada ZIP contiene un Excel por carrera con el modelo SENESCYT de estudiantes.", exact=False)).to_be_visible()
+    expect(page.get_by_text("Las matrices listas para SICS se separan por carrera.", exact=False)).to_be_visible()
     with page.expect_download() as student:
-        page.get_by_role("button", name="Archivo estudiantes por carrera", exact=True).click()
+        page.get_by_role("button", name="Archivo completo estudiantes (revisión)", exact=True).click()
     assert student.value.suggested_filename.endswith(".zip")
     with ZipFile(student.value.path()) as archive:
         assert archive.namelist() == ["01_Administracion_Financiera_completo.xlsx"]
@@ -119,20 +119,23 @@ def verify(browser, name, viewport):
     expect(picker.get_by_role("checkbox", checked=True)).to_have_count(2)
     expect(picker.locator("summary")).to_contain_text("2 período(s)")
     page.get_by_label("Fecha límite (inclusive)", exact=False).fill("2025-12-31")
-    expect(page.get_by_role("button", name="Archivo estudiantes por carrera", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Archivo completo estudiantes (revisión)", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Descargar listos para SICS (0)", exact=True)).to_be_disabled()
     expect(page.get_by_role("button", name="Vista previa", exact=True)).to_be_disabled()
     page.get_by_role("button", name="Consultar", exact=True).click()
-    expect(page.get_by_role("button", name="Archivo estudiantes por carrera", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Archivo completo estudiantes (revisión)", exact=True)).to_be_enabled()
     page.get_by_role("button", name="Vista previa", exact=True).click()
     expect(page.get_by_role("dialog")).to_be_visible()
     page.get_by_role("button", name="Cerrar", exact=True).click()
     for target in ("estudiantes", "docentes"):
         target_select.select_option(target)
-        for label in (f"Archivo {target} por carrera", f"Faltantes {target} global/carreras"):
+        for label in (f"Archivo completo {target} (revisión)", f"Faltantes {target} global/carreras", "Descargar listos para SICS (0)"):
             with page.expect_download():
                 page.get_by_role("button", name=label, exact=True).click()
             assert exports[-1]["periodo"] == ["1032", "1033"]
             assert exports[-1]["fecha_limite"] == ["2025-12-31"]
+            if label.startswith("Descargar listos"):
+                assert exports[-1]["mode"] == ["listos"]
         assert queries[-1]["periodo"] == ["1032", "1033"]
         assert queries[-1]["fecha_limite"] == ["2025-12-31"]
     page.screenshot(path=str(ROOT / ".runlogs" / f"senescyt-period-filters-{name}.png"), full_page=True)
@@ -141,7 +144,7 @@ def verify(browser, name, viewport):
     page.get_by_label("Fecha límite (inclusive)", exact=False).fill("")
     expect(picker.locator("summary")).to_contain_text("Todos los períodos")
     page.get_by_role("button", name="Consultar", exact=True).click()
-    expect(page.get_by_role("button", name="Archivo docentes por carrera", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Archivo completo docentes (revisión)", exact=True)).to_be_enabled()
     assert "periodo" not in queries[-1] and "fecha_limite" not in queries[-1]
     assert not errors, errors
     context.close()
