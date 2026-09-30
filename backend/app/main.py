@@ -78,6 +78,8 @@ app.add_middleware(
         "X-OneDrive-Root",
         "X-OneDrive-Item-Count",
         "X-OneDrive-Same-Folder",
+        "X-OneDrive-Folder",
+        "X-Honorarios-Email-Status",
     ],
 )
 

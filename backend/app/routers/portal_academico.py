@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 import textwrap
 import unicodedata
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -59,7 +60,8 @@ from app.services.graph_documents import (
     safe_folder_part as graph_safe_folder_part,
     upload_bytes as upload_graph_document_bytes,
 )
-from app.services.integration_history import record_teacher_report_event
+from app.services.integration_history import record_teacher_report_event, teacher_honoraria_mail_state
+from app.services.teacher_honoraria_mail import HONORARIA_RECIPIENTS, TeacherMailDeliveryUncertain, send_teacher_honoraria_mail, teacher_copy_address
 from app.services.teacher_enrollment_scope import teacher_selection_filter
 from app.services.invoice_documents import (
     MAX_INVOICE_XML_BYTES,
@@ -2706,6 +2708,7 @@ def _store_signed_teacher_documents_onedrive(
     subject_name: str = "",
     period_codes: list[str] | None = None,
     invoice_documents: list[dict[str, Any]] | None = None,
+    existing_folder_path: str = "",
 ) -> dict[str, Any]:
     invoice_backups = invoice_documents or []
     if invoice_backups:
@@ -2713,12 +2716,19 @@ def _store_signed_teacher_documents_onedrive(
         if len(invoice_backups) != 2 or backup_types != {"FACTURA_XML", "RIDE"}:
             raise ValueError("Los respaldos deben incluir exactamente una factura XML y un RIDE PDF.")
 
-    folder_path = _teacher_signed_documents_folder(
+    new_folder_path = _teacher_signed_documents_folder(
         identity,
         subject_code=subject_code,
         subject_name=subject_name,
         period_codes=period_codes,
     )
+    expected_parent = new_folder_path.rsplit("/", 1)[0]
+    if existing_folder_path and (
+        existing_folder_path.rsplit("/", 1)[0] != expected_parent
+        or not existing_folder_path.rsplit("/", 1)[-1].startswith("FIRMA ")
+    ):
+        raise ValueError("La carpeta previa no corresponde al expediente del docente y materia seleccionados.")
+    folder_path = existing_folder_path or new_folder_path
     folder = ensure_graph_document_folder(folder_path)
     documents: list[dict[str, Any]] = [
         {
@@ -2772,23 +2782,24 @@ def _store_signed_teacher_documents_onedrive(
                 "Microsoft Graph no confirmó el conjunto completo de documentos en una misma carpeta."
             )
     except Exception:
-        for item in reversed(uploaded_items):
+        if not existing_folder_path:
+            for item in reversed(uploaded_items):
+                try:
+                    delete_graph_document_item(_clean(item.get("id")))
+                except Exception:
+                    logger.warning(
+                        "No se pudo revertir el documento parcial %s en OneDrive.",
+                        _clean(item.get("id")),
+                        exc_info=True,
+                    )
             try:
-                delete_graph_document_item(_clean(item.get("id")))
+                delete_graph_document_item(_clean(folder.get("id")))
             except Exception:
                 logger.warning(
-                    "No se pudo revertir el documento parcial %s en OneDrive.",
-                    _clean(item.get("id")),
+                    "No se pudo eliminar la carpeta de operación incompleta %s en OneDrive.",
+                    _clean(folder.get("id")),
                     exc_info=True,
                 )
-        try:
-            delete_graph_document_item(_clean(folder.get("id")))
-        except Exception:
-            logger.warning(
-                "No se pudo eliminar la carpeta de operación incompleta %s en OneDrive.",
-                _clean(folder.get("id")),
-                exc_info=True,
-            )
         raise
 
     return {
@@ -10111,6 +10122,7 @@ async def teacher_signed_documents_archive(
     codigo_materia: Annotated[str, Form()] = "",
     nombre_materia: Annotated[str, Form()] = "",
     codigo_periodo: Annotated[list[str] | None, Form()] = None,
+    existing_folder_path: Annotated[str, Form()] = "",
 ) -> StreamingResponse:
     compliance_pdf = await _read_signed_teacher_pdf(informe, "informe de cumplimiento")
     grades_pdf = await _read_signed_teacher_pdf(notas, "reporte de notas")
@@ -10123,6 +10135,20 @@ async def teacher_signed_documents_archive(
         invoice_documents,
     )
     identity = _teacher_contract_identity(current_user)
+    if existing_folder_path and invoice_documents:
+        try:
+            previous_state = await run_in_threadpool(teacher_honoraria_mail_state, existing_folder_path, identity["cedula"])
+            if previous_state in {"sent", "uncertain"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=("El expediente ya fue enviado por correo." if previous_state == "sent"
+                            else "El envío anterior requiere verificación administrativa antes de reintentar."),
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("No se pudo comprobar el estado de envío del expediente docente.")
+            raise HTTPException(status_code=503, detail="No se pudo comprobar si el correo ya fue enviado. Intente más tarde.") from exc
     try:
         stored = await run_in_threadpool(
             _store_signed_teacher_documents_onedrive,
@@ -10134,6 +10160,7 @@ async def teacher_signed_documents_archive(
             subject_name=nombre_materia,
             period_codes=codigo_periodo or [],
             invoice_documents=invoice_documents,
+            existing_folder_path=existing_folder_path,
         )
         expected_item_count = 5 if invoice_documents else 3
         stored_items = stored.get("items") if isinstance(stored.get("items"), list) else []
@@ -10226,6 +10253,84 @@ async def teacher_signed_documents_archive(
             ]
         },
     )
+    email_status = "pending"
+    if invoice_documents:
+        documents_for_mail = [
+            {"filename": "informe-cumplimiento-firmado.pdf", "content": compliance_pdf, "content_type": "application/pdf", "document_type": "INFORME"},
+            {"filename": "reporte-notas-secretaria-firmado.pdf", "content": grades_pdf, "content_type": "application/pdf", "document_type": "NOTAS"},
+            {"filename": "contrato-docente-firmado.pdf", "content": contract_pdf, "content_type": "application/pdf", "document_type": "CONTRATO"},
+            *invoice_documents,
+        ]
+        try:
+            previous_state = await run_in_threadpool(teacher_honoraria_mail_state, stored["folder_path"], identity["cedula"])
+            if previous_state == "sent":
+                email_status = "sent"
+            elif previous_state == "uncertain":
+                email_status = "uncertain"
+            else:
+                marker_saved = await run_in_threadpool(
+                    record_teacher_report_event,
+                    stage="ENVIANDO",
+                    document_type="HONORARIOS_DOCENTE",
+                    teacher_code=identity.get("codigo_doc"),
+                    teacher_id=identity.get("cedula"),
+                    teacher_name=identity.get("nombre"),
+                    subject_code=codigo_materia,
+                    period_codes=codigo_periodo or [],
+                    document_path=stored.get("folder_path"),
+                    detail="Preparando cinco adjuntos para el envío de Honorarios docentes.",
+                )
+                if not marker_saved:
+                    raise RuntimeError("No se pudo registrar el intento de envío; el correo no será enviado.")
+                message_id = await run_in_threadpool(send_teacher_honoraria_mail, identity, documents_for_mail)
+                email_status = "sent"
+                sent_recorded = await run_in_threadpool(
+                    record_teacher_report_event,
+                    stage="ENVIADO",
+                    document_type="HONORARIOS_DOCENTE",
+                    teacher_code=identity.get("codigo_doc"),
+                    teacher_id=identity.get("cedula"),
+                    teacher_name=identity.get("nombre"),
+                    subject_code=codigo_materia,
+                    subject_name=nombre_materia,
+                    period_codes=codigo_periodo or [],
+                    document_path=stored.get("folder_path"),
+                    detail="Microsoft Graph aceptó el envío de Honorarios docentes.",
+                    metadata={"destinatarios": list(HONORARIA_RECIPIENTS), "copia": teacher_copy_address(identity), "graph_message_id": message_id},
+                )
+                if not sent_recorded:
+                    logger.error("Graph aceptó el correo, pero no se pudo registrar su confirmación en auditoría.")
+        except TeacherMailDeliveryUncertain as exc:
+            email_status = "uncertain"
+            logger.exception("Envío de honorarios docentes sin confirmación de Microsoft Graph.")
+            await run_in_threadpool(
+                record_teacher_report_event,
+                stage="ENVIADO",
+                status="INCIERTO",
+                document_type="HONORARIOS_DOCENTE",
+                teacher_code=identity.get("codigo_doc"),
+                teacher_id=identity.get("cedula"),
+                teacher_name=identity.get("nombre"),
+                document_path=stored.get("folder_path"),
+                detail=f"Microsoft Graph no confirmó el envío: {type(exc).__name__}",
+            )
+        except Exception as exc:
+            email_status = "error"
+            logger.exception("No se pudo enviar el expediente de honorarios docentes %s.", _clean(stored.get("folder_path")))
+            await run_in_threadpool(
+                record_teacher_report_event,
+                stage="ENVIADO",
+                status="ERROR",
+                document_type="HONORARIOS_DOCENTE",
+                teacher_code=identity.get("codigo_doc"),
+                teacher_id=identity.get("cedula"),
+                teacher_name=identity.get("nombre"),
+                subject_code=codigo_materia,
+                subject_name=nombre_materia,
+                period_codes=codigo_periodo or [],
+                document_path=stored.get("folder_path"),
+                detail=f"No se confirmó el envío: {type(exc).__name__}",
+            )
     return StreamingResponse(
         BytesIO(archive_bytes),
         media_type="application/zip",
@@ -10237,6 +10342,8 @@ async def teacher_signed_documents_archive(
             "X-OneDrive-Root": _TEACHER_DOCUMENT_ONEDRIVE_ROOT,
             "X-OneDrive-Item-Count": str(len(stored.get("items") or [])),
             "X-OneDrive-Same-Folder": "true" if stored.get("same_folder") else "false",
+            "X-OneDrive-Folder": quote(str(stored.get("folder_path") or ""), safe=""),
+            "X-Honorarios-Email-Status": email_status,
         },
     )
 

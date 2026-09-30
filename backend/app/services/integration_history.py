@@ -747,6 +747,30 @@ def integration_history_summary() -> dict[str, Any]:
         ) from exc
 
 
+def teacher_honoraria_mail_state(folder_path: str, teacher_id: str) -> str:
+    """Fail closed when the audit store cannot establish whether this case was sent."""
+    ensure_integration_history_schema()
+    with get_integration_control_connection() as connection:
+        row = connection.cursor().execute(
+            """
+            SELECT TOP (1) Etapa, Estado
+            FROM aud.EventoInformeDocente
+            WHERE Etapa IN ('ENVIANDO', 'ENVIADO') AND TipoDocumento = 'HONORARIOS_DOCENTE'
+              AND RutaDocumento = ? AND CedulaDocente = ?
+            ORDER BY EventoInformeId DESC
+            """,
+            folder_path,
+            teacher_id,
+        ).fetchone()
+    if row is None:
+        return "new"
+    if row.Etapa == "ENVIADO" and row.Estado == "EXITOSO":
+        return "sent"
+    if row.Etapa == "ENVIADO" and row.Estado == "ERROR":
+        return "retry"
+    return "uncertain"
+
+
 def record_teacher_report_event(
     *,
     stage: str,

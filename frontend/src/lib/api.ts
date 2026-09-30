@@ -4239,11 +4239,14 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   codigoMateria: string
   nombreMateria: string
   codigoPeriodos: string[]
+  existingFolderPath?: string
 }): Promise<{
   archive: Blob
   oneDriveSaved: boolean
   storedDocumentCount: number
   sameFolder: boolean
+  folderPath: string
+  emailStatus: 'pending' | 'sent' | 'error' | 'uncertain'
 }> {
   const formData = new FormData()
   formData.append('informe', params.informe, params.informeNombre)
@@ -4253,6 +4256,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   if (params.ridePdf) formData.append('ride_pdf', params.ridePdf, params.ridePdf.name)
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('nombre_materia', params.nombreMateria)
+  if (params.existingFolderPath) formData.append('existing_folder_path', params.existingFolderPath)
   for (const codigoPeriodo of params.codigoPeriodos) {
     formData.append('codigo_periodo', codigoPeriodo)
   }
@@ -4260,6 +4264,8 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   let storedDocumentCount = 0
   let sameFolder = false
   let sameFolderHeaderPresent = false
+  let folderPath = ''
+  let emailStatus: 'pending' | 'sent' | 'error' | 'uncertain' = 'pending'
   const archive = await request<Blob>('/api/portal/teacher/signed-documents-archive', {
     method: 'POST',
     body: formData,
@@ -4271,6 +4277,10 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
       sameFolder = sameFolderHeader === 'true'
       const itemCount = Number.parseInt(response.headers.get('X-OneDrive-Item-Count') || '', 10)
       storedDocumentCount = Number.isFinite(itemCount) ? itemCount : 0
+      folderPath = decodeURIComponent(response.headers.get('X-OneDrive-Folder') || '')
+      const rawEmailStatus = response.headers.get('X-Honorarios-Email-Status')
+      emailStatus = rawEmailStatus === 'sent' || rawEmailStatus === 'error' || rawEmailStatus === 'uncertain'
+        ? rawEmailStatus : 'pending'
     },
   })
   if (!sameFolderHeaderPresent && oneDriveSaved && storedDocumentCount > 0) {
@@ -4283,6 +4293,8 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
     oneDriveSaved,
     storedDocumentCount,
     sameFolder,
+    folderPath,
+    emailStatus,
   }
 }
 

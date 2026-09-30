@@ -66,6 +66,12 @@ const MAX_COMPLIANCE_RIDE_PDF_BYTES = 50 * 1024 * 1024
 type ComplianceEvidenceKey = (typeof COMPLIANCE_EVIDENCE_OPTIONS)[number]['key']
 
 type SignedReportBundle = {
+  courseKey: string
+  codigoMateria: string
+  nombreMateria: string
+  codigoPeriodos: string[]
+  folderPath: string
+  emailStatus: 'pending' | 'sent' | 'error' | 'uncertain'
   complianceUrl: string
   complianceFilename: string
   gradesUrl: string
@@ -830,6 +836,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       null,
     [complianceCourseOptions, courses, exactCourses, filteredCourses, gradeCourseGroups, targetCourseKey]
   )
+  const currentSignedBundle = signedReportBundle && targetCourse && signedReportBundle.courseKey === courseKey(targetCourse)
+    ? signedReportBundle : null
   const targetCoursePeriodOptions = useMemo(() => {
     if (!targetCourse) return []
     const options = new Map<string, { code: string; label: string }>()
@@ -1607,8 +1615,86 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setComplianceInvoiceInputKey((current) => current + 1)
   }
 
+  async function completeSignedReportDelivery(bundle: SignedReportBundle) {
+    if (bundle.emailStatus === 'sent' || bundle.emailStatus === 'uncertain') return
+    if (Boolean(complianceInvoiceXml) !== Boolean(complianceRidePdf)) {
+      setError('Seleccione juntos el XML y el RIDE para enviar los documentos.')
+      return
+    }
+    if (!bundle.folderPath) {
+      setError('No se conoce la carpeta archivada en OneDrive. No se puede reintentar el envío sin verificar el expediente.')
+      return
+    }
+    setSigningComplianceReport(true)
+    setError('')
+    setMessage('Validando la factura, archivando el expediente y enviando el correo...')
+    try {
+      const invoiceXml = complianceInvoiceXml || (bundle.invoiceXmlUrl
+        ? new File([await (await fetch(bundle.invoiceXmlUrl)).blob()], bundle.invoiceXmlFilename || 'factura-electronica.xml', { type: 'application/xml' })
+        : null)
+      const ridePdf = complianceRidePdf || (bundle.ridePdfUrl
+        ? new File([await (await fetch(bundle.ridePdfUrl)).blob()], bundle.ridePdfFilename || 'ride-factura.pdf', { type: 'application/pdf' })
+        : null)
+      if (!invoiceXml || !ridePdf) {
+        throw new Error('Para enviar Honorarios docentes, cargue la factura XML y el RIDE PDF.')
+      }
+      if (invoiceXml.size > MAX_COMPLIANCE_INVOICE_XML_BYTES || ridePdf.size > MAX_COMPLIANCE_RIDE_PDF_BYTES) {
+        throw new Error('El XML o el RIDE excede el tamaño permitido.')
+      }
+      const [informe, notas, contrato] = await Promise.all([
+        fetch(bundle.complianceUrl).then((response) => response.blob()),
+        fetch(bundle.gradesUrl).then((response) => response.blob()),
+        fetch(bundle.contractUrl).then((response) => response.blob()),
+      ])
+      const result = await downloadPortalTeacherSignedDocumentsArchive({
+        informe,
+        informeNombre: bundle.complianceFilename,
+        notas,
+        notasNombre: bundle.gradesFilename,
+        contrato,
+        contratoNombre: bundle.contractFilename,
+        facturaXml: invoiceXml,
+        ridePdf,
+        codigoMateria: bundle.codigoMateria,
+        nombreMateria: bundle.nombreMateria,
+        codigoPeriodos: bundle.codigoPeriodos,
+        existingFolderPath: bundle.folderPath,
+      })
+      if (!result.oneDriveSaved || !result.sameFolder || result.storedDocumentCount !== 5) {
+        throw new Error('OneDrive no confirmó los cinco documentos del expediente.')
+      }
+      setSignedReportBundle({
+        ...bundle,
+        complianceUrl: window.URL.createObjectURL(informe),
+        gradesUrl: window.URL.createObjectURL(notas),
+        contractUrl: window.URL.createObjectURL(contrato),
+        invoiceXmlUrl: window.URL.createObjectURL(invoiceXml),
+        invoiceXmlFilename: 'factura-electronica.xml',
+        ridePdfUrl: window.URL.createObjectURL(ridePdf),
+        ridePdfFilename: 'ride-factura.pdf',
+        archiveUrl: window.URL.createObjectURL(result.archive),
+        storedDocumentCount: result.storedDocumentCount,
+        emailStatus: result.emailStatus,
+      })
+      clearComplianceInvoiceBackups()
+      setMessage(result.emailStatus === 'sent'
+        ? 'Los cinco documentos se archivaron y Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
+        : result.emailStatus === 'uncertain'
+          ? 'Los documentos se archivaron. El estado del correo es incierto; solicite verificación administrativa antes de reintentar.'
+          : 'Los cinco documentos se archivaron, pero no se confirmó el envío. Puede reintentarlo sin volver a firmar.')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'No se pudo completar el envío de honorarios docentes.')
+    } finally {
+      setSigningComplianceReport(false)
+    }
+  }
+
   async function signComplianceReport(course: PortalTeacherCourse | null = selectedCourse) {
     if (!course) return
+    if (signedReportBundle && signedReportBundle.courseKey === courseKey(course)) {
+      await completeSignedReportDelivery(signedReportBundle)
+      return
+    }
     const params = reportRequestParams(course, compliancePeriodCodes)
     if (!params) return
     if (params.periodos.length > 4) {
@@ -1760,6 +1846,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         )
       }
       setSignedReportBundle({
+        courseKey: courseKey(course),
+        codigoMateria: params.subjectCode,
+        nombreMateria: course.nombre_materia || '',
+        codigoPeriodos: params.periodos,
+        folderPath: archiveResult.folderPath,
+        emailStatus: archiveResult.emailStatus,
         complianceUrl: window.URL.createObjectURL(complianceBlob),
         complianceFilename,
         gradesUrl: window.URL.createObjectURL(gradesBlob),
@@ -1777,9 +1869,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       setSigningConsent(false)
       clearComplianceInvoiceBackups()
       setMessage(
-        invoiceBackupsIncluded
-          ? 'Se guardaron juntos cinco documentos en la misma carpeta de OneDrive / DOCENTES: informe, notas, contrato, factura XML y RIDE. El ZIP quedó disponible como descarga conjunta.'
-          : 'Se guardaron juntos tres documentos firmados en la misma carpeta de OneDrive / DOCENTES. El ZIP quedó disponible como descarga conjunta.',
+        !invoiceBackupsIncluded
+          ? 'Tres PDF firmados y guardados en OneDrive. El correo queda pendiente hasta cargar factura XML y RIDE; puede descargarlos ahora.'
+          : archiveResult.emailStatus === 'sent'
+            ? 'Cinco documentos guardados en OneDrive. Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
+            : archiveResult.emailStatus === 'uncertain'
+              ? 'Cinco documentos guardados en OneDrive. El estado del correo requiere verificación administrativa antes de reintentar.'
+              : 'Cinco documentos guardados en OneDrive, pero el correo no se confirmó. Puede reintentarlo sin volver a firmar.',
       )
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo firmar electrónicamente el informe')
@@ -2905,7 +3001,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 ))}
                 <div className="portal-compliance-evidence-item portal-compliance-evidence-item--automatic">
                   <span className="portal-compliance-evidence-title"><b>4</b>Reporte de notas firmado</span>
-                  <strong>{signedReportBundle ? 'Adjuntado automáticamente' : 'Se generará al firmar'}</strong>
+                  <strong>{currentSignedBundle ? 'Adjuntado automáticamente' : 'Se generará al firmar'}</strong>
                   <small>
                     El sistema firma primero el reporte de Secretaría, convierte sus páginas en imágenes y las
                     incorpora al informe. El PDF firmado también queda disponible por separado.
@@ -3016,22 +3112,22 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
               <div className="section-title">
                 <div>
                   <span>Firma electrónica</span>
-                  <h2 id="portal-signature-title">Firmar y archivar el informe de cumplimiento</h2>
+                  <h2 id="portal-signature-title">Firmar, archivar y enviar honorarios docentes</h2>
                 </div>
                 <strong>Uso único por solicitud</strong>
               </div>
               <p>
-                El certificado y la contraseña se utilizan una sola vez para firmar el informe de cumplimiento, el
-                reporte de notas en formato Secretaría y el contrato docente validado. Al finalizar deberá
-                seleccionarlos nuevamente para otra firma.
+                Los tres PDF se firman y guardan en OneDrive. Con factura XML y RIDE se envía el expediente a
+                Roberto Castro y Verónica Cevallos, con copia al docente. Sin factura, queda archivado y descargable,
+                pendiente de envío.
               </p>
               <div className="portal-signature-invoice-backups">
                 <div>
                   <span>Respaldos de facturación</span>
                   <strong>Factura XML y RIDE</strong>
                   <small>
-                    Son opcionales, pero deben seleccionarse juntos. Se guardarán sin modificaciones en la misma
-                    carpeta del docente y dentro del paquete ZIP.
+                    Son obligatorios para enviar el correo. Puede cargarlos juntos ahora o después de firmar;
+                    se guardarán en la misma carpeta del expediente y en el ZIP.
                   </small>
                 </div>
                 <div className="compliance-invoice-files">
@@ -3041,7 +3137,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       key={`invoice-xml-${complianceInvoiceInputKey}`}
                       type="file"
                       accept=".xml,text/xml,application/xml"
-                      disabled={signingComplianceReport}
+                      disabled={signingComplianceReport || currentSignedBundle?.emailStatus === 'sent'}
                       onChange={(event) => setComplianceInvoiceXml(event.target.files?.[0] || null)}
                     />
                     <small>{complianceInvoiceXml ? complianceInvoiceXml.name : 'Archivo XML de máximo 20 MB'}</small>
@@ -3052,7 +3148,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       key={`invoice-ride-${complianceInvoiceInputKey}`}
                       type="file"
                       accept=".pdf,application/pdf"
-                      disabled={signingComplianceReport}
+                      disabled={signingComplianceReport || currentSignedBundle?.emailStatus === 'sent'}
                       onChange={(event) => setComplianceRidePdf(event.target.files?.[0] || null)}
                     />
                     <small>{complianceRidePdf ? complianceRidePdf.name : 'Documento PDF de máximo 50 MB'}</small>
@@ -3069,7 +3165,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   </button>
                 ) : null}
               </div>
-              <div className="portal-signature-grid">
+              {!currentSignedBundle ? <div className="portal-signature-grid">
                 <label className="portal-signature-certificate">
                   <span>Archivo de certificado</span>
                   <input
@@ -3117,8 +3213,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     placeholder="Correo institucional (opcional)"
                   />
                 </label>
-              </div>
-              <label className="portal-signature-consent">
+              </div> : null}
+              {!currentSignedBundle ? <label className="portal-signature-consent">
                 <input
                   type="checkbox"
                   checked={signingConsent}
@@ -3128,16 +3224,16 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   Confirmo que soy titular del certificado y apruebo los tres PDF definitivos y los respaldos de
                   facturación seleccionados.
                 </span>
-              </label>
+              </label> : null}
               <div className="portal-signature-actions">
-                <button
+                {!currentSignedBundle ? <button
                   type="button"
                   className="ghost-button"
                   onClick={clearSigningCredentials}
                   disabled={!signingCertificate && !signingPassword}
                 >
                   Limpiar certificado
-                </button>
+                </button> : null}
                 <button
                   type="button"
                   className="primary-action"
@@ -3145,73 +3241,86 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   disabled={
                     signingComplianceReport ||
                     !targetCourse ||
-                    !complianceContractFile ||
-                    !complianceContractAnalysis ||
-                     !signingCertificate ||
-                     !signingPassword ||
-                     !signingConsent ||
-                     !complianceReportCanGenerate ||
-                     Boolean(complianceInvoiceXml) !== Boolean(complianceRidePdf)
+                    Boolean(complianceInvoiceXml) !== Boolean(complianceRidePdf) ||
+                    (currentSignedBundle
+                      ? currentSignedBundle.emailStatus === 'sent' || currentSignedBundle.emailStatus === 'uncertain' ||
+                        (!complianceInvoiceXml && !currentSignedBundle.invoiceXmlUrl)
+                      : !complianceContractFile || !complianceContractAnalysis ||
+                        !signingCertificate || !signingPassword || !signingConsent || !complianceReportCanGenerate)
                   }
                 >
-                  {signingComplianceReport ? 'Firmando y archivando...' : 'Firmar y archivar documentos'}
+                  {signingComplianceReport
+                    ? 'Procesando documentos...'
+                    : currentSignedBundle
+                      ? currentSignedBundle.emailStatus === 'sent' ? 'Correo enviado'
+                        : currentSignedBundle.emailStatus === 'uncertain' ? 'Verificación requerida' : 'Completar y enviar honorarios'
+                      : 'Firmar, archivar y enviar si hay factura'}
                 </button>
               </div>
-              {signedReportBundle ? (
+              {currentSignedBundle ? (
                 <div className="portal-signed-documents" aria-live="polite">
                   <div className="portal-signed-documents-copy">
-                    <strong>{signedReportBundle.storedDocumentCount} documentos guardados</strong>
+                    <strong>{currentSignedBundle.storedDocumentCount} documentos guardados</strong>
                     <small>
                       Informe, notas y contrato firmados
-                      {signedReportBundle.invoiceXmlUrl ? ', factura XML y RIDE' : ''} guardados juntos en una misma
+                      {currentSignedBundle.invoiceXmlUrl ? ', factura XML y RIDE' : ''} guardados juntos en una misma
                       carpeta de OneDrive / DOCENTES. El ZIP es únicamente la descarga conjunta.
+                    </small>
+                    <small>
+                      {currentSignedBundle.emailStatus === 'sent'
+                        ? 'Correo Honorarios docentes aceptado por Microsoft Graph. Docente en copia.'
+                        : currentSignedBundle.emailStatus === 'uncertain'
+                          ? 'El estado del correo es incierto. Solicite verificación administrativa; no se enviará de nuevo automáticamente.'
+                        : currentSignedBundle.emailStatus === 'error'
+                          ? 'El correo no se confirmó. Reintente con el mismo botón; los PDF no se volverán a firmar.'
+                          : 'Envío pendiente de factura XML y RIDE.'}
                     </small>
                   </div>
                   <div className="portal-signed-documents-actions">
                     <button
                       type="button"
                       className="primary-action"
-                      onClick={() => downloadObjectUrl(signedReportBundle.archiveUrl, signedReportBundle.archiveFilename)}
+                      onClick={() => downloadObjectUrl(currentSignedBundle.archiveUrl, currentSignedBundle.archiveFilename)}
                     >
                       Descargar todo
                     </button>
                     <button
                       type="button"
                       className="ghost-button"
-                      onClick={() => downloadObjectUrl(signedReportBundle.complianceUrl, signedReportBundle.complianceFilename)}
+                      onClick={() => downloadObjectUrl(currentSignedBundle.complianceUrl, currentSignedBundle.complianceFilename)}
                     >
                       Descargar informe firmado
                     </button>
                     <button
                       type="button"
                       className="ghost-button"
-                      onClick={() => downloadObjectUrl(signedReportBundle.gradesUrl, signedReportBundle.gradesFilename)}
+                      onClick={() => downloadObjectUrl(currentSignedBundle.gradesUrl, currentSignedBundle.gradesFilename)}
                     >
                       Descargar notas firmadas
                     </button>
                     <button
                       type="button"
                       className="ghost-button"
-                      onClick={() => downloadObjectUrl(signedReportBundle.contractUrl, signedReportBundle.contractFilename)}
+                      onClick={() => downloadObjectUrl(currentSignedBundle.contractUrl, currentSignedBundle.contractFilename)}
                     >
                       Descargar contrato firmado
                     </button>
-                    {signedReportBundle.invoiceXmlUrl && signedReportBundle.invoiceXmlFilename ? (
+                    {currentSignedBundle.invoiceXmlUrl && currentSignedBundle.invoiceXmlFilename ? (
                       <button
                         type="button"
                         className="ghost-button"
                         onClick={() =>
-                          downloadObjectUrl(signedReportBundle.invoiceXmlUrl!, signedReportBundle.invoiceXmlFilename!)
+                          downloadObjectUrl(currentSignedBundle.invoiceXmlUrl!, currentSignedBundle.invoiceXmlFilename!)
                         }
                       >
                         Descargar factura XML
                       </button>
                     ) : null}
-                    {signedReportBundle.ridePdfUrl && signedReportBundle.ridePdfFilename ? (
+                    {currentSignedBundle.ridePdfUrl && currentSignedBundle.ridePdfFilename ? (
                       <button
                         type="button"
                         className="ghost-button"
-                        onClick={() => downloadObjectUrl(signedReportBundle.ridePdfUrl!, signedReportBundle.ridePdfFilename!)}
+                        onClick={() => downloadObjectUrl(currentSignedBundle.ridePdfUrl!, currentSignedBundle.ridePdfFilename!)}
                       >
                         Descargar RIDE
                       </button>
