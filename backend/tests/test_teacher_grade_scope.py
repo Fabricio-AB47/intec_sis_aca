@@ -306,6 +306,42 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
 
 
 class TeacherContractAnalysisTests(unittest.TestCase):
+    def test_contract_term_date_formats(self):
+        examples = [
+            ("NOVENA. - PLAZO. - El presente Contrato rige a partir del 7 de septiembre de 2026 hasta el 27 de septiembre de 2026.", "2026-09-07", "2026-09-27"),
+            ("Para el período que inicia el 7 de septiembre de 2026 y termina el 27 de septiembre de 2026.", "2026-09-07", "2026-09-27"),
+            ("Fecha de inicio: 07/09/2026; fecha de fin: 27/09/2026.", "2026-09-07", "2026-09-27"),
+            ("VIGENCIA: Desde 2026-09-07 hasta 2026-09-27.", "2026-09-07", "2026-09-27"),
+            ("Inicia el 07-SEP-2026 y finaliza el 27-SEP-2026.", "2026-09-07", "2026-09-27"),
+            ("Inicio: 07.09.2026. Fin: 27.09.2026.", "2026-09-07", "2026-09-27"),
+            ("VIGENCIA: Desde el 7 de sept. de 2026 hasta el 27 de sept. de 2026.", "2026-09-07", "2026-09-27"),
+            ("PLAZO. - Del 7 al 27 de septiembre de 2026.", "2026-09-07", "2026-09-27"),
+            ("PLAZO: Del 28 de diciembre al 5 de enero de 2027.", "2026-12-28", "2027-01-05"),
+            ("PLAZO: Del 07/09 al 27/09/2026.", "2026-09-07", "2026-09-27"),
+            ("PLAZO: 2026-09-07 - 2026-09-27.", "2026-09-07", "2026-09-27"),
+            ("PLAZO: desde el 7 de septiembre del 2026 hasta el 27 de septiembre del 2026.", "2026-09-07", "2026-09-27"),
+        ]
+        for source, start, end in examples:
+            with self.subTest(source=source):
+                analysis = _parse_teacher_contract_text(source)
+                self.assertEqual((analysis["fecha_inicio"], analysis["fecha_fin"]), (start, end))
+
+    def test_term_clause_precedes_other_dates_and_invalid_dates_are_not_assumed(self):
+        analysis = _parse_teacher_contract_text(
+            "Firmado el 1 de agosto de 2026. Para el período que inicia el 1 de septiembre de 2026 y termina el 30 de septiembre de 2026. "
+            "NOVENA. - PLAZO. - El contrato rige a partir del 7 de septiembre de 2026 hasta el 27 de septiembre de 2026."
+        )
+        self.assertEqual((analysis["fecha_inicio"], analysis["fecha_fin"]), ("2026-09-07", "2026-09-27"))
+
+        invalid = _parse_teacher_contract_text("Fecha de inicio: 31 de febrero de 2026. Fecha de fin: 27 de septiembre de 2026.")
+        self.assertEqual(invalid["fecha_inicio"], "")
+        self.assertEqual(invalid["fecha_fin"], "2026-09-27")
+        self.assertTrue(invalid["advertencias"])
+
+        inverted = _parse_teacher_contract_text("El contrato inicia el 27 de septiembre de 2026 y termina el 7 de septiembre de 2026.")
+        self.assertEqual((inverted["fecha_inicio"], inverted["fecha_fin"]), ("", ""))
+        self.assertTrue(any("anterior" in warning for warning in inverted["advertencias"]))
+
     def test_regular_contract_extracts_number_subject_dates_and_value(self):
         analysis = _parse_teacher_contract_text(
             """

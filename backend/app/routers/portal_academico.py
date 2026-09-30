@@ -2872,15 +2872,120 @@ def _contract_date_from_parts(day: str, month: str, year: str) -> date | None:
         return None
 
 
+_CONTRACT_DATE_RE = re.compile(
+    r"(?<![A-Z0-9])(?:"
+    r"\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}"
+    r"|\d{1,2}(?:\s*[-/.]\s*|\s+(?:DE|DEL)\s+|\s+)"
+    r"(?:[A-ZÁÉÍÓÚÜÑ]{3,12}|\d{1,2})\.?(?:\s*[-/.]\s*|\s+(?:DE|DEL)\s+|\s+)\d{4}"
+    r")(?![A-Z0-9])",
+    flags=re.IGNORECASE,
+)
+_CONTRACT_START_LABELS = (
+    r"RIGE\s+A\s+PARTIR|A\s+PARTIR|DESDE|INICIA(?:RÁ|RA)?|COMIENZA(?:RÁ|RA)?|"
+    r"FECHA\s+DE\s+INICIO|FECHA\s+INICIAL|INICIO"
+)
+_CONTRACT_END_LABELS = (
+    r"HASTA|TERMINA(?:RÁ|RA)?|FINALIZA(?:RÁ|RA)?|CONCLUYE|CONCLUIRÁ|CULMINA|VENCE(?:RÁ|RA)?|"
+    r"FECHA\s+DE\s+FIN|FECHA\s+FINAL|FECHA\s+DE\s+TERMINACI[ÓO]N|FIN"
+)
+
+
+def _contract_date_value(value: str) -> date | None:
+    parts = [part for part in re.findall(r"[A-ZÁÉÍÓÚÜÑ]+|\d+", value.upper()) if part not in {"DE", "DEL"}]
+    if len(parts) != 3:
+        return None
+    if len(parts[0]) == 4:
+        return _contract_date_from_parts(parts[2], parts[1], parts[0])
+    return _contract_date_from_parts(parts[0], parts[1], parts[2])
+
+
+def _contract_date_after_label(text: str, label_end: int) -> tuple[date, int] | None:
+    candidate = _CONTRACT_DATE_RE.search(text, label_end, min(len(text), label_end + 75))
+    if not candidate or candidate.start() - label_end > 55:
+        return None
+    gap = text[label_end:candidate.start()]
+    if re.search(r"\d|[;!?]", gap):
+        return None
+    parsed = _contract_date_value(candidate.group(0))
+    return (parsed, candidate.end()) if parsed else None
+
+
 def _contract_labeled_date(text: str, labels: str) -> date | None:
-    match = re.search(
-        rf"(?:{labels})(?:\s+(?:EL|DEL|DE))?\s*[:.-]?\s*(\d{{1,2}})\s*[/.-]\s*([A-ZÁÉÍÓÚÑ]{{2,12}}|\d{{1,2}})\s*[/.-]\s*(\d{{4}})",
-        text,
+    for label in re.finditer(rf"\b(?:{labels})\b", text, flags=re.IGNORECASE):
+        found = _contract_date_after_label(text, label.end())
+        if found:
+            return found[0]
+    return None
+
+
+def _contract_shared_date_range(text: str) -> tuple[date, date] | None:
+    pattern = re.compile(
+        r"\b(?:DEL|DESDE\s+EL|A\s+PARTIR\s+DEL)\s+(?P<day1>\d{1,2})"
+        r"(?:\s+DE\s+(?P<month1>[A-ZÁÉÍÓÚÜÑ]{3,12})\.?)?"
+        r"(?:\s+DE\s+(?P<year1>\d{4}))?\s+"
+        r"(?:AL|HASTA(?:\s+EL)?|Y\s+TERMINA(?:\s+EL)?)\s+"
+        r"(?P<day2>\d{1,2})\s+DE\s+(?P<month2>[A-ZÁÉÍÓÚÜÑ]{3,12})\.?\s+DE\s+(?P<year2>\d{4})\b",
         flags=re.IGNORECASE,
     )
-    if not match:
-        return None
-    return _contract_date_from_parts(match.group(1), match.group(2), match.group(3))
+    for match in pattern.finditer(text):
+        end_date = _contract_date_from_parts(match["day2"], match["month2"], match["year2"])
+        if not end_date:
+            continue
+        start_month = match["month1"] or match["month2"]
+        start_year = int(match["year1"] or end_date.year)
+        start_date = _contract_date_from_parts(match["day1"], start_month, str(start_year))
+        if start_date and not match["year1"] and start_date > end_date and match["month1"]:
+            start_date = _contract_date_from_parts(match["day1"], start_month, str(start_year - 1))
+        if start_date and start_date <= end_date:
+            return start_date, end_date
+    numeric_pattern = re.compile(
+        r"\b(?:DEL|DESDE\s+EL)\s+(\d{1,2})\s*[/.-]\s*(\d{1,2})\s+"
+        r"(?:AL|HASTA(?:\s+EL)?)\s+(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{4})\b",
+        flags=re.IGNORECASE,
+    )
+    for match in numeric_pattern.finditer(text):
+        end_date = _contract_date_from_parts(match[3], match[4], match[5])
+        if not end_date:
+            continue
+        start_year = end_date.year - (1 if int(match[2]) > end_date.month else 0)
+        start_date = _contract_date_from_parts(match[1], match[2], str(start_year))
+        if start_date and start_date <= end_date:
+            return start_date, end_date
+    return None
+
+
+def _contract_plain_date_range(text: str) -> tuple[date, date] | None:
+    candidates = list(_CONTRACT_DATE_RE.finditer(text))
+    for first, second in zip(candidates, candidates[1:]):
+        between = text[first.end():second.start()]
+        if len(between) > 35 or not re.fullmatch(r"\s*(?:[-–—]|A|AL|HASTA(?:\s+EL)?|Y(?:\s+EL)?)\s*", between, re.IGNORECASE):
+            continue
+        start_date = _contract_date_value(first.group())
+        end_date = _contract_date_value(second.group())
+        if start_date and end_date and start_date <= end_date:
+            return start_date, end_date
+    return None
+
+
+def _contract_date_range(text: str) -> tuple[date, date] | None:
+    for label in re.finditer(rf"\b(?:{_CONTRACT_START_LABELS})\b", text, flags=re.IGNORECASE):
+        start = _contract_date_after_label(text, label.end())
+        if not start:
+            continue
+        search_end = min(len(text), start[1] + 110)
+        for end_label in re.finditer(rf"\b(?:{_CONTRACT_END_LABELS}|AL)\b", text[start[1]:search_end], flags=re.IGNORECASE):
+            end = _contract_date_after_label(text, start[1] + end_label.end())
+            if end and start[0] <= end[0]:
+                return start[0], end[0]
+    return _contract_shared_date_range(text) or _contract_plain_date_range(text)
+
+
+def _contract_preferred_date_range(text: str) -> tuple[date, date] | None:
+    for heading in re.finditer(r"\b(?:PLAZO|VIGENCIA)\s*[.:-]", text, flags=re.IGNORECASE):
+        result = _contract_date_range(text[heading.end():heading.end() + 450])
+        if result:
+            return result
+    return _contract_date_range(text)
 
 
 def _contract_decimal(value: str) -> float | None:
@@ -2931,8 +3036,12 @@ def _parse_teacher_contract_text(text: str) -> dict[str, Any]:
         flags=re.IGNORECASE,
     )
     subject_match = re.search(r"\b(VGA(?:-[A-Z0-9]+){2,5})\b", upper_text)
-    start_date = _contract_labeled_date(flat_text, r"INICIA|INICIO|FECHA\s+DE\s+INICIO")
-    end_date = _contract_labeled_date(flat_text, r"TERMINA|FINALIZA|FECHA\s+DE\s+FIN|FECHA\s+FINAL")
+    date_range = _contract_preferred_date_range(flat_text)
+    start_date = date_range[0] if date_range else _contract_labeled_date(flat_text, _CONTRACT_START_LABELS)
+    end_date = date_range[1] if date_range else _contract_labeled_date(flat_text, _CONTRACT_END_LABELS)
+    dates_inverted = bool(start_date and end_date and end_date < start_date)
+    if dates_inverted:
+        start_date = end_date = None
 
     value_match = re.search(
         r"VALOR\s+TOTAL.{0,300}?(?:US\$|USD|D[ÓO]LARES?)\s*[:.]?\s*([0-9][0-9.,]*)",
@@ -2967,6 +3076,8 @@ def _parse_teacher_contract_text(text: str) -> dict[str, Any]:
         for key, label in missing_labels.items()
         if not analysis.get(key)
     ]
+    if dates_inverted:
+        analysis["advertencias"].append("La fecha final reconocida es anterior a la inicial; verifique el plazo del contrato.")
     return analysis
 
 
