@@ -1791,6 +1791,8 @@ export type PortalTeacherComplianceGradeStudent = {
   nombre_carrera: string
   detalle_periodo: string
   promedio_final: number | null
+  componentes_pendientes?: string[]
+  detalle_validacion?: string
 }
 
 export type PortalTeacherComplianceGradeValidation = {
@@ -1809,6 +1811,7 @@ export type PortalTeacherComplianceGradeValidation = {
   failed_students: PortalTeacherComplianceGradeStudent[]
   students_without_email: PortalTeacherComplianceGradeStudent[]
   moodle: {
+    comparison_source?: 'evaluation_components'
     checked: boolean
     course_id: number | null
     course_name: string
@@ -1819,6 +1822,14 @@ export type PortalTeacherComplianceGradeValidation = {
     discrepancies: Array<PortalTeacherComplianceGradeStudent & {
       nota_moodle: number
       notas_intec: number[]
+      componentes?: Array<{
+        campo: string
+        componente: string
+        actividad: string
+        item_id: number
+        nota_moodle: number
+        nota_intec: number | null
+      }>
     }>
   }
 }

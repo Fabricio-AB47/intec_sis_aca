@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import logging
+from pathlib import Path
 import re
 from threading import Lock
 from typing import Any, Iterable
@@ -175,6 +176,7 @@ def ensure_integration_history_schema() -> None:
                       INCLUDE(Etapa, Estado, CodigoMateria, NombreArchivo, UsuarioAplicacion)
                     """
                 )
+                cursor.execute((Path(__file__).resolve().parents[2] / "sql" / "2026_09_30_honoraria_audit_states.sql").read_text(encoding="utf-8"))
                 connection.commit()
             _schema_bootstrapped = True
         except (RuntimeError, pyodbc.Error) as exc:

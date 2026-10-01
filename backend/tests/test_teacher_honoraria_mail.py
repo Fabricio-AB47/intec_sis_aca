@@ -7,6 +7,7 @@ import httpx
 
 from app.services.teacher_honoraria_mail import (
     HONORARIA_RECIPIENTS,
+    TeacherMailConfigurationError,
     TeacherMailDeliveryUncertain,
     send_teacher_honoraria_mail,
     teacher_copy_address,
@@ -94,11 +95,8 @@ class TeacherHonorariaMailTests(unittest.TestCase):
 
         def handle(request):
             calls.append(request)
-            if request.url.path.endswith("/messages"):
-                return httpx.Response(201, json={"id": "draft-1"})
-            if request.url.path.endswith("/send"):
-                return httpx.Response(202)
-            return httpx.Response(201, json={"id": "attachment"})
+            self.assertTrue(request.url.path.endswith("/sendMail"))
+            return httpx.Response(202, headers={"request-id": "accepted-1"})
 
         real_client = httpx.Client
         with (
@@ -108,14 +106,17 @@ class TeacherHonorariaMailTests(unittest.TestCase):
         ):
             result = send_teacher_honoraria_mail({"nombre": "Docente", "cedula": "123", "correo": "docente@intec.edu.ec"}, documents())
 
-        self.assertEqual(result, "draft-1")
-        draft = json.loads(calls[0].content)
+        self.assertEqual(result, "sendMail:accepted-1")
+        self.assertEqual(len(calls), 1)
+        payload = json.loads(calls[0].content)
+        self.assertTrue(payload["saveToSentItems"])
+        draft = payload["message"]
         self.assertEqual(draft["subject"], "Honorarios docentes")
         self.assertEqual(HONORARIA_RECIPIENTS, ("roberto.castro@intec.edu.ec", "veronica.cevallos@intec.edu.ec"))
         self.assertEqual([item["emailAddress"]["address"] for item in draft["toRecipients"]], list(HONORARIA_RECIPIENTS))
         self.assertEqual(draft["ccRecipients"][0]["emailAddress"]["address"], "docente@intec.edu.ec")
-        self.assertEqual(len([item for item in calls if item.url.path.endswith("/attachments")]), 6)
-        self.assertTrue(calls[-1].url.path.endswith("/send"))
+        self.assertEqual(len(draft["attachments"]), 6)
+        self.assertTrue(all(item["contentBytes"] == "eHg=" for item in draft["attachments"]))
 
     def test_large_attachment_uses_upload_session(self):
         calls = []
@@ -148,7 +149,7 @@ class TeacherHonorariaMailTests(unittest.TestCase):
         def handle(request):
             if request.url.path.endswith("/messages"):
                 return httpx.Response(201, json={"id": "draft-3"})
-            if request.url.path.endswith("/send"):
+            if request.url.path.endswith(("/send", "/sendMail")):
                 raise httpx.ReadError("connection lost")
             return httpx.Response(201, json={"id": "attachment"})
 
@@ -179,7 +180,43 @@ class TeacherHonorariaMailTests(unittest.TestCase):
             patch("app.services.teacher_honoraria_mail.httpx.Client", side_effect=lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw)),
         ):
             with self.assertRaises(httpx.HTTPStatusError):
-                send_teacher_honoraria_mail({"correo": "docente@intec.edu.ec"}, documents())
+                send_teacher_honoraria_mail({"correo": "docente@intec.edu.ec"}, documents(large=True))
 
         self.assertEqual(calls[-1].method, "DELETE")
         self.assertFalse(any(item.url.path.endswith("/send") for item in calls))
+
+    def test_configuration_errors_are_explicit_and_never_retried(self):
+        real_client = httpx.Client
+        for large, permission in ((False, "Mail.Send"), (True, "Mail.ReadWrite")):
+            calls = []
+
+            def handle(request):
+                calls.append(request)
+                return httpx.Response(403)
+
+            with (
+                self.subTest(large=large),
+                patch("app.services.teacher_honoraria_mail.get_settings", return_value=SimpleNamespace(graph_mail_sender="envios@intec.edu.ec")),
+                patch("app.services.teacher_honoraria_mail.get_graph_token", return_value="token"),
+                patch("app.services.teacher_honoraria_mail.httpx.Client", side_effect=lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw)),
+            ):
+                with self.assertRaisesRegex(TeacherMailConfigurationError, permission):
+                    send_teacher_honoraria_mail({"correo": "docente@intec.edu.ec"}, documents(large=large))
+                self.assertEqual(len(calls), 1)
+
+    def test_server_error_is_uncertain_and_never_retried(self):
+        calls = []
+        real_client = httpx.Client
+
+        def handle(request):
+            calls.append(request)
+            return httpx.Response(503)
+
+        with (
+            patch("app.services.teacher_honoraria_mail.get_settings", return_value=SimpleNamespace(graph_mail_sender="envios@intec.edu.ec")),
+            patch("app.services.teacher_honoraria_mail.get_graph_token", return_value="token"),
+            patch("app.services.teacher_honoraria_mail.httpx.Client", side_effect=lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw)),
+        ):
+            with self.assertRaises(TeacherMailDeliveryUncertain):
+                send_teacher_honoraria_mail({"correo": "docente@intec.edu.ec"}, documents())
+        self.assertEqual(len(calls), 1)

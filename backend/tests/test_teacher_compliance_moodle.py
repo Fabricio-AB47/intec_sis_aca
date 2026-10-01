@@ -22,6 +22,26 @@ from app.routers.portal_academico import (
 )
 
 
+def regular_evaluation_items(grade):
+    return [
+        {
+            "id": partial * 10 + index,
+            "itemtype": "mod", "itemmodule": module,
+            "itemname": f"Evaluación P{partial}",
+            "evaluation_scope": True, "course_section_visible": True,
+            "course_module_visible": True, "course_section_partial": partial,
+            "graderaw": grade, "grademin": 0, "grademax": 10,
+        }
+        for partial in (1, 2, 3)
+        for index, module in enumerate(("quiz", "assign"))
+    ]
+
+
+def regular_academic_components(grade):
+    return {f"p{partial}_{component}": grade for partial in (1, 2, 3)
+            for component in ("tareas", "proyectos", "examen")}
+
+
 class TeacherComplianceMoodleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.meta = {
@@ -151,7 +171,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
 
         self.assertIsNone(grade)
 
-    def test_exact_ten_percent_failed_requires_justification(self) -> None:
+    def test_exact_ten_percent_failed_recommends_optional_justification(self) -> None:
         academic_records = []
         moodle_users = []
         moodle_grades = []
@@ -166,6 +186,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
                     "nombre_carrera": "Desarrollo de Software",
                     "detalle_periodo": "C1-2026-PC",
                     "promedio_final": final_grade,
+                    **regular_academic_components(final_grade),
                 }
             )
             moodle_users.append(
@@ -174,14 +195,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
             moodle_grades.append(
                 {
                     "userid": index + 101,
-                    "gradeitems": [
-                        {
-                            "itemtype": "course",
-                            "graderaw": final_grade,
-                            "grademin": 0,
-                            "grademax": 10,
-                        }
-                    ],
+                    "gradeitems": regular_evaluation_items(final_grade),
                 }
             )
 
@@ -196,10 +210,10 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
         self.assertTrue(validation["can_generate"])
         self.assertEqual(validation["failed_count"], 1)
         self.assertEqual(validation["failed_percentage"], 10.0)
-        self.assertTrue(validation["requires_justification"])
-        with self.assertRaises(HTTPException) as context:
-            _assert_teacher_compliance_generation_allowed(validation, "Muy corta")
-        self.assertEqual(context.exception.status_code, 409)
+        self.assertFalse(validation["requires_justification"])
+        self.assertTrue(validation["justification_recommended"])
+        _assert_teacher_compliance_generation_allowed(validation, "")
+        _assert_teacher_compliance_generation_allowed(validation, "Muy corta")
         _assert_teacher_compliance_generation_allowed(
             validation,
             "El estudiante mantiene un plan académico de recuperación documentado.",
@@ -212,6 +226,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
             "nombre_estudiante": "ESTUDIANTE CERO",
             "correo_intec_registro": "cero@intec.edu.ec",
             "promedio_final": 0,
+            **regular_academic_components(0),
         }
         validation = _teacher_compliance_grade_validation(
             [student],
@@ -221,14 +236,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
             moodle_user_grades=[
                 {
                     "userid": 101,
-                    "gradeitems": [
-                        {
-                            "itemtype": "course",
-                            "graderaw": 0,
-                            "grademin": 0,
-                            "grademax": 10,
-                        }
-                    ],
+                    "gradeitems": regular_evaluation_items(0),
                 }
             ],
         )
@@ -238,7 +246,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
         self.assertEqual(validation["failed_count"], 1)
         self.assertEqual(validation["moodle"]["verified_students"], 1)
 
-    def test_missing_and_different_grades_block_generation(self) -> None:
+    def test_missing_and_different_grades_are_advisory(self) -> None:
         missing = {
             "codigo_estud": 1,
             "cedula": "1100000001",
@@ -252,6 +260,7 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
             "nombre_estudiante": "NOTA DIFERENTE",
             "correo_intec_registro": "diferente@intec.edu.ec",
             "promedio_final": 8,
+            **regular_academic_components(8),
         }
         validation = _teacher_compliance_grade_validation(
             [missing, different],
@@ -265,24 +274,16 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
                 {"userid": 101, "gradeitems": []},
                 {
                     "userid": 102,
-                    "gradeitems": [
-                        {
-                            "itemtype": "course",
-                            "graderaw": 9,
-                            "grademin": 0,
-                            "grademax": 10,
-                        }
-                    ],
+                    "gradeitems": regular_evaluation_items(9),
                 },
             ],
         )
 
-        self.assertFalse(validation["can_generate"])
+        self.assertTrue(validation["can_generate"])
         self.assertEqual(validation["missing_academic_count"], 1)
         self.assertEqual(len(validation["moodle"]["missing_grade_students"]), 1)
         self.assertEqual(len(validation["moodle"]["discrepancies"]), 1)
-        with self.assertRaises(HTTPException):
-            _assert_teacher_compliance_generation_allowed(validation, "")
+        _assert_teacher_compliance_generation_allowed(validation, "")
 
     def test_selected_resource_payload_accepts_only_https_links(self) -> None:
         payload = [{

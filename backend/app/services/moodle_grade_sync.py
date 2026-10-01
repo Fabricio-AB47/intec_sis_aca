@@ -1671,7 +1671,7 @@ class MoodleGradeSyncService:
                 )
                 continue
 
-            candidates, candidate_errors = self._grade_candidates(
+            selected, candidate_errors, conflicts = self.evaluation_components(
                 grade_group.get("gradeitems") or [],
                 enrollment_type,
             )
@@ -1680,7 +1680,6 @@ class MoodleGradeSyncService:
                     {**base_summary, "status": "invalid_grade", "reason": "; ".join(candidate_errors)}
                 )
 
-            selected, conflicts = self._select_candidates(candidates)
             if conflicts:
                 enrollment_summaries.append(
                     {
@@ -2375,6 +2374,16 @@ class MoodleGradeSyncService:
                     }
                 )
         return candidates, errors
+
+    @staticmethod
+    def evaluation_components(
+        grade_items: Iterable[dict[str, Any]],
+        enrollment_type: str,
+    ) -> tuple[dict[str, dict[str, Any]], list[str], set[str]]:
+        """Shared read-only mapping: Evaluation activities, never course totals."""
+        candidates, errors = MoodleGradeSyncService._grade_candidates(grade_items, enrollment_type)
+        selected, conflicts = MoodleGradeSyncService._select_candidates(candidates)
+        return selected, errors, conflicts
 
     @staticmethod
     def _select_candidates(

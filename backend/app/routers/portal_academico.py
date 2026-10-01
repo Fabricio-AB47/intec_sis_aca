@@ -62,8 +62,9 @@ from app.services.graph_documents import (
     upload_bytes as upload_graph_document_bytes,
 )
 from app.services.integration_history import record_teacher_report_event, teacher_honoraria_mail_state
-from app.services.teacher_honoraria_mail import HONORARIA_RECIPIENTS, TeacherMailDeliveryUncertain, send_teacher_honoraria_mail, teacher_copy_address
+from app.services.teacher_honoraria_mail import HONORARIA_RECIPIENTS, TeacherMailConfigurationError, TeacherMailDeliveryUncertain, send_teacher_honoraria_mail, teacher_copy_address
 from app.services.teacher_enrollment_scope import teacher_selection_filter
+from app.services.moodle_grade_sync import MoodleGradeSyncService
 from app.services.invoice_documents import (
     MAX_INVOICE_XML_BYTES,
     MAX_RIDE_PDF_BYTES,
@@ -5443,12 +5444,11 @@ def _teacher_compliance_grade_validation(
         if isinstance(item, dict)
         and (user_id := _int(item.get("userid"))) is not None
     }
-    academic_by_student: dict[int, list[float]] = {}
-    for item in graded_academic:
+    academic_by_student: dict[int, list[dict[str, Any]]] = {}
+    for item in academic_records:
         student_code = _int(item.get("codigo_estud"))
-        final_grade = _number(item.get("promedio_final"))
-        if student_code is not None and final_grade is not None:
-            academic_by_student.setdefault(student_code, []).append(final_grade)
+        if student_code is not None:
+            academic_by_student.setdefault(student_code, []).append(item)
 
     not_enrolled: list[dict[str, Any]] = []
     missing_moodle_grade: list[dict[str, Any]] = []
@@ -5460,28 +5460,70 @@ def _teacher_compliance_grade_validation(
             if moodle_user is None:
                 not_enrolled.append(student)
                 continue
-            moodle_grade = _moodle_grade_to_ten(
-                grades_by_user_id.get(_int(moodle_user.get("id")) or -1, {})
-            )
-            if moodle_grade is None:
-                missing_moodle_grade.append(student)
-                continue
-
             student_code = _int(student.get("codigo_estud"))
-            official_grades = academic_by_student.get(student_code or -1, [])
-            if official_grades and not any(
-                abs(official_grade - moodle_grade) <= _TEACHER_COMPLIANCE_GRADE_TOLERANCE
-                for official_grade in official_grades
-            ):
-                discrepancies.append(
-                    {
-                        **student,
-                        "nota_moodle": moodle_grade,
-                        "notas_intec": [round(value, 2) for value in official_grades],
+            records = academic_by_student.get(student_code or -1, [])
+            grade_items = grades_by_user_id.get(
+                _int(moodle_user.get("id")) or -1, {}
+            ).get("gradeitems") or []
+            student_verified = bool(records)
+            for record in records:
+                enrollment_type = "H" if (
+                    _is_homologation_type(record.get("tipo_matricula"))
+                    or _is_homologation_type(record.get("detalle_periodo"))
+                ) else "R"
+                components, errors, conflicts = MoodleGradeSyncService.evaluation_components(
+                    grade_items, enrollment_type
+                )
+                fields = (
+                    {"teoriaHomo": "teoria_homo", "practicahomo": "practica_homo"}
+                    if enrollment_type == "H" else {
+                        f"P{partial}{component}": f"p{partial}_{column}"
+                        for partial in (1, 2, 3)
+                        for component, column in (
+                            ("Tareas", "tareas"), ("Proyectos", "proyectos"), ("Examen", "examen")
+                        )
                     }
                 )
-                continue
-            verified_students += 1
+                summary = _teacher_compliance_student_summary(record)
+                missing = [MoodleGradeSyncService._component_label(field) for field in fields if field not in components]
+                if missing or errors or conflicts:
+                    missing_moodle_grade.append({
+                        **summary,
+                        "componentes_pendientes": missing,
+                        "detalle_validacion": "; ".join(errors) or (
+                            "Componentes ambiguos en Evaluación" if conflicts else ""
+                        ),
+                    })
+                    student_verified = False
+                differences = []
+                for field, column in fields.items():
+                    candidate = components.get(field)
+                    if candidate is None:
+                        continue
+                    actual = _number(record.get(column))
+                    expected = candidate["grade"]
+                    if actual is None or abs(actual - expected) > _TEACHER_COMPLIANCE_GRADE_TOLERANCE:
+                        differences.append({
+                            "campo": field,
+                            "componente": MoodleGradeSyncService._component_label(field),
+                            "actividad": candidate["item_name"],
+                            "item_id": candidate["item_id"],
+                            "nota_moodle": expected,
+                            "nota_intec": actual,
+                        })
+                if differences:
+                    discrepancies.append({
+                        **summary,
+                        "componentes": differences,
+                        # Compatibility for clients during a rolling deployment.
+                        "nota_moodle": differences[0]["nota_moodle"],
+                        "notas_intec": [d["nota_intec"] for d in differences if d["nota_intec"] is not None],
+                    })
+                    student_verified = False
+                if _number(record.get("promedio_final")) is None:
+                    student_verified = False
+            if student_verified:
+                verified_students += 1
 
     blockers: list[str] = []
     if not total_records:
@@ -5504,17 +5546,13 @@ def _teacher_compliance_grade_validation(
         )
     if missing_moodle_grade:
         blockers.append(
-            f"{len(missing_moodle_grade)} estudiante(s) no tienen calificación en Moodle."
+            f"{len(missing_moodle_grade)} matrícula(s) tienen componentes pendientes o no verificables en la sección Evaluación de Moodle."
         )
     if discrepancies:
         blockers.append(
-            f"{len(discrepancies)} estudiante(s) presentan diferencias entre Moodle e INTECBDD."
+            f"{len(discrepancies)} matrícula(s) presentan diferencias en las notas de Evaluación entre Moodle e INTECBDD."
         )
 
-    requires_justification = (
-        total_records > 0
-        and failed_percentage >= _TEACHER_COMPLIANCE_FAILED_THRESHOLD_PERCENT
-    )
     return {
         "passing_grade": _PASSING_GRADE,
         "failed_threshold_percent": _TEACHER_COMPLIANCE_FAILED_THRESHOLD_PERCENT,
@@ -5524,13 +5562,15 @@ def _teacher_compliance_grade_validation(
         "missing_academic_count": len(missing_academic),
         "failed_count": len(failed_students),
         "failed_percentage": failed_percentage,
-        "requires_justification": requires_justification,
-        "can_generate": not blockers,
+        "requires_justification": False,
+        "justification_recommended": bool(blockers or failed_students),
+        "can_generate": True,
         "blockers": blockers,
         "missing_academic_students": missing_academic,
         "failed_students": failed_students,
         "students_without_email": students_without_email,
         "moodle": {
+            "comparison_source": "evaluation_components",
             "checked": bool(selected_course) and not moodle_error,
             "course_id": _int((selected_course or {}).get("id")),
             "course_name": _clean(
@@ -5551,33 +5591,9 @@ def _assert_teacher_compliance_generation_allowed(
     grade_validation: dict[str, Any],
     failure_justification: str,
 ) -> None:
-    blockers = [
-        _clean(item)
-        for item in grade_validation.get("blockers") or []
-        if _clean(item)
-    ]
-    if blockers:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "No se puede generar el informe de cumplimiento hasta completar y verificar "
-                "las calificaciones. " + " ".join(blockers[:5])
-            ),
-        )
-
-    justification = _clean(failure_justification)
-    if (
-        grade_validation.get("requires_justification")
-        and len(justification) < _TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Los estudiantes reprobados representan el "
-                f"{grade_validation.get('failed_percentage', 0):g} %. Ingrese una justificación "
-                f"de al menos {_TEACHER_COMPLIANCE_JUSTIFICATION_MIN_LENGTH} caracteres antes de generar el informe."
-            ),
-        )
+    # Academic findings are advisory; authorization and certificate validation
+    # remain enforced by the generation/signing endpoints.
+    return None
 
 
 async def _teacher_compliance_moodle_context(
@@ -5926,15 +5942,26 @@ async def _prepare_teacher_compliance_generation(
             detail="Los recursos de Moodle deben pertenecer a un solo curso.",
         )
     selected_course_id = next(iter(course_ids), None)
-    context = await _teacher_compliance_moodle_context(
-        current_user,
-        period_codes,
-        subject_filter,
-        parallel,
-        cod_anio_basica,
-        moodle_course_id=selected_course_id,
-        student_codes=student_codes,
-    )
+    try:
+        context = await _teacher_compliance_moodle_context(
+            current_user,
+            period_codes,
+            subject_filter,
+            parallel,
+            cod_anio_basica,
+            moodle_course_id=selected_course_id,
+            student_codes=student_codes,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        # Do not include caller-supplied Moodle evidence as verified when the
+        # external service is unavailable. Academic scope is checked again below
+        # by the report builder; a 403/404 must never be converted to success.
+        return [], {
+            "can_generate": True, "requires_justification": False,
+            "blockers": ["No se pudo verificar Moodle. No se incluyeron recursos Moodle sin validar."],
+        }
     grade_validation = context.get("grade_validation") or {}
     _assert_teacher_compliance_generation_allowed(
         grade_validation,
@@ -7224,6 +7251,29 @@ def _teacher_compliance_report_pdf(
     return _teacher_compliance_model_pdf(teacher, meta, students, report_format, params, evidence_images)
 
 
+def _teacher_compliance_justification_paragraphs(
+    students: list[dict[str, Any]], params: dict[str, Any],
+) -> list[str]:
+    paragraphs: list[str] = []
+    cases = []
+    for student in students:
+        final = _number(student.get("promedio_final"))
+        if final is not None and final >= _PASSING_GRADE:
+            continue
+        name = _clean(student.get("nombre_estudiante")) or _clean(student.get("codigo_estud"))
+        period = _clean(student.get("detalle_periodo")) or _clean(student.get("codigo_periodo"))
+        status = "Sin calificación final" if final is None else f"Reprobado: {final:.2f}/10"
+        cases.append(f"{name} · {period} · {status}.")
+    paragraphs.extend(cases)
+    for finding in (params.get("grade_validation") or {}).get("blockers") or []:
+        if _clean(finding):
+            paragraphs.append(f"Observación de la revisión: {_clean(finding)}")
+    justification = _clean(params.get("failure_justification"))
+    if justification:
+        paragraphs.extend(justification.splitlines())
+    return paragraphs
+
+
 def _teacher_compliance_model_pdf(
     teacher: dict[str, Any],
     meta: dict[str, Any],
@@ -7762,7 +7812,24 @@ def _teacher_compliance_model_pdf(
         planning_moodle_resources
     )
     teams_start_page = 3 + len(moodle_chunks)
-    total_pages = 4 + len(moodle_chunks) + len(recording_chunks) + len(grade_period_groups) + len(grade_report_images)
+    justification_paragraph = Paragraph(
+        "<br/>".join(escape(text) for text in _teacher_compliance_justification_paragraphs(students, params)),
+        ParagraphStyle("ComplianceJustification", fontName="Times-Roman", fontSize=10, leading=13),
+    )
+    justification_pages = []
+    pending_paragraphs = [justification_paragraph]
+    while pending_paragraphs:
+        paragraph = pending_paragraphs.pop(0)
+        _, paragraph_height = paragraph.wrap(content_width, 390)
+        if paragraph_height <= 390:
+            justification_pages.append((paragraph, paragraph_height))
+        else:
+            pieces = paragraph.split(content_width, 390)
+            first = pieces[0]
+            _, first_height = first.wrap(content_width, 390)
+            justification_pages.append((first, first_height))
+            pending_paragraphs[0:0] = pieces[1:]
+    total_pages = 4 + len(moodle_chunks) + len(recording_chunks) + len(grade_period_groups) + len(grade_report_images) + len(justification_pages)
 
     start_page(1)
     y = 662
@@ -7962,17 +8029,6 @@ def _teacher_compliance_model_pdf(
     )
     y -= 8
     y = draw_grade_summary_table(body_x + 24, y)
-    if grade_validation.get("requires_justification"):
-        y = wrapped(
-            "Justificación académica por porcentaje de reprobación: "
-            + (_clean(params.get("failure_justification")) or "No registrada."),
-            body_x + 24,
-            y,
-            content_width - 24,
-            8.5,
-            False,
-            10,
-        )
 
     grade_period_start_page = teams_start_page + len(recording_chunks) + 1
     for period_index, (_period_code, period_name, period_students) in enumerate(grade_period_groups):
@@ -8031,7 +8087,13 @@ def _teacher_compliance_model_pdf(
         "Factura electrónica, emitida de acuerdo al número de contrato y valor",
     ]:
         y = line(f"      -    {item}", body_x + 18, y - 2, 11)
-    y -= 34
+    for index, (paragraph, paragraph_height) in enumerate(justification_pages):
+        new_page(total_pages - len(justification_pages) + index + 1)
+        y = 662
+        y = line("3.6. Justificación de estudiantes reprobados o sin calificar", body_x, y, 11, True)
+        y -= 14
+        paragraph.drawOn(canvas, body_x, y - paragraph_height)
+        y -= paragraph_height + 20
     y = line("Saludos cordiales,", body_x, y, 11)
     y -= 84
     y = line("Firma electrónica", body_x, y, 11)
@@ -8362,6 +8424,9 @@ def _teacher_compliance_report_pdf_legacy(
     for item in report_format.get("annexes") or []:
         story.append(p(item, "ComplianceBody"))
     story.append(Spacer(1, 0.55 * cm))
+    story.append(bp("Justificación de estudiantes reprobados o sin calificar", "ComplianceBody"))
+    for text in _teacher_compliance_justification_paragraphs(students, params):
+        story.append(p(text, "ComplianceBody"))
     story.append(p("Saludos cordiales,", "ComplianceBody"))
     story.append(Spacer(1, 0.9 * cm))
     story.append(p("Firma electrónica", "ComplianceBody"))
@@ -8628,6 +8693,9 @@ def _teacher_compliance_report_docx(
     for item in report_format.get("annexes") or []:
         _docx_paragraph(document, item)
     _docx_paragraph(document)
+    _docx_paragraph(document, "Justificación de estudiantes reprobados o sin calificar", bold=True)
+    for text in _teacher_compliance_justification_paragraphs(students, params):
+        _docx_paragraph(document, text)
     _docx_paragraph(document, "Saludos cordiales,")
     _docx_paragraph(document)
     _docx_paragraph(document)
@@ -10581,6 +10649,7 @@ async def teacher_signed_documents_archive(
         },
     )
     email_status = "pending"
+    email_message = ""
     if invoice_documents:
         documents_for_mail = [
             {"filename": "informe-cumplimiento-firmado.pdf", "content": compliance_pdf, "content_type": "application/pdf", "document_type": "INFORME"},
@@ -10627,6 +10696,7 @@ async def teacher_signed_documents_archive(
                     metadata={"destinatarios": list(HONORARIA_RECIPIENTS), "copia": teacher_copy_address(identity), "graph_message_id": message_id},
                 )
                 if not sent_recorded:
+                    email_status = "uncertain"
                     logger.error("Graph aceptó el correo, pero no se pudo registrar su confirmación en auditoría.")
         except TeacherMailDeliveryUncertain as exc:
             email_status = "uncertain"
@@ -10644,6 +10714,9 @@ async def teacher_signed_documents_archive(
             )
         except Exception as exc:
             email_status = "error"
+            email_message = str(exc) if isinstance(exc, TeacherMailConfigurationError) else (
+                "Los documentos están archivados, pero el correo no se confirmó. Contacte con administración si el reintento falla."
+            )
             logger.exception("No se pudo enviar el expediente de honorarios docentes %s.", _clean(stored.get("folder_path")))
             await run_in_threadpool(
                 record_teacher_report_event,
@@ -10672,6 +10745,7 @@ async def teacher_signed_documents_archive(
             "X-OneDrive-Same-Folder": "true" if stored.get("same_folder") else "false",
             "X-OneDrive-Folder": quote(str(stored.get("folder_path") or ""), safe=""),
             "X-Honorarios-Email-Status": email_status,
+            "X-Honorarios-Email-Message": quote(email_message, safe=""),
         },
     )
 

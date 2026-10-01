@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
+from uuid import uuid4
 from typing import Any
 from urllib.parse import quote
 
@@ -15,11 +17,16 @@ HONORARIA_RECIPIENTS = ("roberto.castro@intec.edu.ec", "veronica.cevallos@intec.
 HONORARIA_SUBJECT = "Honorarios docentes"
 _SMALL_ATTACHMENT_LIMIT = 3 * 1024 * 1024
 _UPLOAD_CHUNK = 10 * 320 * 1024
+_DIRECT_REQUEST_LIMIT = 3 * 1024 * 1024
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 class TeacherMailDeliveryUncertain(RuntimeError):
     """The send request may have succeeded; manual verification is required before retry."""
+
+
+class TeacherMailConfigurationError(RuntimeError):
+    """Safe configuration explanation that may be shown to the user."""
 
 
 def teacher_copy_address(identity: dict[str, Any]) -> str:
@@ -60,9 +67,45 @@ def send_teacher_honoraria_mail(identity: dict[str, Any], documents: list[dict[s
         "ccRecipients": [recipient(copy_address)],
     }
     headers = {"Authorization": f"Bearer {get_graph_token()}"}
+    # Keep the encoded request below the request-size limit. Small expedientes
+    # can use Mail.Send without requiring permission to create mailbox drafts.
+    if sum(len(item["content"]) for item in documents) < _DIRECT_REQUEST_LIMIT:
+        direct_message = {**message, "attachments": [
+            {"@odata.type": "#microsoft.graph.fileAttachment", "name": str(item["filename"]),
+             "contentType": str(item["content_type"]),
+             "contentBytes": base64.b64encode(item["content"]).decode("ascii")}
+            for item in documents
+        ]}
+        body = json.dumps({"message": direct_message, "saveToSentItems": True}, ensure_ascii=False).encode("utf-8")
+        if len(body) < _DIRECT_REQUEST_LIMIT:
+            request_id = str(uuid4())
+            try:
+                with httpx.Client(timeout=120.0) as client:
+                    sent = client.post(
+                        f"https://graph.microsoft.com/v1.0/users/{quote(sender, safe='')}/sendMail",
+                        content=body,
+                        headers={**headers, "Content-Type": "application/json", "client-request-id": request_id},
+                    )
+                    sent.raise_for_status()
+                    if sent.status_code != 202:
+                        raise TeacherMailDeliveryUncertain("Microsoft Graph no confirmó la aceptación del correo.")
+            except httpx.RequestError as exc:
+                raise TeacherMailDeliveryUncertain("No se pudo confirmar la respuesta de Microsoft Graph al enviar.") from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500:
+                    raise TeacherMailDeliveryUncertain("Microsoft Graph no confirmó si procesó el envío.") from exc
+                if exc.response.status_code in {401, 403}:
+                    raise TeacherMailConfigurationError("Microsoft Graph rechazó el envío. Revise Mail.Send y el acceso al buzón institucional.") from exc
+                raise
+            return f"sendMail:{sent.headers.get('request-id') or request_id}"
     draft_id = ""
     with httpx.Client(timeout=120.0) as client:
         response = client.post(base_url, json=message, headers=headers)
+        if response.status_code in {401, 403}:
+            raise TeacherMailConfigurationError(
+                "Los adjuntos requieren la carga de archivos grandes. Configure Mail.ReadWrite "
+                "con consentimiento administrativo en Microsoft Graph. Los documentos permanecen archivados."
+            )
         response.raise_for_status()
         draft_id = str(response.json().get("id") or "")
         if not draft_id:

@@ -4252,6 +4252,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   sameFolder: boolean
   folderPath: string
   emailStatus: 'pending' | 'sent' | 'error' | 'uncertain'
+  emailMessage: string
 }> {
   const formData = new FormData()
   formData.append('informe', params.informe, params.informeNombre)
@@ -4272,6 +4273,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   let sameFolderHeaderPresent = false
   let folderPath = ''
   let emailStatus: 'pending' | 'sent' | 'error' | 'uncertain' = 'pending'
+  let emailMessage = ''
   const archive = await request<Blob>('/api/portal/teacher/signed-documents-archive', {
     method: 'POST',
     body: formData,
@@ -4285,6 +4287,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
       storedDocumentCount = Number.isFinite(itemCount) ? itemCount : 0
       folderPath = decodeURIComponent(response.headers.get('X-OneDrive-Folder') || '')
       const rawEmailStatus = response.headers.get('X-Honorarios-Email-Status')
+      emailMessage = decodeURIComponent(response.headers.get('X-Honorarios-Email-Message') || '')
       emailStatus = rawEmailStatus === 'sent' || rawEmailStatus === 'error' || rawEmailStatus === 'uncertain'
         ? rawEmailStatus : 'pending'
     },
@@ -4301,6 +4304,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
     sameFolder,
     folderPath,
     emailStatus,
+    emailMessage,
   }
 }
 

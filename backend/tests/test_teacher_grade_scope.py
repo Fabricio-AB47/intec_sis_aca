@@ -1509,7 +1509,7 @@ class TeacherGradeScopeTests(unittest.TestCase):
 
         reader = PdfReader(BytesIO(compliance_pdf))
         report_text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        self.assertEqual(len(reader.pages), 5 + len(grade_images))
+        self.assertEqual(len(reader.pages), 6 + len(grade_images))
         self.assertIn("Notas por período 1 de 1", report_text)
         self.assertIn("Periodo 1030", report_text)
         self.assertIn("Reporte de notas firmado - página 1", report_text)
@@ -1529,7 +1529,7 @@ class TeacherGradeScopeTests(unittest.TestCase):
             {"teams_recordings": []},
         )
         pages = PdfReader(BytesIO(pdf)).pages
-        self.assertEqual(len(pages), 6)
+        self.assertEqual(len(pages), 7)
         april = pages[3].extract_text() or ""
         july = pages[4].extract_text() or ""
         self.assertIn("PERIODO ABRIL", april)

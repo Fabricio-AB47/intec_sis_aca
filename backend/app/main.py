@@ -80,6 +80,7 @@ app.add_middleware(
         "X-OneDrive-Same-Folder",
         "X-OneDrive-Folder",
         "X-Honorarios-Email-Status",
+        "X-Honorarios-Email-Message",
     ],
 )
 

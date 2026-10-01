@@ -66,6 +66,14 @@ const MAX_COMPLIANCE_RIDE_PDF_BYTES = 50 * 1024 * 1024
 type ComplianceEvidenceKey = (typeof COMPLIANCE_EVIDENCE_OPTIONS)[number]['key']
 
 type SignedReportBundle = {
+  documents: {
+    informe: Blob
+    notas: Blob
+    notasPorCarrera: Blob
+    contrato: Blob
+    facturaXml: File | null
+    ridePdf: File | null
+  }
   courseKey: string
   codigoMateria: string
   nombreMateria: string
@@ -910,16 +918,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     [complianceMoodleReportPayload]
   )
   const complianceGradeValidation = complianceMoodle?.grade_validation || null
-  const complianceFailureJustificationValid = Boolean(
-    !complianceGradeValidation?.requires_justification ||
-      complianceFailureJustification.trim().length >= complianceGradeValidation.justification_min_length
-  )
-  const complianceReportCanGenerate = Boolean(
-    complianceGradeValidation?.can_generate &&
-      complianceFailureJustificationValid &&
-      !loadingComplianceMoodle &&
-      !complianceMoodleError
-  )
+  const complianceReportCanGenerate = Boolean(targetCourse)
   const selectedComplianceTeam = useMemo(
     () => complianceTeams.find((team) => team.id === selectedComplianceTeamId) || null,
     [complianceTeams, selectedComplianceTeamId]
@@ -1423,19 +1422,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
   }
 
   function complianceGenerationError() {
-    if (loadingComplianceMoodle) {
-      return 'Espere mientras se verifican las calificaciones académicas y de Moodle.'
-    }
-    if (complianceMoodleError) return complianceMoodleError
-    if (!complianceGradeValidation) {
-      return 'Actualice la verificación de Moodle antes de generar el informe de cumplimiento.'
-    }
-    if (!complianceGradeValidation.can_generate) {
-      return complianceGradeValidation.blockers[0] || 'Existen calificaciones pendientes o inconsistentes.'
-    }
-    if (!complianceFailureJustificationValid) {
-      return `Justifique los estudiantes reprobados con al menos ${complianceGradeValidation.justification_min_length} caracteres.`
-    }
+    // Academic/Moodle findings are informative, never a generation gate.
     return ''
   }
 
@@ -1630,24 +1617,15 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     setError('')
     setMessage('Validando la factura, archivando el expediente y enviando el correo...')
     try {
-      const invoiceXml = complianceInvoiceXml || (bundle.invoiceXmlUrl
-        ? new File([await (await fetch(bundle.invoiceXmlUrl)).blob()], bundle.invoiceXmlFilename || 'factura-electronica.xml', { type: 'application/xml' })
-        : null)
-      const ridePdf = complianceRidePdf || (bundle.ridePdfUrl
-        ? new File([await (await fetch(bundle.ridePdfUrl)).blob()], bundle.ridePdfFilename || 'ride-factura.pdf', { type: 'application/pdf' })
-        : null)
+      const invoiceXml = complianceInvoiceXml || bundle.documents.facturaXml
+      const ridePdf = complianceRidePdf || bundle.documents.ridePdf
       if (!invoiceXml || !ridePdf) {
         throw new Error('Para enviar Honorarios docentes, cargue la factura XML y el RIDE PDF.')
       }
       if (invoiceXml.size > MAX_COMPLIANCE_INVOICE_XML_BYTES || ridePdf.size > MAX_COMPLIANCE_RIDE_PDF_BYTES) {
         throw new Error('El XML o el RIDE excede el tamaño permitido.')
       }
-      const [informe, notas, contrato, notasPorCarrera] = await Promise.all([
-        fetch(bundle.complianceUrl).then((response) => response.blob()),
-        fetch(bundle.gradesUrl).then((response) => response.blob()),
-        fetch(bundle.contractUrl).then((response) => response.blob()),
-        fetch(bundle.careerGradesUrl).then((response) => response.blob()),
-      ])
+      const { informe, notas, contrato, notasPorCarrera } = bundle.documents
       const result = await downloadPortalTeacherSignedDocumentsArchive({
         informe,
         informeNombre: bundle.complianceFilename,
@@ -1668,6 +1646,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       }
       setSignedReportBundle({
         ...bundle,
+        documents: { informe, notas, notasPorCarrera, contrato, facturaXml: invoiceXml, ridePdf },
         complianceUrl: window.URL.createObjectURL(informe),
         gradesUrl: window.URL.createObjectURL(notas),
         careerGradesUrl: window.URL.createObjectURL(notasPorCarrera),
@@ -1681,6 +1660,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         emailStatus: result.emailStatus,
       })
       clearComplianceInvoiceBackups()
+      if (result.emailStatus === 'error' && result.emailMessage) setError(result.emailMessage)
       setMessage(result.emailStatus === 'sent'
         ? 'Los seis documentos se archivaron y Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
         : result.emailStatus === 'uncertain'
@@ -1867,6 +1847,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       }
       setSignedReportBundle({
         courseKey: courseKey(course),
+        documents: { informe: complianceBlob, notas: gradesBlob, notasPorCarrera: careerGradesBlob, contrato: contractBlob, facturaXml: invoiceXmlFile, ridePdf: ridePdfFile },
         codigoMateria: params.subjectCode,
         nombreMateria: course.nombre_materia || '',
         codigoPeriodos: params.periodos,
@@ -1889,6 +1870,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       })
       setSigningConsent(false)
       clearComplianceInvoiceBackups()
+      if (archiveResult.emailStatus === 'error' && archiveResult.emailMessage) setError(archiveResult.emailMessage)
       setMessage(
         !invoiceBackupsIncluded
           ? 'Cuatro PDF firmados guardados en OneDrive, incluido el anexo por carrera. El correo queda pendiente hasta cargar factura XML y RIDE.'
@@ -2609,7 +2591,8 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                     <div className="portal-compliance-grade-header">
                       <div>
                         <span>Control previo del informe</span>
-                        <strong>Calificaciones académicas y verificación con Moodle</strong>
+                        <strong>Calificaciones académicas y verificación de Evaluación en Moodle</strong>
+                        <p>Se comparan las actividades de la sección Evaluación con las mismas reglas de la migración. No se utiliza el total del curso de Moodle.</p>
                       </div>
                       <span
                         className={`portal-compliance-grade-status ${
@@ -2618,7 +2601,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                             : 'portal-compliance-grade-status--blocked'
                         }`}
                       >
-                        {complianceReportCanGenerate ? 'Informe habilitado' : 'Informe bloqueado'}
+                        Informe habilitado · revisión informativa
                       </span>
                     </div>
 
@@ -2633,7 +2616,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
 
                     {complianceGradeValidation.blockers.length > 0 ? (
                       <div className="portal-compliance-grade-alert" role="alert">
-                        <strong>Faltan calificaciones por revisar</strong>
+                        <strong>Observaciones académicas: no bloquean el informe</strong>
                         <ul>
                           {complianceGradeValidation.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
                         </ul>
@@ -2655,11 +2638,11 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       ) : null}
                       {complianceGradeValidation.moodle.missing_grade_students.length > 0 ? (
                         <details open>
-                          <summary>Sin calificación en Moodle ({complianceGradeValidation.moodle.missing_grade_students.length})</summary>
+                          <summary>Evaluación pendiente o no verificable en Moodle ({complianceGradeValidation.moodle.missing_grade_students.length})</summary>
                           <ul>
                             {complianceGradeValidation.moodle.missing_grade_students.map((student, index) => (
                               <li key={`moodle-${student.codigo_estud || student.cedula || index}`}>
-                                {student.nombre_estudiante} · {student.correo_intec || 'Sin correo institucional'}
+                                {student.nombre_estudiante} · {student.detalle_periodo || 'Período no registrado'} · {student.componentes_pendientes?.join(', ') || student.detalle_validacion || 'Sin actividades verificables'}
                               </li>
                             ))}
                           </ul>
@@ -2679,11 +2662,18 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       ) : null}
                       {complianceGradeValidation.moodle.discrepancies.length > 0 ? (
                         <details open>
-                          <summary>Diferencias entre Moodle e INTECBDD ({complianceGradeValidation.moodle.discrepancies.length})</summary>
+                          <summary>Diferencias en Evaluación entre Moodle e INTECBDD ({complianceGradeValidation.moodle.discrepancies.length})</summary>
                           <ul>
                             {complianceGradeValidation.moodle.discrepancies.map((student, index) => (
                               <li key={`difference-${student.codigo_estud || student.cedula || index}`}>
-                                {student.nombre_estudiante} · Moodle {student.nota_moodle.toFixed(2)} · INTECBDD {student.notas_intec.map((grade) => grade.toFixed(2)).join(', ')}
+                                {student.nombre_estudiante} · {student.detalle_periodo || 'Período no registrado'}
+                                {student.componentes?.length ? (
+                                  <ul>{student.componentes.map((component) => (
+                                    <li key={component.campo}>
+                                      {component.componente} · {component.actividad} · Moodle Evaluación {component.nota_moodle.toFixed(2)} · INTECBDD {component.nota_intec == null ? 'Sin nota' : component.nota_intec.toFixed(2)}
+                                    </li>
+                                  ))}</ul>
+                                ) : ' · Actualice los recursos para verificar las actividades de Evaluación.'}
                               </li>
                             ))}
                           </ul>
@@ -2703,20 +2693,6 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       ) : null}
                     </div>
 
-                    {complianceGradeValidation.requires_justification ? (
-                      <label className="portal-compliance-grade-justification">
-                        <span>Justificación académica obligatoria</span>
-                        <textarea
-                          value={complianceFailureJustification}
-                          onChange={(event) => setComplianceFailureJustification(event.target.value)}
-                          maxLength={1500}
-                          placeholder={`Explique los casos reprobados. Mínimo ${complianceGradeValidation.justification_min_length} caracteres.`}
-                        />
-                        <small>
-                          {complianceFailureJustification.trim().length}/{complianceGradeValidation.justification_min_length} caracteres mínimos. El porcentaje de reprobación alcanzó el umbral de {complianceGradeValidation.failed_threshold_percent.toFixed(0)} %.
-                        </small>
-                      </label>
-                    ) : null}
                   </section>
                 ) : null}
               </div>
@@ -3130,6 +3106,20 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <p className="form-success">Los estudiantes se cargarán automáticamente al seleccionar la materia y sus períodos.</p>
               )}
             </div>
+            <section className="portal-signature-panel" aria-labelledby="portal-justification-title">
+              <h2 id="portal-justification-title">Justificación de estudiantes reprobados o sin calificar</h2>
+              <label className="portal-compliance-grade-justification">
+                <span>Justificación académica (opcional)</span>
+                <textarea
+                  value={complianceFailureJustification}
+                  onChange={(event) => setComplianceFailureJustification(event.target.value)}
+                  maxLength={2000}
+                  rows={6}
+                  placeholder="Indique el estudiante, por qué reprobó o no fue calificado y las acciones de seguimiento."
+                />
+                <small>Se incluye al final del informe, antes de la firma. No bloquea la generación. {complianceFailureJustification.length}/2000 caracteres.</small>
+              </label>
+            </section>
             <section className="portal-signature-panel" aria-labelledby="portal-signature-title">
               <div className="section-title">
                 <div>
@@ -3139,7 +3129,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                 <strong>Uso único por solicitud</strong>
               </div>
               <p>
-                Los tres PDF se firman y guardan en OneDrive. Con factura XML y RIDE se envía el expediente a
+                Los cuatro PDF se firman y guardan en OneDrive. Con factura XML y RIDE se envía el expediente a
                 Roberto Castro y Verónica Cevallos, con copia al docente. Sin factura, queda archivado y descargable,
                 pendiente de envío.
               </p>
