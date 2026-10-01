@@ -174,6 +174,8 @@ import type {
   PortalAcademicPlanningPayload,
   PortalStudentRecordResponse,
   PortalTeacherComplianceMoodleResourcesResponse,
+  PortalTeacherComplianceMoodleCoursesResponse,
+  PortalTeacherComplianceMoodleScopeResponse,
   PortalTeacherCoursesResponse,
   PortalTeacherContractAnalysis,
   PortalTeacherContractDocumentSaveResponse,
@@ -1328,6 +1330,17 @@ export type PortalTeacherComplianceMoodleQuery = {
   refresh?: boolean
 }
 
+export async function fetchPortalTeacherComplianceMoodleCourses(codigoMateria: string): Promise<PortalTeacherComplianceMoodleCoursesResponse> {
+  const params = new URLSearchParams({ codigo_materia: codigoMateria })
+  return request<PortalTeacherComplianceMoodleCoursesResponse>(`/api/portal/teacher/compliance-moodle-courses?${params}`, { cache: 'no-store' })
+}
+
+export async function fetchPortalTeacherComplianceMoodleScope(codigoMateria: string, moodleCourseId: number, refresh = false): Promise<PortalTeacherComplianceMoodleScopeResponse> {
+  const params = new URLSearchParams({ codigo_materia: codigoMateria, moodle_course_id: String(moodleCourseId) })
+  if (refresh) params.set('refresh', 'true')
+  return request<PortalTeacherComplianceMoodleScopeResponse>(`/api/portal/teacher/compliance-moodle-course-scope?${params}`, { cache: 'no-store' })
+}
+
 export async function fetchPortalTeacherComplianceMoodleResources(
   query: PortalTeacherComplianceMoodleQuery,
 ): Promise<PortalTeacherComplianceMoodleResourcesResponse> {
@@ -1488,6 +1501,12 @@ export async function fetchTeamsCatalog(): Promise<TeamsCatalogResponse> {
 
 export async function fetchMyTeamsCatalog(): Promise<TeamsCatalogResponse> {
   return request<TeamsCatalogResponse>('/api/teams/mine/catalog')
+}
+
+export async function fetchMyTeamParticipants(teamId: string): Promise<TeamCollectionResponse<TeamParticipant>> {
+  return request<TeamCollectionResponse<TeamParticipant>>(
+    `/api/teams/mine/${encodeURIComponent(teamId)}/participants`
+  )
 }
 
 export async function fetchTeamParticipants(teamId: string): Promise<TeamCollectionResponse<TeamParticipant>> {
@@ -3557,6 +3576,7 @@ export async function updateTeacherComplianceFormat(
 }
 
 type TeacherComplianceReportParams = {
+  moodleCourseId?: number | null
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
@@ -3581,6 +3601,7 @@ function buildTeacherComplianceFormData(params: TeacherComplianceReportParams): 
   const formData = new FormData()
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('paralelo', params.paralelo)
+  if (params.moodleCourseId) formData.append('moodle_course_id', String(params.moodleCourseId))
   if (params.codAnioBasica) formData.append('cod_anio_basica', params.codAnioBasica)
   if (params.codJornada !== null && params.codJornada !== undefined) formData.append('cod_jornada', String(params.codJornada))
   if (params.fechaInicio) formData.append('fecha_inicio', params.fechaInicio)
@@ -4148,6 +4169,7 @@ export async function downloadSenescytAuditWorkbook(
 }
 
 export async function downloadPortalTeacherStudentGradeReport(params: {
+  moodleCourseId?: number | null
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
@@ -4155,12 +4177,12 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   codigoMateria: string
   paralelo: string
   codigoEstudiantes?: Array<string | number>
-  porCarrera?: boolean
 }): Promise<Blob> {
   const query = new URLSearchParams({
     codigo_materia: params.codigoMateria,
     paralelo: params.paralelo,
   })
+  if (params.moodleCourseId) query.set('moodle_course_id', String(params.moodleCourseId))
   if (params.codAnioBasica) {
     query.set('cod_anio_basica', params.codAnioBasica)
   }
@@ -4174,7 +4196,6 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   for (const codigoEstud of params.codigoEstudiantes || []) {
     if (String(codigoEstud).trim()) query.append('codigo_estud', String(codigoEstud))
   }
-  if (params.porCarrera) query.set('por_carrera', 'true')
   const response = await fetch(`/api/portal/teacher/student-grade-report-pdf?${query.toString()}`, {
     credentials: 'include',
   })
@@ -4192,6 +4213,7 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
 }
 
 export async function signPortalTeacherStudentGradeReport(params: {
+  moodleCourseId?: number | null
   codigoPeriodo?: string
   codigoPeriodos?: string[]
   codAnioBasica?: string
@@ -4204,11 +4226,11 @@ export async function signPortalTeacherStudentGradeReport(params: {
   firmaMotivo: string
   firmaUbicacion: string
   firmaContacto?: string
-  porCarrera?: boolean
 }): Promise<Blob> {
   const formData = new FormData()
   formData.append('codigo_materia', params.codigoMateria)
   formData.append('paralelo', params.paralelo)
+  if (params.moodleCourseId) formData.append('moodle_course_id', String(params.moodleCourseId))
   if (params.codAnioBasica) formData.append('cod_anio_basica', params.codAnioBasica)
   if (params.codJornada !== null && params.codJornada !== undefined) {
     formData.append('cod_jornada', String(params.codJornada))
@@ -4223,7 +4245,6 @@ export async function signPortalTeacherStudentGradeReport(params: {
   formData.append('firma_motivo', params.firmaMotivo)
   formData.append('firma_ubicacion', params.firmaUbicacion)
   if (params.firmaContacto) formData.append('firma_contacto', params.firmaContacto)
-  if (params.porCarrera) formData.append('por_carrera', 'true')
   return request<Blob>('/api/portal/teacher/student-grade-report-sign', {
     method: 'POST',
     body: formData,
@@ -4236,7 +4257,6 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   informeNombre: string
   notas: Blob
   notasNombre: string
-  notasPorCarrera: Blob
   contrato: Blob
   contratoNombre: string
   facturaXml?: File | null
@@ -4257,7 +4277,6 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   const formData = new FormData()
   formData.append('informe', params.informe, params.informeNombre)
   formData.append('notas', params.notas, params.notasNombre)
-  formData.append('notas_por_carrera', params.notasPorCarrera, 'reporte-notas-por-carrera-firmado.pdf')
   formData.append('contrato', params.contrato, params.contratoNombre)
   if (params.facturaXml) formData.append('factura_xml', params.facturaXml, params.facturaXml.name)
   if (params.ridePdf) formData.append('ride_pdf', params.ridePdf, params.ridePdf.name)

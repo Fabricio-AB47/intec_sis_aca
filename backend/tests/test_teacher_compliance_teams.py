@@ -1,9 +1,11 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from app.routers.portal_academico import _parse_teacher_teams_recordings
+from app.routers import teams
 
 
 class TeacherComplianceTeamsEvidenceTests(unittest.TestCase):
@@ -46,6 +48,18 @@ class TeacherComplianceTeamsEvidenceTests(unittest.TestCase):
             _parse_teacher_teams_recordings(payload)
 
         self.assertEqual(context.exception.status_code, 400)
+
+    def test_teacher_can_only_read_participants_of_joined_team(self):
+        with (
+            patch.object(teams, "_joined_teams_for_current_user", return_value=[{"id": "team-1"}]),
+            patch.object(teams, "_load_team_members", return_value=[{"mail": "uno@intec.edu.ec"}]) as load_members,
+        ):
+            result = teams.my_team_participants("team-1", None)
+            self.assertEqual(result["count"], 1)
+            with self.assertRaises(HTTPException) as context:
+                teams.my_team_participants("team-2", None)
+            self.assertEqual(context.exception.status_code, 403)
+            load_members.assert_called_once_with("team-1")
 
 
 if __name__ == "__main__":

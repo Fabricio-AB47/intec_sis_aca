@@ -21634,6 +21634,11 @@
   margin-top: 0;
 }
 
+.portal-compliance-panel--launcher > label {
+  align-self: start;
+  align-content: start;
+}
+
 .portal-compliance-actions {
   display: flex;
   flex-wrap: wrap;
@@ -22517,15 +22522,19 @@
 
 .portal-compliance-students-table th:first-child,
 .portal-compliance-students-table td:first-child {
-  width: 78px;
-  text-align: center;
+  min-width: 240px;
 }
 
-.portal-compliance-students-table th:nth-child(2),
-.portal-compliance-students-table td:nth-child(2),
-.portal-compliance-students-table th:nth-child(4),
-.portal-compliance-students-table td:nth-child(4) {
+.portal-compliance-students-table th:first-child,
+.portal-compliance-students-table td:first-child,
+.portal-compliance-students-table th:nth-child(3),
+.portal-compliance-students-table td:nth-child(3) {
   text-transform: uppercase;
+}
+
+.portal-compliance-students-table th:last-child,
+.portal-compliance-students-table td:last-child {
+  min-width: 120px;
 }
 
 .portal-signature-panel {
@@ -22587,14 +22596,17 @@
 
 .portal-signature-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .portal-signature-grid label {
   display: grid;
+  grid-column: span 2;
   gap: 6px;
   min-width: 0;
+  align-content: start;
 }
 
 .portal-signature-grid label > span {
@@ -22608,13 +22620,15 @@
 .portal-signature-grid input {
   width: 100%;
   min-width: 0;
-  min-height: 42px;
+  height: 44px;
+  min-height: 44px;
   border: 1px solid color-mix(in srgb, var(--ui-text) 18%, transparent);
   border-radius: var(--ui-radius-panel);
   background: var(--ui-surface);
   color: var(--ui-text);
   font: inherit;
   padding: 9px 11px;
+  box-sizing: border-box;
 }
 
 .portal-signature-grid small {
@@ -22623,8 +22637,9 @@
   overflow-wrap: anywhere;
 }
 
-.portal-signature-certificate {
-  grid-column: span 2;
+.portal-signature-grid .portal-signature-certificate,
+.portal-signature-grid .portal-signature-password-field {
+  grid-column: span 3;
 }
 
 .portal-signature-password {
@@ -22635,6 +22650,9 @@
 
 .portal-signature-password .ghost-button {
   min-width: 92px;
+  height: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 
 .portal-signature-consent {
@@ -22808,7 +22826,9 @@
     grid-template-columns: 1fr;
   }
 
-  .portal-signature-certificate {
+  .portal-signature-grid label,
+  .portal-signature-grid .portal-signature-certificate,
+  .portal-signature-grid .portal-signature-password-field {
     grid-column: auto;
   }
 
