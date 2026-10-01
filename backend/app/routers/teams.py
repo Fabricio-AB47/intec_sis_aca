@@ -2224,6 +2224,26 @@ def my_teams_catalog(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/mine/{team_id}/participants", responses={500: {"description": "Error interno del servidor"}})
+def my_team_participants(
+    team_id: str,
+    current_user: Annotated[SessionUser, Depends(_TEAMS_SELF_ACCESS)],
+) -> dict[str, Any]:
+    normalized_team_id = str(team_id or "").strip().lower()
+    if not normalized_team_id:
+        raise HTTPException(status_code=400, detail="Debe indicar el equipo de Teams")
+    try:
+        joined_teams = _joined_teams_for_current_user(current_user)
+        if not any(str(item.get("id") or "").strip().lower() == normalized_team_id for item in joined_teams):
+            raise HTTPException(status_code=403, detail="El equipo no pertenece al docente autenticado")
+        items = _load_team_members(team_id)
+        return {"value": items, "count": len(items)}
+    except httpx.HTTPStatusError as exc:
+        _raise_graph_http_exception(exc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/catalog", responses={500: {"description": "Error interno del servidor"}})
 def teams_catalog(
     current_user: Annotated[SessionUser, Depends(_TEAMS_ACCESS)],

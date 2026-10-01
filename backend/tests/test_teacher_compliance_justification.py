@@ -71,7 +71,7 @@ def test_docx_includes_justification_before_signature():
 
 def test_moodle_outage_is_advisory_and_omits_unverified_resources():
     with patch.object(portal, "_teacher_compliance_moodle_context", AsyncMock(side_effect=HTTPException(503))):
-        resources, validation = asyncio.run(portal._prepare_teacher_compliance_generation(
+        resources, validation, _ = asyncio.run(portal._prepare_teacher_compliance_generation(
             None, [1055], "TEST", "A", None, [{"course_id": 10, "module_id": 20}], [1], ""))
     assert resources == []
     assert validation["can_generate"]
@@ -89,5 +89,5 @@ def test_access_and_input_errors_are_not_bypassed(status):
 def test_generation_continues_with_missing_grades_and_no_justification():
     context = {"grade_validation": {"can_generate": True, "blockers": ["Notas pendientes"]}}
     with patch.object(portal, "_teacher_compliance_moodle_context", AsyncMock(return_value=context)):
-        _, validation = asyncio.run(portal._prepare_teacher_compliance_generation(None, [1055], "TEST", "A", None, [], [1], ""))
+        _, validation, _ = asyncio.run(portal._prepare_teacher_compliance_generation(None, [1055], "TEST", "A", None, [], [1], ""))
     assert validation["can_generate"]

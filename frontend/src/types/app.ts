@@ -1859,6 +1859,23 @@ export type PortalTeacherComplianceMoodleResourcesResponse = {
   grade_validation: PortalTeacherComplianceGradeValidation
 }
 
+export type PortalTeacherComplianceMoodleCoursesResponse = {
+  subject_code: string
+  candidates: PortalTeacherComplianceMoodleCourse[]
+  total: number
+}
+
+export type PortalTeacherComplianceMoodleScopeResponse = {
+  subject_code: string
+  course: PortalTeacherComplianceMoodleCourse
+  teacher_moodle_verified: boolean
+  periods: Array<{ code: string; label: string; start_date: string; year: number | null; student_count: number }>
+  students: PortalAcademicRecordItem[]
+  review: Array<{ codigo_estud: string; nombre_estudiante: string; motivo: string }>
+  moodle_student_count: number
+  unmatched_moodle_count: number
+}
+
 export type TeacherComplianceMoodleResource = {
   course_id: number
   course_name: string
@@ -6175,6 +6192,7 @@ export type PortalAcademicRecordItem = {
   nombre_carrera?: string
   codigo_periodo?: string
   detalle_periodo?: string
+  fecha_inicio_periodo?: string
   anio_periodo?: number | null
   codigo_materia?: string
   cod_materia?: string

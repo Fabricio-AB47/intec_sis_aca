@@ -129,6 +129,20 @@ class TeacherComplianceMoodleTests(unittest.TestCase):
 
         self.assertIsNone(_teacher_moodle_course_match(course, self.meta, [1034]))
 
+    def test_course_match_rejects_a_different_code_namespace_even_with_same_name(self) -> None:
+        course = {
+            "fullname": "VGA-GA-2023-90 - Inteligencia Artificial 1",
+            "shortname": "IA1-1034-A",
+        }
+        similarity, conflict = _moodle_subject_code_similarity(course, self.meta["cod_materia"])
+        self.assertLess(similarity, 0.82)
+        self.assertTrue(conflict)
+        self.assertIsNone(_teacher_moodle_course_match(course, self.meta, [1034]))
+
+    def test_course_match_rejects_name_only_when_unique_code_is_available(self) -> None:
+        course = {"fullname": "Inteligencia Artificial 1 - C1-2026-PC"}
+        self.assertIsNone(_teacher_moodle_course_match(course, self.meta, [1034]))
+
     def test_email_match_is_case_insensitive_and_reports_coverage(self) -> None:
         matches, coverage = _teacher_moodle_email_match(
             {"Estudiante.Uno@intec.edu.ec", "estudiante.dos@intec.edu.ec"},
