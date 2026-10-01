@@ -19,7 +19,7 @@ def report(*rows):
     return {"target": "docentes", "dataframe": pd.DataFrame(rows), "report_columns": senescyt._TEACHER_REPORT_COLUMNS}
 
 
-def test_teacher_model_has_exact_supplied_headers_and_one_row_per_teacher():
+def test_teacher_model_has_exact_supplied_headers_and_one_row_per_career():
     assert len(HEADERS) == 57
     assert senescyt._TEACHER_REPORT_COLUMNS == HEADERS
     teacher = {"codigo": "7", "numeroIdentificacion": "0401105002", "tipoDocumentoId": "1",
@@ -32,7 +32,7 @@ def test_teacher_model_has_exact_supplied_headers_and_one_row_per_teacher():
     workbook = load_workbook(BytesIO(content), data_only=False)
     assert workbook.sheetnames == ["Sheet1"]
     sheet = workbook.active
-    assert sheet.max_row == 2 and sheet.max_column == 57
+    assert sheet.max_row == 3 and sheet.max_column == 57
     assert [cell.value for cell in sheet[1]] == HEADERS
     values = dict(zip(HEADERS, (cell.value for cell in sheet[2])))
     assert values["numeroIdentificacion"] == "0401105002"
@@ -42,6 +42,7 @@ def test_teacher_model_has_exact_supplied_headers_and_one_row_per_teacher():
     assert values["fechaNacimiento"] == "1974-05-20"
     assert values["ingresoConConcursoMeritos"] == "2"
     assert values["pueblonacionalidadId"] is None
+    assert sheet.cell(3, HEADERS.index("numeroIdentificacion") + 1).value == "0401105002"
     assert "codigo" not in HEADERS and "nombreCarrera" not in HEADERS
     workbook.close()
 
@@ -126,6 +127,21 @@ def test_teacher_complete_download_has_one_model_workbook_per_career():
                 assert workbook.active.max_row == 2
                 assert [cell.value for cell in next(workbook.active.iter_rows(max_row=1))] == HEADERS
                 workbook.close()
+
+
+def test_teacher_audit_keeps_same_active_teacher_in_multiple_careers():
+    columns = [column for column in senescyt._TEACHER_REPORT_COLUMNS
+               if column not in {"primerApellido", "segundoApellido", "primerNombre", "segundoNombre"}]
+    rows = []
+    for career in ("Administracion", "Ciberseguridad"):
+        row = {column: None for column in columns}
+        row.update({"codigo": "1", "numeroIdentificacion": "0401105002",
+                    "nombreOriginal": "PEREZ LOPEZ ANA MARIA", "nombreCarrera": career})
+        rows.append(row)
+    with patch.object(senescyt, "_read_sql_dataframe", return_value=pd.DataFrame(rows)):
+        result = senescyt._read_teacher_audit_dataframe()
+    assert result["nombreCarrera"].tolist() == ["Administracion", "Ciberseguridad"]
+    assert result["numeroIdentificacion"].nunique() == 1
 
 
 def test_teacher_empty_zip_keeps_model_headers():

@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -90,9 +91,9 @@ class TeacherAcademicPlanningPdfTests(unittest.TestCase):
 
     def meta(self):
         return {'nombre_materia': 'Asignatura de prueba', 'nombre_carrera': 'Carrera de prueba',
-                'detalle_periodo': ' / '.join(f'P{code}' for code in PERIODS), 'paralelo': 'Varios'}
+                'detalle_periodo': 'P1060', 'paralelo': 'Varios'}
 
-    def test_http_preview_and_download_preserve_eleven_periods_for_both_documents(self):
+    def test_http_preview_and_download_show_only_latest_period_for_both_documents(self):
         with self.client() as client, patch.object(portal, '_teacher_course_report_meta', return_value=self.meta()) as meta, patch.object(
             portal, 'teacher_profile', return_value={'teacher': {'docente': 'Docente de prueba'}}
         ):
@@ -104,8 +105,10 @@ class TeacherAcademicPlanningPdfTests(unittest.TestCase):
                     self.assertIn('application/pdf', response.headers['content-type'])
                     self.assertIn('inline' if preview else 'attachment', response.headers['content-disposition'])
                     text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+                    self.assertIn('P1060', text)
                     for code in PERIODS:
-                        self.assertIn(f'P{code}', text)
+                        if code != 1060:
+                            self.assertNotIn(f'P{code}', text)
                     self.assertEqual(meta.call_args.args[:4], (7, PERIODS, 'VGA-ID-2023-119', 'VARIOS'))
 
     def test_http_sign_accepts_eleven_periods_without_using_real_certificates(self):
@@ -137,7 +140,7 @@ class TeacherAcademicPlanningPdfTests(unittest.TestCase):
             payload['unidades'][0]['temas'] = []
             self.assertEqual(client.post('/api/portal/teacher/academic-planning-pdf', json=payload).status_code, 400)
 
-    def test_metadata_batches_all_periods_without_truncation_and_keeps_teacher_scope(self):
+    def test_metadata_batches_all_periods_but_displays_one_and_keeps_teacher_scope(self):
         connection = MagicMock()
         connection.__enter__.return_value = connection
         cursor = connection.cursor.return_value
@@ -150,7 +153,7 @@ class TeacherAcademicPlanningPdfTests(unittest.TestCase):
         with patch.object(portal, 'get_connection', return_value=connection):
             result = portal._teacher_course_report_meta(7, list(range(1, 2502)) + [1], 'TEST', 'VARIOS', None)
         self.assertEqual(cursor.execute.call_count, 6)
-        self.assertEqual(len(result['detalle_periodo'].split(' / ')), 2501)
+        self.assertEqual(result['detalle_periodo'], 'P2501')
         for call in cursor.execute.call_args_list:
             query, *params = call.args
             self.assertLessEqual(len(params), 507)
@@ -159,6 +162,29 @@ class TeacherAcademicPlanningPdfTests(unittest.TestCase):
             self.assertEqual(params[0], 7)
             self.assertEqual(params[3:5], ['TEST', 'TEST'])
             self.assertEqual(query.count('?'), len(params))
+
+    def test_metadata_chooses_largest_start_date_across_batches_not_largest_code(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value
+
+        def rows():
+            result = []
+            for code in cursor.execute.call_args.args[6:-2]:
+                start = date(2026, 9, 7) if code in {10, 20} else date(2025, 1, 1)
+                result.append(SimpleNamespace(
+                    nombre_carrera='Carrera', codigo_materia='1', cod_materia='TEST',
+                    nombre_materia='Materia', codigo_periodo=code, detalle_periodo=f'P{code}',
+                    fecha_inicio_periodo=start, tipo_periodo='R', paralelo='A', cod_jornada=1,
+                    jornada='Matutina', semestre=1, unidad_curricular='', horas=32,
+                ))
+            return result
+
+        cursor.fetchall.side_effect = rows
+        with patch.object(portal, 'get_connection', return_value=connection):
+            result = portal._teacher_course_report_meta(7, list(range(1, 502)), 'TEST', 'VARIOS', None)
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(result['detalle_periodo'], 'P20')
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from openpyxl import Workbook
+from pypdf import PdfReader, PdfWriter
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field, ValidationError
 import pyodbc
@@ -2605,6 +2606,7 @@ def _signed_teacher_documents_archive(
     grades_pdf: bytes,
     contract_pdf: bytes,
     invoice_documents: list[dict[str, Any]] | None = None,
+    career_grades_pdf: bytes | None = None,
 ) -> bytes:
     documents = (
         ("informe-cumplimiento-firmado.pdf", compliance_pdf, "informe de cumplimiento", "FirmaDocente"),
@@ -2627,6 +2629,9 @@ def _signed_teacher_documents_archive(
             _validate_signed_teacher_document_pdf(content, label)
             _assert_pdf_signature_field(content, signature_field)
             archive.writestr(filename, content)
+        if career_grades_pdf is not None:
+            _assert_career_grade_pages_signed(career_grades_pdf)
+            archive.writestr("reporte-notas-por-carrera-firmado.pdf", career_grades_pdf)
         for document in invoice_documents or []:
             document_type = _clean(document.get("document_type")).upper()
             filename = Path(_clean(document.get("filename"))).name
@@ -2705,6 +2710,7 @@ def _store_signed_teacher_documents_onedrive(
     compliance_pdf: bytes,
     grades_pdf: bytes,
     contract_pdf: bytes,
+    career_grades_pdf: bytes | None = None,
     subject_code: str = "",
     subject_name: str = "",
     period_codes: list[str] | None = None,
@@ -2751,6 +2757,13 @@ def _store_signed_teacher_documents_onedrive(
             "document_type": "CONTRATO",
         },
     ]
+    if career_grades_pdf is not None:
+        documents.append({
+            "filename": "reporte-notas-por-carrera-firmado.pdf",
+            "content": career_grades_pdf,
+            "content_type": "application/pdf",
+            "document_type": "NOTAS_POR_CARRERA",
+        })
     documents.extend(invoice_backups)
     uploaded_items: list[dict[str, Any]] = []
     try:
@@ -3874,6 +3887,12 @@ def teacher_courses(
                     TRY_CONVERT(nvarchar(4000), p.Nomb_Materia) AS nombre_materia,
                     TRY_CONVERT(varchar(50), cxd.codigo_periodo) AS codigo_periodo,
                     TRY_CONVERT(nvarchar(4000), pe.Detalle_Periodo) AS detalle_periodo,
+                    COALESCE(
+                        TRY_CONVERT(date, pe.fechain, 121),
+                        TRY_CONVERT(date, pe.fechain, 103),
+                        TRY_CONVERT(date, pe.fechain, 105),
+                        TRY_CONVERT(date, pe.fechain)
+                    ) AS fecha_inicio_periodo,
                     TRY_CONVERT(nvarchar(100), pe.TipoMatricula) AS tipo_periodo,
                     TRY_CONVERT(date, pe.fechain) AS fecha_inicio,
                     TRY_CONVERT(date, pe.fechafin) AS fecha_fin,
@@ -4873,7 +4892,12 @@ def _teacher_course_report_meta(
                         ? IS NULL
                         OR UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), cxd.Paralelo)))) = ?
                   )
-                ORDER BY TRY_CONVERT(int, cxd.codigo_periodo) DESC
+                ORDER BY COALESCE(
+                    TRY_CONVERT(date, pe.fechain, 121),
+                    TRY_CONVERT(date, pe.fechain, 103),
+                    TRY_CONVERT(date, pe.fechain, 105),
+                    TRY_CONVERT(date, pe.fechain)
+                ) DESC, TRY_CONVERT(int, cxd.codigo_periodo) DESC
                 """
             rows = []
             for offset in range(0, len(period_codes), 500):
@@ -4895,18 +4919,21 @@ def _teacher_course_report_meta(
 
     if not rows:
         return {}
+    def period_order(row: Any) -> tuple[date, int]:
+        try:
+            start = date.fromisoformat(_date_text(getattr(row, "fecha_inicio_periodo", None)))
+        except ValueError:
+            start = date.min
+        return start, _int(row.codigo_periodo) or 0
+
+    first = max(rows, key=period_order)
     careers: list[str] = []
-    periods: list[str] = []
     parallels: list[str] = []
     journeys: list[str] = []
-    first = rows[0]
     for row in rows:
         career = _clean(row.nombre_carrera)
         if career and career not in careers:
             careers.append(career)
-        period = _clean(row.detalle_periodo) or _clean(row.codigo_periodo)
-        if period and period not in periods:
-            periods.append(period)
         row_parallel = _clean(row.paralelo)
         if row_parallel and row_parallel not in parallels:
             parallels.append(row_parallel)
@@ -4915,7 +4942,7 @@ def _teacher_course_report_meta(
             journeys.append(journey)
     return {
         "nombre_carrera": " / ".join(careers) if len(careers) <= 2 else f"{len(careers)} carreras",
-        "detalle_periodo": " / ".join(periods),
+        "detalle_periodo": _clean(first.detalle_periodo) or _clean(first.codigo_periodo),
         "codigo_materia": _clean(first.codigo_materia),
         "cod_materia": _clean(first.cod_materia),
         "nombre_materia": _clean(first.nombre_materia),
@@ -5958,6 +5985,18 @@ def _teacher_notes_report_pdf(
     meta: dict[str, Any],
     students: list[dict[str, Any]],
 ) -> bytes:
+    period_groups = _grade_students_by_period(students)
+    if len(period_groups) > 1:
+        writer = PdfWriter()
+        for _code, period_name, period_students in period_groups:
+            writer.append(BytesIO(_teacher_notes_report_pdf(
+                teacher, {**meta, "detalle_periodo": period_name}, period_students,
+            )))
+        combined = BytesIO()
+        writer.write(combined)
+        writer.close()
+        return combined.getvalue()
+
     red = colors.HexColor("#931913")
     light_blue = colors.HexColor("#EAF5F8")
     blue = colors.HexColor("#8DBBC7")
@@ -6739,6 +6778,48 @@ def _student_secretaria_notes_pdf(
     return output.getvalue()
 
 
+def _grade_students_by_period(
+    students: list[dict[str, Any]],
+) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    groups: list[tuple[str, str, list[dict[str, Any]]]] = []
+    positions: dict[str, int] = {}
+    for item in students:
+        code = _clean(item.get("codigo_periodo"))
+        name = _clean(item.get("detalle_periodo")) or code or "Período sin identificar"
+        key = code or name
+        if key not in positions:
+            positions[key] = len(groups)
+            groups.append((code, name, []))
+        groups[positions[key]][2].append(item)
+    return groups
+
+
+def _student_grade_report_by_career_pdf(
+    teacher: dict[str, Any],
+    meta: dict[str, Any],
+    students: list[dict[str, Any]],
+) -> bytes:
+    if not students:
+        raise HTTPException(status_code=400, detail="No hay estudiantes para el anexo de notas por carrera.")
+    careers: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+    for student in students:
+        code = _clean(student.get("cod_anio_basica"))
+        name = _clean(student.get("nombre_carrera"))
+        if not code or not name:
+            raise HTTPException(status_code=400, detail="Falta identificar la carrera de un estudiante del reporte.")
+        careers.setdefault(code, (name, []))[1].append(student)
+    writer = PdfWriter()
+    try:
+        for code, (name, career_students) in sorted(careers.items(), key=lambda item: (item[1][0].casefold(), item[0])):
+            section_meta = {**meta, "nombre_carrera": name, "cod_anio_basica": code}
+            writer.append(BytesIO(_student_grade_report_pdf(teacher, section_meta, career_students)))
+        output = BytesIO()
+        writer.write(output)
+        return output.getvalue()
+    finally:
+        writer.close()
+
+
 def _student_grade_report_pdf(
     teacher: dict[str, Any],
     meta: dict[str, Any],
@@ -6748,6 +6829,18 @@ def _student_grade_report_pdf(
     # La consulta ya esta limitada a una asignacion exacta. El PDF replica el
     # formato historico de Secretaria sin ampliar el historial del estudiante.
     rows = list(students)
+    period_groups = _grade_students_by_period(rows)
+    if len(period_groups) > 1:
+        writer = PdfWriter()
+        for _code, period_name, period_students in period_groups:
+            section_meta = {**meta, "detalle_periodo": period_name}
+            writer.append(BytesIO(_student_grade_report_pdf(
+                teacher, section_meta, period_students, include_teacher=include_teacher,
+            )))
+        combined = BytesIO()
+        writer.write(combined)
+        writer.close()
+        return combined.getvalue()
     table_width = 539.0
     grid_color = colors.HexColor("#777777")
     text_color = colors.black
@@ -6878,19 +6971,6 @@ def _student_grade_report_pdf(
     def cell(value: Any, *, centered: bool = False) -> Paragraph:
         style = styles["SecretaryLegacyCellCenter"] if centered else styles["SecretaryLegacyCell"]
         return Paragraph(_pdf_text(value), style)
-
-    period_groups: list[tuple[str, str, list[dict[str, Any]]]] = []
-    period_group_indexes: dict[tuple[str, str], int] = {}
-    for item in rows:
-        period_code = _clean(item.get("codigo_periodo"))
-        period_name = _clean(item.get("detalle_periodo")) or period_code or "Período sin identificar"
-        group_key = (period_code, period_name)
-        group_index = period_group_indexes.get(group_key)
-        if group_index is None:
-            period_group_indexes[group_key] = len(period_groups)
-            period_groups.append((period_code, period_name, [item]))
-        else:
-            period_groups[group_index][2].append(item)
 
     def period_heading(period_code: str, period_name: str, total: int) -> Paragraph:
         code_label = f" · Código {_pdf_text(period_code)}" if period_code and period_code not in period_name else ""
@@ -7600,13 +7680,21 @@ def _teacher_compliance_model_pdf(
             y_after -= 10
         return y_after
 
-    def draw_grade_summary_table(x: float, y: float) -> float:
+    def draw_grade_summary_table(
+        x: float, y: float,
+        values_for_period: list[float] | None = None,
+        failed_for_period: int | None = None,
+        percentage_for_period: float | None = None,
+    ) -> float:
+        selected_values = grade_values if values_for_period is None else values_for_period
+        selected_failed = failed if failed_for_period is None else failed_for_period
+        selected_percentage = failed_percentage if percentage_for_period is None else percentage_for_period
         headers = ["Nota máxima", "Nota mínima", "Estudiantes reprobados", "% reprobación"]
         values = [
-            _grade_text(max(grade_values) if grade_values else None),
-            _grade_text(min(grade_values) if grade_values else None),
-            str(failed),
-            f"{failed_percentage:g} %",
+            _grade_text(max(selected_values) if selected_values else None),
+            _grade_text(min(selected_values) if selected_values else None),
+            str(selected_failed),
+            f"{selected_percentage:g} %",
         ]
         col_w = 88.5
         row_h = 16
@@ -7669,11 +7757,12 @@ def _teacher_compliance_model_pdf(
         for index in range(0, len(teams_recordings), recordings_per_page)
     ]
     grade_report_images = evidence_group("reporte de notas firmado")
+    grade_period_groups = _grade_students_by_period(students)
     planning_moodle_document_rows = _teacher_planning_moodle_document_rows(
         planning_moodle_resources
     )
     teams_start_page = 3 + len(moodle_chunks)
-    total_pages = 4 + len(moodle_chunks) + len(recording_chunks) + len(grade_report_images)
+    total_pages = 4 + len(moodle_chunks) + len(recording_chunks) + len(grade_period_groups) + len(grade_report_images)
 
     start_page(1)
     y = 662
@@ -7885,11 +7974,34 @@ def _teacher_compliance_model_pdf(
             10,
         )
 
-    for image_index, item in enumerate(grade_report_images):
-        new_page(teams_start_page + len(recording_chunks) + 1 + image_index)
+    grade_period_start_page = teams_start_page + len(recording_chunks) + 1
+    for period_index, (_period_code, period_name, period_students) in enumerate(grade_period_groups):
+        new_page(grade_period_start_page + period_index)
         y = continuation_content_y
         y = line(
-            f"3.4.1.   Reporte de notas firmado - página {image_index + 1} de {len(grade_report_images)}",
+            f"3.4.1.   Notas por período {period_index + 1} de {len(grade_period_groups)}",
+            body_x + 18, y, 10, True,
+        )
+        y = wrapped(period_name, body_x + 18, y, content_width - 18, 10, True, 12)
+        period_values = [
+            value for student in period_students
+            if (value := _number(student.get("promedio_final"))) is not None
+        ]
+        period_failed = sum(value < _PASSING_GRADE for value in period_values)
+        period_percentage = round(period_failed / len(period_students) * 100, 2)
+        y = wrapped(
+            f"Estudiantes matriculados: {len(period_students)}. "
+            f"Con nota final: {len(period_values)}. Sin nota final: {len(period_students) - len(period_values)}.",
+            body_x + 18, y - 8, content_width - 18, 9, False, 11,
+        )
+        draw_grade_summary_table(body_x + 24, y - 12, period_values, period_failed, period_percentage)
+
+    grade_images_start_page = grade_period_start_page + len(grade_period_groups)
+    for image_index, item in enumerate(grade_report_images):
+        new_page(grade_images_start_page + image_index)
+        y = continuation_content_y
+        y = line(
+            f"3.4.2.   Reporte de notas firmado - página {image_index + 1} de {len(grade_report_images)}",
             body_x + 18,
             y,
             10,
@@ -7908,7 +8020,7 @@ def _teacher_compliance_model_pdf(
         if content:
             y = draw_image(content, body_x + 8, y - 6, content_width - 16, 520)
 
-    new_page(teams_start_page + len(recording_chunks) + 1 + len(grade_report_images))
+    new_page(grade_images_start_page + len(grade_report_images))
     y = 662
     y = line("3.5.     Anexos:", body_x + 18, y, 12, True)
     y -= 16
@@ -9049,6 +9161,7 @@ def _pdf_signature_target_above_text(
     vertical_gap: float = 3,
     page_margin: float = 18,
     fallback_box: tuple[float, float, float, float] = (243, 90, 369, 138),
+    page_index: int | None = None,
 ) -> tuple[int, tuple[float, float, float, float]]:
     """Locate the last marker occurrence and reserve a visible stamp above it."""
     try:
@@ -9056,8 +9169,11 @@ def _pdf_signature_target_above_text(
 
         document = pdfium.PdfDocument(pdf_bytes)
         try:
-            for page_index in range(len(document) - 1, -1, -1):
-                page = document[page_index]
+            if page_index is not None and not 0 <= page_index < len(document):
+                raise ValueError("La página de firma no existe en el reporte")
+            page_indexes = [page_index] if page_index is not None else range(len(document) - 1, -1, -1)
+            for current_page in page_indexes:
+                page = document[current_page]
                 try:
                     page_width, page_height = page.get_size()
                     text_page = page.get_textpage()
@@ -9086,11 +9202,15 @@ def _pdf_signature_target_above_text(
                 if top > page_height - page_margin:
                     top = page_height - page_margin
                     bottom = top - box_height
-                return page_index, (left, bottom, left + box_width, top)
+                return current_page, (left, bottom, left + box_width, top)
         finally:
             document.close()
-    except Exception:
+    except Exception as exc:
         logger.exception("No se pudo localizar el espacio visible de firma en el PDF")
+        if page_index is not None:
+            raise HTTPException(status_code=400, detail=f"No se pudo localizar la firma en la hoja {page_index + 1}") from exc
+    if page_index is not None:
+        raise HTTPException(status_code=400, detail=f"La hoja {page_index + 1} no contiene el espacio de firma")
     return -1, fallback_box
 
 
@@ -9139,6 +9259,36 @@ def _assert_pdf_signature_field(pdf_bytes: bytes, field_name: str) -> None:
             status_code=500,
             detail=f"El documento no contiene la firma electrónica esperada ({field_name})",
         )
+
+
+def _career_grade_signature_field(page_index: int) -> str:
+    return f"FirmaDocenteNotasCarreraPagina{page_index + 1}"
+
+
+def _assert_career_grade_pages_signed(pdf_bytes: bytes) -> None:
+    _validate_signed_teacher_document_pdf(pdf_bytes, "anexo de notas por carrera")
+    try:
+        pages = PdfReader(BytesIO(pdf_bytes), strict=False).pages
+        signatures = PdfFileReader(BytesIO(pdf_bytes), strict=False).embedded_signatures
+        field_names = {signature.field_name for signature in signatures}
+        page_fields = []
+        for page in pages:
+            fields = set()
+            for reference in page.get("/Annots", []):
+                annotation = reference.get_object()
+                field_name = annotation.get("/T")
+                if not field_name and annotation.get("/Parent"):
+                    field_name = annotation["/Parent"].get_object().get("/T")
+                if field_name:
+                    fields.add(str(field_name))
+            page_fields.append(fields)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo verificar el anexo de notas por carrera") from exc
+    if not page_fields or any(
+        (expected := _career_grade_signature_field(index)) not in field_names or expected not in fields
+        for index, fields in enumerate(page_fields)
+    ):
+        raise HTTPException(status_code=400, detail="Cada hoja del anexo de notas por carrera debe estar firmada")
 
 
 async def _sign_pdf_with_pkcs12(
@@ -9216,6 +9366,45 @@ async def _sign_pdf_with_pkcs12(
         raise HTTPException(status_code=400, detail=detail) from exc
     signed_pdf = output.getvalue()
     _assert_pdf_signature_field(signed_pdf, field_name)
+    return signed_pdf
+
+
+async def _sign_career_grade_report_pages(
+    pdf_bytes: bytes,
+    *,
+    pkcs12_bytes: bytes,
+    password: str,
+    current_user: SessionUser,
+    reason: str,
+    location: str,
+    contact: str,
+) -> bytes:
+    try:
+        page_count = len(PdfReader(BytesIO(pdf_bytes), strict=False).pages)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="El anexo de notas por carrera no es un PDF válido") from exc
+    if not page_count:
+        raise HTTPException(status_code=400, detail="El anexo de notas por carrera no tiene hojas")
+
+    signed_pdf = pdf_bytes
+    for page_index in range(page_count):
+        signature_page, signature_box = _pdf_signature_target_above_text(
+            signed_pdf, "Firma del docente", page_index=page_index,
+        )
+        signed_pdf = await _sign_pdf_with_pkcs12(
+            pdf_bytes=signed_pdf,
+            pkcs12_bytes=pkcs12_bytes,
+            password=password,
+            current_user=current_user,
+            reason=reason,
+            location=location,
+            contact=contact,
+            signature_box=signature_box,
+            signature_page=signature_page,
+            field_name=_career_grade_signature_field(page_index),
+            readable_field_name=f"Firma electrónica docente del anexo de notas, hoja {page_index + 1}",
+        )
+    _assert_career_grade_pages_signed(signed_pdf)
     return signed_pdf
 
 
@@ -9846,6 +10035,7 @@ def _build_teacher_student_grade_report_pdf(
     codigo_estud: list[int] | None = None,
     cod_anio_basica: int | None = None,
     cod_jornada: int | None = None,
+    por_carrera: bool = False,
 ) -> tuple[bytes, str]:
     codigo_doc = _teacher_code(current_user)
     parallel = paralelo.strip().upper()
@@ -9893,12 +10083,15 @@ def _build_teacher_student_grade_report_pdf(
             "horas": meta.get("horas") or _number(first.get("horas")),
             "es_homologacion": meta.get("es_homologacion") or any(item.get("es_homologacion") for item in students),
         }
-    pdf_bytes = _student_grade_report_pdf(teacher, meta, students)
+    pdf_bytes = (
+        _student_grade_report_by_career_pdf(teacher, meta, students)
+        if por_carrera else _student_grade_report_pdf(teacher, meta, students)
+    )
     filename_stem = (
         f"reporte-notas-secretaria-{_safe_filename(meta.get('nombre_materia') or subject_filter)}-"
         f"{_safe_filename(meta.get('detalle_periodo') or '-'.join(str(code) for code in period_codes))}"
     )
-    return pdf_bytes, filename_stem
+    return pdf_bytes, f"{filename_stem}-por-carrera" if por_carrera else filename_stem
 
 
 @router.get("/teacher/student-grade-report-pdf")
@@ -9910,6 +10103,7 @@ def teacher_student_grade_report_pdf(
     codigo_estud: Annotated[list[int] | None, Query()] = None,
     cod_anio_basica: Annotated[int | None, Query()] = None,
     cod_jornada: Annotated[int | None, Query()] = None,
+    por_carrera: bool = False,
 ) -> StreamingResponse:
     pdf_bytes, filename_stem = _build_teacher_student_grade_report_pdf(
         current_user=current_user,
@@ -9919,6 +10113,7 @@ def teacher_student_grade_report_pdf(
         codigo_estud=codigo_estud,
         cod_anio_basica=cod_anio_basica,
         cod_jornada=cod_jornada,
+        por_carrera=por_carrera,
     )
     return StreamingResponse(
         BytesIO(pdf_bytes),
@@ -9941,6 +10136,7 @@ async def teacher_sign_student_grade_report(
     codigo_estud: Annotated[list[int] | None, Form()] = None,
     cod_anio_basica: Annotated[int | None, Form()] = None,
     cod_jornada: Annotated[int | None, Form()] = None,
+    por_carrera: Annotated[bool, Form()] = False,
 ) -> StreamingResponse:
     certificate_bytes = await _read_pkcs12_upload(certificado)
 
@@ -9952,24 +10148,33 @@ async def teacher_sign_student_grade_report(
         codigo_estud=codigo_estud,
         cod_anio_basica=cod_anio_basica,
         cod_jornada=cod_jornada,
+        por_carrera=por_carrera,
     )
-    signature_page, signature_box = _pdf_signature_target_above_text(
-        pdf_bytes,
-        "Firma del docente",
-    )
-    signed_pdf = await _sign_pdf_with_pkcs12(
-        pdf_bytes=pdf_bytes,
-        pkcs12_bytes=certificate_bytes,
-        password=contrasena_certificado,
-        current_user=current_user,
-        reason=firma_motivo,
-        location=firma_ubicacion,
-        contact=firma_contacto,
-        signature_box=signature_box,
-        signature_page=signature_page,
-        field_name="FirmaDocenteReporteNotas",
-        readable_field_name="Firma electrónica docente del reporte de notas",
-    )
+    if por_carrera:
+        signed_pdf = await _sign_career_grade_report_pages(
+            pdf_bytes,
+            pkcs12_bytes=certificate_bytes,
+            password=contrasena_certificado,
+            current_user=current_user,
+            reason=firma_motivo,
+            location=firma_ubicacion,
+            contact=firma_contacto,
+        )
+    else:
+        signature_page, signature_box = _pdf_signature_target_above_text(pdf_bytes, "Firma del docente")
+        signed_pdf = await _sign_pdf_with_pkcs12(
+            pdf_bytes=pdf_bytes,
+            pkcs12_bytes=certificate_bytes,
+            password=contrasena_certificado,
+            current_user=current_user,
+            reason=firma_motivo,
+            location=firma_ubicacion,
+            contact=firma_contacto,
+            signature_box=signature_box,
+            signature_page=signature_page,
+            field_name="FirmaDocenteReporteNotas",
+            readable_field_name="Firma electrónica docente del reporte de notas",
+        )
     return StreamingResponse(
         BytesIO(signed_pdf),
         media_type="application/pdf",
@@ -10235,6 +10440,7 @@ async def teacher_signed_documents_archive(
     informe: Annotated[UploadFile, File()],
     notas: Annotated[UploadFile, File()],
     contrato: Annotated[UploadFile, File()],
+    notas_por_carrera: Annotated[UploadFile, File()],
     factura_xml: Annotated[UploadFile | None, File()] = None,
     ride_pdf: Annotated[UploadFile | None, File()] = None,
     codigo_materia: Annotated[str, Form()] = "",
@@ -10245,12 +10451,14 @@ async def teacher_signed_documents_archive(
     compliance_pdf = await _read_signed_teacher_pdf(informe, "informe de cumplimiento")
     grades_pdf = await _read_signed_teacher_pdf(notas, "reporte de notas")
     contract_pdf = await _read_signed_teacher_pdf(contrato, "contrato")
+    career_grades_pdf = await _read_signed_teacher_pdf(notas_por_carrera, "anexo de notas por carrera")
     invoice_documents = await _teacher_invoice_backup_documents(factura_xml, ride_pdf)
     archive_bytes = _signed_teacher_documents_archive(
         compliance_pdf,
         grades_pdf,
         contract_pdf,
         invoice_documents,
+        career_grades_pdf,
     )
     identity = _teacher_contract_identity(current_user)
     if existing_folder_path and invoice_documents:
@@ -10274,13 +10482,14 @@ async def teacher_signed_documents_archive(
             compliance_pdf=compliance_pdf,
             grades_pdf=grades_pdf,
             contract_pdf=contract_pdf,
+            career_grades_pdf=career_grades_pdf,
             subject_code=codigo_materia,
             subject_name=nombre_materia,
             period_codes=codigo_periodo or [],
             invoice_documents=invoice_documents,
             existing_folder_path=existing_folder_path,
         )
-        expected_item_count = 5 if invoice_documents else 3
+        expected_item_count = 6 if invoice_documents else 4
         stored_items = stored.get("items") if isinstance(stored.get("items"), list) else []
         if len(stored_items) != expected_item_count or not bool(stored.get("same_folder")):
             raise RuntimeError(
@@ -10345,10 +10554,10 @@ async def teacher_signed_documents_archive(
         document_path=stored.get("folder_path"),
         document_url=stored_folder.get("webUrl"),
         detail=(
-            "Cinco documentos archivados juntos en la misma carpeta de OneDrive: informe, notas, contrato, "
+            "Seis documentos archivados en OneDrive: informe, notas, contrato, anexo de notas por carrera, "
             "factura XML y RIDE."
             if invoice_documents
-            else "Tres documentos firmados y archivados juntos en la misma carpeta de OneDrive: informe, notas y contrato."
+            else "Cuatro documentos archivados en OneDrive: informe, notas, contrato y anexo de notas por carrera."
         ),
         metadata={
             "documentos_guardados": len(stored_items),
@@ -10376,6 +10585,7 @@ async def teacher_signed_documents_archive(
         documents_for_mail = [
             {"filename": "informe-cumplimiento-firmado.pdf", "content": compliance_pdf, "content_type": "application/pdf", "document_type": "INFORME"},
             {"filename": "reporte-notas-secretaria-firmado.pdf", "content": grades_pdf, "content_type": "application/pdf", "document_type": "NOTAS"},
+            {"filename": "reporte-notas-por-carrera-firmado.pdf", "content": career_grades_pdf, "content_type": "application/pdf", "document_type": "NOTAS_POR_CARRERA"},
             {"filename": "contrato-docente-firmado.pdf", "content": contract_pdf, "content_type": "application/pdf", "document_type": "CONTRATO"},
             *invoice_documents,
         ]
@@ -10396,7 +10606,7 @@ async def teacher_signed_documents_archive(
                     subject_code=codigo_materia,
                     period_codes=codigo_periodo or [],
                     document_path=stored.get("folder_path"),
-                    detail="Preparando cinco adjuntos para el envío de Honorarios docentes.",
+                    detail="Preparando seis adjuntos para el envío de Honorarios docentes.",
                 )
                 if not marker_saved:
                     raise RuntimeError("No se pudo registrar el intento de envío; el correo no será enviado.")

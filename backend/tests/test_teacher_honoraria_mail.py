@@ -21,6 +21,7 @@ def documents(large: bool = False):
         for kind, name, mime in (
             ("INFORME", "informe.pdf", "application/pdf"),
             ("NOTAS", "notas.pdf", "application/pdf"),
+            ("NOTAS_POR_CARRERA", "notas-por-carrera.pdf", "application/pdf"),
             ("CONTRATO", "contrato.pdf", "application/pdf"),
             ("FACTURA_XML", "factura.xml", "application/xml"),
             ("RIDE", "ride.pdf", "application/pdf"),
@@ -113,7 +114,7 @@ class TeacherHonorariaMailTests(unittest.TestCase):
         self.assertEqual(HONORARIA_RECIPIENTS, ("roberto.castro@intec.edu.ec", "veronica.cevallos@intec.edu.ec"))
         self.assertEqual([item["emailAddress"]["address"] for item in draft["toRecipients"]], list(HONORARIA_RECIPIENTS))
         self.assertEqual(draft["ccRecipients"][0]["emailAddress"]["address"], "docente@intec.edu.ec")
-        self.assertEqual(len([item for item in calls if item.url.path.endswith("/attachments")]), 5)
+        self.assertEqual(len([item for item in calls if item.url.path.endswith("/attachments")]), 6)
         self.assertTrue(calls[-1].url.path.endswith("/send"))
 
     def test_large_attachment_uses_upload_session(self):

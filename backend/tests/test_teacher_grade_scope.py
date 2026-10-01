@@ -1,5 +1,6 @@
 import unittest
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -8,6 +9,14 @@ from zipfile import ZipFile
 from pypdf import PdfReader
 from pydantic import ValidationError
 from fastapi import HTTPException
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import pkcs12
+from asn1crypto import x509 as asn1_x509
+from pyhanko.pdf_utils.reader import PdfFileReader
+from pyhanko.sign.validation import validate_pdf_signature
+from pyhanko_certvalidator import ValidationContext
 
 from app.routers.legacy_reports import (
     _ACTIVE_GRADE_STUDENTS_SQL,
@@ -38,6 +47,11 @@ from app.routers.portal_academico import (
     _signed_teacher_documents_archive,
     _store_signed_teacher_documents_onedrive,
     _student_grade_report_pdf,
+    _student_grade_report_by_career_pdf,
+    _sign_career_grade_report_pages,
+    _sign_pdf_with_pkcs12,
+    _assert_career_grade_pages_signed,
+    _teacher_notes_report_pdf,
     _teacher_compliance_model_pdf,
     _teacher_course_students_for_report,
     _teacher_signed_documents_folder,
@@ -151,6 +165,21 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
             self.assertEqual(archive.read("ride-factura.pdf"), ride_content)
             self.assertEqual(len(archive.namelist()), 5)
 
+    @patch("app.routers.portal_academico._assert_career_grade_pages_signed")
+    @patch("app.routers.portal_academico._assert_pdf_signature_field")
+    def test_archive_keeps_career_report_separate_from_compliance(
+        self, _assert_signature: MagicMock, assert_career_signatures: MagicMock,
+    ):
+        archive_bytes = _signed_teacher_documents_archive(
+            b"%PDF-1.4\ninforme", b"%PDF-1.4\nnotas", b"%PDF-1.4\ncontrato",
+            career_grades_pdf=b"%PDF-1.4\npor carrera",
+        )
+        with ZipFile(BytesIO(archive_bytes)) as archive:
+            self.assertEqual(len(archive.namelist()), 4)
+            self.assertEqual(archive.read("reporte-notas-por-carrera-firmado.pdf"), b"%PDF-1.4\npor carrera")
+            self.assertEqual(archive.read("informe-cumplimiento-firmado.pdf"), b"%PDF-1.4\ninforme")
+        assert_career_signatures.assert_called_once()
+
     def test_onedrive_folder_is_scoped_under_docentes(self):
         path = _teacher_signed_documents_folder(
             {
@@ -203,6 +232,20 @@ class SignedTeacherDocumentsArchiveTests(unittest.TestCase):
         self.assertTrue(upload.call_args_list[0].args[0].endswith("/informe-cumplimiento-firmado.pdf"))
         self.assertTrue(upload.call_args_list[2].args[0].endswith("/contrato-docente-firmado.pdf"))
         delete_item.assert_not_called()
+
+    @patch("app.routers.portal_academico.upload_graph_document_bytes")
+    @patch("app.routers.portal_academico.ensure_graph_document_folder")
+    def test_onedrive_storage_includes_career_report(self, ensure_folder: MagicMock, upload: MagicMock):
+        ensure_folder.return_value = {"id": "folder-1"}
+        upload.side_effect = [{"id": f"item-{index}"} for index in range(4)]
+        stored = _store_signed_teacher_documents_onedrive(
+            identity={"cedula": "123", "nombre": "DOCENTE"},
+            compliance_pdf=b"informe", grades_pdf=b"notas", contract_pdf=b"contrato",
+            career_grades_pdf=b"por carrera",
+        )
+        self.assertEqual(len(stored["items"]), 4)
+        self.assertEqual(stored["items"][3]["tipo_documento"], "NOTAS_POR_CARRERA")
+        self.assertTrue(upload.call_args_list[3].args[0].endswith("/reporte-notas-por-carrera-firmado.pdf"))
 
     @patch("app.routers.portal_academico.delete_graph_document_item")
     @patch("app.routers.portal_academico.upload_graph_document_bytes")
@@ -1143,6 +1186,100 @@ class TeacherGradeScopeTests(unittest.TestCase):
         self.assertLessEqual(font_size, 5.5)
         self.assertGreaterEqual(separation, 1)
 
+    def test_career_appendix_separates_students_and_periods(self):
+        students = [
+            {
+                "codigo_estud": code, "codigo_periodo": period, "detalle_periodo": f"Periodo {period}",
+                "cod_anio_basica": career, "nombre_carrera": f"Carrera {career}",
+                "nombre_estudiante": name, "cedula": f"11061283{code}",
+            }
+            for code, period, career, name in (
+                ("80", "1060", "10", "ALUMNO DIEZ UNO"),
+                ("81", "1051", "10", "ALUMNO DIEZ DOS"),
+                ("82", "1060", "20", "ALUMNO VEINTE"),
+            )
+        ]
+        pdf = _student_grade_report_by_career_pdf(
+            {"docente": "DOCENTE PRUEBA"}, {"nombre_materia": "Materia asignada", "paralelo": "A"}, students,
+        )
+        pages = [page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages]
+        self.assertEqual(len(pages), 3)
+        self.assertIn("ALUMNO DIEZ UNO", pages[0])
+        self.assertNotIn("ALUMNO VEINTE", pages[0])
+        self.assertIn("ALUMNO DIEZ DOS", pages[1])
+        self.assertIn("ALUMNO VEINTE", pages[2])
+        self.assertNotIn("ALUMNO DIEZ UNO", pages[2])
+
+    def test_career_appendix_is_signed_on_every_page(self):
+        students = [
+            {
+                "codigo_estud": str(index), "codigo_periodo": "1060", "detalle_periodo": "Periodo 1060",
+                "cod_anio_basica": str(index), "nombre_carrera": f"Carrera {index}",
+                "nombre_estudiante": f"ALUMNO {index}", "cedula": f"11061283{index:02d}",
+            }
+            for index in (10, 20)
+        ]
+        pdf = _student_grade_report_by_career_pdf(
+            {"docente": "DOCENTE PRUEBA"}, {"nombre_materia": "Materia asignada", "paralelo": "A"}, students,
+        )
+        with self.assertRaisesRegex(HTTPException, "Cada hoja"):
+            _assert_career_grade_pages_signed(pdf)
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "DOCENTE PRUEBA")])
+        now = datetime.now(timezone.utc)
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(subject).issuer_name(subject).public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=1)).not_valid_after(now + timedelta(days=1))
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, content_commitment=True, key_encipherment=False,
+                data_encipherment=False, key_agreement=False, key_cert_sign=False,
+                crl_sign=False, encipher_only=False, decipher_only=False,
+            ), critical=True)
+            .sign(key, hashes.SHA256())
+        )
+        p12 = pkcs12.serialize_key_and_certificates(
+            b"signing", key, certificate, None,
+            serialization.BestAvailableEncryption(b"secret"),
+        )
+        first_page, first_box = _pdf_signature_target_above_text(
+            pdf, "Firma del docente", page_index=0,
+        )
+        partial_pdf = asyncio.run(_sign_pdf_with_pkcs12(
+            pdf_bytes=pdf, pkcs12_bytes=p12, password="secret",
+            current_user=SessionUser(login="docente@intec.edu.ec", nombres="DOCENTE PRUEBA", rol="DOCENTE", codigo_doc=31),
+            reason="Anexo de notas por carrera", location="Quito", contact="",
+            signature_page=first_page, signature_box=first_box,
+            field_name="FirmaDocenteNotasCarreraPagina1",
+        ))
+        with self.assertRaisesRegex(HTTPException, "Cada hoja"):
+            _assert_career_grade_pages_signed(partial_pdf)
+        signed_pdf = asyncio.run(_sign_career_grade_report_pages(
+            pdf,
+            pkcs12_bytes=p12, password="secret",
+            current_user=SessionUser(login="docente@intec.edu.ec", nombres="DOCENTE PRUEBA", rol="DOCENTE", codigo_doc=31),
+            reason="Anexo de notas por carrera", location="Quito", contact="",
+        ))
+        _assert_career_grade_pages_signed(signed_pdf)
+        pages = PdfReader(BytesIO(signed_pdf)).pages
+        self.assertEqual(len(pages), 2)
+        for index, page in enumerate(pages):
+            page_fields = {
+                str(annotation.get_object().get("/T"))
+                for annotation in page.get("/Annots", [])
+            }
+            self.assertIn(f"FirmaDocenteNotasCarreraPagina{index + 1}", page_fields)
+        reader = PdfFileReader(BytesIO(signed_pdf), strict=False)
+        context = ValidationContext(trust_roots=[asn1_x509.Certificate.load(
+            certificate.public_bytes(serialization.Encoding.DER),
+        )], allow_fetching=False)
+        for signature in reader.embedded_signatures:
+            status = validate_pdf_signature(signature, signer_validation_context=context)
+            self.assertTrue(status.intact)
+            self.assertTrue(status.valid)
+
     def test_secretary_report_includes_every_student_grouped_by_period(self):
         students = [
             {
@@ -1185,16 +1322,20 @@ class TeacherGradeScopeTests(unittest.TestCase):
             students,
         )
 
-        report_text = "\n".join(
-            page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages
-        )
-        self.assertIn("Períodos incluidos:", report_text)
-        self.assertIn("Estudiantes matriculados:", report_text)
-        self.assertIn("C1-2026 ABRIL 2026 - AGOSTO 2026", report_text)
-        self.assertIn("C2-2026 JULIO 2026 - NOVIEMBRE 2026", report_text)
-        self.assertIn("ESTUDIANTE PRIMER PERIODO", report_text)
-        self.assertIn("SEGUNDO PRIMER PERIODO", report_text)
-        self.assertIn("ESTUDIANTE SEGUNDO PERIODO", report_text)
+        pages = PdfReader(BytesIO(pdf)).pages
+        self.assertEqual(len(pages), 2)
+        first_page, second_page = (page.extract_text() or "" for page in pages)
+        self.assertIn("Estudiantes matriculados:", first_page + second_page)
+        self.assertIn("C1-2026 ABRIL 2026 - AGOSTO 2026", first_page)
+        self.assertNotIn("C2-2026 JULIO 2026 - NOVIEMBRE 2026", first_page)
+        self.assertIn("ESTUDIANTE PRIMER PERIODO", first_page)
+        self.assertIn("SEGUNDO PRIMER PERIODO", first_page)
+        self.assertNotIn("ESTUDIANTE SEGUNDO PERIODO", first_page)
+        self.assertIn("C2-2026 JULIO 2026 - NOVIEMBRE 2026", second_page)
+        self.assertIn("ESTUDIANTE SEGUNDO PERIODO", second_page)
+        self.assertNotIn("ESTUDIANTE PRIMER PERIODO", second_page)
+        signature_page, _ = _pdf_signature_target_above_text(pdf, "Firma del docente")
+        self.assertEqual(signature_page, 1)
 
     def test_signature_stamp_scales_to_each_document_area(self):
         notes = _signature_stamp_layout((243, 90, 369, 138))
@@ -1368,10 +1509,56 @@ class TeacherGradeScopeTests(unittest.TestCase):
 
         reader = PdfReader(BytesIO(compliance_pdf))
         report_text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        self.assertEqual(len(reader.pages), 4 + len(grade_images))
+        self.assertEqual(len(reader.pages), 5 + len(grade_images))
+        self.assertIn("Notas por período 1 de 1", report_text)
+        self.assertIn("Periodo 1030", report_text)
         self.assertIn("Reporte de notas firmado - página 1", report_text)
         self.assertIn("Imagen generada automáticamente", report_text)
         self.assertIn("Reporte de notas firmado electrónicamente", report_text)
+
+    def test_compliance_report_has_separate_grade_page_for_each_period(self):
+        students = [
+            {"codigo_periodo": "1060", "detalle_periodo": "PERIODO ABRIL", "promedio_final": 9.5},
+            {"codigo_periodo": "1051", "detalle_periodo": "PERIODO JULIO", "promedio_final": 6.0},
+        ]
+        pdf = _teacher_compliance_model_pdf(
+            {"docente": "DOCENTE PRUEBA", "cedula": "1106128381"},
+            {"nombre_materia": "Materia asignada", "detalle_periodo": "DOS PERIODOS"},
+            students,
+            {},
+            {"teams_recordings": []},
+        )
+        pages = PdfReader(BytesIO(pdf)).pages
+        self.assertEqual(len(pages), 6)
+        april = pages[3].extract_text() or ""
+        july = pages[4].extract_text() or ""
+        self.assertIn("PERIODO ABRIL", april)
+        self.assertIn("9.50", april)
+        self.assertNotIn("PERIODO JULIO", april)
+        self.assertIn("PERIODO JULIO", july)
+        self.assertIn("6.00", july)
+        self.assertNotIn("PERIODO ABRIL", july)
+
+    def test_teacher_preview_report_separates_periods_on_different_pages(self):
+        students = [
+            {"codigo_periodo": "1060", "detalle_periodo": "PERIODO ABRIL",
+             "nombre_estudiante": "ESTUDIANTE ABRIL", "promedio_final": 9.0},
+            {"codigo_periodo": "1051", "detalle_periodo": "PERIODO JULIO",
+             "nombre_estudiante": "ESTUDIANTE JULIO", "promedio_final": 8.0},
+        ]
+        pdf = _teacher_notes_report_pdf(
+            {"docente": "DOCENTE PRUEBA"},
+            {"nombre_materia": "Materia asignada", "detalle_periodo": "DOS PERIODOS"},
+            students,
+        )
+        pages = PdfReader(BytesIO(pdf)).pages
+        self.assertEqual(len(pages), 2)
+        april = pages[0].extract_text() or ""
+        july = pages[1].extract_text() or ""
+        self.assertIn("ESTUDIANTE ABRIL", april)
+        self.assertNotIn("ESTUDIANTE JULIO", april)
+        self.assertIn("ESTUDIANTE JULIO", july)
+        self.assertNotIn("ESTUDIANTE ABRIL", july)
 
     @patch("pypdfium2.PdfDocument")
     def test_signed_grade_report_renders_signature_forms_and_annotations(self, pdf_document: MagicMock):

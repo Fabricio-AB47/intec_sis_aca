@@ -4155,6 +4155,7 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   codigoMateria: string
   paralelo: string
   codigoEstudiantes?: Array<string | number>
+  porCarrera?: boolean
 }): Promise<Blob> {
   const query = new URLSearchParams({
     codigo_materia: params.codigoMateria,
@@ -4173,6 +4174,7 @@ export async function downloadPortalTeacherStudentGradeReport(params: {
   for (const codigoEstud of params.codigoEstudiantes || []) {
     if (String(codigoEstud).trim()) query.append('codigo_estud', String(codigoEstud))
   }
+  if (params.porCarrera) query.set('por_carrera', 'true')
   const response = await fetch(`/api/portal/teacher/student-grade-report-pdf?${query.toString()}`, {
     credentials: 'include',
   })
@@ -4202,6 +4204,7 @@ export async function signPortalTeacherStudentGradeReport(params: {
   firmaMotivo: string
   firmaUbicacion: string
   firmaContacto?: string
+  porCarrera?: boolean
 }): Promise<Blob> {
   const formData = new FormData()
   formData.append('codigo_materia', params.codigoMateria)
@@ -4220,6 +4223,7 @@ export async function signPortalTeacherStudentGradeReport(params: {
   formData.append('firma_motivo', params.firmaMotivo)
   formData.append('firma_ubicacion', params.firmaUbicacion)
   if (params.firmaContacto) formData.append('firma_contacto', params.firmaContacto)
+  if (params.porCarrera) formData.append('por_carrera', 'true')
   return request<Blob>('/api/portal/teacher/student-grade-report-sign', {
     method: 'POST',
     body: formData,
@@ -4232,6 +4236,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   informeNombre: string
   notas: Blob
   notasNombre: string
+  notasPorCarrera: Blob
   contrato: Blob
   contratoNombre: string
   facturaXml?: File | null
@@ -4251,6 +4256,7 @@ export async function downloadPortalTeacherSignedDocumentsArchive(params: {
   const formData = new FormData()
   formData.append('informe', params.informe, params.informeNombre)
   formData.append('notas', params.notas, params.notasNombre)
+  formData.append('notas_por_carrera', params.notasPorCarrera, 'reporte-notas-por-carrera-firmado.pdf')
   formData.append('contrato', params.contrato, params.contratoNombre)
   if (params.facturaXml) formData.append('factura_xml', params.facturaXml, params.facturaXml.name)
   if (params.ridePdf) formData.append('ride_pdf', params.ridePdf, params.ridePdf.name)

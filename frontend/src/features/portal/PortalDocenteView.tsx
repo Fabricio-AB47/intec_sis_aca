@@ -76,6 +76,7 @@ type SignedReportBundle = {
   complianceFilename: string
   gradesUrl: string
   gradesFilename: string
+  careerGradesUrl: string
   contractUrl: string
   contractFilename: string
   invoiceXmlUrl: string | null
@@ -1641,16 +1642,18 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       if (invoiceXml.size > MAX_COMPLIANCE_INVOICE_XML_BYTES || ridePdf.size > MAX_COMPLIANCE_RIDE_PDF_BYTES) {
         throw new Error('El XML o el RIDE excede el tamaño permitido.')
       }
-      const [informe, notas, contrato] = await Promise.all([
+      const [informe, notas, contrato, notasPorCarrera] = await Promise.all([
         fetch(bundle.complianceUrl).then((response) => response.blob()),
         fetch(bundle.gradesUrl).then((response) => response.blob()),
         fetch(bundle.contractUrl).then((response) => response.blob()),
+        fetch(bundle.careerGradesUrl).then((response) => response.blob()),
       ])
       const result = await downloadPortalTeacherSignedDocumentsArchive({
         informe,
         informeNombre: bundle.complianceFilename,
         notas,
         notasNombre: bundle.gradesFilename,
+        notasPorCarrera,
         contrato,
         contratoNombre: bundle.contractFilename,
         facturaXml: invoiceXml,
@@ -1660,13 +1663,14 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         codigoPeriodos: bundle.codigoPeriodos,
         existingFolderPath: bundle.folderPath,
       })
-      if (!result.oneDriveSaved || !result.sameFolder || result.storedDocumentCount !== 5) {
-        throw new Error('OneDrive no confirmó los cinco documentos del expediente.')
+      if (!result.oneDriveSaved || !result.sameFolder || result.storedDocumentCount !== 6) {
+        throw new Error('OneDrive no confirmó los seis documentos del expediente.')
       }
       setSignedReportBundle({
         ...bundle,
         complianceUrl: window.URL.createObjectURL(informe),
         gradesUrl: window.URL.createObjectURL(notas),
+        careerGradesUrl: window.URL.createObjectURL(notasPorCarrera),
         contractUrl: window.URL.createObjectURL(contrato),
         invoiceXmlUrl: window.URL.createObjectURL(invoiceXml),
         invoiceXmlFilename: 'factura-electronica.xml',
@@ -1678,10 +1682,10 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       })
       clearComplianceInvoiceBackups()
       setMessage(result.emailStatus === 'sent'
-        ? 'Los cinco documentos se archivaron y Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
+        ? 'Los seis documentos se archivaron y Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
         : result.emailStatus === 'uncertain'
           ? 'Los documentos se archivaron. El estado del correo es incierto; solicite verificación administrativa antes de reintentar.'
-          : 'Los cinco documentos se archivaron, pero no se confirmó el envío. Puede reintentarlo sin volver a firmar.')
+          : 'Los seis documentos se archivaron, pero no se confirmó el envío. Puede reintentarlo sin volver a firmar.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo completar el envío de honorarios docentes.')
     } finally {
@@ -1783,6 +1787,21 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         firmaUbicacion: signingLocation,
         firmaContacto: signingContact,
       })
+      setMessage('Firmando cada hoja del anexo de notas por carrera...')
+      const careerGradesBlob = await signPortalTeacherStudentGradeReport({
+        codigoPeriodos: params.periodos,
+        codAnioBasica: params.codAnioBasica,
+        codigoMateria: params.subjectCode,
+        paralelo: params.paralelo,
+        codJornada: params.codJornada,
+        codigoEstudiantes: selectedComplianceStudentCodes,
+        certificado: signingCertificate,
+        contrasenaCertificado: signingPassword,
+        firmaMotivo: 'Anexo de notas por carrera',
+        firmaUbicacion: signingLocation,
+        firmaContacto: signingContact,
+        porCarrera: true,
+      })
       setMessage('Firmando el contrato docente con el mismo certificado...')
       const contractBlob = await signPortalTeacherUploadedContract({
         contrato: complianceContractFile,
@@ -1825,6 +1844,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         informeNombre: complianceFilename,
         notas: gradesBlob,
         notasNombre: gradesFilename,
+        notasPorCarrera: careerGradesBlob,
         contrato: contractBlob,
         contratoNombre: contractFilename,
         facturaXml: invoiceXmlFile,
@@ -1834,7 +1854,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         codigoPeriodos: params.periodos,
       })
       const invoiceBackupsIncluded = Boolean(invoiceXmlFile && ridePdfFile)
-      const expectedDocumentCount = invoiceBackupsIncluded ? 5 : 3
+      const expectedDocumentCount = invoiceBackupsIncluded ? 6 : 4
       if (
         !archiveResult.oneDriveSaved ||
         !archiveResult.sameFolder ||
@@ -1855,6 +1875,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
         complianceUrl: window.URL.createObjectURL(complianceBlob),
         complianceFilename,
         gradesUrl: window.URL.createObjectURL(gradesBlob),
+        careerGradesUrl: window.URL.createObjectURL(careerGradesBlob),
         gradesFilename,
         contractUrl: window.URL.createObjectURL(contractBlob),
         contractFilename,
@@ -1870,12 +1891,12 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
       clearComplianceInvoiceBackups()
       setMessage(
         !invoiceBackupsIncluded
-          ? 'Tres PDF firmados y guardados en OneDrive. El correo queda pendiente hasta cargar factura XML y RIDE; puede descargarlos ahora.'
+          ? 'Cuatro PDF firmados guardados en OneDrive, incluido el anexo por carrera. El correo queda pendiente hasta cargar factura XML y RIDE.'
           : archiveResult.emailStatus === 'sent'
-            ? 'Cinco documentos guardados en OneDrive. Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
+            ? 'Seis documentos guardados en OneDrive. Microsoft Graph aceptó el correo Honorarios docentes con copia al docente.'
             : archiveResult.emailStatus === 'uncertain'
-              ? 'Cinco documentos guardados en OneDrive. El estado del correo requiere verificación administrativa antes de reintentar.'
-              : 'Cinco documentos guardados en OneDrive, pero el correo no se confirmó. Puede reintentarlo sin volver a firmar.',
+              ? 'Seis documentos guardados en OneDrive. El estado del correo requiere verificación administrativa antes de reintentar.'
+              : 'Seis documentos guardados en OneDrive, pero el correo no se confirmó. Puede reintentarlo sin volver a firmar.',
       )
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'No se pudo firmar electrónicamente el informe')
@@ -1927,6 +1948,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
     return () => {
       window.URL.revokeObjectURL(signedReportBundle.complianceUrl)
       window.URL.revokeObjectURL(signedReportBundle.gradesUrl)
+      window.URL.revokeObjectURL(signedReportBundle.careerGradesUrl)
       window.URL.revokeObjectURL(signedReportBundle.contractUrl)
       if (signedReportBundle.invoiceXmlUrl) window.URL.revokeObjectURL(signedReportBundle.invoiceXmlUrl)
       if (signedReportBundle.ridePdfUrl) window.URL.revokeObjectURL(signedReportBundle.ridePdfUrl)
@@ -3221,7 +3243,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   onChange={(event) => setSigningConsent(event.target.checked)}
                 />
                 <span>
-                  Confirmo que soy titular del certificado y apruebo los tres PDF definitivos y los respaldos de
+                  Confirmo que soy titular del certificado y apruebo los cuatro PDF definitivos y los respaldos de
                   facturación seleccionados.
                 </span>
               </label> : null}
@@ -3262,7 +3284,7 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                   <div className="portal-signed-documents-copy">
                     <strong>{currentSignedBundle.storedDocumentCount} documentos guardados</strong>
                     <small>
-                      Informe, notas y contrato firmados
+                      Informe, notas, contrato y anexo por carrera firmados
                       {currentSignedBundle.invoiceXmlUrl ? ', factura XML y RIDE' : ''} guardados juntos en una misma
                       carpeta de OneDrive / DOCENTES. El ZIP es únicamente la descarga conjunta.
                     </small>
@@ -3297,6 +3319,13 @@ export function PortalDocenteView({ displayName, initialMode = 'courses' }: Read
                       onClick={() => downloadObjectUrl(currentSignedBundle.gradesUrl, currentSignedBundle.gradesFilename)}
                     >
                       Descargar notas firmadas
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => downloadObjectUrl(currentSignedBundle.careerGradesUrl, 'reporte-notas-por-carrera-firmado.pdf')}
+                    >
+                      Descargar anexo firmado
                     </button>
                     <button
                       type="button"

@@ -2221,6 +2221,64 @@ matricula_cne_catalogada AS (
 )
 """
 
+_ACTIVE_CNE_STUDENTS_CTE = _MATRICULA_CNE_CTE + """
+, active_cne_candidates AS (
+    SELECT cne.*,
+        UPPER(LTRIM(RTRIM(COALESCE(
+            NULLIF(TRY_CONVERT(nvarchar(4000), datos.Apellidos_nombre), ''),
+            cne.Apellidos_nombre
+        )))) AS nombre_clave,
+        CASE WHEN EXISTS (
+            SELECT 1
+            FROM dbo.DATOS_ESTUD estudiante_nota
+            INNER JOIN dbo.CARRERAXESTUD nota
+                ON nota.codigo_estud = estudiante_nota.codigo_estud
+            WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), estudiante_nota.Cedula_Est))) = cne.Cedula_Est
+                AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estudiante_nota.Estado)))) = 'A'
+                AND (
+                    TRY_CONVERT(decimal(10, 2), nota.PromedioFinal) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.Promedio) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.Recuperacion) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P1Tareas) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P1Proyectos) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P1Examen) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P2Tareas) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P2Proyectos) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P2Examen) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P3Tareas) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P3Proyectos) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.P3Examen) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.teoriaHomo) > 0
+                    OR TRY_CONVERT(decimal(10, 2), nota.practicahomo) > 0
+                )
+        ) THEN 1 ELSE 0 END AS tiene_notas,
+        ROW_NUMBER() OVER (
+            PARTITION BY cne.Cedula_Est
+            ORDER BY cne.tipo_matricula, cne.nombre_carrera
+        ) AS persona_posicion
+    FROM matricula_cne_catalogada cne
+    CROSS APPLY (
+        SELECT TOP (1) estudiante.Apellidos_nombre
+        FROM dbo.DATOS_ESTUD estudiante
+        WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), estudiante.Cedula_Est))) = cne.Cedula_Est
+            AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estudiante.Estado)))) = 'A'
+        ORDER BY TRY_CONVERT(bigint, estudiante.codigo_estud) DESC,
+            estudiante.codigo_estud DESC
+    ) datos
+    WHERE cne.estado_codigo = 'A'
+      AND NULLIF(cne.Cedula_Est, '') IS NOT NULL
+), active_cne_ranked AS (
+    SELECT candidatos.*,
+        SUM(CASE WHEN persona_posicion = 1 AND tiene_notas = 1 THEN 1 ELSE 0 END)
+            OVER (PARTITION BY nombre_clave) AS cedulas_con_notas
+    FROM active_cne_candidates candidatos
+), active_cne_students AS (
+    SELECT * FROM active_cne_ranked
+    WHERE persona_posicion = 1
+      AND (NULLIF(nombre_clave, '') IS NULL OR cedulas_con_notas <> 1 OR tiene_notas = 1)
+)
+"""
+
 _MATRICULA_CNE_CARRERA_CTE = (
     _MATRICULA_CNE_CTE
     + """
@@ -3010,27 +3068,33 @@ def dashboard_matricula(
         """
     )
     states_query = (
-        _MATRICULA_CNE_CTE
+        _ACTIVE_CNE_STUDENTS_CTE
         + """
         SELECT
             cne.estado_codigo,
             MAX(cne.estado_nombre) AS estado_nombre,
             COUNT(*) AS total_estudiantes
-        FROM matricula_cne_catalogada cne
-        WHERE cne.estado_codigo IN ('A', 'G', 'P', 'R')
+        FROM (
+            SELECT estado_codigo, estado_nombre
+            FROM active_cne_students
+            WHERE persona_posicion = 1
+            UNION ALL
+            SELECT estado_codigo, estado_nombre
+            FROM matricula_cne_catalogada
+            WHERE estado_codigo IN ('G', 'P', 'R')
+        ) cne
         GROUP BY cne.estado_codigo
         ORDER BY cne.estado_codigo
         """
     )
     active_by_type_query = (
-        _MATRICULA_CNE_CTE
+        _ACTIVE_CNE_STUDENTS_CTE
         + """
         SELECT
             cne.tipo_matricula,
             COUNT(*) AS total_estudiantes
-        FROM matricula_cne_catalogada cne
-        WHERE cne.estado_codigo = 'A'
-          AND cne.tipo_matricula IN ('R', 'H')
+        FROM active_cne_students cne
+        WHERE cne.persona_posicion = 1
         GROUP BY cne.tipo_matricula
         ORDER BY cne.tipo_matricula
         """

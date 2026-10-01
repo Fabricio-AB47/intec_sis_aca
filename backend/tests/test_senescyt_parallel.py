@@ -44,12 +44,12 @@ def test_parallel_comes_from_unique_period_assignment_and_exact_enrollment_catal
     assert params == [1032, 1033, cutoff]
     assert "INNER JOIN dbo.PERIODO p ON cx.codigo_periodo = p.cod_periodo" in sql
     assert "p.cod_periodo IN (?, ?)" in sql
-    assert sql.index("cx.Fecha_Matricula) <= ?") < sql.index("GROUP BY cx.codigo_estud")
-    assert "GROUP BY cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo" in sql
+    assert sql.index("cx.Fecha_Matricula) <= ?") < sql.index("GROUP BY estudiante.Cedula_Est")
+    assert "GROUP BY estudiante.Cedula_Est, cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo" in sql
     assert "COUNT(DISTINCT NULLIF(UPPER(LTRIM(RTRIM(cx.paralelo))), '')) = 1" in sql
     assert "COUNT(NULLIF(LTRIM(RTRIM(cx.paralelo)), '')) = COUNT(*)" in sql
     assert "ORDER BY COALESCE(inicio_periodo, fecha_matricula) DESC" in sql
-    assert "WHERE s.posicion = 1" in sql
+    assert "AND s.posicion = 1" in sql
     assert "FROM dbo.PARALELOS par" in sql
     assert "UPPER(LTRIM(RTRIM(par.paralelo))) = s.paralelo" in sql
     assert "TRY_CONVERT(int, par.num) BETWEEN 1 AND 20" in sql
@@ -91,16 +91,18 @@ def test_preview_and_both_excel_downloads_use_computed_parallel(client, parallel
         assert all(call.args[1] == [1032, 1033, date(2025, 12, 31)] for call in reader.call_args_list)
 
 
-def test_parallel_is_recalculated_on_each_generation_and_kept_separate_by_career(client):
+def test_parallel_is_recalculated_on_each_generation_for_latest_career(client):
     first_source = pd.concat([
-        student_source(1), student_source(2).assign(nombreCarrera="Ciberseguridad"),
+        student_source(1), student_source(2).assign(
+            nombreCarrera="Ciberseguridad", fechaMatricula=date(2025, 11, 1),
+        ),
     ], ignore_index=True)
     with patch.object(senescyt, "_read_sql_dataframe", side_effect=[first_source, student_source(3)]):
         first = client.get("/api/students/senescyt/datos?target=estudiantes&periodo=1032")
         second = client.get("/api/students/senescyt/datos?target=estudiantes&periodo=1032")
     assert first.status_code == second.status_code == 200
     parallels = {row["nombre_carrera"]: row["fields"]["paraleloId"] for row in first.json()["rows"]}
-    assert parallels == {"Administracion": 1, "Ciberseguridad": 2}
+    assert parallels == {"Ciberseguridad": 2}
     assert second.json()["rows"][0]["fields"]["paraleloId"] == 3
 
 

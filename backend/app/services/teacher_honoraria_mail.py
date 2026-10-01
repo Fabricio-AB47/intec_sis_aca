@@ -37,9 +37,9 @@ def send_teacher_honoraria_mail(identity: dict[str, Any], documents: list[dict[s
         raise ValueError("Configure GRAPH_MAIL_SENDER con un buzón institucional válido.")
     copy_address = teacher_copy_address(identity)
     if {str(item.get("document_type")) for item in documents} != {
-        "INFORME", "NOTAS", "CONTRATO", "FACTURA_XML", "RIDE"
-    } or len(documents) != 5:
-        raise ValueError("El correo requiere los tres PDF firmados, la factura XML y el RIDE.")
+        "INFORME", "NOTAS", "NOTAS_POR_CARRERA", "CONTRATO", "FACTURA_XML", "RIDE"
+    } or len(documents) != 6:
+        raise ValueError("El correo requiere los cuatro PDF firmados, la factura XML y el RIDE.")
 
     def recipient(address: str) -> dict[str, Any]:
         return {"emailAddress": {"address": address}}
@@ -53,7 +53,7 @@ def send_teacher_honoraria_mail(identity: dict[str, Any], documents: list[dict[s
                 "Se remiten los documentos firmados para el trámite de honorarios docentes.\n"
                 f"Docente: {identity.get('nombre') or ''}\n"
                 f"Cédula: {identity.get('cedula') or ''}\n"
-                "Adjuntos: informe de cumplimiento, reporte de notas, contrato, factura XML y RIDE."
+                "Adjuntos: informe de cumplimiento, reporte de notas, anexo de notas por carrera, contrato, factura XML y RIDE."
             ),
         },
         "toRecipients": [recipient(address) for address in HONORARIA_RECIPIENTS],

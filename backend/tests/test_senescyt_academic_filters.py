@@ -32,19 +32,24 @@ def test_student_query_scopes_subject_enrollments_before_ranking_and_requires_ac
     assert params == [1032, 1033, cutoff]
     assert "p.cod_periodo IN (?, ?)" in sql
     assert "TRY_CONVERT(date, cx.Fecha_Matricula) <= ?" in sql
-    assert sql.index("cx.Fecha_Matricula) <= ?") < sql.index("ROW_NUMBER()")
-    assert "GROUP BY cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo" in sql
-    assert "PARTITION BY codigo_estud, cod_anio_Basica" in sql
+    assert sql.index("cx.Fecha_Matricula) <= ?") < sql.index("PARTITION BY cedula_estud\n")
+    assert "GROUP BY estudiante.Cedula_Est, cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo" in sql
+    assert "PARTITION BY cedula_estud, cod_anio_Basica" in sql
+    assert "PARTITION BY cedula_estud\n" in sql
+    assert "COALESCE(inicio_periodo, fecha_matricula) DESC" in sql
+    assert "FROM active_cne_students cne" in sql
+    assert "cne.persona_posicion = 1" in sql
     assert "e.codigo_estud = cne.codigo_estud" in sql
-    assert "e.Cedula_Est = cne.Cedula_Est" in sql
-    assert "INNER JOIN dbo.ESTADO estado ON e.Estado = estado.IDESTADO" in sql
-    assert "estado.IDESTADO)))) = 'A'" in sql
+    assert "e.Cedula_Est))) = cne.Cedula_Est" in sql
+    assert "datos.Estado)))) = 'A'" in sql
+    assert "AND s.posicion = 1" in sql
+    assert "CASE WHEN datos.codigo_estud = s.codigo_estud THEN 0 ELSE 1 END" in sql
     assert "cne.fecha_matricula AS fechaMatricula" in sql
     assert "e.fechaMatricula" not in sql
     assert result.empty
 
 
-def test_student_audit_collapses_duplicate_source_rows_without_losing_other_careers():
+def test_student_audit_collapses_duplicate_source_rows_across_careers():
     columns = [column for column in senescyt._REPORT_COLUMNS if column not in senescyt._NAME_FIELDS]
     row = {column: None for column in columns}
     row.update({
@@ -56,11 +61,11 @@ def test_student_audit_collapses_duplicate_source_rows_without_losing_other_care
     with patch.object(senescyt, "_read_student_audit_source", return_value=raw) as reader:
         result = senescyt._prepare_student_audit_dataframe([1032], date(2025, 12, 31))
     reader.assert_called_once_with([1032], date(2025, 12, 31))
-    assert len(result) == 2
-    assert not result.duplicated(["numeroIdentificacion", "nombreCarrera"]).any()
+    assert len(result) == 1
+    assert not result.duplicated(["numeroIdentificacion"]).any()
 
 
-def test_teacher_query_uses_assigned_period_and_active_user_with_inclusive_cutoff():
+def test_teacher_query_keeps_all_assigned_careers_for_active_teacher_with_cutoff():
     cutoff = date(2025, 12, 31)
     with patch.object(senescyt, "_read_sql_dataframe", return_value=pd.DataFrame()) as reader:
         result = senescyt._read_teacher_audit_dataframe([1032, 1033], cutoff)
@@ -68,11 +73,13 @@ def test_teacher_query_uses_assigned_period_and_active_user_with_inclusive_cutof
     assert params == [1032, 1033, cutoff, cutoff]
     assert "cd.codigo_periodo = p.cod_periodo" in sql
     assert "p.cod_periodo IN (?, ?)" in sql
-    assert "p.fechain <= ?" in sql
+    assert "TRY_CONVERT(date, p.fechain)) <= ?" in sql
     assert "ingreso.fecha IS NULL OR ingreso.fecha <= ?" in sql
     assert "d.fechaIngresoIES" in sql
-    assert "FROM dbo.USUARIOS u" in sql
-    assert "IN (N'A', N'ACTIVO', N'ACTIVA')" in sql
+    assert "INNER JOIN dbo.CARRERAXDOCENTE cd" in sql
+    assert "FROM dbo.USUARIOS u" not in sql
+    assert "d.Estado)))) = 'A'" in sql
+    assert "SELECT TOP (1) cd.cod_Anio_Basica" not in sql
     assert "SELECT DISTINCT" in sql
     assert result.empty
 
@@ -85,7 +92,39 @@ def test_no_selection_keeps_all_periods_but_does_not_remove_active_validation(ta
     assert not params
     assert "p.cod_periodo IN" not in sql
     assert " <= ?" not in sql
-    assert ("estado.IDESTADO)))) = 'A'" if target == "estudiantes" else "u.Estado") in sql
+    assert ("cne.estado_codigo = 'A'" if target == "estudiantes" else "d.Estado") in sql
+
+
+def test_dashboard_and_report_use_the_same_active_student_cohort():
+    from app.routers import students
+
+    assert students._ACTIVE_CNE_STUDENTS_CTE in senescyt._DASHBOARD_ACTIVE_COUNT_QUERY
+    with patch.object(senescyt, "_read_sql_dataframe", return_value=pd.DataFrame()) as reader:
+        senescyt._read_student_audit_source(None, None)
+    assert students._ACTIVE_CNE_STUDENTS_CTE in reader.call_args.args[0]
+
+
+def test_active_student_cohort_resolves_only_unambiguous_name_duplicates_with_grades():
+    from app.routers import students
+
+    sql = students._ACTIVE_CNE_STUDENTS_CTE
+    assert "PARTITION BY cne.Cedula_Est" in sql
+    assert "PARTITION BY nombre_clave" in sql
+    assert "nota.codigo_estud = estudiante_nota.codigo_estud" in sql
+    assert "TRY_CONVERT(decimal(10, 2), nota.PromedioFinal) > 0" in sql
+    assert "cedulas_con_notas <> 1 OR tiene_notas = 1" in sql
+
+
+@pytest.mark.parametrize("target", ["estudiantes", "docentes"])
+def test_career_totals_equal_unique_people_in_report(target):
+    columns = senescyt._STUDENT_AUDIT_COLUMNS if target == "estudiantes" else senescyt._TEACHER_REPORT_COLUMNS
+    source = pd.DataFrame([
+        {"codigo": "1", "numeroIdentificacion": "0100000001", "nombreCarrera": "Administracion"},
+        {"codigo": "2", "numeroIdentificacion": "0100000002", "nombreCarrera": "Ciberseguridad"},
+    ])
+    report = senescyt._build_senescyt_audit_from_dataframe(target, source, columns)
+    assert report["summary"]["total_registros"] == 2
+    assert sum(career["total_registros"] for career in report["careers"]) == 2
 
 
 def test_catalog_includes_historical_periods_even_if_closed(client):

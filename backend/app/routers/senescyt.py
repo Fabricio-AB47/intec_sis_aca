@@ -11,7 +11,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from app.core.security import SessionUser, require_roles
-from app.routers.students import _MATRICULA_CNE_CTE
+from app.routers.students import _ACTIVE_CNE_STUDENTS_CTE, _MATRICULA_CNE_CTE
 from app.services.db import get_connection
 
 router = APIRouter(prefix="/api/students/senescyt", tags=["senescyt"])
@@ -200,11 +200,11 @@ class SenescytStudentUpdatePayload(BaseModel):
     fields: dict[str, Any] = Field(default_factory=dict)
 
 _DASHBOARD_ACTIVE_COUNT_QUERY = (
-    _MATRICULA_CNE_CTE
+    _ACTIVE_CNE_STUDENTS_CTE
     + """
 SELECT COUNT(*)
-FROM matricula_cne_catalogada cne
-WHERE cne.estado_codigo = 'A';
+FROM active_cne_students cne
+WHERE cne.persona_posicion = 1;
 """
 )
 
@@ -632,8 +632,8 @@ def _build_report() -> dict[str, Any]:
         "warnings": warnings,
         "criteria": {
             "fuente": "DATOS_ESTUD para datos personales; CARRERAXESTUD y PENSUM para el semestre más alto; PERIODO y CARRERAXESTUD para la matrícula del último período elegible y PARALELOS.num para paraleloId.",
-            "activos": "Mismo criterio del tablero de matrícula; excluye a los estudiantes sin carrera registrada.",
-            "matricula": "Matrícula actual validada contra la carrera, el pensum y el estado del tablero.",
+            "activos": "Una cédula por estudiante con matrícula R/H activa y estado activo en DATOS_ESTUD; ante nombres duplicados se prioriza la única cédula con notas registradas.",
+            "matricula": "Carrera del período elegible con fecha de inicio más reciente; si no hay detalle académico, se conserva la carrera del padrón activo.",
             "export": "Un archivo de Excel por carrera dentro de un ZIP.",
         },
     }
@@ -933,7 +933,10 @@ def _academic_scope_sql(periods: list[int] | None, cutoff: date | None, *, targe
             conditions.append("TRY_CONVERT(date, cx.Fecha_Matricula) <= ?")
             params.append(cutoff)
         else:
-            conditions.append("p.fechain <= ?")
+            conditions.append("COALESCE(TRY_CONVERT(date, p.fechain, 121), "
+                              "TRY_CONVERT(date, p.fechain, 103), "
+                              "TRY_CONVERT(date, p.fechain, 105), "
+                              "TRY_CONVERT(date, p.fechain)) <= ?")
             params.append(cutoff)
             conditions.append("(ingreso.fecha IS NULL OR ingreso.fecha <= ?)")
             params.append(cutoff)
@@ -945,10 +948,17 @@ def _read_student_audit_source(periods: list[int] | None, cutoff: date | None) -
     # Resolve the parallel within each eligible period, never across a student's history.
     # Use the institutional enrollment catalog ID, not the separate scheduling catalog Paralelo.
     sql = """
-    WITH matriculas AS (
-        SELECT cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo,
+    """ + _ACTIVE_CNE_STUDENTS_CTE + """
+    , matriculas AS (
+        SELECT LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), estudiante.Cedula_Est))) AS cedula_estud,
+            cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo,
             MIN(TRY_CONVERT(date, cx.Fecha_Matricula)) AS fecha_matricula,
-            MAX(p.fechain) AS inicio_periodo,
+            MAX(COALESCE(
+                TRY_CONVERT(date, p.fechain, 121),
+                TRY_CONVERT(date, p.fechain, 103),
+                TRY_CONVERT(date, p.fechain, 105),
+                TRY_CONVERT(date, p.fechain)
+            )) AS inicio_periodo,
             MAX(CASE WHEN TRY_CONVERT(int, pen.Semestre) > 0
                 THEN TRY_CONVERT(int, pen.Semestre) END) AS semestre,
             CASE WHEN COUNT(DISTINCT NULLIF(UPPER(LTRIM(RTRIM(cx.paralelo))), '')) = 1
@@ -956,30 +966,40 @@ def _read_student_audit_source(periods: list[int] | None, cutoff: date | None) -
                 THEN MIN(UPPER(LTRIM(RTRIM(cx.paralelo)))) END AS paralelo
         FROM dbo.CARRERAXESTUD cx
         INNER JOIN dbo.PERIODO p ON cx.codigo_periodo = p.cod_periodo
+        INNER JOIN dbo.DATOS_ESTUD estudiante ON estudiante.codigo_estud = cx.codigo_estud
         LEFT JOIN dbo.PENSUM pen ON pen.codigo_materia = cx.codigo_materia
             AND pen.Cod_AnioBasica = cx.cod_anio_Basica
         WHERE UPPER(LTRIM(RTRIM(p.TipoMatricula))) IN ('R', 'H')
             AND cx.cod_anio_Basica NOT IN (12, 13)
+            AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estudiante.Estado)))) = 'A'
     """ + scope + """
-        GROUP BY cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo
+        GROUP BY estudiante.Cedula_Est, cx.codigo_estud, cx.cod_anio_Basica, cx.codigo_periodo
     ), seleccion AS (
         SELECT *, MAX(semestre) OVER (
-            PARTITION BY codigo_estud, cod_anio_Basica
+            PARTITION BY cedula_estud, cod_anio_Basica
         ) AS nivel_academico,
         ROW_NUMBER() OVER (
-            PARTITION BY codigo_estud, cod_anio_Basica
+            PARTITION BY cedula_estud
             ORDER BY COALESCE(inicio_periodo, fecha_matricula) DESC,
-                codigo_periodo DESC, fecha_matricula DESC
+                codigo_periodo DESC, fecha_matricula DESC,
+                cod_anio_Basica DESC, codigo_estud DESC
         ) AS posicion
         FROM matriculas
-    ), matricula_cne_catalogada AS (
-        SELECT s.codigo_estud, s.fecha_matricula, s.nivel_academico,
-            catalogo.paralelo_id, e.Cedula_Est, e.Apellidos_nombre,
-            LTRIM(RTRIM(c.Nombre_Basica)) AS nombre_carrera
-        FROM seleccion s
-        INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = s.codigo_estud
-        INNER JOIN dbo.ESTADO estado ON e.Estado = estado.IDESTADO
-        INNER JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = s.cod_anio_Basica
+    ), matricula_elegida AS (
+        SELECT e.codigo_estud, s.fecha_matricula, s.nivel_academico,
+            catalogo.paralelo_id, cne.Cedula_Est, cne.Apellidos_nombre,
+            COALESCE(NULLIF(LTRIM(RTRIM(c.Nombre_Basica)), ''), cne.nombre_carrera) AS nombre_carrera
+        FROM active_cne_students cne
+        LEFT JOIN seleccion s ON s.cedula_estud = cne.Cedula_Est AND s.posicion = 1
+        OUTER APPLY (
+            SELECT TOP (1) datos.codigo_estud
+            FROM dbo.DATOS_ESTUD datos
+            WHERE LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), datos.Cedula_Est))) = cne.Cedula_Est
+                AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), datos.Estado)))) = 'A'
+            ORDER BY CASE WHEN datos.codigo_estud = s.codigo_estud THEN 0 ELSE 1 END,
+                TRY_CONVERT(bigint, datos.codigo_estud) DESC, datos.codigo_estud DESC
+        ) e
+        LEFT JOIN dbo.CARRERAS c ON c.Cod_AnioBasica = s.cod_anio_Basica
         OUTER APPLY (
             SELECT CASE WHEN COUNT(*) = 1
                 THEN MIN(TRY_CONVERT(int, par.num)) END AS paralelo_id
@@ -987,16 +1007,16 @@ def _read_student_audit_source(periods: list[int] | None, cutoff: date | None) -
             WHERE UPPER(LTRIM(RTRIM(par.paralelo))) = s.paralelo
                 AND TRY_CONVERT(int, par.num) BETWEEN 1 AND 20
         ) catalogo
-        WHERE s.posicion = 1
-            AND UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), estado.IDESTADO)))) = 'A'
+        WHERE cne.persona_posicion = 1
+    """ + (" AND s.posicion = 1" if periods or cutoff else "") + """
     )
     """ + _STUDENT_SELECT.format(
         fecha_matricula="cne.fecha_matricula", nivel_academico="cne.nivel_academico",
         paralelo_id="cne.paralelo_id",
     ) + """
-    FROM matricula_cne_catalogada cne
+    FROM matricula_elegida cne
     INNER JOIN dbo.DATOS_ESTUD e ON e.codigo_estud = cne.codigo_estud
-        AND e.Cedula_Est = cne.Cedula_Est
+        AND LTRIM(RTRIM(TRY_CONVERT(nvarchar(100), e.Cedula_Est))) = cne.Cedula_Est
     """ + _STUDENT_EMAIL_APPLY
     return _read_sql_dataframe(sql, params)
 
@@ -1006,7 +1026,7 @@ def _prepare_student_audit_dataframe(periods: list[int] | None = None, cutoff: d
     if raw.empty:
         return pd.DataFrame(columns=_STUDENT_AUDIT_COLUMNS + ["codigo", "nombreCompleto", "nombreCarrera"])
 
-    df = _dedupe_career_model_rows(_apply_student_model_context(_normalize_dataframe(raw)), "fechaMatricula")
+    df = _dedupe_model_rows(_apply_student_model_context(_normalize_dataframe(raw)), "fechaMatricula")
     df = df.rename(columns={"codigoEstud": "codigo"})
     for column in _STUDENT_AUDIT_COLUMNS:
         if column not in df.columns:
@@ -1087,12 +1107,12 @@ def _read_teacher_audit_dataframe(periods: list[int] | None = None, cutoff: date
             NULLIF(LTRIM(RTRIM(TRY_CONVERT(nvarchar(255), c.Nombre_Basica))), ''),
             N'Sin carrera'
         ) AS nombreCarrera
-    FROM dbo.CARRERAXDOCENTE cd
-    INNER JOIN dbo.CARRERAS c
-        ON TRY_CONVERT(varchar(50), cd.cod_Anio_Basica) = TRY_CONVERT(varchar(50), c.Cod_AnioBasica)
-    INNER JOIN dbo.DATOSDOCENTE d
+    FROM dbo.DATOSDOCENTE d
+    INNER JOIN dbo.CARRERAXDOCENTE cd
         ON TRY_CONVERT(varchar(50), cd.codigo_doc) = TRY_CONVERT(varchar(50), d.codigo_doc)
     INNER JOIN dbo.PERIODO p ON cd.codigo_periodo = p.cod_periodo
+    INNER JOIN dbo.CARRERAS c
+        ON TRY_CONVERT(varchar(50), cd.cod_Anio_Basica) = TRY_CONVERT(varchar(50), c.Cod_AnioBasica)
     OUTER APPLY (
         SELECT COALESCE(
             TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(d.fechaIngresoIES)), ''), 23),
@@ -1100,12 +1120,7 @@ def _read_teacher_audit_dataframe(periods: list[int] | None = None, cutoff: date
             TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(d.fechaIngresoIES)), ''), 103)
         ) AS fecha
     ) ingreso
-    WHERE EXISTS (
-        SELECT 1
-        FROM dbo.USUARIOS u
-        WHERE LTRIM(RTRIM(TRY_CONVERT(varchar(50), u.cedula))) = LTRIM(RTRIM(TRY_CONVERT(varchar(50), d.cedula_doc)))
-          AND UPPER(LTRIM(RTRIM(TRY_CONVERT(nvarchar(50), u.Estado)))) IN (N'A', N'ACTIVO', N'ACTIVA')
-    )
+    WHERE UPPER(LTRIM(RTRIM(TRY_CONVERT(varchar(10), d.Estado)))) = 'A'
     """ + scope + """
     ORDER BY nombreCarrera, nombreOriginal
     """
@@ -2077,7 +2092,7 @@ def _dedupe_career_model_rows(dataframe: pd.DataFrame, date_column: str) -> pd.D
 
 def _teacher_model_workbook(report: dict[str, Any]) -> bytes:
     dataframe: pd.DataFrame = report["dataframe"]
-    unique = _apply_teacher_model_context(_dedupe_model_rows(dataframe, "fechaIngresoIES"))
+    unique = _apply_teacher_model_context(_dedupe_career_model_rows(dataframe, "fechaIngresoIES"))
     if "provinciaSufragio" in unique:
         unique["provinciaSufragio"] = unique["provinciaSufragio"].map(lambda value: _model_geographic_code(value, 2))
     if "fechaSalidaIES" in unique:
