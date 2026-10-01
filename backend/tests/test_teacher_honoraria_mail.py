@@ -145,6 +145,25 @@ class TeacherHonorariaMailTests(unittest.TestCase):
         self.assertEqual(len([item for item in calls if item.method == "PUT"]), 1)
         self.assertEqual(calls[-2].headers["Content-Range"], f"bytes 0-{3 * 1024 * 1024 - 1}/{3 * 1024 * 1024}")
 
+    def test_legacy_mail_preserves_five_attachments_without_inventing_an_annex(self):
+        calls = []
+        real_client = httpx.Client
+
+        def handle(request):
+            calls.append(request)
+            return httpx.Response(202)
+
+        with (
+            patch("app.services.teacher_honoraria_mail.get_settings", return_value=SimpleNamespace(graph_mail_sender="envios@intec.edu.ec")),
+            patch("app.services.teacher_honoraria_mail.get_graph_token", return_value="token"),
+            patch("app.services.teacher_honoraria_mail.httpx.Client", side_effect=lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw)),
+        ):
+            send_teacher_honoraria_mail({'correo': 'teacher@example.test'}, [d for d in documents() if d['document_type'] != 'NOTAS_POR_CARRERA'])
+        self.assertEqual(len(calls), 1)
+        message = json.loads(calls[0].content)['message']
+        self.assertEqual(len(message['attachments']), 5)
+        self.assertNotIn('anexo de notas por carrera', message['body']['content'])
+
     def test_uncertain_graph_response_is_not_treated_as_retriable(self):
         def handle(request):
             if request.url.path.endswith("/messages"):

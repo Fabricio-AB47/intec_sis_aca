@@ -10508,7 +10508,7 @@ async def teacher_signed_documents_archive(
     informe: Annotated[UploadFile, File()],
     notas: Annotated[UploadFile, File()],
     contrato: Annotated[UploadFile, File()],
-    notas_por_carrera: Annotated[UploadFile, File()],
+    notas_por_carrera: Annotated[UploadFile | None, File()] = None,
     factura_xml: Annotated[UploadFile | None, File()] = None,
     ride_pdf: Annotated[UploadFile | None, File()] = None,
     codigo_materia: Annotated[str, Form()] = "",
@@ -10519,7 +10519,12 @@ async def teacher_signed_documents_archive(
     compliance_pdf = await _read_signed_teacher_pdf(informe, "informe de cumplimiento")
     grades_pdf = await _read_signed_teacher_pdf(notas, "reporte de notas")
     contract_pdf = await _read_signed_teacher_pdf(contrato, "contrato")
-    career_grades_pdf = await _read_signed_teacher_pdf(notas_por_carrera, "anexo de notas por carrera")
+    # Older open browser sessions submit the original three signed PDFs.
+    # Validate the career annex when supplied; never fabricate a signed annex.
+    career_grades_pdf = (
+        await _read_signed_teacher_pdf(notas_por_carrera, "anexo de notas por carrera")
+        if notas_por_carrera is not None else None
+    )
     invoice_documents = await _teacher_invoice_backup_documents(factura_xml, ride_pdf)
     archive_bytes = _signed_teacher_documents_archive(
         compliance_pdf,
@@ -10557,7 +10562,7 @@ async def teacher_signed_documents_archive(
             invoice_documents=invoice_documents,
             existing_folder_path=existing_folder_path,
         )
-        expected_item_count = 6 if invoice_documents else 4
+        expected_item_count = 3 + int(career_grades_pdf is not None) + len(invoice_documents)
         stored_items = stored.get("items") if isinstance(stored.get("items"), list) else []
         if len(stored_items) != expected_item_count or not bool(stored.get("same_folder")):
             raise RuntimeError(
@@ -10622,12 +10627,12 @@ async def teacher_signed_documents_archive(
         document_path=stored.get("folder_path"),
         document_url=stored_folder.get("webUrl"),
         detail=(
-            "Seis documentos archivados en OneDrive: informe, notas, contrato, anexo de notas por carrera, "
-            "factura XML y RIDE."
-            if invoice_documents
-            else "Cuatro documentos archivados en OneDrive: informe, notas, contrato y anexo de notas por carrera."
+            f"{expected_item_count} documentos archivados en OneDrive: informe, notas, contrato"
+            + (", anexo de notas por carrera" if career_grades_pdf is not None else "")
+            + (", factura XML y RIDE" if invoice_documents else "") + "."
         ),
         metadata={
+            "anexo_por_carrera_incluido": career_grades_pdf is not None,
             "documentos_guardados": len(stored_items),
             "documentos_en_misma_carpeta": bool(stored.get("same_folder")),
             "carpeta_compartida": stored.get("folder_path"),
@@ -10654,10 +10659,14 @@ async def teacher_signed_documents_archive(
         documents_for_mail = [
             {"filename": "informe-cumplimiento-firmado.pdf", "content": compliance_pdf, "content_type": "application/pdf", "document_type": "INFORME"},
             {"filename": "reporte-notas-secretaria-firmado.pdf", "content": grades_pdf, "content_type": "application/pdf", "document_type": "NOTAS"},
-            {"filename": "reporte-notas-por-carrera-firmado.pdf", "content": career_grades_pdf, "content_type": "application/pdf", "document_type": "NOTAS_POR_CARRERA"},
             {"filename": "contrato-docente-firmado.pdf", "content": contract_pdf, "content_type": "application/pdf", "document_type": "CONTRATO"},
             *invoice_documents,
         ]
+        if career_grades_pdf is not None:
+            documents_for_mail.append({
+                "filename": "reporte-notas-por-carrera-firmado.pdf", "content": career_grades_pdf,
+                "content_type": "application/pdf", "document_type": "NOTAS_POR_CARRERA",
+            })
         try:
             previous_state = await run_in_threadpool(teacher_honoraria_mail_state, stored["folder_path"], identity["cedula"])
             if previous_state == "sent":
@@ -10675,7 +10684,7 @@ async def teacher_signed_documents_archive(
                     subject_code=codigo_materia,
                     period_codes=codigo_periodo or [],
                     document_path=stored.get("folder_path"),
-                    detail="Preparando seis adjuntos para el envío de Honorarios docentes.",
+                    detail=f"Preparando {len(documents_for_mail)} adjuntos para el envío de Honorarios docentes.",
                 )
                 if not marker_saved:
                     raise RuntimeError("No se pudo registrar el intento de envío; el correo no será enviado.")
