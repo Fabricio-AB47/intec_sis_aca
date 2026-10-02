@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, UsersRound } from 'lucide-react'
 
 import {
   ApiError,
@@ -137,15 +138,7 @@ const timestampValue = (value?: string | null): number => {
 }
 
 const messageThreadKey = (message: TeamMessage): string => {
-  return String(message.id || message.rootMessageId || message.threadSubject || message.createdDateTime || 'thread')
-}
-
-const messageGroupKey = (message: TeamMessage): string => {
-  const channelKey = String(message.channelId || message.channelName || 'general').trim().toLowerCase()
-  const dateKey =
-    formatDateOnlyInEcuador(message.threadCreatedDateTime || message.createdDateTimeEcuador || message.createdDateTime) ||
-    'sin-fecha'
-  return `${channelKey}|${dateKey}`
+  return `${String(message.channelId || message.channelName || 'general').trim().toLowerCase()}|${String(message.id || message.rootMessageId || message.threadSubject || message.createdDateTime || 'thread')}`
 }
 
 const messageIdentityKey = (message: TeamMessage): string => {
@@ -220,99 +213,31 @@ const isPublicationRoot = (message: TeamMessage): boolean => {
   return Boolean(String(message.bodyText || message.bodyPreview || message.summary || '').trim())
 }
 
-const sameMessageDay = (first: TeamMessage, second: TeamMessage): boolean => {
-  const firstDate = formatDateOnlyInEcuador(first.createdDateTimeEcuador || first.createdDateTime)
-  const secondDate = formatDateOnlyInEcuador(second.createdDateTimeEcuador || second.createdDateTime)
-  return Boolean(firstDate && secondDate && firstDate === secondDate)
-}
-
-const findNearestMessageThread = (
-  message: TeamMessage,
-  threads: MessageThread[]
-): MessageThread | null => {
-  const messageTime = timestampValue(message.createdDateTime)
-  const channelKey = String(message.channelId || message.channelName || '').trim()
-  const candidates = threads
-    .filter((thread) => {
-      const rootChannelKey = String(thread.root.channelId || thread.root.channelName || '').trim()
-      return (!channelKey || !rootChannelKey || channelKey === rootChannelKey) && sameMessageDay(message, thread.root)
-    })
-    .map((thread) => ({
-      thread,
-      distance: Math.abs(messageTime - timestampValue(thread.root.createdDateTime)),
-    }))
-    .sort((a, b) => a.distance - b.distance)
-
-  return candidates[0]?.thread || null
-}
-
 const buildMessageThreads = (items: TeamMessage[]): MessageThread[] => {
-  const orderedMessages = [...items].sort(
+  const uniqueMessages = new Map<string, TeamMessage>()
+  for (const message of items) {
+    const key = message.id
+      ? `${String(message.channelId || '').toLowerCase()}|${message.id}`
+      : messageIdentityKey(message)
+    if (!uniqueMessages.has(key)) uniqueMessages.set(key, message)
+  }
+
+  const orderedMessages = [...uniqueMessages.values()].sort(
     (a, b) => timestampValue(a.createdDateTime) - timestampValue(b.createdDateTime)
   )
-  const repliesByRoot = new Map<string, TeamMessage[]>()
-  const consumedMessageKeys = new Set<string>()
+  const threads = orderedMessages
+    .filter((message) => !message.isReply && isPublicationRoot(message))
+    .map((root) => ({ root, replies: [] as TeamMessage[] }))
+  const threadsByRoot = new Map(threads.map((thread) => [messageThreadKey(thread.root), thread]))
 
-  for (const reply of orderedMessages.filter((item) => item.isReply)) {
-    const rootKey = String(reply.parentMessageId || reply.rootMessageId || '').trim()
-    if (!rootKey) continue
-    const replies = repliesByRoot.get(rootKey) || []
-    replies.push(reply)
-    repliesByRoot.set(rootKey, replies)
-    consumedMessageKeys.add(messageIdentityKey(reply))
-  }
-
-  const rootCandidates = orderedMessages.filter((item) => !item.isReply)
-  const rootsByGroup = new Map<string, TeamMessage[]>()
-  for (const root of rootCandidates) {
-    const groupKey = messageGroupKey(root)
-    const groupRoots = rootsByGroup.get(groupKey) || []
-    groupRoots.push(root)
-    rootsByGroup.set(groupKey, groupRoots)
-  }
-
-  let rootMessages: TeamMessage[] = []
-  for (const roots of rootsByGroup.values()) {
-    const rootsWithReplies = roots.filter((root) => {
-      const rootKey = String(root.id || root.rootMessageId || '').trim()
-      return (root.replyCount || 0) > 0 || (rootKey ? (repliesByRoot.get(rootKey) || []).length > 0 : false)
-    })
-    rootMessages.push(...(rootsWithReplies.length > 0 ? rootsWithReplies : roots.filter(isPublicationRoot)))
-  }
-
-  if (rootMessages.length === 0) {
-    rootMessages = rootCandidates
-  }
-
-  const threads = rootMessages.map((root) => {
-    const rootKey = String(root.id || root.rootMessageId || '').trim()
-    consumedMessageKeys.add(messageIdentityKey(root))
-    return {
-      root,
-      replies: [...(repliesByRoot.get(rootKey) || [])],
-    }
-  })
-
-  for (const message of orderedMessages) {
-    const messageKey = messageIdentityKey(message)
-    if (consumedMessageKeys.has(messageKey)) continue
-
-    const targetThread = findNearestMessageThread(message, threads)
-    if (targetThread) {
-      targetThread.replies.push({
-        ...message,
-        isReply: true,
-        parentMessageId: targetThread.root.id || targetThread.root.rootMessageId || null,
-        rootMessageId: targetThread.root.id || targetThread.root.rootMessageId || message.rootMessageId,
-        threadSubject: targetThread.root.subject || targetThread.root.threadSubject || message.threadSubject,
-      })
-      consumedMessageKeys.add(messageKey)
-      continue
-    }
-
-    if (!message.isReply) {
-      threads.push({ root: message, replies: [] })
-      consumedMessageKeys.add(messageKey)
+  for (const reply of orderedMessages.filter((message) => message.isReply)) {
+    const rootId = String(reply.parentMessageId || reply.rootMessageId || '').trim()
+    const channelId = String(reply.channelId || reply.channelName || 'general').trim().toLowerCase()
+    const parent = rootId ? threadsByRoot.get(`${channelId}|${rootId}`) : null
+    if (parent) {
+      parent.replies.push(reply)
+    } else if (!isInternalPublicationActivity({ ...reply, isReply: false })) {
+      threads.push({ root: { ...reply, isReply: false }, replies: [] })
     }
   }
 
@@ -460,7 +385,7 @@ export function TeamsView({
   const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false)
   const [isTeamDetailScreenOpen, setIsTeamDetailScreenOpen] = useState(false)
   const [teamNameFilter, setTeamNameFilter] = useState('')
-  const [modalTeamIndex, setModalTeamIndex] = useState<number | null>(null)
+  const [modalTeamId, setModalTeamId] = useState<string | null>(null)
   const [activeInfoTab, setActiveInfoTab] = useState<TeamInfoTab>('participants')
   const [callStatus, setCallStatus] = useState<TeamCallStatus | null>(null)
   const [participants, setParticipants] = useState<TeamParticipant[]>([])
@@ -479,6 +404,9 @@ export function TeamsView({
   const [attendanceNote, setAttendanceNote] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState<string>('')
   const [openMessageThreadKeys, setOpenMessageThreadKeys] = useState<string[]>([])
+  const teamInfoRequestId = useRef(0)
+  const activeTeamId = useRef('')
+  const autoInviteStarted = useRef(false)
 
   const toErrorMessage = useCallback((error: unknown): string => {
     if (error instanceof ApiError) return error.message
@@ -497,10 +425,9 @@ export function TeamsView({
       .filter(({ team }) => (team.displayName || '').toLowerCase().includes(normalizedFilter))
   }, [catalogTeams, teamNameFilter])
 
-  const modalSelectedTeam =
-    modalTeamIndex === null || modalTeamIndex < 0 || modalTeamIndex >= catalogTeams.length
-      ? null
-      : catalogTeams[modalTeamIndex]
+  const modalSelectedTeam = modalTeamId
+    ? catalogTeams.find((team) => team.id?.toLowerCase() === modalTeamId.toLowerCase()) || null
+    : null
 
   const academicIdentity = useMemo(
     () => extractAcademicIdentity(modalSelectedTeam),
@@ -598,9 +525,21 @@ export function TeamsView({
   }, [recordingDiscovery, recordingSummary, recordings])
 
   const loadTeamInfo = useCallback(async (teamId: string) => {
+    const requestId = ++teamInfoRequestId.current
+    activeTeamId.current = teamId
     setTeamInfoError('')
     setTeamInfoLoading(true)
     setAttendanceNote('')
+    setCallStatus(null)
+    setParticipants([])
+    setCourses([])
+    setRecordings([])
+    setRecordingSummary(null)
+    setRecordingDiscovery(null)
+    setAttendance([])
+    setMessages([])
+    setOpenMessageThreadKeys([])
+    setLastRefreshAt('')
 
     const [statusResult, participantsResult, coursesResult, recordingsResult, attendanceResult, messagesResult] =
       await Promise.allSettled([
@@ -611,6 +550,7 @@ export function TeamsView({
         fetchTeamAttendance(teamId),
         fetchTeamMessages(teamId),
       ])
+    if (requestId !== teamInfoRequestId.current) return
 
     if (statusResult.status === 'fulfilled') {
       setCallStatus(statusResult.value)
@@ -680,19 +620,25 @@ export function TeamsView({
     const teamId = url.searchParams.get('auto_invite_team_id')
     const msConnected = url.searchParams.get('ms_connected')
 
-    if (!teamId || msConnected !== '1') {
+    if (!teamId || msConnected !== '1' || autoInviteStarted.current) {
       return
     }
+    autoInviteStarted.current = true
+    if (!catalogLoading && !catalogTeams.some((team) => team.id?.toLowerCase() === teamId.toLowerCase())) onLoadCatalog()
 
     const run = async () => {
       try {
+        teamInfoRequestId.current += 1
+        activeTeamId.current = teamId
         setIsTeamsModalOpen(true)
         setIsTeamDetailScreenOpen(true)
+        setModalTeamId(teamId)
         setActiveInfoTab('status')
         setTeamInfoError('')
         setTeamInfoMessage('Ejecutando invitacion masiva automatica...')
 
         const result = await inviteMissingParticipants(teamId)
+        if (activeTeamId.current !== teamId) return
         if (result.needs_microsoft_connect) {
           redirectToMicrosoftConnect(teamId, result.connect_url)
           return
@@ -700,6 +646,7 @@ export function TeamsView({
         setTeamInfoMessage(result.message || 'Invitacion automática completada.')
         await loadTeamInfo(teamId)
       } catch (error) {
+        if (activeTeamId.current !== teamId) return
         if (isMicrosoftConnectRequiredError(error)) {
           redirectToMicrosoftConnect(teamId)
           return
@@ -710,17 +657,30 @@ export function TeamsView({
         url.searchParams.delete('auto_invite_team_id')
         url.searchParams.delete('open_page')
         globalThis.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+        autoInviteStarted.current = false
       }
     }
 
     void run()
-  }, [isMicrosoftConnectRequiredError, loadTeamInfo, redirectToMicrosoftConnect, toErrorMessage])
+  }, [catalogLoading, catalogTeams, isMicrosoftConnectRequiredError, loadTeamInfo, onLoadCatalog, redirectToMicrosoftConnect, toErrorMessage])
+
+  useEffect(() => {
+    if (!isTeamsModalOpen || !isTeamDetailScreenOpen || !modalTeamId) return
+    const index = catalogTeams.findIndex((team) => team.id?.toLowerCase() === modalTeamId.toLowerCase())
+    if (index >= 0 && index !== selectedTeamIndex) {
+      onSelectTeam(index)
+      onTeamIdFromCatalog(modalTeamId)
+    }
+  }, [catalogTeams, isTeamDetailScreenOpen, isTeamsModalOpen, modalTeamId, onSelectTeam, onTeamIdFromCatalog, selectedTeamIndex])
 
   const handleInfoTabClick = (tab: TeamInfoTab) => {
     setActiveInfoTab(tab)
   }
 
   const closeTeamsModal = () => {
+    teamInfoRequestId.current += 1
+    activeTeamId.current = ''
+    setTeamInfoLoading(false)
     setIsTeamsModalOpen(false)
     setIsTeamDetailScreenOpen(false)
   }
@@ -731,24 +691,18 @@ export function TeamsView({
     setIsTeamDetailScreenOpen(false)
     setTeamNameFilter('')
     setActiveInfoTab('status')
-    setModalTeamIndex(initialIndex)
+    setModalTeamId(initialIndex === null ? null : catalogTeams[initialIndex]?.id || null)
     setTeamInfoError('')
     setTeamInfoMessage('')
     setJoinRequestUrl('')
     setJoinRequestCount(0)
     setLastRefreshAt('')
 
-    if (initialIndex !== null) {
-      const team = catalogTeams[initialIndex]
-      if (team?.id) {
-        void loadTeamInfo(team.id)
-      }
-    }
   }
 
   const handlePickTeam = (index: number) => {
     const team = catalogTeams[index]
-    setModalTeamIndex(index)
+    setModalTeamId(team?.id || null)
     setIsTeamDetailScreenOpen(true)
     setActiveInfoTab('status')
     setTeamInfoError('')
@@ -763,8 +717,8 @@ export function TeamsView({
   }
 
   const refreshSelectedTeamInfo = () => {
-    if (modalSelectedTeam?.id) {
-      void loadTeamInfo(modalSelectedTeam.id)
+    if (modalTeamId) {
+      void loadTeamInfo(modalTeamId)
     }
   }
 
@@ -777,7 +731,8 @@ export function TeamsView({
   }
 
   const handleInviteMissing = async () => {
-    if (!modalSelectedTeam?.id) {
+    const teamId = modalTeamId || ''
+    if (!teamId) {
       setTeamInfoError('Seleccione un equipo para invitar participantes faltantes.')
       return
     }
@@ -789,11 +744,12 @@ export function TeamsView({
     setJoinRequestCount(0)
 
     try {
-      const result = await inviteMissingParticipants(modalSelectedTeam.id)
+      const result = await inviteMissingParticipants(teamId)
+      if (activeTeamId.current !== teamId) return
       setTeamInfoMessage(result.message || 'Invitacion procesada correctamente.')
 
       if (result.needs_microsoft_connect) {
-        redirectToMicrosoftConnect(modalSelectedTeam.id, result.connect_url)
+        redirectToMicrosoftConnect(teamId, result.connect_url)
         return
       }
 
@@ -802,10 +758,11 @@ export function TeamsView({
         setJoinRequestCount(result.missing_participants?.length || 0)
       }
 
-      await loadTeamInfo(modalSelectedTeam.id)
+      await loadTeamInfo(teamId)
     } catch (error) {
+      if (activeTeamId.current !== teamId) return
       if (isMicrosoftConnectRequiredError(error)) {
-        redirectToMicrosoftConnect(modalSelectedTeam.id)
+        redirectToMicrosoftConnect(teamId)
         return
       }
       setTeamInfoError(toErrorMessage(error))
@@ -1119,7 +1076,7 @@ export function TeamsView({
           ) : null}
 
           <div className="teams-actions">
-            <button type="button" onClick={() => void handleInviteMissing()} disabled={inviteLoading || !modalSelectedTeam?.id}>
+            <button type="button" onClick={() => void handleInviteMissing()} disabled={inviteLoading || !modalTeamId}>
               {inviteLoading ? 'Invitando...' : 'Invitacion masiva a faltantes'}
             </button>
           </div>
@@ -1177,9 +1134,6 @@ export function TeamsView({
         <div>
           <p className="eyebrow">Microsoft Teams</p>
           <h2>Movimientos Teams</h2>
-          <p className="report-description">
-            Consulta global de aulas, detalles y actividad de Microsoft Teams con una distribución simetrica.
-          </p>
         </div>
 
         <div className="student-topbar__right">
@@ -1192,70 +1146,46 @@ export function TeamsView({
         </div>
       </header>
 
-      <section className="student-grid student-grid--content teams-page-grid">
-        <article className="student-card student-card--wide">
-          <div className="card-head">
-            <h3>Catálogo de aulas de Teams</h3>
-            <span>Consulta global desde Microsoft Graph</span>
+      <section className="teams-page-overview" aria-labelledby="teams-catalog-heading">
+        <div className="teams-page-overview__toolbar">
+          <div>
+            <h3 id="teams-catalog-heading">Aulas de Teams</h3>
+            <span>Catálogo institucional</span>
           </div>
-
-          <p className="empty-block">
-            Carga todas las aulas disponibles en el tenant, sin depender del usuario actual.
-          </p>
-
-          <div className="teams-actions">
+          <div className="teams-page-overview__actions">
             <button type="button" onClick={onLoadCatalog} disabled={catalogLoading}>
-              {catalogLoading ? 'Consultando...' : 'Cargar aulas de Teams'}
+              <RefreshCw size={16} aria-hidden="true" />
+              {catalogLoading ? 'Consultando...' : catalogTeams.length > 0 ? 'Actualizar aulas' : 'Cargar aulas'}
             </button>
-          </div>
-
-          {catalogMessage ? <p className="teams-message">{catalogMessage}</p> : null}
-          {catalogError ? <p className="teams-error">{catalogError}</p> : null}
-        </article>
-
-        <article className="student-card teams-summary-card">
-          <div className="card-head">
-            <h3>Resumen</h3>
-            <span>{catalogTeams.length} aulas</span>
-          </div>
-
-          <div className="teams-summary">
-            <div>
-              <strong>Total de aulas</strong>
-              <p>{catalogTeams.length}</p>
-            </div>
-            <div>
-              <strong>Equipo seleccionado</strong>
-              <p>{selectedTeam?.displayName || selectedTeam?.id || 'Ninguno'}</p>
-            </div>
-            <div>
-              <strong>Estado</strong>
-              <p>{catalogLoading ? 'Cargando...' : 'Listo'}</p>
-            </div>
-          </div>
-        </article>
-
-        <article className="student-card student-card--wide">
-          <div className="card-head">
-            <h3>Lista de Teams</h3>
-            <span>Haga clic para ver detalles</span>
-          </div>
-
-          <div className="teams-actions">
             <button
               type="button"
+              className="teams-page-overview__secondary"
               onClick={openTeamsModal}
               disabled={catalogTeams.length === 0}
             >
+              <UsersRound size={16} aria-hidden="true" />
               Ver equipos
             </button>
           </div>
+        </div>
 
-          <p className="empty-block">
-            Use el botón «Ver equipos» para abrir la subpantalla, navegar por nombre y revisar
-            detalles del Team.
-          </p>
-        </article>
+        <div className="teams-page-overview__summary" aria-live="polite">
+          <div>
+            <strong>Total de aulas</strong>
+            <p>{catalogTeams.length}</p>
+          </div>
+          <div>
+            <strong>Equipo seleccionado</strong>
+            <p>{selectedTeam?.displayName || selectedTeam?.id || 'Ninguno'}</p>
+          </div>
+          <div>
+            <strong>Estado</strong>
+            <p>{catalogLoading ? 'Cargando...' : catalogError ? 'Error' : catalogTeams.length > 0 ? 'Disponible' : 'Sin cargar'}</p>
+          </div>
+        </div>
+
+        {catalogMessage ? <p className="teams-message">{catalogMessage}</p> : null}
+        {catalogError ? <p className="teams-error">{catalogError}</p> : null}
 
         {isTeamsModalOpen ? (
           <div className="teams-modal-overlay">
@@ -1264,7 +1194,7 @@ export function TeamsView({
                 <h3>{isTeamDetailScreenOpen ? 'Información del Team' : 'Seleccionar equipo'}</h3>
                 <span>
                   {isTeamDetailScreenOpen
-                    ? modalSelectedTeam?.displayName || 'Sin equipo seleccionado'
+                    ? modalSelectedTeam?.displayName || modalTeamId || 'Sin equipo seleccionado'
                     : `${filteredTeams.length} resultados`}
                 </span>
               </div>
@@ -1294,7 +1224,7 @@ export function TeamsView({
                         <button
                           key={team.id || `${team.displayName || 'team'}-${index}`}
                           type="button"
-                          className={`team-item ${modalTeamIndex === index ? 'team-item--active' : ''}`}
+                          className={`team-item ${modalTeamId?.toLowerCase() === team.id?.toLowerCase() ? 'team-item--active' : ''}`}
                           onClick={() => handlePickTeam(index)}
                         >
                           <strong>{team.displayName || 'Sin nombre'}</strong>
@@ -1310,15 +1240,15 @@ export function TeamsView({
               ) : (
                 <section className="teams-modal-info teams-modal-info--detail">
                   <div className="card-head">
-                    <h3>{modalSelectedTeam?.displayName || 'Sin equipo seleccionado'}</h3>
-                    <span>{modalSelectedTeam?.id || ''}</span>
+                    <h3>{modalSelectedTeam?.displayName || modalTeamId || 'Sin equipo seleccionado'}</h3>
+                    <span>{modalTeamId || ''}</span>
                   </div>
 
                   <div className="teams-actions">
                     <button type="button" onClick={() => setIsTeamDetailScreenOpen(false)}>
                       Volver a equipos
                     </button>
-                    <button type="button" onClick={refreshSelectedTeamInfo} disabled={teamInfoLoading || !modalSelectedTeam?.id}>
+                    <button type="button" onClick={refreshSelectedTeamInfo} disabled={teamInfoLoading || !modalTeamId}>
                       {teamInfoLoading ? 'Actualizando...' : 'Actualizar información'}
                     </button>
                     <button type="button" onClick={closeTeamsModal}>
@@ -1328,10 +1258,10 @@ export function TeamsView({
 
                   <div className="teams-team-profile">
                     <div>
-                      <strong>{modalSelectedTeam?.displayName || 'Sin nombre'}</strong>
+                      <strong>{modalSelectedTeam?.displayName || modalTeamId || 'Sin nombre'}</strong>
                       <span>{modalSelectedTeam?.mail || 'Sin correo del grupo'}</span>
                       <span>{modalSelectedTeam?.description || 'Sin descripción registrada'}</span>
-                      <small>ID: {modalSelectedTeam?.id || 'N/D'}</small>
+                      <small>ID: {modalTeamId || 'N/D'}</small>
                     </div>
                     {modalSelectedTeam?.webUrl ? (
                       <a href={modalSelectedTeam.webUrl} target="_blank" rel="noreferrer" className="teams-link-btn">

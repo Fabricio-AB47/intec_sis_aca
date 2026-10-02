@@ -28,6 +28,7 @@ _SCREEN_GROUP_ALIASES = {
     "Matrícula / Operación": "Matrícula",
     "Matrícula / Control académico": "Matrícula",
     "Operación / Matrícula": "Matrícula",
+    "Operación / Integraciones": "Integraciones",
 }
 
 
@@ -136,8 +137,8 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
         "Analizar PEA y sílabos mediante texto u OCR para enriquecer la malla.",
         "Académico",
     ),
-    _screen("teams", "Movimientos Teams", "Equipos, clases, grabaciones y actividad Microsoft 365.", "Microsoft 365"),
-    _screen("teams-matricula", "Matrícula en Teams", "Creación de aulas y matriculación en Microsoft Teams.", "Microsoft 365"),
+    _screen("teams", "Movimientos Teams", "Equipos, clases, grabaciones y actividad Microsoft 365.", "Integraciones"),
+    _screen("teams-matricula", "Matrícula en Teams", "Creación de aulas y matriculación en Microsoft Teams.", "Integraciones"),
     _screen(
         "moodle-teams",
         "Matrícula Moodle-Teams",
@@ -170,8 +171,8 @@ BASE_SCREEN_CATALOG: tuple[dict[str, str], ...] = (
     ),
     _screen("matricula-excel-certificados", "Certificados desde Excel", "Generación masiva de certificados desde Excel.", "Certificados"),
     _screen("renombrar-certificados", "Renombrar certificados", "Organización y renombrado de documentos.", "Certificados"),
-    _screen("credenciales", "Credenciales", "Generación institucional de credenciales.", "Documentos"),
-    _screen("correos-masivos", "Correos masivos", "Envíos institucionales y documentos asociados.", "Comunicación"),
+    _screen("credenciales", "Credenciales", "Generación institucional de credenciales.", "Integraciones"),
+    _screen("correos-masivos", "Correos masivos", "Envíos institucionales y documentos asociados.", "Integraciones"),
     _screen("carnet-institucional", "Carné institucional", "Foto, aprobación y emisión de carnés.", "Comunicación"),
     _screen("fecha-grado", "Fecha de grado", "Carga SENESCYT, actas y datos de grado.", "Actualización"),
     _screen("titulacion", "Verificación de titulación", "Requisitos previos y selección de modalidad.", "Titulación"),

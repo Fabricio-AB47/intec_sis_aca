@@ -29,6 +29,17 @@ const UPDATE_SCREEN_PAGES = new Set<ScreenPermissionCode>([
   'gestion-sisacademico/actualizacion_est',
   'gestion-sisacademico/actualizacion_estudiantes',
 ])
+const INTEGRATION_SCREEN_PAGES = new Set<ScreenPermissionCode>([
+  'credenciales',
+  'correos-masivos',
+  'teams',
+  'teams-matricula',
+  'moodle-teams',
+  'moodle/enrollment-validation',
+  'gestion-sisacademico/moodle_notas',
+  'gestion-sisacademico/moodle_sincronizacion',
+  'gestion-sisacademico/microsoft365_audit',
+])
 const ENROLLMENT_GROUP_ALIASES = new Set([
   'inscripcion / matricula',
   'matricula / operacion',
@@ -46,6 +57,7 @@ function normalizedGroupName(value: string) {
 
 function canonicalScreenGroup(page: ScreenPermissionCode, group: string) {
   if (UPDATE_SCREEN_PAGES.has(page)) return 'Actualización'
+  if (INTEGRATION_SCREEN_PAGES.has(page)) return 'Integraciones'
 
   const normalizedGroup = normalizedGroupName(group)
   if (normalizedGroup === 'actualizacion' || normalizedGroup === 'actualizaciones') return 'Actualización'

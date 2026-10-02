@@ -432,8 +432,6 @@ function groupIconName(groupKey: string): GroupIconName {
     'educacion-continua': 'catalog',
     'documentacion-academica': 'documents',
     titulacion: 'student',
-    'grupo-integraciones-v1': 'integration',
-    'integraciones-academicas': 'integration',
     'reportes-rh': 'report',
     integraciones: 'integration',
     moodle: 'integration',
@@ -1338,34 +1336,6 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'grupo-integraciones-v1',
-      title: 'Integraciones V1',
-      summary: 'Moodle y Microsoft 365',
-      items: [
-        {
-          label: 'Notas Moodle',
-          description: 'Notas sincronizadas por estudiante, materia y componente.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'moodle_notas',
-          action: () => onOpenGestionSisAcademico('moodle_notas'),
-        },
-        {
-          label: 'Sincronización Moodle',
-          description: 'Historial de procesos de sincronización de calificaciones.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'moodle_sincronizacion',
-          action: () => onOpenGestionSisAcademico('moodle_sincronizacion'),
-        },
-        {
-          label: 'Auditoría de Microsoft 365',
-          description: 'Acciones, estados y errores de servicios Microsoft 365.',
-          page: 'gestion-sisacademico',
-          sectionKey: 'microsoft365_audit',
-          action: () => onOpenGestionSisAcademico('microsoft365_audit'),
-        },
-      ],
-    },
-    {
       key: 'carnetizacion',
       title: 'Carnetización',
       summary: 'Aprobación, renovación y emisión de carnés',
@@ -1583,8 +1553,29 @@ export function StudentLayout({
     {
       key: 'integraciones',
       title: 'Integraciones',
-      summary: 'Teams, Office 365 y servicios externos',
+      summary: 'Moodle, Teams y Microsoft 365',
       items: [
+        {
+          label: 'Notas Moodle',
+          description: 'Notas sincronizadas por estudiante, materia y componente.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_notas',
+          action: () => onOpenGestionSisAcademico('moodle_notas'),
+        },
+        {
+          label: 'Sincronización Moodle',
+          description: 'Historial de procesos de sincronización de calificaciones.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'moodle_sincronizacion',
+          action: () => onOpenGestionSisAcademico('moodle_sincronizacion'),
+        },
+        {
+          label: 'Auditoría de Microsoft 365',
+          description: 'Acciones, estados y errores de servicios Microsoft 365.',
+          page: 'gestion-sisacademico',
+          sectionKey: 'microsoft365_audit',
+          action: () => onOpenGestionSisAcademico('microsoft365_audit'),
+        },
         {
           label: 'Validación de matrículas Moodle',
           description: 'Comparación de matrículas académicas y Moodle por período.',
@@ -2048,8 +2039,8 @@ export function StudentLayout({
       ],
     },
     {
-      key: 'integraciones-academicas',
-      title: 'Integraciones académicas',
+      key: 'integraciones',
+      title: 'Integraciones',
       summary: 'Moodle y Microsoft 365',
       items: [
         {

@@ -671,7 +671,7 @@ def _is_recording_drive_item(file_item: dict[str, Any]) -> bool:
 
 def _dedupe_recording_items(file_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     recordings: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: dict[str, dict[str, Any]] = {}
 
     for file_item in file_items:
         if not _is_recording_drive_item(file_item):
@@ -688,9 +688,13 @@ def _dedupe_recording_items(file_items: list[dict[str, Any]]) -> list[dict[str, 
                 str(item.get("sizeBytes") or ""),
             ]
         )
-        if key in seen:
+        existing = seen.get(key)
+        if existing is not None:
+            if item.get("channelId") and not existing.get("channelId"):
+                for field in ("storageSource", "sourceLabel", "channelId", "channelName", "parentPath"):
+                    existing[field] = item.get(field)
             continue
-        seen.add(key)
+        seen[key] = item
         recordings.append(item)
 
     recordings.sort(key=lambda item: str(item.get("startTime") or item.get("lastModifiedDateTime") or ""), reverse=True)
@@ -2256,7 +2260,13 @@ def teams_catalog(
     )
 
     try:
-        return graph_get_all(url)
+        payload = graph_get_all(url)
+        teams_by_id: dict[str, dict[str, Any]] = {}
+        for team in _graph_value_items(payload):
+            team_id = str(team.get("id") or "").strip().lower()
+            if team_id:
+                teams_by_id.setdefault(team_id, team)
+        return {**payload, "value": list(teams_by_id.values()), "count": len(teams_by_id)}
     except httpx.HTTPStatusError as exc:
         _raise_graph_http_exception(exc)
     except RuntimeError as exc:
@@ -2309,7 +2319,11 @@ def teams_courses(
 
     try:
         payload = graph_get_all(url)
-        channels = _graph_value_items(payload)
+        channels = list({
+            str(channel.get("id") or "").strip().lower(): channel
+            for channel in _graph_value_items(payload)
+            if str(channel.get("id") or "").strip()
+        }.values())
         items: list[dict[str, Any]] = [
             {
                 "id": channel.get("id"),
@@ -2427,38 +2441,6 @@ def teams_recordings(
         except (httpx.HTTPStatusError, RuntimeError) as exc:
             return None, _recording_discovery_warning(f"SharePoint del canal {channel_name}", exc)
 
-    def resolve_owner_folder(owner: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-        owner_id = str(owner.get("id") or "").strip()
-        owner_name = str(
-            owner.get("displayName") or owner.get("mail") or owner.get("userPrincipalName") or "Propietario"
-        ).strip()
-        if not owner_id:
-            return None, None
-        try:
-            folder = graph_get(
-                f"https://graph.microsoft.com/v1.0/users/{quote(owner_id, safe='')}/drive/root:/Recordings"
-                "?$select=id,name,webUrl,parentReference"
-            )
-            parent_reference = (
-                cast(dict[str, Any], folder.get("parentReference"))
-                if isinstance(folder.get("parentReference"), dict)
-                else {}
-            )
-            drive_id = str(parent_reference.get("driveId") or "").strip()
-            folder_id = str(folder.get("id") or "").strip()
-            if not drive_id or not folder_id:
-                raise RuntimeError("Graph no devolvió la carpeta Recordings del propietario")
-            return {
-                "driveId": drive_id,
-                "folderId": folder_id,
-                "folderWebUrl": folder.get("webUrl"),
-                "parentPath": parent_reference.get("path"),
-                "ownerId": owner_id,
-                "ownerName": owner_name,
-            }, None
-        except (httpx.HTTPStatusError, RuntimeError) as exc:
-            return None, _recording_discovery_warning(f"OneDrive de {owner_name}", exc)
-
     def scan_location(location: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, str | None]:
         local_candidates: list[dict[str, Any]] = []
         location_succeeded = False
@@ -2575,8 +2557,16 @@ def teams_recordings(
                 if warning:
                     discovery_warnings.append(warning)
 
-        channels = indexes.get("Canales del Team", [])
-        group_drives = indexes.get("Bibliotecas SharePoint del Team", [])
+        channels = list({
+            str(item.get("id") or "").strip().lower(): item
+            for item in indexes.get("Canales del Team", [])
+            if str(item.get("id") or "").strip()
+        }.values())
+        group_drives = list({
+            str(item.get("id") or "").strip().lower(): item
+            for item in indexes.get("Bibliotecas SharePoint del Team", [])
+            if str(item.get("id") or "").strip()
+        }.values())
         owners = indexes.get("Propietarios del Team", [])
         members = indexes.get("Miembros del Team", [])
         try:
@@ -2589,20 +2579,15 @@ def teams_recordings(
             discovery_warnings.append(_recording_discovery_warning("Información del Team", exc))
 
         channel_folders: list[dict[str, Any]] = []
-        owner_folders: list[dict[str, Any]] = []
-        resolution_jobs = len(channels) + len(owners)
-        if resolution_jobs:
-            with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, resolution_jobs)) as executor:
+        if channels:
+            with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, len(channels))) as executor:
                 channel_futures = [executor.submit(resolve_channel_folder, channel) for channel in channels]
-                owner_futures = [executor.submit(resolve_owner_folder, owner) for owner in owners]
-                for future in as_completed(channel_futures + owner_futures):
+                for future in as_completed(channel_futures):
                     resolved, warning = future.result()
                     if warning:
                         discovery_warnings.append(warning)
-                    elif resolved and "channelId" in resolved:
-                        channel_folders.append(resolved)
                     elif resolved:
-                        owner_folders.append(resolved)
+                        channel_folders.append(resolved)
 
         locations_by_key: dict[str, dict[str, Any]] = {}
         group_drive_ids = {str(drive.get("id") or "").strip() for drive in group_drives}
@@ -2659,35 +2644,6 @@ def teams_recordings(
                 "skipSearchWhenChildrenFails": is_standard_channel,
             }
 
-        for folder in owner_folders:
-            drive_id = str(folder["driveId"])
-            folder_id = str(folder["folderId"])
-            encoded_drive_id = quote(drive_id, safe="")
-            encoded_folder_id = quote(folder_id, safe="")
-            owner_name = str(folder["ownerName"])
-            locations_by_key[f"owner:{drive_id}:{folder_id}"] = {
-                "sourceLabel": f"OneDrive de {owner_name}",
-                "metadata": {
-                    "storageSource": "OWNER_ONEDRIVE",
-                    "sourceLabel": f"OneDrive de {owner_name}",
-                    "driveId": drive_id,
-                    "driveName": "Recordings",
-                    "driveType": "business",
-                    "driveWebUrl": folder.get("folderWebUrl"),
-                    "ownerId": folder["ownerId"],
-                    "ownerName": owner_name,
-                    "parentPath": folder.get("parentPath"),
-                },
-                "searchBaseUrl": (
-                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/{encoded_folder_id}"
-                ),
-                "recordingsChildrenUrl": (
-                    f"https://graph.microsoft.com/v1.0/drives/{encoded_drive_id}/items/"
-                    f"{encoded_folder_id}/children?$select={select_fields}"
-                ),
-                "skipSearchWhenChildrenSucceeds": True,
-            }
-
         locations = list(locations_by_key.values())
         if locations:
             with ThreadPoolExecutor(max_workers=min(_GRAPH_PARALLEL_WORKERS, len(locations))) as executor:
@@ -2710,6 +2666,8 @@ def teams_recordings(
             if drive_id and folder_name:
                 full_path = f"{parent_path}/{folder_name}".lower()
                 channel_paths_by_drive.setdefault(drive_id, []).append((full_path, folder))
+        for paths in channel_paths_by_drive.values():
+            paths.sort(key=lambda entry: len(entry[0]), reverse=True)
 
         # A single scan covers all standard channels in the Team library. Restore
         # the channel identity from each item's parent path without another request.
@@ -2722,7 +2680,7 @@ def teams_recordings(
             drive_id = str(candidate.get("driveId") or parent_reference.get("driveId") or "")
             item_path = str(parent_reference.get("path") or "").lower()
             for channel_path, folder in channel_paths_by_drive.get(drive_id, []):
-                if item_path.startswith(channel_path):
+                if item_path == channel_path or item_path.startswith(f"{channel_path}/"):
                     channel_name = str(folder.get("channelName") or "Canal")
                     candidate.update(
                         {
@@ -2948,7 +2906,13 @@ def teams_attendance(
         payload = graph_get_all(url)
         events = _graph_value_items(payload)
         items: list[dict[str, Any]] = []
+        seen_events: set[str] = set()
         for event in events:
+            event_id = str(event.get("id") or "").strip()
+            if event_id and event_id in seen_events:
+                continue
+            if event_id:
+                seen_events.add(event_id)
             attendees_info = event.get("attendees")
             start, start_tz, _ = _event_datetime_field(event, "start")
             end, end_tz, _ = _event_datetime_field(event, "end")
@@ -3004,7 +2968,12 @@ def teams_messages(
         reply_errors: list[dict[str, Any]] = []
         root_entries: list[tuple[str, str, dict[str, Any]]] = []
 
-        valid_channels = [channel for channel in channels if str(channel.get("id") or "").strip()]
+        valid_channels = list({
+            str(channel.get("id") or "").strip().lower(): channel
+            for channel in channels
+            if str(channel.get("id") or "").strip()
+        }.values())
+        seen_roots: set[tuple[str, str]] = set()
         if valid_channels:
             workers = min(_GRAPH_PARALLEL_WORKERS, len(valid_channels))
             with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -3032,13 +3001,19 @@ def teams_messages(
                     channel_id = loaded_channel_id or channel_id
                     channel_name = loaded_channel_name or channel_name
                     raw_message_count += len(message_items)
-                    root_message_count += len(message_items)
                     for message in message_items:
+                        message_id = str(message.get("id") or "").strip()
+                        message_key = (channel_id.lower(), message_id)
+                        if message_id and message_key in seen_roots:
+                            continue
+                        if message_id:
+                            seen_roots.add(message_key)
                         root_entries.append(
                             (channel_id, channel_name, _graph_channel_message_item(channel_id, channel_name, message))
                         )
+                        root_message_count += 1
 
-        reply_results: dict[str, list[dict[str, Any]]] = {}
+        reply_results: dict[tuple[str, str], list[dict[str, Any]]] = {}
         reply_targets = [
             (channel_id, channel_name, root_item)
             for channel_id, channel_name, root_item in root_entries
@@ -3059,10 +3034,11 @@ def teams_messages(
                 for future in as_completed(futures):
                     channel_id, channel_name, root_item = futures[future]
                     message_id = str(root_item.get("id") or "").strip()
+                    message_key = (channel_id.lower(), message_id)
                     try:
-                        reply_results[message_id] = future.result()
+                        reply_results[message_key] = future.result()
                     except httpx.HTTPStatusError as reply_exc:
-                        reply_results[message_id] = []
+                        reply_results[message_key] = []
                         reply_errors.append(
                             {
                                 "channelId": channel_id,
@@ -3075,7 +3051,17 @@ def teams_messages(
 
         for channel_id, channel_name, root_item in root_entries:
             message_id = str(root_item.get("id") or "").strip()
-            replies = reply_results.get(message_id, [])
+            raw_replies = reply_results.get((channel_id.lower(), message_id), [])
+            raw_message_count += len(raw_replies)
+            replies: list[dict[str, Any]] = []
+            seen_replies: set[str] = set()
+            for reply in raw_replies:
+                reply_id = str(reply.get("id") or "").strip()
+                if reply_id and reply_id in seen_replies:
+                    continue
+                if reply_id:
+                    seen_replies.add(reply_id)
+                replies.append(reply)
             root_item["replyCount"] = len(replies)
             if any(_is_recording_channel_message(reply) for reply in replies):
                 root_item["isRecordingRelated"] = True
@@ -3083,7 +3069,6 @@ def teams_messages(
                 root_item["activityLabel"] = "Hilo con grabacion"
             messages.append(root_item)
             reply_message_count += len(replies)
-            raw_message_count += len(replies)
 
             root_subject = str(root_item.get("threadSubject") or root_item.get("subject") or "")
             root_created_datetime = str(root_item.get("createdDateTime") or "")
@@ -3108,8 +3093,8 @@ def teams_messages(
             "root_message_count": root_message_count,
             "reply_message_count": reply_message_count,
             "recording_message_count": recording_message_count,
-            "channel_count": len(channels),
-            "scanned_channel_count": max(0, len(channels) - len(channel_errors)),
+            "channel_count": len(valid_channels),
+            "scanned_channel_count": max(0, len(valid_channels) - len(channel_errors)),
             "channel_errors": channel_errors,
             "reply_errors": reply_errors,
             "filter": "all_channel_messages_with_replies",

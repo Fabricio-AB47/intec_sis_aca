@@ -8182,7 +8182,7 @@ def _teacher_compliance_model_pdf(
         canvas.setFont("Times-Italic", 8)
         canvas.drawString(
             x, y - 84,
-            f"Base: {summary['graded']} con nota final; {summary['ungraded']} sin nota final.",
+            f"Observación: {summary['graded']} con nota final; {summary['ungraded']} sin nota final.",
         )
         canvas.restoreState()
         return y - 96
