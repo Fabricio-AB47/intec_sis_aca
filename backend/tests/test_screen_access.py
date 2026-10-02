@@ -63,6 +63,25 @@ class ScreenAccessCatalogTests(unittest.TestCase):
     def test_catalog_codes_fit_the_database_column(self) -> None:
         self.assertLessEqual(max(map(len, ALL_PAGES)), 80)
 
+    def test_integration_entries_share_one_assignable_group(self) -> None:
+        integration_pages = {
+            "credenciales",
+            "correos-masivos",
+            "teams",
+            "teams-matricula",
+            "moodle-teams",
+            "moodle/enrollment-validation",
+            "gestion-sisacademico/moodle_notas",
+            "gestion-sisacademico/moodle_sincronizacion",
+            "gestion-sisacademico/microsoft365_audit",
+        }
+        catalog = {screen["page"]: screen for screen in ASSIGNABLE_SCREEN_CATALOG}
+
+        self.assertTrue(integration_pages.issubset(ALL_PAGES))
+        for page in integration_pages:
+            with self.subTest(page=page):
+                self.assertEqual(catalog[page]["group"], "Integraciones")
+
     def test_student_enrollment_is_an_assignable_screen(self) -> None:
         screen = next(item for item in SCREEN_CATALOG if item["page"] == "matricula-acad")
         self.assertEqual(screen["label"], "Matriculación académica")
